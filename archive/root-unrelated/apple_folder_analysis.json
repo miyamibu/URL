@@ -1,0 +1,449 @@
+{
+  "total_entries": 36,
+  "kind_counts": {
+    "directory": 9,
+    "file": 25,
+    "package": 2
+  },
+  "ext_counts": {
+    ".swift": 16,
+    "[none]": 1,
+    ".entitlements": 2,
+    ".plist": 3,
+    ".pbxproj": 1,
+    ".xcworkspacedata": 1,
+    ".xcuserstate": 1
+  },
+  "depth_counts": {
+    "0": 23,
+    "1": 3,
+    "2": 4,
+    "3": 3,
+    "4": 3
+  },
+  "hidden_file_count": 1,
+  "hidden_dir_count": 0,
+  "zero_byte_files": [],
+  "broken_symlinks": [],
+  "exec_files": [],
+  "empty_dirs": [
+    "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/configuration"
+  ],
+  "largest_files": [
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/SessionStore.swift",
+      "rel_path": "SessionStore.swift",
+      "size_bytes": 21299,
+      "mtime": "2026-04-02T23:17:16+09:00",
+      "kind": "file"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj/project.pbxproj",
+      "rel_path": "LapTimer.xcodeproj/project.pbxproj",
+      "size_bytes": 19513,
+      "mtime": "2026-04-04T14:36:28.447229+09:00",
+      "kind": "file"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj/project.xcworkspace/xcuserdata/mimac.xcuserdatad/UserInterfaceState.xcuserstate",
+      "rel_path": "LapTimer.xcodeproj/project.xcworkspace/xcuserdata/mimac.xcuserdatad/UserInterfaceState.xcuserstate",
+      "size_bytes": 18466,
+      "mtime": "2026-04-04T16:34:05.194667+09:00",
+      "kind": "file"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/XLSXExporter.swift",
+      "rel_path": "XLSXExporter.swift",
+      "size_bytes": 16614,
+      "mtime": "2026-04-02T22:02:31+09:00",
+      "kind": "file"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/SessionDetailView.swift",
+      "rel_path": "SessionDetailView.swift",
+      "size_bytes": 8575,
+      "mtime": "2026-04-02T23:16:41+09:00",
+      "kind": "file"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/SessionListView.swift",
+      "rel_path": "SessionListView.swift",
+      "size_bytes": 8487,
+      "mtime": "2026-04-02T22:04:51+09:00",
+      "kind": "file"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/iOSSessionStore.swift",
+      "rel_path": "iOSSessionStore.swift",
+      "size_bytes": 6418,
+      "mtime": "2026-04-02T22:04:14+09:00",
+      "kind": "file"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/.DS_Store",
+      "rel_path": ".DS_Store",
+      "size_bytes": 6148,
+      "mtime": "2026-04-04T10:43:21.256843+09:00",
+      "kind": "file"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/Models.swift",
+      "rel_path": "Models.swift",
+      "size_bytes": 4543,
+      "mtime": "2026-04-02T21:57:19+09:00",
+      "kind": "file"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/iOSConnectivityManager.swift",
+      "rel_path": "iOSConnectivityManager.swift",
+      "size_bytes": 4177,
+      "mtime": "2026-04-02T22:02:31+09:00",
+      "kind": "file"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/WatchConnectivityManager.swift",
+      "rel_path": "WatchConnectivityManager.swift",
+      "size_bytes": 3675,
+      "mtime": "2026-04-02T22:02:31+09:00",
+      "kind": "file"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/TimerView.swift",
+      "rel_path": "TimerView.swift",
+      "size_bytes": 2446,
+      "mtime": "2026-04-02T21:07:46+09:00",
+      "kind": "file"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/ResultView.swift",
+      "rel_path": "ResultView.swift",
+      "size_bytes": 2317,
+      "mtime": "2026-04-02T11:38:34+09:00",
+      "kind": "file"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/TextExporter.swift",
+      "rel_path": "TextExporter.swift",
+      "size_bytes": 2264,
+      "mtime": "2026-04-02T21:09:27+09:00",
+      "kind": "file"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/SyncMessage.swift",
+      "rel_path": "SyncMessage.swift",
+      "size_bytes": 2140,
+      "mtime": "2026-04-02T21:10:55+09:00",
+      "kind": "file"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/ContentView.swift",
+      "rel_path": "ContentView.swift",
+      "size_bytes": 1592,
+      "mtime": "2026-04-02T21:07:41+09:00",
+      "kind": "file"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/LapTimerWatchApp.swift",
+      "rel_path": "LapTimerWatchApp.swift",
+      "size_bytes": 1114,
+      "mtime": "2026-04-02T21:23:00+09:00",
+      "kind": "file"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/LapListView.swift",
+      "rel_path": "LapListView.swift",
+      "size_bytes": 925,
+      "mtime": "2026-04-02T11:38:34+09:00",
+      "kind": "file"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/LapTimerIOS-Info.plist",
+      "rel_path": "LapTimerIOS-Info.plist",
+      "size_bytes": 899,
+      "mtime": "2026-04-02T21:22:42+09:00",
+      "kind": "file"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/LapTimerWatch-Info.plist",
+      "rel_path": "LapTimerWatch-Info.plist",
+      "size_bytes": 863,
+      "mtime": "2026-04-04T14:40:54.047268+09:00",
+      "kind": "file"
+    }
+  ],
+  "recent_entries": [
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj/project.xcworkspace/xcuserdata/mimac.xcuserdatad",
+      "rel_path": "LapTimer.xcodeproj/project.xcworkspace/xcuserdata/mimac.xcuserdatad",
+      "kind": "directory",
+      "size_bytes": 96,
+      "mtime": "2026-04-04T16:34:05.195408+09:00"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj/project.xcworkspace/xcuserdata/mimac.xcuserdatad/UserInterfaceState.xcuserstate",
+      "rel_path": "LapTimer.xcodeproj/project.xcworkspace/xcuserdata/mimac.xcuserdatad/UserInterfaceState.xcuserstate",
+      "kind": "file",
+      "size_bytes": 18466,
+      "mtime": "2026-04-04T16:34:05.194667+09:00"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj/xcuserdata/mimac.xcuserdatad/xcschemes",
+      "rel_path": "LapTimer.xcodeproj/xcuserdata/mimac.xcuserdatad/xcschemes",
+      "kind": "directory",
+      "size_bytes": 96,
+      "mtime": "2026-04-04T16:26:45.502468+09:00"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj/xcuserdata/mimac.xcuserdatad/xcschemes/xcschememanagement.plist",
+      "rel_path": "LapTimer.xcodeproj/xcuserdata/mimac.xcuserdatad/xcschemes/xcschememanagement.plist",
+      "kind": "file",
+      "size_bytes": 461,
+      "mtime": "2026-04-04T16:26:45.502395+09:00"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/LapTimerWatch-Info.plist",
+      "rel_path": "LapTimerWatch-Info.plist",
+      "kind": "file",
+      "size_bytes": 863,
+      "mtime": "2026-04-04T14:40:54.047268+09:00"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj",
+      "rel_path": "LapTimer.xcodeproj",
+      "kind": "package",
+      "size_bytes": 160,
+      "mtime": "2026-04-04T14:36:28.447373+09:00"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj/project.pbxproj",
+      "rel_path": "LapTimer.xcodeproj/project.pbxproj",
+      "kind": "file",
+      "size_bytes": 19513,
+      "mtime": "2026-04-04T14:36:28.447229+09:00"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/.DS_Store",
+      "rel_path": ".DS_Store",
+      "kind": "file",
+      "size_bytes": 6148,
+      "mtime": "2026-04-04T10:43:21.256843+09:00"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎",
+      "rel_path": ".",
+      "kind": "directory",
+      "size_bytes": 768,
+      "mtime": "2026-04-04T10:43:21.256312+09:00"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj/project.xcworkspace/xcuserdata",
+      "rel_path": "LapTimer.xcodeproj/project.xcworkspace/xcuserdata",
+      "kind": "directory",
+      "size_bytes": 96,
+      "mtime": "2026-04-04T10:19:54.870250+09:00"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj/project.xcworkspace",
+      "rel_path": "LapTimer.xcodeproj/project.xcworkspace",
+      "kind": "package",
+      "size_bytes": 160,
+      "mtime": "2026-04-04T10:19:54.870173+09:00"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj/xcuserdata/mimac.xcuserdatad",
+      "rel_path": "LapTimer.xcodeproj/xcuserdata/mimac.xcuserdatad",
+      "kind": "directory",
+      "size_bytes": 96,
+      "mtime": "2026-04-04T10:19:51.136279+09:00"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj/xcuserdata",
+      "rel_path": "LapTimer.xcodeproj/xcuserdata",
+      "kind": "directory",
+      "size_bytes": 96,
+      "mtime": "2026-04-04T10:19:51.136245+09:00"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj/project.xcworkspace/xcshareddata/swiftpm",
+      "rel_path": "LapTimer.xcodeproj/project.xcworkspace/xcshareddata/swiftpm",
+      "kind": "directory",
+      "size_bytes": 96,
+      "mtime": "2026-04-04T10:19:50.863952+09:00"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/configuration",
+      "rel_path": "LapTimer.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/configuration",
+      "kind": "directory",
+      "size_bytes": 64,
+      "mtime": "2026-04-04T10:19:50.863950+09:00"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj/project.xcworkspace/xcshareddata",
+      "rel_path": "LapTimer.xcodeproj/project.xcworkspace/xcshareddata",
+      "kind": "directory",
+      "size_bytes": 96,
+      "mtime": "2026-04-04T10:19:50.863915+09:00"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj/project.xcworkspace/contents.xcworkspacedata",
+      "rel_path": "LapTimer.xcodeproj/project.xcworkspace/contents.xcworkspacedata",
+      "kind": "file",
+      "size_bytes": 135,
+      "mtime": "2026-04-04T10:19:50.842169+09:00"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/SessionStore.swift",
+      "rel_path": "SessionStore.swift",
+      "kind": "file",
+      "size_bytes": 21299,
+      "mtime": "2026-04-02T23:17:16+09:00"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/SessionDetailView.swift",
+      "rel_path": "SessionDetailView.swift",
+      "kind": "file",
+      "size_bytes": 8575,
+      "mtime": "2026-04-02T23:16:41+09:00"
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/SessionListView.swift",
+      "rel_path": "SessionListView.swift",
+      "kind": "file",
+      "size_bytes": 8487,
+      "mtime": "2026-04-02T22:04:51+09:00"
+    }
+  ],
+  "largest_dirs": [
+    {
+      "path": "/Users/mimac/Desktop/🍎",
+      "kb": 200,
+      "bytes": 204800,
+      "rel_path": ".",
+      "kind": "directory"
+    },
+    {
+      "path": "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj",
+      "kb": 48,
+      "bytes": 49152,
+      "rel_path": "LapTimer.xcodeproj",
+      "kind": "package"
+    },
+    {
+      "path": "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj/project.xcworkspace",
+      "kb": 24,
+      "bytes": 24576,
+      "rel_path": "LapTimer.xcodeproj/project.xcworkspace",
+      "kind": "package"
+    },
+    {
+      "path": "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj/project.xcworkspace/xcuserdata",
+      "kb": 20,
+      "bytes": 20480,
+      "rel_path": "LapTimer.xcodeproj/project.xcworkspace/xcuserdata",
+      "kind": "directory"
+    },
+    {
+      "path": "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj/project.xcworkspace/xcuserdata/mimac.xcuserdatad",
+      "kb": 20,
+      "bytes": 20480,
+      "rel_path": "LapTimer.xcodeproj/project.xcworkspace/xcuserdata/mimac.xcuserdatad",
+      "kind": "directory"
+    },
+    {
+      "path": "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj/xcuserdata",
+      "kb": 4,
+      "bytes": 4096,
+      "rel_path": "LapTimer.xcodeproj/xcuserdata",
+      "kind": "directory"
+    },
+    {
+      "path": "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj/xcuserdata/mimac.xcuserdatad",
+      "kb": 4,
+      "bytes": 4096,
+      "rel_path": "LapTimer.xcodeproj/xcuserdata/mimac.xcuserdatad",
+      "kind": "directory"
+    },
+    {
+      "path": "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj/xcuserdata/mimac.xcuserdatad/xcschemes",
+      "kb": 4,
+      "bytes": 4096,
+      "rel_path": "LapTimer.xcodeproj/xcuserdata/mimac.xcuserdatad/xcschemes",
+      "kind": "directory"
+    },
+    {
+      "path": "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj/project.xcworkspace/xcshareddata",
+      "kb": 0,
+      "bytes": 0,
+      "rel_path": "LapTimer.xcodeproj/project.xcworkspace/xcshareddata",
+      "kind": "directory"
+    },
+    {
+      "path": "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj/project.xcworkspace/xcshareddata/swiftpm",
+      "kb": 0,
+      "bytes": 0,
+      "rel_path": "LapTimer.xcodeproj/project.xcworkspace/xcshareddata/swiftpm",
+      "kind": "directory"
+    },
+    {
+      "path": "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/configuration",
+      "kb": 0,
+      "bytes": 0,
+      "rel_path": "LapTimer.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/configuration",
+      "kind": "directory"
+    }
+  ],
+  "project_markers": [
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/LapTimerWatch-Info.plist",
+      "rel_path": "LapTimerWatch-Info.plist",
+      "kind": "file",
+      "extension": ".plist",
+      "size_bytes": 863
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj",
+      "rel_path": "LapTimer.xcodeproj",
+      "kind": "package",
+      "extension": ".xcodeproj",
+      "size_bytes": 160
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj/xcuserdata/mimac.xcuserdatad/xcschemes/xcschememanagement.plist",
+      "rel_path": "LapTimer.xcodeproj/xcuserdata/mimac.xcuserdatad/xcschemes/xcschememanagement.plist",
+      "kind": "file",
+      "extension": ".plist",
+      "size_bytes": 461
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/LapTimer.xcodeproj/project.xcworkspace",
+      "rel_path": "LapTimer.xcodeproj/project.xcworkspace",
+      "kind": "package",
+      "extension": ".xcworkspace",
+      "size_bytes": 160
+    },
+    {
+      "abs_path": "/Users/mimac/Desktop/🍎/LapTimerIOS-Info.plist",
+      "rel_path": "LapTimerIOS-Info.plist",
+      "kind": "file",
+      "extension": ".plist",
+      "size_bytes": 899
+    }
+  ],
+  "duplicate_group_count": 1,
+  "duplicate_groups": [
+    [
+      {
+        "abs_path": "/Users/mimac/Desktop/🍎/LapTimerIOS.entitlements",
+        "rel_path": "LapTimerIOS.entitlements",
+        "size_bytes": 181,
+        "name": "LapTimerIOS.entitlements"
+      },
+      {
+        "abs_path": "/Users/mimac/Desktop/🍎/LapTimerWatch.entitlements",
+        "rel_path": "LapTimerWatch.entitlements",
+        "size_bytes": 181,
+        "name": "LapTimerWatch.entitlements"
+      }
+    ]
+  ]
+}
