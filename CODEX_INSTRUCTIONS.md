@@ -94,7 +94,7 @@ Confirm these fixed decisions are safe from repo evidence:
 - remove search rather than adopt it
 - move unrelated root files into `archive/`
 - disable backup entirely
-- treat crash reporting as release blocker only
+- finalize crash reporting release decision in docs
 - fill only actually verified UX checklist entries
 
 If any decision causes data-loss risk or product contract breakage, stop and ask the user.
@@ -209,7 +209,7 @@ Add or update:
   - `./gradlew testDebugUnitTest`
   - `./gradlew lintDebug`
 - `docs/phase1b-ux-checklist.md`: mark only actually verified entries
-- docs explicitly stating crash reporting is not introduced yet and is a release blocker
+- docs explicitly stating crash reporting release decision for this phase
 
 Do not add Firebase/Sentry code in this pass.
 
@@ -260,7 +260,7 @@ All must be true:
 - search no longer implemented while out of scope
 - no silent failure pretending success in touched scope
 - backup disabled and policy documented
-- crash reporting clearly documented as blocker (not falsely complete)
+- crash reporting release decision clearly documented (no false completion)
 - verification reported as passed/failed/not run
 
 ## Final report format
