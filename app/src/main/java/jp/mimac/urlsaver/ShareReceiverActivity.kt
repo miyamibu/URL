@@ -11,7 +11,9 @@ import jp.mimac.urlsaver.data.EXTRA_SHARE_BATCH_RESTORED_COUNT
 import jp.mimac.urlsaver.data.EXTRA_SHARE_BATCH_TOTAL_COUNT
 import jp.mimac.urlsaver.data.EXTRA_SHARE_DEGRADATION_NOTICE
 import jp.mimac.urlsaver.data.EXTRA_SHARE_ENTRY_ID
+import jp.mimac.urlsaver.data.EXTRA_MAIN_INTENT_EVENT_TOKEN
 import jp.mimac.urlsaver.data.EXTRA_SHARE_SAVE_RESULT
+import jp.mimac.urlsaver.data.SHARE_DEGRADATION_TRUNCATED_TO_MAX_URLS
 import jp.mimac.urlsaver.data.UrlRepository
 import jp.mimac.urlsaver.data.SHARE_DEGRADATION_TRUNCATED_TO_FIRST_URL
 import jp.mimac.urlsaver.domain.SaveResult
@@ -19,6 +21,7 @@ import jp.mimac.urlsaver.domain.ShareExtractionResult
 import jp.mimac.urlsaver.domain.ShareSaveResult
 import jp.mimac.urlsaver.domain.UrlRules
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 class ShareReceiverActivity : ComponentActivity() {
 
@@ -35,15 +38,27 @@ class ShareReceiverActivity : ComponentActivity() {
 
         lifecycleScope.launch {
             val repository = (application as UrlSaverApp).container.repository
+            val nonUrlRedirect = ShareReceiverEntrypointRouter.resolve(
+                activity = this@ShareReceiverActivity,
+                sourceIntent = intent,
+                tagRepository = (application as UrlSaverApp).container.tagRepository,
+            )
+            if (nonUrlRedirect != null) {
+                startActivity(nonUrlRedirect)
+                finish()
+                return@launch
+            }
             val isSendMultiple = intent.action == Intent.ACTION_SEND_MULTIPLE
             var degradationNotice: String? = null
             var batchSummary: BatchSaveSummary? = null
 
             val saveResult = if (isSendMultiple) {
-                val extractedUrls = UrlRules.extractAllFromIntent(intent)
+                val extractedBatch = UrlRules.extractAllFromIntent(intent)
+                val extractedUrls = extractedBatch.urls
                 when {
                     extractedUrls.isEmpty() -> {
                         when (val extracted = UrlRules.extractFromIntent(intent)) {
+                            ShareExtractionResult.InputTooLarge -> SaveResult(ShareSaveResult.INPUT_TOO_LARGE)
                             ShareExtractionResult.InvalidUrl -> SaveResult(ShareSaveResult.INVALID_URL)
                             ShareExtractionResult.NoUrlFound -> SaveResult(ShareSaveResult.NO_URL_FOUND)
                             is ShareExtractionResult.Found -> repository.saveFromManualInput(extracted.url)
@@ -51,6 +66,9 @@ class ShareReceiverActivity : ComponentActivity() {
                     }
                     extractedUrls.size == 1 -> repository.saveFromManualInput(extractedUrls.first())
                     else -> {
+                        if (extractedBatch.truncatedToMaxUrls) {
+                            degradationNotice = SHARE_DEGRADATION_TRUNCATED_TO_MAX_URLS
+                        }
                         batchSummary = saveBatch(repository, extractedUrls)
                         SaveResult(ShareSaveResult.BATCH_PROCESSED)
                     }
@@ -62,8 +80,7 @@ class ShareReceiverActivity : ComponentActivity() {
                 repository.saveFromIntent(intent)
             }
 
-            val mainIntent = Intent(this@ShareReceiverActivity, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            val mainIntent = buildMainRedirectIntent().apply {
                 putExtra(EXTRA_SHARE_SAVE_RESULT, saveResult.result.name)
                 degradationNotice?.let { putExtra(EXTRA_SHARE_DEGRADATION_NOTICE, it) }
                 batchSummary?.let { summary ->
@@ -88,12 +105,20 @@ class ShareReceiverActivity : ComponentActivity() {
                     -> {
                         saveResult.entryId?.let { putExtra(EXTRA_SHARE_ENTRY_ID, it) }
                     }
+                    ShareSaveResult.INPUT_TOO_LARGE -> Unit
                     else -> Unit
                 }
             }
 
             startActivity(mainIntent)
             finish()
+        }
+    }
+
+    private fun buildMainRedirectIntent(): Intent {
+        return Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra(EXTRA_MAIN_INTENT_EVENT_TOKEN, UUID.randomUUID().toString())
         }
     }
 
@@ -111,6 +136,7 @@ class ShareReceiverActivity : ComponentActivity() {
                 -> duplicate += 1
                 ShareSaveResult.RESTORED_FROM_PENDING_DELETE -> restored += 1
                 ShareSaveResult.SAVE_FAILED,
+                ShareSaveResult.INPUT_TOO_LARGE,
                 ShareSaveResult.INVALID_URL,
                 ShareSaveResult.NO_URL_FOUND,
                 ShareSaveResult.BATCH_PROCESSED,

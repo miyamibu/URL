@@ -11,8 +11,10 @@ import jp.mimac.urlsaver.data.EXTRA_SHARE_BATCH_RESTORED_COUNT
 import jp.mimac.urlsaver.data.EXTRA_SHARE_BATCH_TOTAL_COUNT
 import jp.mimac.urlsaver.data.EXTRA_SHARE_DEGRADATION_NOTICE
 import jp.mimac.urlsaver.data.EXTRA_SHARE_ENTRY_ID
+import jp.mimac.urlsaver.data.EXTRA_MAIN_INTENT_EVENT_TOKEN
 import jp.mimac.urlsaver.data.EXTRA_SHARE_SAVE_RESULT
 import jp.mimac.urlsaver.data.SHARE_DEGRADATION_TRUNCATED_TO_FIRST_URL
+import jp.mimac.urlsaver.data.SHARE_DEGRADATION_TRUNCATED_TO_MAX_URLS
 import jp.mimac.urlsaver.data.UrlRepository
 import jp.mimac.urlsaver.domain.DetailEffect
 import jp.mimac.urlsaver.domain.MainNavigationEvent
@@ -51,12 +53,25 @@ class MainActivityViewModel(
     private val deleteTimers = mutableMapOf<Long, Job>()
 
     private var titleUndo: TitleUndoState? = null
+    private val secondaryIntentHandler = MainActivitySecondaryIntentHandler(
+        enqueueSnackbar = ::enqueueSnackbar,
+        navigate = { event ->
+            viewModelScope.launch {
+                navigationChannel.send(event)
+            }
+        },
+    )
 
     fun consumeShareResult(intent: Intent, currentRoute: String?) {
         val resultName = intent.getStringExtra(EXTRA_SHARE_SAVE_RESULT) ?: return
         val entryId = if (intent.hasExtra(EXTRA_SHARE_ENTRY_ID)) intent.getLongExtra(EXTRA_SHARE_ENTRY_ID, -1L) else null
         val degradationNotice = intent.getStringExtra(EXTRA_SHARE_DEGRADATION_NOTICE)
-        val signature = "${System.identityHashCode(intent)}:$resultName:${entryId ?: -1}:${degradationNotice ?: ""}"
+        val signature = buildShareIntentSignature(
+            intent = intent,
+            resultName = resultName,
+            entryId = entryId,
+            degradationNotice = degradationNotice,
+        )
         if (!consumedShareSignatures.add(signature)) return
 
         val result = runCatching { ShareSaveResult.valueOf(resultName) }.getOrNull() ?: return
@@ -98,6 +113,9 @@ class MainActivityViewModel(
                 enqueueSnackbar(SnackbarEvent(kind = SnackbarEventKind.INFO, message = "削除を取り消して復元しました"))
             }
 
+            ShareSaveResult.INPUT_TOO_LARGE -> enqueueSnackbar(
+                SnackbarEvent(kind = SnackbarEventKind.INFO, message = "共有内容が長すぎるため処理できませんでした"),
+            )
             ShareSaveResult.SAVE_FAILED -> enqueueSnackbar(SnackbarEvent(kind = SnackbarEventKind.INFO, message = "保存できませんでした"))
             ShareSaveResult.INVALID_URL -> enqueueSnackbar(SnackbarEvent(kind = SnackbarEventKind.INFO, message = "有効なURLではありませんでした"))
             ShareSaveResult.NO_URL_FOUND -> enqueueSnackbar(SnackbarEvent(kind = SnackbarEventKind.INFO, message = "URLが見つかりませんでした"))
@@ -109,6 +127,14 @@ class MainActivityViewModel(
                     SnackbarEvent(
                         kind = SnackbarEventKind.INFO,
                         message = "共有内容に複数URLが含まれていたため、1件目のみ保存しました",
+                    ),
+                )
+            }
+            SHARE_DEGRADATION_TRUNCATED_TO_MAX_URLS -> {
+                enqueueSnackbar(
+                    SnackbarEvent(
+                        kind = SnackbarEventKind.INFO,
+                        message = "共有内容に多数のURLが含まれていたため、先頭${jp.mimac.urlsaver.domain.UrlRules.MAX_BATCH_SAVE_URLS_PER_INTAKE}件のみ処理しました",
                     ),
                 )
             }
@@ -145,12 +171,21 @@ class MainActivityViewModel(
             }
 
             ShareSaveResult.SAVE_FAILED -> enqueueSnackbar(SnackbarEvent(kind = SnackbarEventKind.INFO, message = "保存できませんでした"))
+            ShareSaveResult.INPUT_TOO_LARGE,
             ShareSaveResult.INVALID_URL,
             ShareSaveResult.NO_URL_FOUND,
             -> {
                 // Manual input handles these in bottom sheet error state.
             }
         }
+    }
+
+    fun consumeTagImportResult(intent: Intent) {
+        secondaryIntentHandler.consumeTagImportResult(intent)
+    }
+
+    fun consumeDeepLinkIntent(intent: Intent) {
+        secondaryIntentHandler.consumeDeepLinkIntent(intent)
     }
 
     fun onDetailEffect(effect: DetailEffect) {
@@ -278,6 +313,13 @@ class MainActivityViewModel(
                 }
             }
 
+            SnackbarEventKind.OPEN_TAG_DETAIL -> {
+                val tagId = event.tagId ?: return
+                if (tagId > 0L) {
+                    navigationChannel.send(MainNavigationEvent.NavigateToTagDetail(tagId))
+                }
+            }
+
             SnackbarEventKind.UNDO_TITLE_EDIT -> {
                 val undo = titleUndo ?: return
                 repository.restoreUserTitle(undo.entryId, undo.oldTitle)
@@ -300,6 +342,22 @@ class MainActivityViewModel(
 
     fun notifyMemoSaved() {
         enqueueSnackbar(SnackbarEvent(kind = SnackbarEventKind.INFO, message = "メモを保存しました"))
+    }
+
+    fun notifyOpenFailed() {
+        enqueueSnackbar(SnackbarEvent(kind = SnackbarEventKind.INFO, message = "リンクを開けませんでした"))
+    }
+
+    fun notifyMetadataRetryUnavailable() {
+        enqueueSnackbar(SnackbarEvent(kind = SnackbarEventKind.INFO, message = "この状態では再取得できません"))
+    }
+
+    fun notifyArchiveFailed() {
+        enqueueSnackbar(SnackbarEvent(kind = SnackbarEventKind.INFO, message = "アーカイブできませんでした"))
+    }
+
+    fun notifyDeleteFailed() {
+        enqueueSnackbar(SnackbarEvent(kind = SnackbarEventKind.INFO, message = "削除できませんでした"))
     }
 
     private fun invalidateTitleUndo() {
@@ -337,6 +395,33 @@ class MainActivityViewModel(
             return "複数URLの共有を処理しました"
         }
         return "複数URLの共有を処理しました（${total}件） 新規${created}件 / 既存${duplicate}件 / 復元${restored}件 / 失敗${failed}件"
+    }
+
+    private fun buildShareIntentSignature(
+        intent: Intent,
+        resultName: String,
+        entryId: Long?,
+        degradationNotice: String?,
+    ): String {
+        val eventToken = intent.getStringExtra(EXTRA_MAIN_INTENT_EVENT_TOKEN)?.takeIf { it.isNotBlank() }
+        if (eventToken != null) {
+            return "event:$eventToken"
+        }
+        return listOf(
+            "legacy",
+            resultName,
+            entryId?.toString() ?: "null",
+            degradationNotice ?: "null",
+            intExtraComponent(intent, EXTRA_SHARE_BATCH_TOTAL_COUNT),
+            intExtraComponent(intent, EXTRA_SHARE_BATCH_CREATED_COUNT),
+            intExtraComponent(intent, EXTRA_SHARE_BATCH_DUPLICATE_COUNT),
+            intExtraComponent(intent, EXTRA_SHARE_BATCH_RESTORED_COUNT),
+            intExtraComponent(intent, EXTRA_SHARE_BATCH_FAILED_COUNT),
+        ).joinToString(":")
+    }
+
+    private fun intExtraComponent(intent: Intent, key: String): String {
+        return if (intent.hasExtra(key)) intent.getIntExtra(key, 0).toString() else "null"
     }
 
     private data class TitleUndoState(

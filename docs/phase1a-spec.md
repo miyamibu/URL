@@ -2,7 +2,7 @@
 
 ## 1. Goal
 共有された URL を保存し、あとで再オープンできるようにする。  
-投稿本文・画像本体・埋め込みデータそのものは主役にしない。
+URL を主軸にしつつ、一覧/詳細で内容を再発見できる最小 metadata（タイトル・本文・要約・サムネイル）を扱う。
 
 ## 2. Scope / Non-Scope
 ### Scope
@@ -11,13 +11,13 @@
 - 手動貼り付け保存
 - URL 抽出 / 正規化 / 重複排除
 - Main / Archive / Detail の 3 画面
+- Main active 一覧のスワイプ操作（右: archive / 左: pending delete + Undo）
 - metadata WorkManager enqueue
 - アーカイブ / 削除猶予 Undo
 - 仕様・テスト・文書の整備
 
 ### Non-Scope
 - WebView
-- スワイプ archive/delete
 - 検索機能
 - タグ / 高度検索
 - 過剰アニメーション
@@ -32,6 +32,9 @@
 - `openUrl` は開く/コピー専用
 - Phase 1a 固定: `openUrl = normalizedUrl`
 - 一覧カードタップは詳細遷移のみ（直接 open しない）
+- Main active 一覧はスワイプ操作を許可:
+  - start-to-end（右）: archive
+  - end-to-start（左）: pending delete（DB-backed Undo 対象）
 - 詳細画面「開く」「コピー」は `openUrl` を使う
 
 ## 4. Data Model / DB
@@ -39,6 +42,14 @@
 - `pendingDeletionUntil` は epoch millis `Long`
 - `recordState`: `ACTIVE` / `ARCHIVED` / `PENDING_DELETE`
 - `metadataState`: `PENDING` / `READY` / `FAILED` / `UNAVAILABLE`
+- metadata 保存列:
+  - `fetchedTitle`
+  - `fetchedBody`
+  - `bodySummary`
+  - `thumbnailUrl`
+  - `canonicalId`
+  - `normalizedHost`
+  - `rawSourceHost`
 
 ### Unique
 - `normalizedUrl` に DB-level unique index
@@ -70,13 +81,14 @@
 
 ## 5. URL Extraction / Normalization / Display
 ### Share extraction priority
-1. `Intent.EXTRA_TEXT`
+1. `Intent.EXTRA_TEXT` / `Intent.EXTRA_HTML_TEXT` / `Intent.EXTRA_SUBJECT`
 2. `ClipData`
-3. `intent.dataString`
+3. `Intent.EXTRA_STREAM`（単体/複数）
+4. `intent.dataString`
 
 各 source ごとに:
 - 候補文字列を抽出
-- source 内で最初に見つかった有効な absolute `http/https` URL を 1 件採用
+- source 内で最初に見つかった有効な absolute URL 候補を 1 件採用（新規保存対象は `https`）
 - 有効 URL がなければ次 source へフォールバック
 
 共有 payload に複数 URL が含まれる場合:
@@ -91,10 +103,10 @@
 - scheme lowercase
 - host lowercase
 - fragment 除去
-- default port 除去 (`http:80`, `https:443`)
+- default port 除去（`https:443`。loopback `http` は `http:80` も除去）
 - path が root (`/`) 以外のときのみ末尾 slash 除去
 - query は保持
-- 有効 scheme は `http`/`https` のみ
+- 新規保存の有効 scheme は `https` のみ（既存 `http` レコードは読取互換）
 - absolute URL 必須
 - host 非空必須
 - scheme なしは無効
@@ -137,6 +149,7 @@
   - `archivedAt`
   - `pendingDeletionUntil`
   - `metadataFetchedAt`
+- ユーザー向け表示の「保存時刻」は `createdAt` を採用する（Main / Archive / Detail）
 - `updatedAt` を更新してよい操作:
   - create / archive / restore / pending delete / final delete
   - `userTitle` 保存 / `memo` 保存 / 明示編集
@@ -147,7 +160,7 @@
 ## 8. Metadata Classification / Worker
 ### Classification
 - `FAILED`: `TIMEOUT`, `NETWORK_IO`, `HTTP_5XX`
-- `UNAVAILABLE`: `NON_HTML`, `OVERSIZED`, `TOO_MANY_REDIRECTS`, `HTTP_404`, `HTTP_4XX`, `PARSE_FAILED`
+- `UNAVAILABLE`: `NON_HTML`, `OVERSIZED`, `TOO_MANY_REDIRECTS`, `HTTP_404`, `HTTP_4XX`, `PARSE_FAILED`, `UNSUPPORTED_SCHEME`
 - 固定: `PARSE_FAILED = UNAVAILABLE`
 
 ### Limits
@@ -157,6 +170,34 @@
 - redirect 上限 5
 - connect timeout 10 秒
 - read timeout 30 秒
+
+### Service-aware extraction
+- 保存・重複判定・開くURLは従来どおり `normalizedUrl` / `openUrl` を維持する。
+- `FetchOutcome.Ready` は以下の統一契約で返す:
+  - `fetchedTitle`
+  - `fetchedBody`
+  - `bodySummary`
+  - `description`
+  - `thumbnailUrl`
+  - `canonicalId`
+  - `normalizedHost`
+  - `rawSourceHost`
+- `title` / `body` / `thumbnail` のいずれか一部でも取得できれば `READY`（部分成功）とする。
+- `bodySummary` は取得時に rule-based で生成し DB 保存する:
+  - 空白正規化
+  - URL 除去
+  - 先頭文優先
+  - 長文は省略記号
+  - 空なら `null`
+- サービス別優先順（無料・API キー不要）:
+  - X: syndication -> oEmbed
+  - YouTube:
+    - title: oEmbed -> `og:title` -> `<title>`
+    - body: JSON-LD `VideoObject.description` -> `meta/og description` -> `null`
+    - description: `og:description` -> `twitter:description` -> `meta description`
+  - Instagram: JSON-LD -> 埋め込み JSON -> OG
+  - Web: `og:title` -> `<title>`、body は `meta description` 優先、空なら `article/main/p`
+- 本文を取得できない場合は `fetchedBody = null` のまま保持し、UI で制限を正直に表示する。
 
 ### Retry / WorkManager
 - retry 合計 3 回（初回 + retry 2 回）
@@ -174,7 +215,7 @@
   - `normalizedUrl`, `originalUrl`, `displayUrl`, `openUrl`
   - `recordState`, `userTitle`, `memo`
 - `FetchMetadataWorker` が更新してよい:
-  - `fetchedTitle`, `thumbnailUrl`, `metadataState`
+  - `fetchedTitle`, `fetchedBody`, `bodySummary`, `description`, `thumbnailUrl`, `metadataState`
   - `metadataFetchedAt`, `metadataError`
   - `canonicalId`（確定時）
   - 補助 host/source 情報
@@ -211,12 +252,24 @@
 - `android:noHistory="true"`
 - `launchMode="standard"`
 - `android:exported` を明示
+- manifest は `ACTION_SEND` / `ACTION_SEND_MULTIPLE` の `text/*` 受信に加え、mime 未指定 share も最小フォールバック受信する
 
 ### MainActivity
 - `launchMode="singleTop"`
 - `onCreate` / `onNewIntent` で `consumeShareResult(intent, currentRoute)` を呼ぶ
+- `onCreate` / `onNewIntent` で共有フォルダ deep link の extras も消費し、`tag/{tagId}` へ橋渡しする
 - extras は remove しない
+
+### Shared tag local deep link
+- 共有フォルダの共有リンクは `urlsaver://tag/{tagId}` のカスタムスキームのみ
+- `https://...` App Links やバックエンド連携は追加しない
+- このリンクは同一端末・同一アプリデータ前提のローカルリンク
+- 再インストール / データ消去 / 復元差分などで `tagId` が無効化されうる
+- `ACTION_VIEW` の malformed URI / `tagId` 欠落 / 数値変換不可ではクラッシュさせず Main に安全着地する
+- `tagId` が読める場合は `tag/{tagId}` へ遷移し、タグ不存在時は既存の not found UI を使う
 - consume は idempotent
+  - dedupe key は extras ベースの stable signature を使う
+  - `System.identityHashCode(intent)` には依存しない
 
 ### Flags
 - `FLAG_ACTIVITY_CLEAR_TOP | FLAG_ACTIVITY_SINGLE_TOP`
@@ -231,6 +284,7 @@
 - `EXTRA_SHARE_BATCH_DUPLICATE_COUNT`
 - `EXTRA_SHARE_BATCH_RESTORED_COUNT`
 - `EXTRA_SHARE_BATCH_FAILED_COUNT`
+- `EXTRA_MAIN_INTENT_EVENT_TOKEN`
 
 ### Extras usage
 - `BATCH_PROCESSED`: `SAVE_RESULT` + batch count extras
@@ -239,6 +293,7 @@
 - `DUPLICATE_ARCHIVED`: `SAVE_RESULT` 必須
 - `RESTORED_FROM_PENDING_DELETE`: `SAVE_RESULT` + `EXTRA_SHARE_ENTRY_ID` 必須
 - `SAVE_FAILED` / `INVALID_URL` / `NO_URL_FOUND`: `SAVE_RESULT` 必須
+- Share / tag import / deep link の MainActivity redirect intent には `EXTRA_MAIN_INTENT_EVENT_TOKEN` を付与する
 
 ### `ACTION_SEND_MULTIPLE`
 - manifest/runtime で受信する
@@ -338,6 +393,7 @@ sealed interface DetailEffect {
   - `WEB`: `normalizedHost`
   - 既知サービス: サービス名
   - 非 `STANDARD` のときのみ `contentContext` chip 1 つ
+- `bodySummary` がある場合はカード内に 2 行まで表示
 - URL 行: `displayUrl`（1行 + Ellipsis）
 - 状態行:
   - `メタデータ取得中…`
@@ -375,6 +431,16 @@ sealed interface DetailEffect {
 - `displayUrl`
 - `memo` 読み取り表示（空なら `メモなし`）
 - サービス情報
+- `bodySummary` はサービス別ラベルで表示:
+  - YouTube: `概要欄の要点`
+  - Instagram: `キャプションの要点`
+  - X: `投稿内容の要点`
+  - Web: `概要` または `本文抜粋の要点`
+- `fetchedBody` はサービス別ラベルで表示:
+  - YouTube: `概要欄`
+  - Instagram: `キャプション`
+  - X: `投稿内容`
+  - Web: `概要` または `本文抜粋`
 - 主アクション:
   - `開く`
   - `コピー`
