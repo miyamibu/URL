@@ -1,0 +1,29 @@
+# Account Deletion Notes
+
+## Goal
+
+- shared-tag cloud / account creation を公開面に出す前に、アプリ内削除導線と Google Play 向けの web deletion route の両方を整理する。
+
+## Current repo state
+
+- Android shared-tag cloud auth UI には in-app の `アカウント削除` 導線を追加した。
+- iOS shared-tag cloud シートにも in-app の `アカウント削除` 導線を追加した。
+- Supabase 側には `delete_my_account()` RPC を追加した。
+- この RPC は次の安全条件で動作する。
+  - 通常メンバーは自分の membership を外して auth user を削除できる。
+  - 自分だけが所属する owner shared tag は server-side cleanup の対象にできる。
+  - 他の active member がいる shared tag の owner は、所有権移譲未実装のため削除をブロックする。
+
+## Google Play web route
+
+- Google Play 公開前に、`docs/account-deletion-request.html` を静的公開して app listing / data safety の削除 URL として設定する。
+- この HTML は repo 内の source-of-truth であり、運用環境では public HTTPS URL として配信する。
+- repo には `.github/workflows/account-deletion-page.yml` を追加してあり、GitHub Pages を有効化すれば `docs/account-deletion-request.html` を `/account-deletion/` に配信できる。
+
+## Remaining release work
+
+- Android release では `release.supabase.url` / `release.supabase.anon.key` / `release.shared.tag.cloud.enabled=true`、または対応する `URLSAVER_RELEASE_*` 環境変数を設定して cloud を有効化する。
+- iOS release では `ruby ios/generate_xcodeproj.rb` 実行前に `URLSAVER_SHARED_TAG_CLOUD_ENABLED=true` / `URLSAVER_SUPABASE_URL` / `URLSAVER_SUPABASE_ANON_KEY` を設定して Info.plist へ反映させる。
+- iOS / Android の shared-tag cloud を public release で有効化する前に、実運用用の Supabase 設定と web deletion route の公開をそろえる。
+- owner transfer 未実装のため、owner with active members の削除は引き続きブロックされる。
+- `delete_my_account()` を production で有効にする前に、Supabase project 側で migration 適用と public web deletion route の配信を完了する。
