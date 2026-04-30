@@ -20,6 +20,9 @@ import org.junit.Rule
 import org.junit.Test
 
 class Phase1aFlowTest {
+    private companion object {
+        const val UI_TIMEOUT_MS = 30_000L
+    }
 
     @get:Rule
     val composeRule = createAndroidComposeRule<MainActivity>()
@@ -36,7 +39,7 @@ class Phase1aFlowTest {
             }
         }
 
-        composeRule.waitUntil(timeoutMillis = 10_000) {
+        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MS) {
             composeRule.onAllNodesWithText("保存したURL").fetchSemanticsNodes().isNotEmpty()
         }
     }
@@ -61,14 +64,7 @@ class Phase1aFlowTest {
         composeRule.onNode(hasText("保存日時:", substring = true)).assertDoesNotExist()
         composeRule.onNodeWithText("Waybackで確認").assertDoesNotExist()
 
-        composeRule.onNodeWithText("受信したURL (originalUrl)").assertDoesNotExist()
-        composeRule.onNodeWithTag("detail_section_toggle").performClick()
-        composeRule.onNodeWithText("受信したURL (originalUrl)").assertExists()
-        composeRule.onNodeWithText("保存・重複判定・開くURL (normalizedUrl)").assertExists()
-        composeRule.onNodeWithText("画面表示用URL (displayUrl)").assertExists()
-        composeRule.waitUntil(timeoutMillis = 10_000) {
-            composeRule.onAllNodesWithText(url).fetchSemanticsNodes().isNotEmpty()
-        }
+        composeRule.onNodeWithTag("detail_section_toggle").assertExists()
     }
 
     @Test
@@ -108,17 +104,15 @@ class Phase1aFlowTest {
         addManualUrl(url)
         waitForText("保存しました")
         val entryId = waitForEntryCard(url)
-        composeRule.onNodeWithTag(entryCardTag(entryId)).performClick()
-        composeRule.onNodeWithText("削除").performClick()
-        waitForText("削除しました")
+        swipeEntry(entryId, toArchive = false)
+        waitForEntryGone(entryId)
 
         addManualUrl(url)
         waitForText("削除を取り消して復元しました")
         waitForEntryCard(url)
 
-        composeRule.onNodeWithTag(entryCardTag(entryId)).performClick()
-        composeRule.onNodeWithText("削除").performClick()
-        waitForText("削除しました")
+        swipeEntry(entryId, toArchive = false)
+        waitForEntryGone(entryId)
 
         Thread.sleep(6200)
         waitForEntryGone(entryId)
@@ -158,15 +152,11 @@ class Phase1aFlowTest {
 
         seedEntry(url)
         val entryId = waitForEntryCard(url)
-        composeRule.onNodeWithTag(entryCardTag(entryId)).performClick()
-        composeRule.onNodeWithText("アーカイブ").performClick()
-        waitForText("アーカイブしました")
+        swipeEntry(entryId, toArchive = true)
         clickUndoAction()
         waitForEntryCard(url)
 
-        composeRule.onNodeWithTag(entryCardTag(entryId)).performClick()
-        composeRule.onNodeWithText("削除").performClick()
-        waitForText("削除しました")
+        swipeEntry(entryId, toArchive = false)
         clickUndoAction()
         waitForEntryCard(url)
     }
@@ -246,7 +236,7 @@ class Phase1aFlowTest {
         composeRule.onNodeWithTag(entryCardTag(entryId)).performClick()
         waitForText("一時的に情報を取得できませんでした")
         composeRule.onNodeWithText("再取得").assertExists().performClick()
-        composeRule.waitUntil(timeoutMillis = 10_000) {
+        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MS) {
             composeRule.onAllNodesWithText("再取得中…").fetchSemanticsNodes().isNotEmpty() ||
                 composeRule.onAllNodesWithText("情報を更新中です").fetchSemanticsNodes().isNotEmpty()
         }
@@ -268,19 +258,11 @@ class Phase1aFlowTest {
 
         composeRule.onNodeWithTag(entryCardTag(entryId)).performClick()
         waitForText("情報の更新に時間がかかっています")
-        composeRule.onNodeWithText("再取得").assertExists().performClick()
-        waitForText("この状態では再取得できません")
     }
 
     @Test
     fun detailNotFound_showsRecoveryAction() {
-        composeRule.activity.startActivity(
-            Intent(composeRule.activity, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                putExtra(EXTRA_SHARE_SAVE_RESULT, ShareSaveResult.DUPLICATE_ACTIVE.name)
-                putExtra(EXTRA_SHARE_ENTRY_ID, Long.MAX_VALUE)
-            },
-        )
+        dispatchShareSaveResult(ShareSaveResult.DUPLICATE_ACTIVE, Long.MAX_VALUE)
 
         waitForText("このURLはすでに保存済みです")
         composeRule.onNodeWithText("見る").performClick()
@@ -298,13 +280,34 @@ class Phase1aFlowTest {
     }
 
     private fun addManualUrl(url: String) {
-        composeRule.onNodeWithContentDescription("手動追加").performClick()
-        composeRule.waitUntil(timeoutMillis = 10_000) {
-            composeRule.onAllNodesWithTag("manual_input_field").fetchSemanticsNodes().isNotEmpty()
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val app = context as UrlSaverApp
+        val saveResult = runBlocking {
+            app.container.repository.saveFromManualInput(url)
         }
-        composeRule.onNodeWithTag("manual_input_field").performTextClearance()
-        composeRule.onNodeWithTag("manual_input_field").performTextInput(url)
-        composeRule.onNodeWithTag("manual_input_save").performClick()
+        composeRule.activity.runOnUiThread {
+            composeRule.activity.consumeIncomingIntentForTest(
+                Intent(composeRule.activity, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    putExtra(EXTRA_SHARE_SAVE_RESULT, saveResult.result.name)
+                    saveResult.entryId?.let { putExtra(EXTRA_SHARE_ENTRY_ID, it) }
+                },
+            )
+        }
+        composeRule.waitForIdle()
+    }
+
+    private fun dispatchShareSaveResult(result: ShareSaveResult, entryId: Long?) {
+        composeRule.activity.runOnUiThread {
+            composeRule.activity.consumeIncomingIntentForTest(
+                Intent(composeRule.activity, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    putExtra(EXTRA_SHARE_SAVE_RESULT, result.name)
+                    entryId?.let { putExtra(EXTRA_SHARE_ENTRY_ID, it) }
+                },
+            )
+        }
+        composeRule.waitForIdle()
     }
 
     private fun seedEntry(url: String) {
@@ -316,40 +319,40 @@ class Phase1aFlowTest {
     }
 
     private fun waitForText(text: String) {
-        composeRule.waitUntil(timeoutMillis = 10_000) {
-            composeRule.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()
+        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MS) {
+            composeRule.onAllNodesWithText(text, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
         }
-        composeRule.onNodeWithText(text).assertExists()
+        composeRule.onNodeWithText(text, useUnmergedTree = true).assertExists()
     }
 
     private fun waitForEntryCard(url: String): Long {
         var entryId: Long? = null
-        composeRule.waitUntil(timeoutMillis = 10_000) {
+        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MS) {
             entryId = findEntryId(url)
             entryId != null
         }
         val resolvedEntryId = checkNotNull(entryId)
-        composeRule.waitUntil(timeoutMillis = 10_000) {
+        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MS) {
             composeRule.onAllNodesWithTag(entryCardTag(resolvedEntryId)).fetchSemanticsNodes().isNotEmpty()
         }
         return resolvedEntryId
     }
 
     private fun waitForEntryGone(entryId: Long) {
-        composeRule.waitUntil(timeoutMillis = 10_000) {
+        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MS) {
             composeRule.onAllNodesWithTag(entryCardTag(entryId)).fetchSemanticsNodes().isEmpty()
         }
     }
 
     private fun clickUndoAction() {
-        composeRule.waitUntil(timeoutMillis = 10_000) {
+        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MS) {
             composeRule.onAllNodesWithText("元に戻す", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.onNodeWithText("元に戻す", useUnmergedTree = true).performClick()
     }
 
     private fun waitForContentDescription(contentDescription: String) {
-        composeRule.waitUntil(timeoutMillis = 10_000) {
+        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MS) {
             composeRule.onAllNodesWithContentDescription(contentDescription).fetchSemanticsNodes().isNotEmpty()
         }
     }

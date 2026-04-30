@@ -77,6 +77,10 @@ class MainActivity : ComponentActivity() {
         activityViewModel.enqueueForegroundSharedTagSyncIfNeeded()
     }
 
+    fun consumeIncomingIntentForTest(intent: Intent) {
+        consumeIncomingIntent(intent)
+    }
+
     private fun consumeIncomingIntent(intent: Intent) {
         activityViewModel.consumeShareResult(intent, currentRoute)
         activityViewModel.consumeTagImportResult(intent)

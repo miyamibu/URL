@@ -16,6 +16,7 @@ artifacts/pre-edit/
 artifacts/compile*.txt
 artifacts/*.log
 artifacts/*classpath*.txt
+artifacts/device-backups/
 artifacts/tiktok-live/
 tmp_main.png
 

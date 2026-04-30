@@ -8,22 +8,24 @@ ADB_BIN="${ADB_BIN:-adb}"
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/install_on_device.sh [--serial <device-serial>] [--connect <host:port>] [--allow-emulator] [--force-reinstall]
+  ./scripts/install_on_device.sh [--serial <device-serial>] [--connect <host:port>] [--allow-emulator] [--allow-fresh-install]
 
 Options:
   --serial   Target device serial from `adb devices` (recommended when multiple devices exist)
   --connect  Run `adb connect <host:port>` before install (for wireless debugging)
   --allow-emulator
              Allow installing to emulator if physical device is not connected
-  --force-reinstall
-             If install fails with signature/version conflict, uninstall and retry automatically
+  --allow-fresh-install
+             Allow installing when jp.mimac.urlsaver is not already installed.
+             Without this flag, the script refuses fresh installs to avoid silently
+             replacing a data-bearing app with an empty database.
 EOF
 }
 
 SERIAL=""
 CONNECT_TARGET=""
 ALLOW_EMULATOR="false"
-FORCE_REINSTALL="false"
+ALLOW_FRESH_INSTALL="false"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -39,8 +41,8 @@ while [[ $# -gt 0 ]]; do
       ALLOW_EMULATOR="true"
       shift 1
       ;;
-    --force-reinstall)
-      FORCE_REINSTALL="true"
+    --allow-fresh-install)
+      ALLOW_FRESH_INSTALL="true"
       shift 1
       ;;
     -h|--help)
@@ -108,28 +110,60 @@ if [[ ! -f "$APK_PATH" ]]; then
   exit 1
 fi
 
+PACKAGE_PATH_BEFORE="$("$ADB_BIN" -s "$SERIAL" shell pm path "$APP_ID" 2>/dev/null | tr -d '\r' || true)"
+if [[ -z "$PACKAGE_PATH_BEFORE" && "$ALLOW_FRESH_INSTALL" != "true" ]]; then
+  cat <<EOF
+[error] '$APP_ID' is not currently installed on $SERIAL.
+
+Refusing to do a fresh install because it would create a new empty app data
+directory. If this is intentional for a clean device, rerun with:
+  ./scripts/install_on_device.sh --serial $SERIAL --allow-fresh-install
+EOF
+  exit 1
+fi
+
+if [[ -n "$PACKAGE_PATH_BEFORE" ]]; then
+  BACKUP_DIR="$PROJECT_ROOT/artifacts/device-backups/android"
+  BACKUP_STAMP="$(date +%Y%m%d-%H%M%S)"
+  BACKUP_PATH="$BACKUP_DIR/${BACKUP_STAMP}-${SERIAL}-${APP_ID}.tgz"
+  mkdir -p "$BACKUP_DIR"
+  echo "[info] Backing up app databases/shared preferences before install..."
+  set +e
+  "$ADB_BIN" -s "$SERIAL" exec-out run-as "$APP_ID" sh -c "cd /data/data/$APP_ID && tar -czf - databases shared_prefs 2>/dev/null" > "$BACKUP_PATH"
+  BACKUP_CODE=$?
+  set -e
+  if [[ $BACKUP_CODE -ne 0 || ! -s "$BACKUP_PATH" ]]; then
+    rm -f "$BACKUP_PATH"
+    cat <<EOF
+[error] Could not back up existing app data from $SERIAL.
+Refusing to install because preserving local URL data is more important than
+continuing blindly.
+EOF
+    exit 1
+  fi
+  echo "[info] Backup saved: $BACKUP_PATH"
+fi
+
 echo "[info] Installing APK..."
 set +e
-INSTALL_OUTPUT="$("$ADB_BIN" -s "$SERIAL" install -r "$APK_PATH" 2>&1)"
+INSTALL_OUTPUT="$("$ADB_BIN" -s "$SERIAL" install -r -d "$APK_PATH" 2>&1)"
 INSTALL_CODE=$?
 set -e
 
 if [[ $INSTALL_CODE -ne 0 ]]; then
   echo "$INSTALL_OUTPUT"
-  NEED_REINSTALL="false"
   if echo "$INSTALL_OUTPUT" | grep -q "INSTALL_FAILED_UPDATE_INCOMPATIBLE"; then
-    NEED_REINSTALL="true"
     cat <<EOF
 [hint] Signature mismatch detected.
-Run:
-  adb -s $SERIAL uninstall $APP_ID
-Then retry this script.
+Do not auto-uninstall this app on a data-bearing device. Export or back up data
+first, then use a clean test device/emulator if a destructive reinstall is
+really needed.
 EOF
   elif echo "$INSTALL_OUTPUT" | grep -q "INSTALL_FAILED_VERSION_DOWNGRADE"; then
-    NEED_REINSTALL="true"
     cat <<'EOF'
 [hint] A newer versionCode is already installed.
-Uninstall the existing app or bump versionCode.
+Use a matching/newer versionCode. Do not uninstall a data-bearing device just to
+work around this.
 EOF
   elif echo "$INSTALL_OUTPUT" | grep -q "INSTALL_FAILED_OLDER_SDK"; then
     cat <<'EOF'
@@ -137,21 +171,7 @@ EOF
 Use Android 8.0+ device/emulator.
 EOF
   fi
-
-  if [[ "$FORCE_REINSTALL" == "true" && "$NEED_REINSTALL" == "true" ]]; then
-    echo "[info] Trying force reinstall: uninstall -> install"
-    "$ADB_BIN" -s "$SERIAL" uninstall "$APP_ID" || true
-    set +e
-    RETRY_OUTPUT="$("$ADB_BIN" -s "$SERIAL" install -r "$APK_PATH" 2>&1)"
-    RETRY_CODE=$?
-    set -e
-    echo "$RETRY_OUTPUT"
-    if [[ $RETRY_CODE -ne 0 ]]; then
-      exit "$RETRY_CODE"
-    fi
-  else
-    exit "$INSTALL_CODE"
-  fi
+  exit "$INSTALL_CODE"
 fi
 
 echo "$INSTALL_OUTPUT"
