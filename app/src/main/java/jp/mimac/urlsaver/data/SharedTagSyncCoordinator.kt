@@ -188,6 +188,7 @@ class SharedTagSyncCoordinator(
 
             syncDao.deleteMembersForUser(authUserId)
             tagDao.deleteSyncedCrossRefsForUser(authUserId)
+            urlEntryDao.resetSharedReferenceCounts()
 
             if (snapshot.members.isNotEmpty()) {
                 val members = snapshot.members.mapNotNull { member ->
@@ -208,7 +209,7 @@ class SharedTagSyncCoordinator(
             if (snapshot.urls.isNotEmpty()) {
                 val refs = snapshot.urls.mapNotNull { remoteUrl ->
                     val localTagId = remoteToLocalTagId[remoteUrl.tagId] ?: return@mapNotNull null
-                    val entryId = ensureLocalEntry(remoteUrl.rawUrl, remoteUrl.normalizedUrl, createdEntryIds)
+                    val entryId = ensureSharedCacheEntry(remoteUrl.rawUrl, remoteUrl.normalizedUrl, createdEntryIds)
                         ?: return@mapNotNull null
                     TagUrlCrossRef(
                         tagId = localTagId,
@@ -226,7 +227,13 @@ class SharedTagSyncCoordinator(
                     )
                 }
                 tagDao.upsertCrossRefs(refs)
+                refs.groupingBy { it.entryId }
+                    .eachCount()
+                    .forEach { (entryId, count) ->
+                        urlEntryDao.updateSharedReferenceCount(entryId, count)
+                    }
             }
+            urlEntryDao.deleteUnreferencedSharedOnlyEntries()
         }
 
         createdEntryIds.forEach { entryId ->
@@ -234,7 +241,7 @@ class SharedTagSyncCoordinator(
         }
     }
 
-    private suspend fun ensureLocalEntry(
+    private suspend fun ensureSharedCacheEntry(
         rawUrl: String,
         normalizedUrl: String,
         createdEntryIds: MutableList<Long>,
@@ -252,6 +259,8 @@ class SharedTagSyncCoordinator(
                 rawSourceHost = parsed.rawSourceHost,
                 serviceType = parsed.serviceType,
                 contentContext = parsed.contentContext,
+                localProvenanceCount = 0,
+                sharedReferenceCount = 0,
                 metadataState = jp.mimac.urlsaver.domain.MetadataState.PENDING,
                 recordState = RecordState.ACTIVE,
                 createdAt = now,

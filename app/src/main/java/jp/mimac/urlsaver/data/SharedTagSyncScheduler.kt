@@ -9,14 +9,22 @@ import androidx.work.WorkManager
 import androidx.work.workDataOf
 import java.util.concurrent.TimeUnit
 
-class SharedTagSyncScheduler(
+interface SharedTagSyncScheduler {
+    fun enqueue(authUserId: String)
+
+    companion object {
+        const val KEY_AUTH_USER_ID = "shared_tag_sync_auth_user_id"
+    }
+}
+
+class WorkManagerSharedTagSyncScheduler(
     private val workManager: WorkManager,
-) {
-    fun enqueue(authUserId: String) {
+) : SharedTagSyncScheduler {
+    override fun enqueue(authUserId: String) {
         val request = OneTimeWorkRequestBuilder<jp.mimac.urlsaver.worker.SharedTagSyncWorker>()
             .setInputData(
                 workDataOf(
-                    KEY_AUTH_USER_ID to authUserId,
+                    SharedTagSyncScheduler.KEY_AUTH_USER_ID to authUserId,
                 ),
             )
             .setConstraints(
@@ -35,8 +43,4 @@ class SharedTagSyncScheduler(
     }
 
     private fun uniqueWorkName(authUserId: String): String = "shared-tag-sync:$authUserId"
-
-    companion object {
-        const val KEY_AUTH_USER_ID = "shared_tag_sync_auth_user_id"
-    }
 }

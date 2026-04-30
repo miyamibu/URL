@@ -5,7 +5,10 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import jp.mimac.urlsaver.data.AppDatabase
 import jp.mimac.urlsaver.data.DefaultTagRepository
+import jp.mimac.urlsaver.data.DefaultUsageSummaryDataSource
 import jp.mimac.urlsaver.data.MetadataScheduler
+import jp.mimac.urlsaver.data.SharedTagAuthRemoteDataSource
+import jp.mimac.urlsaver.data.SharedTagAuthRemoteResult
 import jp.mimac.urlsaver.data.SharedTagAuthSession
 import jp.mimac.urlsaver.data.SharedTagAuthSessionProvider
 import jp.mimac.urlsaver.data.SharedTagSyncCoordinator
@@ -15,8 +18,11 @@ import jp.mimac.urlsaver.data.TagEntity
 import jp.mimac.urlsaver.data.TagUrlCrossRef
 import jp.mimac.urlsaver.data.UrlEntryEntity
 import jp.mimac.urlsaver.domain.ApplySharedTagOpsResponse
+import jp.mimac.urlsaver.domain.AcceptSharedTagInviteResponse
 import jp.mimac.urlsaver.domain.ContentContext
+import jp.mimac.urlsaver.domain.CreateSharedTagInviteResponse
 import jp.mimac.urlsaver.domain.MetadataState
+import jp.mimac.urlsaver.domain.MigrateSharedTagResult
 import jp.mimac.urlsaver.domain.PullSharedTagSnapshotResponse
 import jp.mimac.urlsaver.domain.RecordState
 import jp.mimac.urlsaver.domain.RemoteSharedTag
@@ -78,9 +84,20 @@ class SharedTagSyncRepositoryTest {
             clock = clock,
             metadataScheduler = scheduler,
             authSessionProvider = authProvider,
+            authRemoteDataSource = FakeAuthRemoteDataSource(),
             syncScheduler = null,
             syncCoordinator = coordinator,
-            remoteConfig = SharedTagSyncRemoteConfig("https://example.supabase.co", "anon"),
+            remoteDataSource = remote,
+            remoteConfig = SharedTagSyncRemoteConfig(
+                enabled = true,
+                supabaseUrl = "https://example.supabase.co",
+                anonKey = "anon",
+            ),
+            usageSummaryDataSource = DefaultUsageSummaryDataSource(
+                urlEntryDao = db.urlEntryDao(),
+                tagDao = db.tagDao(),
+                authSessionProvider = authProvider,
+            ),
         )
     }
 
@@ -95,6 +112,7 @@ class SharedTagSyncRepositoryTest {
 
         val localTagId = repository.createTag("Team Links")
         assertNotNull(localTagId)
+        assertEquals(MigrateSharedTagResult.Success, repository.migrateLocalTagToCloud(requireNotNull(localTagId)))
         val entryId = insertEntry("https://example.com/shared")
         repository.assignTag(requireNotNull(localTagId), entryId)
 
@@ -190,7 +208,7 @@ class SharedTagSyncRepositoryTest {
         db.tagDao().insertCrossRef(TagUrlCrossRef(tagId = localTagId, entryId = entryId))
         authProvider.updateSession(SharedTagAuthSession(USER_A, "token-a"))
 
-        assertTrue(repository.migrateLocalTagToCloud(localTagId))
+        assertEquals(MigrateSharedTagResult.Success, repository.migrateLocalTagToCloud(localTagId))
 
         val migrated = db.tagDao().findTagById(localTagId)!!
         assertEquals(SharedTagScope.SYNCED, migrated.scope)
@@ -208,6 +226,7 @@ class SharedTagSyncRepositoryTest {
 
         val tagId = repository.createTag("needs-retry")
         assertNotNull(tagId)
+        assertEquals(MigrateSharedTagResult.Success, repository.migrateLocalTagToCloud(requireNotNull(tagId)))
 
         assertFalse(coordinator.syncCurrentSession())
 
@@ -222,6 +241,7 @@ class SharedTagSyncRepositoryTest {
         authProvider.updateSession(SharedTagAuthSession(USER_A, "token-a"))
         val tagId = repository.createTag("queued-for-user-a")
         assertNotNull(tagId)
+        assertEquals(MigrateSharedTagResult.Success, repository.migrateLocalTagToCloud(requireNotNull(tagId)))
         assertEquals(1, db.sharedTagSyncDao().getPendingOutbox(USER_A).size)
 
         authProvider.updateSession(SharedTagAuthSession(USER_B, "token-b"))
@@ -237,6 +257,7 @@ class SharedTagSyncRepositoryTest {
         remote.overrideApplyStatus = "rejected"
         val tagId = repository.createTag("terminal-failure")
         assertNotNull(tagId)
+        assertEquals(MigrateSharedTagResult.Success, repository.migrateLocalTagToCloud(requireNotNull(tagId)))
 
         assertTrue(coordinator.syncForAuthUser(USER_A))
 
@@ -255,6 +276,7 @@ class SharedTagSyncRepositoryTest {
         remote.overrideApplyStatus = "unexpected_status"
         val tagId = repository.createTag("unknown-status")
         assertNotNull(tagId)
+        assertEquals(MigrateSharedTagResult.Success, repository.migrateLocalTagToCloud(requireNotNull(tagId)))
 
         assertFalse(coordinator.syncForAuthUser(USER_A))
 
@@ -263,6 +285,71 @@ class SharedTagSyncRepositoryTest {
         assertEquals("PENDING", pending.first().state.name)
         assertEquals(1, pending.first().attemptCount)
         assertTrue(pending.first().lastErrorMessage.orEmpty().contains("unknown status=unexpected_status"))
+    }
+
+    @Test
+    fun acceptInvite_schedulesSync_andSnapshotMakesTagVisible() = runBlocking {
+        authProvider.updateSession(SharedTagAuthSession(USER_B, "token-b"))
+        remote.acceptInviteResponse = AcceptSharedTagInviteResponse(
+            tagId = "90000000-0000-0000-0000-000000000001",
+            tagName = "Joined Links",
+            role = "editor",
+            status = "active",
+        )
+        remote.snapshot = PullSharedTagSnapshotResponse(
+            pulledAt = "2026-04-20T00:00:00Z",
+            normalizationVersion = 1,
+            tags = listOf(
+                RemoteSharedTag(
+                    id = "90000000-0000-0000-0000-000000000001",
+                    name = "Joined Links",
+                    createdBy = USER_A,
+                    createdAt = "2026-04-20T00:00:00Z",
+                    updatedAt = "2026-04-20T00:00:00Z",
+                    version = 1,
+                ),
+            ),
+            members = listOf(
+                RemoteSharedTagMember(
+                    tagId = "90000000-0000-0000-0000-000000000001",
+                    userId = USER_B,
+                    role = "editor",
+                    status = "active",
+                    createdAt = "2026-04-20T00:00:00Z",
+                    updatedAt = "2026-04-20T00:00:00Z",
+                ),
+            ),
+            urls = listOf(
+                RemoteSharedTagUrl(
+                    id = "80000000-0000-0000-0000-000000000001",
+                    tagId = "90000000-0000-0000-0000-000000000001",
+                    rawUrl = "https://example.com/joined",
+                    normalizedUrl = "https://example.com/joined",
+                    normalizationVersion = 1,
+                    addedBy = USER_A,
+                    createdAt = "2026-04-20T00:00:00Z",
+                    updatedAt = "2026-04-20T00:00:00Z",
+                ),
+            ),
+        )
+
+        val accepted = repository.acceptInvite("invite-token")
+        assertTrue(accepted is jp.mimac.urlsaver.domain.SharedTagInviteAcceptanceResult.Success)
+
+        assertTrue(coordinator.syncCurrentSession())
+
+        val visibleTags = repository.observeAllTagsWithCount().first()
+        assertEquals(1, visibleTags.size)
+        assertEquals("Joined Links", visibleTags.first().name)
+        assertEquals(SharedTagScope.SYNCED, visibleTags.first().scope)
+        assertEquals(jp.mimac.urlsaver.domain.SharedTagMemberRole.EDITOR, visibleTags.first().currentUserRole)
+        assertEquals(1, visibleTags.first().urlCount)
+
+        val sharedTagEntries = db.tagDao().getEntriesForTag(visibleTags.first().id)
+        assertEquals(1, sharedTagEntries.size)
+        assertEquals(0, sharedTagEntries.first().localProvenanceCount)
+        assertEquals(1, sharedTagEntries.first().sharedReferenceCount)
+        assertTrue(db.urlEntryDao().observeActiveEntries().first().isEmpty())
     }
 
     private suspend fun insertEntry(url: String): Long {
@@ -303,11 +390,35 @@ class SharedTagSyncRepositoryTest {
         }
     }
 
+    private class FakeAuthRemoteDataSource : SharedTagAuthRemoteDataSource {
+        override suspend fun signUp(email: String, password: String): SharedTagAuthRemoteResult {
+            return SharedTagAuthRemoteResult.SignedIn(
+                SharedTagAuthSession("signed-up", "access", "refresh", email),
+            )
+        }
+
+        override suspend fun signIn(email: String, password: String): SharedTagAuthRemoteResult {
+            return SharedTagAuthRemoteResult.SignedIn(
+                SharedTagAuthSession("signed-in", "access", "refresh", email),
+            )
+        }
+
+        override suspend fun refreshSession(refreshToken: String): SharedTagAuthSession {
+            return SharedTagAuthSession("refreshed", "access", refreshToken, "refresh@example.com")
+        }
+    }
+
     private class FakeRemoteDataSource : SharedTagSyncRemoteDataSource {
         var failApply: Boolean = false
         var overrideApplyStatus: String? = null
         var applyCallCount: Int = 0
         var lastApplyAuthUserId: String? = null
+        var acceptInviteResponse: AcceptSharedTagInviteResponse = AcceptSharedTagInviteResponse(
+            tagId = "remote-tag",
+            tagName = "joined-tag",
+            role = "editor",
+            status = "active",
+        )
         var snapshot: PullSharedTagSnapshotResponse = PullSharedTagSnapshotResponse(
             pulledAt = "2026-04-20T00:00:00Z",
             normalizationVersion = 1,
@@ -339,6 +450,26 @@ class SharedTagSyncRepositoryTest {
         }
 
         override suspend fun pullSnapshot(session: SharedTagAuthSession): PullSharedTagSnapshotResponse = snapshot
+
+        override suspend fun createInvite(
+            session: SharedTagAuthSession,
+            remoteTagId: String,
+            role: String,
+        ): CreateSharedTagInviteResponse {
+            return CreateSharedTagInviteResponse(
+                tagId = remoteTagId,
+                inviteToken = "invite-token",
+                expiresAt = "2026-05-01T00:00:00Z",
+                role = role,
+            )
+        }
+
+        override suspend fun acceptInvite(
+            session: SharedTagAuthSession,
+            inviteToken: String,
+        ): AcceptSharedTagInviteResponse = acceptInviteResponse
+
+        override suspend fun deleteAccount(session: SharedTagAuthSession) = Unit
     }
 
     private companion object {

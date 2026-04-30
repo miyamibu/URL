@@ -38,6 +38,7 @@ enum class MetadataState {
 enum class MetadataError {
     TIMEOUT,
     NETWORK_IO,
+    UNSUPPORTED_SCHEME,
     SCHEDULER_UNAVAILABLE,
     HTTP_404,
     HTTP_4XX,
@@ -48,13 +49,23 @@ enum class MetadataError {
     TOO_MANY_REDIRECTS,
 }
 
+enum class MetadataBodyKind {
+    YOUTUBE_DESCRIPTION,
+    INSTAGRAM_CAPTION,
+    X_POST_TEXT,
+    WEB_DESCRIPTION,
+    WEB_EXCERPT,
+}
+
 enum class ShareSaveResult {
     BATCH_PROCESSED,
     CREATED,
     DUPLICATE_ACTIVE,
     DUPLICATE_ARCHIVED,
     RESTORED_FROM_PENDING_DELETE,
+    PERSONAL_URL_LIMIT_REACHED,
     SAVE_FAILED,
+    INPUT_TOO_LARGE,
     INVALID_URL,
     NO_URL_FOUND,
 }
@@ -82,6 +93,7 @@ data class ParsedUrl(
 
 sealed interface ShareExtractionResult {
     data class Found(val url: String) : ShareExtractionResult
+    data object InputTooLarge : ShareExtractionResult
     data object NoUrlFound : ShareExtractionResult
     data object InvalidUrl : ShareExtractionResult
 }
@@ -90,8 +102,11 @@ enum class SnackbarEventKind {
     INFO,
     UNDO_PENDING_DELETE,
     UNDO_ARCHIVE,
+    UNDO_BATCH_PENDING_DELETE,
+    UNDO_BATCH_ARCHIVE,
     OPEN_ARCHIVE,
     OPEN_EXISTING,
+    OPEN_TAG_DETAIL,
     UNDO_TITLE_EDIT,
 }
 
@@ -107,6 +122,8 @@ data class SnackbarEvent(
     val duration: androidx.compose.material3.SnackbarDuration? = null,
     val customDurationMillis: Long? = null,
     val entryId: Long? = null,
+    val entryIds: List<Long>? = null,
+    val tagId: Long? = null,
     val targetRoute: SnackbarTargetRoute? = null,
 )
 
@@ -121,4 +138,7 @@ sealed interface MainNavigationEvent {
     data object NavigateToArchive : MainNavigationEvent
     data object NavigateToMain : MainNavigationEvent
     data class NavigateToDetail(val entryId: Long) : MainNavigationEvent
+    data class NavigateToTagDetail(val tagId: Long) : MainNavigationEvent
+    data class NavigateToInvite(val inviteToken: String) : MainNavigationEvent
+    data object NavigateToCloudAuth : MainNavigationEvent
 }

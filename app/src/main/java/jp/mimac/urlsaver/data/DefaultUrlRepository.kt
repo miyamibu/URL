@@ -5,8 +5,10 @@ import android.util.Log
 import androidx.room.withTransaction
 import jp.mimac.urlsaver.domain.MetadataError
 import jp.mimac.urlsaver.domain.MetadataState
+import jp.mimac.urlsaver.domain.LimitResult
 import jp.mimac.urlsaver.domain.RecordState
 import jp.mimac.urlsaver.domain.SaveResult
+import jp.mimac.urlsaver.domain.ServiceType
 import jp.mimac.urlsaver.domain.ShareExtractionResult
 import jp.mimac.urlsaver.domain.ShareSaveResult
 import jp.mimac.urlsaver.domain.UrlRules
@@ -16,42 +18,119 @@ import kotlinx.coroutines.flow.Flow
 class DefaultUrlRepository(
     private val database: AppDatabase,
     private val dao: UrlEntryDao,
+    private val collectionDao: CollectionDao,
+    private val userLabelDao: UserLabelDao,
     private val clock: AppClock,
     private val scheduler: MetadataScheduler,
+    private val usageSummaryDataSource: UsageSummaryDataSource,
 ) : UrlRepository {
+    private val collectionsSupport = DefaultUrlRepositoryCollectionsSupport(
+        database = database,
+        dao = dao,
+        collectionDao = collectionDao,
+        userLabelDao = userLabelDao,
+        clock = clock,
+    )
 
     override fun observeActiveEntries(): Flow<List<UrlEntryEntity>> = dao.observeActiveEntries()
 
     override fun observeArchiveEntries(): Flow<List<UrlEntryEntity>> = dao.observeArchiveEntries()
 
     override fun observeEntry(entryId: Long): Flow<UrlEntryEntity?> = dao.observeEntry(entryId)
+    override fun observeCollections(): Flow<List<CollectionEntity>> = collectionsSupport.observeCollections()
+    override fun observeUserLabels(): Flow<List<UserLabelEntity>> = collectionsSupport.observeUserLabels()
 
-    override suspend fun saveFromIntent(intent: Intent): SaveResult {
+    override suspend fun saveFromIntent(intent: Intent): SaveResult = saveFromIntent(intent, collectionId = null)
+
+    override suspend fun saveFromIntent(intent: Intent, collectionId: Long?): SaveResult {
         return when (val extracted = UrlRules.extractFromIntent(intent)) {
-            is ShareExtractionResult.Found -> saveFromUrl(extracted.url)
+            is ShareExtractionResult.Found -> saveFromUrl(extracted.url, collectionId)
+            ShareExtractionResult.InputTooLarge -> SaveResult(ShareSaveResult.INPUT_TOO_LARGE)
             ShareExtractionResult.InvalidUrl -> SaveResult(ShareSaveResult.INVALID_URL)
             ShareExtractionResult.NoUrlFound -> SaveResult(ShareSaveResult.NO_URL_FOUND)
         }
     }
 
-    override suspend fun saveFromManualInput(input: String): SaveResult {
+    override suspend fun saveFromManualInput(input: String): SaveResult = saveFromManualInput(input, collectionId = null)
+
+    override suspend fun saveFromManualInput(input: String, collectionId: Long?): SaveResult {
         return when (val extracted = UrlRules.extractForManualInput(input)) {
-            is ShareExtractionResult.Found -> saveFromUrl(extracted.url)
+            is ShareExtractionResult.Found -> saveFromUrl(extracted.url, collectionId)
+            ShareExtractionResult.InputTooLarge -> SaveResult(ShareSaveResult.INPUT_TOO_LARGE)
             ShareExtractionResult.InvalidUrl -> SaveResult(ShareSaveResult.INVALID_URL)
             ShareExtractionResult.NoUrlFound -> SaveResult(ShareSaveResult.NO_URL_FOUND)
         }
     }
 
-    private suspend fun saveFromUrl(originalUrl: String): SaveResult {
+    override suspend fun createCollection(name: String): CreateCollectionResult = collectionsSupport.createCollection(name)
+
+    override suspend fun assignCollection(entryId: Long, collectionId: Long): Boolean {
+        val target = collectionDao.findById(collectionId) ?: return false
+        val entry = dao.findById(entryId) ?: return false
+        if (entry.collectionId == target.id) return true
+        dao.updateCollection(entryId = entryId, collectionId = target.id, updatedAt = clock.nowEpochMillis())
+        return true
+    }
+
+    override suspend fun reorderCollections(collectionIds: List<Long>): Boolean = collectionsSupport.reorderCollections(collectionIds)
+
+    override suspend fun deleteCollection(collectionId: Long): Boolean = collectionsSupport.deleteCollection(collectionId)
+
+    override suspend fun createUserLabel(name: String): Long = collectionsSupport.createUserLabel(name)
+
+    override suspend fun deleteUserLabel(labelId: Long) = collectionsSupport.deleteUserLabel(labelId)
+
+    override suspend fun assignLabel(entryId: Long, labelId: Long?): Boolean {
+        return collectionsSupport.assignLabel(entryId, labelId)
+    }
+
+    private suspend fun saveFromUrl(originalUrl: String, requestedCollectionId: Long?): SaveResult {
         val parsed = UrlRules.parseUrl(originalUrl) ?: return SaveResult(ShareSaveResult.INVALID_URL)
         val now = clock.nowEpochMillis()
 
         return try {
             database.withTransaction {
-                val existing = dao.findByNormalizedUrl(parsed.normalizedUrl)
+                val targetCollectionId = collectionsSupport.resolveCollectionId(requestedCollectionId, now)
+                val existing = findExistingEntry(parsed.normalizedUrl)
                 if (existing != null) {
+                    if (existing.localProvenanceCount <= 0) {
+                        val limitResult = usageSummaryDataSource.limitChecker.checkCanSavePersonalUrl(
+                            usageSummaryDataSource.getUsageSummary(),
+                        )
+                        if (limitResult is LimitResult.Blocked) {
+                            return@withTransaction SaveResult(ShareSaveResult.PERSONAL_URL_LIMIT_REACHED)
+                        }
+                        val promoted = existing.copy(
+                            localProvenanceCount = 1,
+                            collectionId = targetCollectionId,
+                            recordState = RecordState.ACTIVE,
+                            archivedAt = null,
+                            pendingDeletionUntil = null,
+                            updatedAt = now,
+                        )
+                        dao.update(promoted)
+                        if (shouldEnqueueMetadataAfterRestore(promoted)) {
+                            if (promoted.metadataState == MetadataState.PENDING) {
+                                dao.markMetadataPending(promoted.id, now)
+                            }
+                            enqueueMetadataOrMarkUnavailable(promoted.id, now)
+                        }
+                        return@withTransaction SaveResult(
+                            result = ShareSaveResult.CREATED,
+                            entryId = promoted.id,
+                            normalizedUrl = promoted.normalizedUrl,
+                        )
+                    }
                     when (existing.recordState) {
                         RecordState.ACTIVE -> {
+                            if (existing.collectionId != targetCollectionId) {
+                                dao.update(
+                                    existing.copy(
+                                        collectionId = targetCollectionId,
+                                        updatedAt = now,
+                                    ),
+                                )
+                            }
                             SaveResult(
                                 result = ShareSaveResult.DUPLICATE_ACTIVE,
                                 entryId = existing.id,
@@ -68,8 +147,18 @@ class DefaultUrlRepository(
                         }
 
                         RecordState.PENDING_DELETE -> {
-                            val restored = dao.restoreFromPending(existing, now)
+                            var restored = dao.restoreFromPending(existing, now)
+                            if (restored.collectionId != targetCollectionId) {
+                                restored = restored.copy(
+                                    collectionId = targetCollectionId,
+                                    updatedAt = now,
+                                )
+                                dao.update(restored)
+                            }
                             if (shouldEnqueueMetadataAfterRestore(restored)) {
+                                if (restored.metadataState == MetadataState.PENDING) {
+                                    dao.markMetadataPending(restored.id, now)
+                                }
                                 enqueueMetadataOrMarkUnavailable(restored.id, now)
                             }
                             SaveResult(
@@ -80,6 +169,12 @@ class DefaultUrlRepository(
                         }
                     }
                 } else {
+                    val limitResult = usageSummaryDataSource.limitChecker.checkCanSavePersonalUrl(
+                        usageSummaryDataSource.getUsageSummary(),
+                    )
+                    if (limitResult is LimitResult.Blocked) {
+                        return@withTransaction SaveResult(ShareSaveResult.PERSONAL_URL_LIMIT_REACHED)
+                    }
                     val entryId = dao.insert(
                         UrlEntryEntity(
                             originalUrl = parsed.originalUrl,
@@ -88,9 +183,11 @@ class DefaultUrlRepository(
                             openUrl = parsed.openUrl,
                             normalizedHost = parsed.normalizedHost,
                             rawSourceHost = parsed.rawSourceHost,
+                            collectionId = targetCollectionId,
                             serviceType = parsed.serviceType,
                             contentContext = parsed.contentContext,
                             metadataState = MetadataState.PENDING,
+                            metadataRequestedAt = now,
                             createdAt = now,
                             updatedAt = now,
                         ),
@@ -136,7 +233,7 @@ class DefaultUrlRepository(
             MetadataState.READY -> false
             MetadataState.UNAVAILABLE -> false
             MetadataState.FAILED -> true
-            MetadataState.PENDING -> entry.metadataFetchedAt == null
+            MetadataState.PENDING -> entry.metadataRequestedAt == null && entry.metadataFetchedAt == null
         }
     }
 
@@ -276,7 +373,12 @@ class DefaultUrlRepository(
         dao.updateMetadata(
             entryId = entryId,
             fetchedTitle = metadata.fetchedTitle,
+            fetchedBody = metadata.fetchedBody,
+            fetchedBodyKind = metadata.fetchedBodyKind,
+            bodySummary = metadata.bodySummary,
+            description = metadata.description,
             thumbnailUrl = metadata.thumbnailUrl,
+            badgeImageUrl = metadata.badgeImageUrl,
             metadataState = metadata.metadataState,
             metadataFetchedAt = metadata.metadataFetchedAt,
             metadataError = metadata.metadataError,
@@ -288,14 +390,39 @@ class DefaultUrlRepository(
 
     override suspend fun retryMetadata(entryId: Long): Boolean {
         val entry = dao.findById(entryId) ?: return false
-        if (entry.metadataState !in setOf(MetadataState.FAILED, MetadataState.UNAVAILABLE)) {
+        if (!canRetryMetadata(entry)) {
             return false
         }
-        dao.markMetadataPending(entryId)
-        return enqueueMetadataOrMarkUnavailable(entryId, clock.nowEpochMillis())
+        val now = clock.nowEpochMillis()
+        dao.markMetadataPending(entryId, now)
+        return enqueueMetadataOrMarkUnavailable(entryId, now)
+    }
+
+    override suspend fun refreshMetadata(entryId: Long): Boolean {
+        dao.findById(entryId) ?: return false
+        val now = clock.nowEpochMillis()
+        dao.markMetadataPending(entryId, now)
+        return enqueueMetadataOrMarkUnavailable(entryId, now)
     }
 
     override suspend fun loadEntry(entryId: Long): UrlEntryEntity? = dao.findById(entryId)
+
+    private suspend fun findExistingEntry(normalizedUrl: String): UrlEntryEntity? {
+        dao.findByNormalizedUrl(normalizedUrl)?.let { return it }
+        val legacyHttpTwin = UrlRules.toLegacyHttpTwin(normalizedUrl) ?: return null
+        return dao.findByNormalizedUrl(legacyHttpTwin)
+    }
+
+    private fun canRetryMetadata(entry: UrlEntryEntity): Boolean {
+        if (entry.metadataState in setOf(MetadataState.FAILED, MetadataState.UNAVAILABLE)) {
+            return true
+        }
+        return entry.metadataState == MetadataState.READY &&
+            (
+                (entry.bodySummary.isNullOrBlank() && entry.fetchedBody.isNullOrBlank()) ||
+                    (entry.serviceType == ServiceType.X && entry.badgeImageUrl.isNullOrBlank())
+                )
+    }
 
     private companion object {
         const val TAG = "DefaultUrlRepository"

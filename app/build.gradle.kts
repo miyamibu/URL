@@ -1,8 +1,32 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.serialization")
     id("com.google.devtools.ksp")
+}
+
+val localProperties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.isFile) {
+        file.inputStream().use(::load)
+    }
+}
+
+fun configString(propertyName: String, envName: String, defaultValue: String = ""): String {
+    return providers.gradleProperty(propertyName).orNull
+        ?: providers.environmentVariable(envName).orNull
+        ?: localProperties.getProperty(propertyName)
+        ?: defaultValue
+}
+
+fun configBoolean(propertyName: String, envName: String, defaultValue: Boolean = false): Boolean {
+    return configString(propertyName, envName, defaultValue.toString()).toBooleanStrictOrNull() ?: defaultValue
+}
+
+fun buildConfigString(value: String): String {
+    return "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
 }
 
 android {
@@ -18,11 +42,31 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
+        manifestPlaceholders["admobAppId"] =
+            providers.gradleProperty("admobAppId").getOrElse("ca-app-pub-3940256099942544~3347511713")
     }
 
     buildTypes {
+        debug {
+            buildConfigField("boolean", "ADS_ENABLED", configBoolean("ads.enabled", "URLSAVER_ADS_ENABLED").toString())
+            buildConfigField("String", "ADMOB_APP_ID", buildConfigString("ca-app-pub-3940256099942544~3347511713"))
+            buildConfigField("String", "ADMOB_BANNER_AD_UNIT_ID", buildConfigString("ca-app-pub-3940256099942544/9214589741"))
+            buildConfigField("String", "ADMOB_INTERSTITIAL_AD_UNIT_ID", buildConfigString("ca-app-pub-3940256099942544/1033173712"))
+            buildConfigField("String", "INSTAGRAM_OEMBED_ACCESS_TOKEN", buildConfigString(configString("instagram.oembed.access.token", "URLSAVER_INSTAGRAM_OEMBED_ACCESS_TOKEN")))
+            buildConfigField("boolean", "SHARED_TAG_CLOUD_ENABLED", configBoolean("shared.tag.cloud.enabled", "URLSAVER_SHARED_TAG_CLOUD_ENABLED").toString())
+            buildConfigField("String", "SUPABASE_URL", buildConfigString(configString("supabase.url", "URLSAVER_SUPABASE_URL")))
+            buildConfigField("String", "SUPABASE_ANON_KEY", buildConfigString(configString("supabase.anon.key", "URLSAVER_SUPABASE_ANON_KEY")))
+        }
         release {
             isMinifyEnabled = false
+            buildConfigField("boolean", "ADS_ENABLED", "false")
+            buildConfigField("String", "ADMOB_APP_ID", buildConfigString(""))
+            buildConfigField("String", "ADMOB_BANNER_AD_UNIT_ID", buildConfigString(""))
+            buildConfigField("String", "ADMOB_INTERSTITIAL_AD_UNIT_ID", buildConfigString(""))
+            buildConfigField("String", "INSTAGRAM_OEMBED_ACCESS_TOKEN", buildConfigString(configString("instagram.oembed.access.token", "URLSAVER_INSTAGRAM_OEMBED_ACCESS_TOKEN")))
+            buildConfigField("boolean", "SHARED_TAG_CLOUD_ENABLED", configBoolean("release.shared.tag.cloud.enabled", "URLSAVER_RELEASE_SHARED_TAG_CLOUD_ENABLED").toString())
+            buildConfigField("String", "SUPABASE_URL", buildConfigString(configString("release.supabase.url", "URLSAVER_RELEASE_SUPABASE_URL")))
+            buildConfigField("String", "SUPABASE_ANON_KEY", buildConfigString(configString("release.supabase.anon.key", "URLSAVER_RELEASE_SUPABASE_ANON_KEY")))
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -80,8 +124,11 @@ dependencies {
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.navigation:navigation-compose:2.7.7")
     implementation("androidx.work:work-runtime-ktx:2.9.1")
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
+    implementation("com.google.android.gms:play-services-ads:23.6.0")
+    implementation("io.coil-kt:coil-compose:2.6.0")
     implementation("org.jsoup:jsoup:1.18.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
     ksp("androidx.room:room-compiler:2.6.1")

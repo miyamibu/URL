@@ -8,16 +8,20 @@ import androidx.room.Transaction
 import androidx.room.Update
 import jp.mimac.urlsaver.domain.MetadataError
 import jp.mimac.urlsaver.domain.MetadataState
+import jp.mimac.urlsaver.domain.MetadataBodyKind
 import jp.mimac.urlsaver.domain.RecordState
 import jp.mimac.urlsaver.domain.ServiceType
 import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface UrlEntryDao {
-    @Query("SELECT * FROM url_entries WHERE recordState = 'ACTIVE' ORDER BY createdAt DESC")
+    @Query("SELECT * FROM url_entries ORDER BY createdAt DESC")
+    suspend fun loadAllEntries(): List<UrlEntryEntity>
+
+    @Query("SELECT * FROM url_entries WHERE localProvenanceCount > 0 AND recordState = 'ACTIVE' ORDER BY createdAt DESC")
     fun observeActiveEntries(): Flow<List<UrlEntryEntity>>
 
-    @Query("SELECT * FROM url_entries WHERE recordState = 'ARCHIVED' ORDER BY archivedAt DESC")
+    @Query("SELECT * FROM url_entries WHERE localProvenanceCount > 0 AND recordState = 'ARCHIVED' ORDER BY archivedAt DESC")
     fun observeArchiveEntries(): Flow<List<UrlEntryEntity>>
 
     @Query("SELECT * FROM url_entries WHERE id = :entryId")
@@ -28,6 +32,26 @@ interface UrlEntryDao {
 
     @Query("SELECT * FROM url_entries WHERE normalizedUrl = :normalizedUrl LIMIT 1")
     suspend fun findByNormalizedUrl(normalizedUrl: String): UrlEntryEntity?
+
+    @Query(
+        """
+        SELECT COUNT(*)
+        FROM url_entries
+        WHERE localProvenanceCount > 0
+          AND recordState IN ('ACTIVE', 'ARCHIVED')
+        """
+    )
+    suspend fun countPersonalSavedEntries(): Int
+
+    @Query(
+        """
+        SELECT COUNT(*)
+        FROM url_entries
+        WHERE localProvenanceCount > 0
+          AND recordState IN ('ACTIVE', 'ARCHIVED')
+        """
+    )
+    fun observePersonalSavedEntriesCount(): Flow<Int>
 
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insert(entry: UrlEntryEntity): Long
@@ -48,7 +72,12 @@ interface UrlEntryDao {
         """
         UPDATE url_entries
         SET fetchedTitle = :fetchedTitle,
+            fetchedBody = :fetchedBody,
+            fetchedBodyKind = :fetchedBodyKind,
+            bodySummary = :bodySummary,
+            description = :description,
             thumbnailUrl = :thumbnailUrl,
+            badgeImageUrl = :badgeImageUrl,
             metadataState = :metadataState,
             metadataFetchedAt = :metadataFetchedAt,
             metadataError = :metadataError,
@@ -61,7 +90,12 @@ interface UrlEntryDao {
     suspend fun updateMetadata(
         entryId: Long,
         fetchedTitle: String?,
+        fetchedBody: String?,
+        fetchedBodyKind: MetadataBodyKind?,
+        bodySummary: String?,
+        description: String?,
         thumbnailUrl: String?,
+        badgeImageUrl: String?,
         metadataState: MetadataState,
         metadataFetchedAt: Long?,
         metadataError: MetadataError?,
@@ -73,12 +107,50 @@ interface UrlEntryDao {
     @Query(
         """
         UPDATE url_entries
-        SET metadataState = 'PENDING',
-            metadataError = NULL
+        SET userLabelId = :userLabelId
         WHERE id = :entryId
         """
     )
-    suspend fun markMetadataPending(entryId: Long)
+    suspend fun updateUserLabel(entryId: Long, userLabelId: Long?)
+
+    @Query(
+        """
+        UPDATE url_entries
+        SET userLabelId = NULL
+        WHERE userLabelId = :labelId
+        """
+    )
+    suspend fun clearUserLabel(labelId: Long)
+
+    @Query(
+        """
+        UPDATE url_entries
+        SET collectionId = :targetCollectionId
+        WHERE collectionId = :sourceCollectionId
+        """
+    )
+    suspend fun moveCollectionEntries(sourceCollectionId: Long, targetCollectionId: Long)
+
+    @Query(
+        """
+        UPDATE url_entries
+        SET collectionId = :collectionId,
+            updatedAt = :updatedAt
+        WHERE id = :entryId
+        """
+    )
+    suspend fun updateCollection(entryId: Long, collectionId: Long, updatedAt: Long)
+
+    @Query(
+        """
+        UPDATE url_entries
+        SET metadataState = 'PENDING',
+            metadataError = NULL,
+            metadataRequestedAt = :requestedAt
+        WHERE id = :entryId
+        """
+    )
+    suspend fun markMetadataPending(entryId: Long, requestedAt: Long)
 
     @Query(
         """
@@ -89,8 +161,29 @@ interface UrlEntryDao {
     )
     suspend fun updateCanonicalId(entryId: Long, canonicalId: String?)
 
-    @Query("SELECT COUNT(*) FROM url_entries WHERE serviceType = :serviceType AND recordState = :recordState")
+    @Query("SELECT COUNT(*) FROM url_entries WHERE localProvenanceCount > 0 AND serviceType = :serviceType AND recordState = :recordState")
     suspend fun countByService(serviceType: ServiceType, recordState: RecordState): Int
+
+    @Query(
+        """
+        UPDATE url_entries
+        SET sharedReferenceCount = 0
+        WHERE sharedReferenceCount != 0
+        """
+    )
+    suspend fun resetSharedReferenceCounts()
+
+    @Query(
+        """
+        UPDATE url_entries
+        SET sharedReferenceCount = :count
+        WHERE id = :entryId
+        """
+    )
+    suspend fun updateSharedReferenceCount(entryId: Long, count: Int)
+
+    @Query("DELETE FROM url_entries WHERE localProvenanceCount = 0 AND sharedReferenceCount = 0")
+    suspend fun deleteUnreferencedSharedOnlyEntries()
 
     @Transaction
     suspend fun restoreFromPending(entry: UrlEntryEntity, now: Long): UrlEntryEntity {
