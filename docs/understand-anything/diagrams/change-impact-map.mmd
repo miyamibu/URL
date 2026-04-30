@@ -1,0 +1,40 @@
+flowchart TD
+  Norm[normalizedUrl\nURL同一判定]:::service
+  Open[openUrl = normalizedUrl\n開くURL/取得URL]:::service
+  Updated[updatedAtルール\nmetadataだけで更新しない]:::service
+  Metadata[Metadata fetch\nREADY FAILED UNAVAILABLE]:::worker
+  Sync[Shared Tag Sync\noutbox apply pull]:::service
+  Intent[Android Intent\nACTION_SEND / VIEW]:::ui
+  Extension[iOS Share Extension\nNSExtension]:::ui
+  Schema[DB schema\nRoom / SQLite]:::db
+
+  Save[保存/重複/復元]:::service
+  Main[Main / Archive / Detail表示]:::ui
+  Tag[共有タグカード一覧]:::ui
+  Worker[Worker / BGTask]:::worker
+  Supabase[Supabase RPC/RLS]:::external
+  Tests[回帰テスト]:::test
+
+  Norm --> Save --> Schema --> Main
+  Norm --> Sync --> Tag
+  Open --> Metadata --> Worker --> Main
+  Updated --> Main
+  Metadata --> Main
+  Sync --> Supabase --> Tag
+  Intent --> Save
+  Extension --> Save
+  Schema --> Worker
+  Schema --> Sync
+  Tests -.確認.-> Norm
+  Tests -.確認.-> Schema
+  Tests -.確認.-> Sync
+  Tests -.確認.-> Metadata
+
+  classDef ui fill:#dbeafe,stroke:#2563eb,color:#111827;
+  classDef api fill:#ede9fe,stroke:#7c3aed,color:#111827;
+  classDef service fill:#dcfce7,stroke:#16a34a,color:#111827;
+  classDef db fill:#ffedd5,stroke:#f97316,color:#111827;
+  classDef worker fill:#fef9c3,stroke:#ca8a04,color:#111827;
+  classDef config fill:#e5e7eb,stroke:#6b7280,color:#111827;
+  classDef external fill:#fee2e2,stroke:#dc2626,color:#111827;
+  classDef test fill:#f3f4f6,stroke:#9ca3af,color:#111827;

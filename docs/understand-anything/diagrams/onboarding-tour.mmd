@@ -1,0 +1,36 @@
+flowchart TD
+  Readme[README.md\nまず目的を読む]:::config
+  Agents[AGENTS.md\n作業ルール]:::config
+  Docs[docs/shared-tag-sync-architecture.md\n同期の思想]:::config
+  AndroidEntry[Android entry\nMainActivity / ShareReceiverActivity]:::ui
+  iOSEntry[iOS entry\nURLSaveriOSApp / ShareViewController]:::ui
+  Domain[URL rules\nUrlRules.kt / URLRules.swift]:::service
+  DB[DB\nAppDatabase.kt / URLRepository.swift]:::db
+  Repo[Repository Service\nDefaultUrlRepository / SharedTagCloud]:::service
+  Worker[Worker\nFetchMetadataWorker / MetadataCoordinator]:::worker
+  Sync[Sync\nSharedTagSyncCoordinator / Supabase SQL]:::api
+  UI[UI\nUrlSaverRoot / RootView / Detail]:::ui
+  Tests[Tests\nAndroid iOS Supabase]:::test
+  Understand[docs/understand-anything\nこの資料一式]:::test
+
+  Readme --> Agents --> Docs
+  Docs --> AndroidEntry
+  Docs --> iOSEntry
+  AndroidEntry --> Domain
+  iOSEntry --> Domain
+  Domain --> DB --> Repo --> UI
+  Repo --> Worker
+  Repo --> Sync
+  Worker --> Tests
+  Sync --> Tests
+  UI --> Tests
+  Tests --> Understand
+
+  classDef ui fill:#dbeafe,stroke:#2563eb,color:#111827;
+  classDef api fill:#ede9fe,stroke:#7c3aed,color:#111827;
+  classDef service fill:#dcfce7,stroke:#16a34a,color:#111827;
+  classDef db fill:#ffedd5,stroke:#f97316,color:#111827;
+  classDef worker fill:#fef9c3,stroke:#ca8a04,color:#111827;
+  classDef config fill:#e5e7eb,stroke:#6b7280,color:#111827;
+  classDef external fill:#fee2e2,stroke:#dc2626,color:#111827;
+  classDef test fill:#f3f4f6,stroke:#9ca3af,color:#111827;

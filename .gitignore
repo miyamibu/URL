@@ -14,7 +14,9 @@ app/build/
 # Generated evidence and temporary outputs
 artifacts/pre-edit/
 artifacts/compile*.txt
+artifacts/*.log
 artifacts/*classpath*.txt
+artifacts/tiktok-live/
 tmp_main.png
 
 # Xcode local/build outputs

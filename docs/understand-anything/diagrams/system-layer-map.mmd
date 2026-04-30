@@ -1,0 +1,72 @@
+flowchart LR
+  subgraph UI[UI 青]
+    A1[Android UI\nUrlSaverRoot.kt]:::ui
+    A2[Android Share受信\nShareReceiverActivity.kt]:::ui
+    I1[iOS UI\nRootView.swift / DetailView.swift]:::ui
+    I2[iOS Share Extension\nShareViewController.swift]:::ui
+    TUI[Shared Tag画面\nTagDetailScreen / Sheets]:::ui
+  end
+
+  subgraph Service[Service Logic 緑]
+    U1[URL正規化\nUrlRules.kt / URLRules.swift]:::service
+    R1[URL保存Repository\nDefaultUrlRepository / URLRepository]:::service
+    M1[Metadata Fetcher\nMetadataFetcher.kt / swift]:::service
+    S1[Shared Tag Sync\nSharedTagSyncCoordinator / SharedTagCloud]:::service
+    AUTH[Auth Logic\nSharedTagAuth data sources]:::service
+  end
+
+  subgraph DB[DB Data オレンジ]
+    D1[Android Room\nAppDatabase.kt url_entries tags outbox]:::db
+    D2[iOS SQLite\nURLRepository.swift SharedTagCloud.swift]:::db
+    D3[Supabase Tables\nshared_tags members urls invites]:::db
+  end
+
+  subgraph Worker[Worker 黄]
+    W1[Android WorkManager\nFetchMetadataWorker]:::worker
+    W2[Android SyncWorker\nSharedTagSyncWorker]:::worker
+    W3[iOS BGTask\nMetadataCoordinator]:::worker
+    W4[iOS Sync Executor\nSharedTagSyncExecutor]:::worker
+  end
+
+  subgraph External[External 赤]
+    E1[Web Metadata\nYouTube X Instagram TikTok]:::external
+    E2[Supabase Auth/RPC]:::external
+  end
+
+  subgraph Config[Config 灰]
+    C1[Android BuildConfig\nSupabase/AdMob]:::config
+    C2[iOS Info.plist\nSharedTagCloudEnabled]:::config
+  end
+
+  subgraph Test[Test 薄灰]
+    TX[Android Tests\napp/src/test androidTest]:::test
+    TY[iOS Tests\nios/URLSaveriOSTests]:::test
+    TZ[Supabase SQL Tests\nsupabase/tests]:::test
+  end
+
+  A2 --> U1 --> R1 --> D1
+  I2 --> U1 --> R1 --> D2
+  A1 --> R1
+  I1 --> R1
+  R1 --> W1 --> M1 --> E1
+  R1 --> W3 --> M1
+  TUI --> S1 --> D1
+  TUI --> S1 --> D2
+  S1 --> W2 --> E2 --> D3
+  S1 --> W4 --> E2
+  AUTH --> E2
+  C1 --> AUTH
+  C2 --> AUTH
+  TX -.tests.-> U1
+  TX -.tests.-> R1
+  TY -.tests.-> R1
+  TZ -.tests.-> D3
+
+  classDef ui fill:#dbeafe,stroke:#2563eb,color:#111827;
+  classDef api fill:#ede9fe,stroke:#7c3aed,color:#111827;
+  classDef service fill:#dcfce7,stroke:#16a34a,color:#111827;
+  classDef db fill:#ffedd5,stroke:#f97316,color:#111827;
+  classDef worker fill:#fef9c3,stroke:#ca8a04,color:#111827;
+  classDef config fill:#e5e7eb,stroke:#6b7280,color:#111827;
+  classDef external fill:#fee2e2,stroke:#dc2626,color:#111827;
+  classDef test fill:#f3f4f6,stroke:#9ca3af,color:#111827;

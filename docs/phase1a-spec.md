@@ -271,6 +271,12 @@ URL を主軸にしつつ、一覧/詳細で内容を再発見できる最小 me
   - dedupe key は extras ベースの stable signature を使う
   - `System.identityHashCode(intent)` には依存しない
 
+### Shared tag cloud invite link
+- cross-device 共有はローカル `tagId` ではなく `urlsaver://invite/{token}` を使う
+- 招待リンクは shared tag sync の別契約であり、上記のローカル deep link を置き換えない
+- 受信側は invite token を MainActivity へ橋渡しし、アプリ内で認証と参加処理を続行する
+- 招待参加の同期対象は shared tag の URL 一覧のみで、`title` / `memo` / metadata は同期保証に含めない
+
 ### Flags
 - `FLAG_ACTIVITY_CLEAR_TOP | FLAG_ACTIVITY_SINGLE_TOP`
 - `FLAG_ACTIVITY_NEW_TASK` は使わない
@@ -284,6 +290,10 @@ URL を主軸にしつつ、一覧/詳細で内容を再発見できる最小 me
 - `EXTRA_SHARE_BATCH_DUPLICATE_COUNT`
 - `EXTRA_SHARE_BATCH_RESTORED_COUNT`
 - `EXTRA_SHARE_BATCH_FAILED_COUNT`
+- `EXTRA_DEEP_LINK_TAG_ID`
+- `EXTRA_DEEP_LINK_INVALID`
+- `EXTRA_SHARED_TAG_INVITE_TOKEN`
+- `EXTRA_SHARED_TAG_INVITE_INVALID`
 - `EXTRA_MAIN_INTENT_EVENT_TOKEN`
 
 ### Extras usage

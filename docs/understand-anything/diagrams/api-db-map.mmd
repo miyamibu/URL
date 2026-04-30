@@ -1,0 +1,39 @@
+flowchart LR
+  UI[Shared Tag / Detail UI]:::ui
+  AuthUI[Auth UI\nSharedTagCloudScreens / Sheet]:::ui
+  AndroidRepo[Android Repository\nDefaultTagRepository.kt]:::service
+  iOSService[iOS Service\nSharedTagCloud.swift]:::service
+  Auth[Auth data source]:::service
+  AndroidDB[Room local DB\ntags refs outbox state]:::db
+  iOSDB[SQLite local DB\nshared_tags shared_tag_urls]:::db
+  SupaAuth[Supabase Auth\n/auth/v1]:::external
+  Apply[RPC apply_shared_tag_ops]:::api
+  Pull[RPC pull_shared_tag_snapshot]:::api
+  Invite[RPC create/accept invite]:::api
+  RemoteDB[Supabase DB\nshared_tags members urls invites]:::db
+  MetadataFetcher[MetadataFetcher\nAndroid/iOS]:::service
+  Web[External Web\nYouTube X Instagram TikTok]:::external
+  Config[Config Env\nBuildConfig / Info.plist]:::config
+
+  AuthUI --> Auth --> SupaAuth
+  Config --> Auth
+  UI --> AndroidRepo --> AndroidDB
+  UI --> iOSService --> iOSDB
+  AndroidRepo --> Apply --> RemoteDB
+  iOSService --> Apply
+  AndroidRepo --> Pull --> RemoteDB
+  iOSService --> Pull
+  AndroidRepo --> Invite --> RemoteDB
+  iOSService --> Invite
+  MetadataFetcher --> Web
+  MetadataFetcher --> AndroidDB
+  MetadataFetcher --> iOSDB
+
+  classDef ui fill:#dbeafe,stroke:#2563eb,color:#111827;
+  classDef api fill:#ede9fe,stroke:#7c3aed,color:#111827;
+  classDef service fill:#dcfce7,stroke:#16a34a,color:#111827;
+  classDef db fill:#ffedd5,stroke:#f97316,color:#111827;
+  classDef worker fill:#fef9c3,stroke:#ca8a04,color:#111827;
+  classDef config fill:#e5e7eb,stroke:#6b7280,color:#111827;
+  classDef external fill:#fee2e2,stroke:#dc2626,color:#111827;
+  classDef test fill:#f3f4f6,stroke:#9ca3af,color:#111827;
