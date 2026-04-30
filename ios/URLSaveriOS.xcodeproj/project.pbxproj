@@ -1,0 +1,908 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0802569D1115EDD1CFE76DD9 /* URLRulesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C76102982C1A890E3AB1F6E5 /* URLRulesTests.swift */; };
+		0F0FAFB5CA0F217F65DD98D9 /* PendingInviteStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91181228076456E7A5516C5E /* PendingInviteStore.swift */; };
+		138E11EEAAD912AED3265D35 /* SharedTagCloudLiveSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FAA564A48FE4FD8D7D38104 /* SharedTagCloudLiveSyncTests.swift */; };
+		157DFE1D4095F8B62A072CCD /* SharedTagCloudModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9251D16146B21401C65E7F2 /* SharedTagCloudModels.swift */; };
+		1683532A53A44E2F05D474C2 /* SharedTagStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E23461A58F4C6AD796FC4207 /* SharedTagStoreTests.swift */; };
+		16FEC99A3CE34B6624BBBF2C /* UserProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 500F4227AC0D559F82D92553 /* UserProfile.swift */; };
+		19BF2D1EDB1D0CCCCF4D98EE /* UserProfileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98EBFD8C82C77F9FAD87A4F0 /* UserProfileStore.swift */; };
+		19FACF8C303E21A9F1FEBA05 /* BackgroundTasks.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3B7CFDA7E5872EF078C8DE19 /* BackgroundTasks.framework */; };
+		1DC5D4336CD248722C473480 /* URLRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = 830EA7E3E4DEA661B358BB85 /* URLRules.swift */; };
+		25080D71969F1C49C254C923 /* PendingInviteStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91181228076456E7A5516C5E /* PendingInviteStore.swift */; };
+		2DBDC1C9A872D4ACA3397F82 /* URLRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89B4C870FEF59AE36DA1E3FB /* URLRepository.swift */; };
+		2E3AA4F6595E4719A89F43A1 /* MetadataFetcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BE62A29DC1746B7B6AC0E48 /* MetadataFetcherTests.swift */; };
+		2E8FC71A1091E61971CDB794 /* MetadataStatusTextTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CBCC9A913013C246A1BA4E7 /* MetadataStatusTextTests.swift */; };
+		2F991B284E4B88D7A5DCE001 /* ServiceFilterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F991B284E4B88D7A5DCF001 /* ServiceFilterTests.swift */; };
+		309670F4746AEE8A56B1A603 /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 9BF8E65CDA6748EA2F0C7ADA /* libsqlite3.tbd */; };
+		31AD21D993A14FD33997408F /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 172F35140576C6DFFC86EC03 /* Security.framework */; };
+		33FC997A7C5AF1226479F4D4 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10F42BCFC9F1DE3AC634AAF /* Foundation.framework */; };
+		3CAB31ECDF9F37174D7092BB /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 0676313ADADB2A4325C2F1E4 /* PrivacyInfo.xcprivacy */; };
+		3E2FCAAC384382669CF125A3 /* URLSaveriOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 370A838D8F9E9C15C600EA69 /* URLSaveriOSApp.swift */; };
+		4027F3D6300FC019900C1448 /* ActivityShareSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73BD32F5BDB9A6A52EAEF7F1 /* ActivityShareSheet.swift */; };
+		440B8FA629901384B9E9B0CA /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = F808F07514C91AC9A73475E9 /* PrivacyInfo.xcprivacy */; };
+		4A623B0E0C7568040B23CADA /* BackgroundTaskRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF5E8AB1F7A16F4583B74ED3 /* BackgroundTaskRunner.swift */; };
+		514634AE9875F6C33C2D6C44 /* SQLiteDatabaseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D23CA9C7A067C59AC497FF6 /* SQLiteDatabaseTests.swift */; };
+		536BF4F1761A85C196754D9F /* BackgroundTaskRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF5E8AB1F7A16F4583B74ED3 /* BackgroundTaskRunner.swift */; };
+		57D781931F053F06DACDBF5B /* URLRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89B4C870FEF59AE36DA1E3FB /* URLRepository.swift */; };
+		5861EC81F447D8D94A8534F1 /* PendingInviteStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91181228076456E7A5516C5E /* PendingInviteStore.swift */; };
+		5D46EA8B61CA7D6477F03307 /* ShareHandoffStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4D2BBA01CCB249C22660AB5 /* ShareHandoffStore.swift */; };
+		647A45EF43FB540A5941A0DC /* SharedTagCloudModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9251D16146B21401C65E7F2 /* SharedTagCloudModels.swift */; };
+		683F6B222DA6BFC09100FC8E /* BackgroundTaskRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF5E8AB1F7A16F4583B74ED3 /* BackgroundTaskRunner.swift */; };
+		83F1E8FFDF202C1987CC277F /* SQLiteDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6434B99BBAD17B41EA9B0BBA /* SQLiteDatabase.swift */; };
+		8473852FE546A100382F137F /* AppChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72D762E0193496B1204EA3BE /* AppChrome.swift */; };
+		854DB8C45E373D0F066A9320 /* URLRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = 830EA7E3E4DEA661B358BB85 /* URLRules.swift */; };
+		8890AFDD331017B1E9804776 /* URLSaverAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D47C199B9BD5913E04FABB5C /* URLSaverAppModel.swift */; };
+		8A4408DF2254C5B2CC181DE4 /* MetadataFetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = D35D744CD3B913511BCCB5ED /* MetadataFetcher.swift */; };
+		8A5183B3C13A53AB692CE375 /* UserProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 500F4227AC0D559F82D92553 /* UserProfile.swift */; };
+		8D249A39206A3E2C177E2799 /* URLRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = 830EA7E3E4DEA661B358BB85 /* URLRules.swift */; };
+		8F1A37C4018A4F38A1D07102 /* ExportArchiveBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F1A37C3018A4F38A1D07102 /* ExportArchiveBuilder.swift */; };
+		90E4B0D51E36442DA7F06B12 /* ExportArchiveBuilderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90E4B0D41E36442DA7F06B12 /* ExportArchiveBuilderTests.swift */; };
+		954F62770554FA405F3555DD /* SharedTagSyncExecutorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA4BF55B45BBD2FDC66E67B1 /* SharedTagSyncExecutorTests.swift */; };
+		97A2399E75C7091F00301DBB /* MetadataFetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = D35D744CD3B913511BCCB5ED /* MetadataFetcher.swift */; };
+		986CC52F088395C00B2D5C16 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 172F35140576C6DFFC86EC03 /* Security.framework */; };
+		98FE55AE8407199B73C5EEBF /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA2BCA45DFB6C10FF4D4919E /* Models.swift */; };
+		9ABC15E1324DF119B71EC91B /* SharedTagSyncExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5F908EC3F6AD49495BA60CB /* SharedTagSyncExecutor.swift */; };
+		9B764DB055ABA113E6B57CA1 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E346B2EF8639E9ABC4FA9912 /* RootView.swift */; };
+		A3733C721D0FC30B61AB2EEE /* UserProfileStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0947A6E5CD2BE18B5EFC47C /* UserProfileStoreTests.swift */; };
+		A64CE20FF267C55185BD7694 /* SharedTagCloud.swift in Sources */ = {isa = PBXBuildFile; fileRef = EABA50B5267E3C2A59D6FCFC /* SharedTagCloud.swift */; };
+		A8DB33D509FB0D8ED07AA23A /* SharedTagManagementSheets.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA9C1770221FBEBC6C2F9C18 /* SharedTagManagementSheets.swift */; };
+		AA1B48D5082B45D19C108A33 /* ExportSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1B48D4082B45D19C108A33 /* ExportSheet.swift */; };
+		A97579C13CA83F77972EC71D /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 172F35140576C6DFFC86EC03 /* Security.framework */; };
+		ACDFBC65A57156C0244FBF76 /* ShareHandoffStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4D2BBA01CCB249C22660AB5 /* ShareHandoffStore.swift */; };
+		B4C2806BEA8C4B4FF06FC488 /* AppBackgroundScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63D661ED2DEE1AE118F43DE0 /* AppBackgroundScheduler.swift */; };
+		B5EE28E0A71374EE1E7A8B09 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10F42BCFC9F1DE3AC634AAF /* Foundation.framework */; };
+		BAC9BDD5A7BA82C04C793405 /* SharedTagSyncExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5F908EC3F6AD49495BA60CB /* SharedTagSyncExecutor.swift */; };
+		BDA937669BCFAA61FAAA02E8 /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 9BF8E65CDA6748EA2F0C7ADA /* libsqlite3.tbd */; };
+		C1B757A265DC0DAADFC7F2EE /* UserProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 500F4227AC0D559F82D92553 /* UserProfile.swift */; };
+		C42F7CC148CE3C0EDE10B431 /* SharedTagCloud.swift in Sources */ = {isa = PBXBuildFile; fileRef = EABA50B5267E3C2A59D6FCFC /* SharedTagCloud.swift */; };
+		C64C0DD695F35954B711E340 /* MetadataCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA734408C2E1356ECAC12605 /* MetadataCoordinator.swift */; };
+		C703D31CDA569CCBA7A9B6C2 /* AppServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = C84D138F345CD92F5C9A6197 /* AppServices.swift */; };
+		CA9F83282A35B2A39CD6B39A /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA2BCA45DFB6C10FF4D4919E /* Models.swift */; };
+		D4412D6D464AA7FFDC4402BD /* SharedTagCloudSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16777BCE69AAFDABF256AD0D /* SharedTagCloudSheet.swift */; };
+		DE082E561734C1E5B0BA256C /* SharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32C3F291E0922ACE67FC62BD /* SharedContainer.swift */; };
+		DE172FDA95020FF47074537B /* SharedTagCloud.swift in Sources */ = {isa = PBXBuildFile; fileRef = EABA50B5267E3C2A59D6FCFC /* SharedTagCloud.swift */; };
+		E2B6BC3EED867D733B542B2F /* DetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72B58FD9EB800A2224CB3492 /* DetailView.swift */; };
+		E8136171B19319B4A31931AB /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10F42BCFC9F1DE3AC634AAF /* Foundation.framework */; };
+		E95A7AC13D083D585AD583A9 /* URLRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89B4C870FEF59AE36DA1E3FB /* URLRepository.swift */; };
+		EAAB3170864EAB75B2750EEA /* URLRepositoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60F87AC8EA46DCD1F4ED605D /* URLRepositoryTests.swift */; };
+		ED3FCB994DD3E22532668B34 /* UserProfileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98EBFD8C82C77F9FAD87A4F0 /* UserProfileStore.swift */; };
+		EEDA24437274ED4951F993F7 /* SQLiteDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6434B99BBAD17B41EA9B0BBA /* SQLiteDatabase.swift */; };
+		EFE1F9C785303C5D19007A3E /* SQLiteDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6434B99BBAD17B41EA9B0BBA /* SQLiteDatabase.swift */; };
+		F2A371DCCA662E1B6A340205 /* PendingInviteStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 086D5DBD6A136A5831490D98 /* PendingInviteStoreTests.swift */; };
+		FB6A2498A98D528A8E29EEF1 /* UserProfileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98EBFD8C82C77F9FAD87A4F0 /* UserProfileStore.swift */; };
+		FB76C8F297DEC173C335DB9D /* URLSaverShareExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 1FE6278FBF6D17425F4AC085 /* URLSaverShareExtension.appex */; };
+		FC643DC2D81385E73EC51EEA /* SharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32C3F291E0922ACE67FC62BD /* SharedContainer.swift */; };
+		FC6D32531395FCF774563498 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA2BCA45DFB6C10FF4D4919E /* Models.swift */; };
+		FC9AB28F87C65B3D9B12E71B /* SharedTagCloudModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9251D16146B21401C65E7F2 /* SharedTagCloudModels.swift */; };
+		FCEC207D78C2551C11159AFA /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A40F69469FCF706D55D77898 /* ShareViewController.swift */; };
+		FDE9924FC4E62ECEE3D640C1 /* ShareHandoffStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4D2BBA01CCB249C22660AB5 /* ShareHandoffStore.swift */; };
+		FE5F97CDA5CEF70F899B37C1 /* SharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32C3F291E0922ACE67FC62BD /* SharedContainer.swift */; };
+		FF45CE7B74A4160F0C66DD3E /* MetadataFetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = D35D744CD3B913511BCCB5ED /* MetadataFetcher.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		8EDB5B10BD37C773FFDDF303 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 0EC6D296E8C21DAFD142571A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 4D399647F491CCE4D8313F82;
+			remoteInfo = URLSaverShareExtension;
+		};
+		B8EAF8FAAA2212A4A3752233 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 0EC6D296E8C21DAFD142571A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 98AE6524C1D644C32F15635F;
+			remoteInfo = URLSaveriOS;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		9886DF33EAAF95F079B33301 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				FB76C8F297DEC173C335DB9D /* URLSaverShareExtension.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		0676313ADADB2A4325C2F1E4 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		086D5DBD6A136A5831490D98 /* PendingInviteStoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PendingInviteStoreTests.swift; sourceTree = "<group>"; };
+		0E20B74B007E29CBAC2A93F1 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; name = Info.plist; path = URLSaveriOSTests/Info.plist; sourceTree = "<group>"; };
+		0FAA564A48FE4FD8D7D38104 /* SharedTagCloudLiveSyncTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SharedTagCloudLiveSyncTests.swift; sourceTree = "<group>"; };
+		16777BCE69AAFDABF256AD0D /* SharedTagCloudSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SharedTagCloudSheet.swift; path = UI/SharedTagCloudSheet.swift; sourceTree = "<group>"; };
+		172F35140576C6DFFC86EC03 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		1CBCC9A913013C246A1BA4E7 /* MetadataStatusTextTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MetadataStatusTextTests.swift; sourceTree = "<group>"; };
+		1FE6278FBF6D17425F4AC085 /* URLSaverShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = URLSaverShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		279B86E918302A4E03F88FAA /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; name = Info.plist; path = URLSaverShareExtension/Info.plist; sourceTree = "<group>"; };
+		2F991B284E4B88D7A5DCF001 /* ServiceFilterTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ServiceFilterTests.swift; sourceTree = "<group>"; };
+		32C3F291E0922ACE67FC62BD /* SharedContainer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SharedContainer.swift; path = Support/SharedContainer.swift; sourceTree = "<group>"; };
+		36CD086A72FE330DDAC85D7D /* URLSaveriOSTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = URLSaveriOSTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		370A838D8F9E9C15C600EA69 /* URLSaveriOSApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = URLSaveriOSApp.swift; path = App/URLSaveriOSApp.swift; sourceTree = "<group>"; };
+		3B7CFDA7E5872EF078C8DE19 /* BackgroundTasks.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = BackgroundTasks.framework; path = System/Library/Frameworks/BackgroundTasks.framework; sourceTree = SDKROOT; };
+		48F9A8C4607B5E30B83D7ECD /* URLSaveriOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = URLSaveriOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		500F4227AC0D559F82D92553 /* UserProfile.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = UserProfile.swift; path = Domain/UserProfile.swift; sourceTree = "<group>"; };
+		60F87AC8EA46DCD1F4ED605D /* URLRepositoryTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = URLRepositoryTests.swift; sourceTree = "<group>"; };
+		63D661ED2DEE1AE118F43DE0 /* AppBackgroundScheduler.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppBackgroundScheduler.swift; path = App/AppBackgroundScheduler.swift; sourceTree = "<group>"; };
+		6434B99BBAD17B41EA9B0BBA /* SQLiteDatabase.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SQLiteDatabase.swift; path = Support/SQLiteDatabase.swift; sourceTree = "<group>"; };
+		72B58FD9EB800A2224CB3492 /* DetailView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DetailView.swift; path = UI/DetailView.swift; sourceTree = "<group>"; };
+		72D762E0193496B1204EA3BE /* AppChrome.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppChrome.swift; path = UI/AppChrome.swift; sourceTree = "<group>"; };
+		73BD32F5BDB9A6A52EAEF7F1 /* ActivityShareSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ActivityShareSheet.swift; path = UI/ActivityShareSheet.swift; sourceTree = "<group>"; };
+		830EA7E3E4DEA661B358BB85 /* URLRules.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = URLRules.swift; path = Domain/URLRules.swift; sourceTree = "<group>"; };
+		8BE62A29DC1746B7B6AC0E48 /* MetadataFetcherTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MetadataFetcherTests.swift; sourceTree = "<group>"; };
+		8F1A37C3018A4F38A1D07102 /* ExportArchiveBuilder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExportArchiveBuilder.swift; path = Data/ExportArchiveBuilder.swift; sourceTree = "<group>"; };
+		88EFA67B2F06972B0C22CC72 /* URLSaverShareExtension.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; name = URLSaverShareExtension.entitlements; path = URLSaverShareExtension/URLSaverShareExtension.entitlements; sourceTree = "<group>"; };
+		89B4C870FEF59AE36DA1E3FB /* URLRepository.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = URLRepository.swift; path = Data/URLRepository.swift; sourceTree = "<group>"; };
+		8D23CA9C7A067C59AC497FF6 /* SQLiteDatabaseTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SQLiteDatabaseTests.swift; sourceTree = "<group>"; };
+		91181228076456E7A5516C5E /* PendingInviteStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PendingInviteStore.swift; path = Data/PendingInviteStore.swift; sourceTree = "<group>"; };
+		90E4B0D41E36442DA7F06B12 /* ExportArchiveBuilderTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ExportArchiveBuilderTests.swift; sourceTree = "<group>"; };
+		927CF98069CDD305752118A9 /* URLSaveriOS.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; name = URLSaveriOS.entitlements; path = URLSaveriOS/URLSaveriOS.entitlements; sourceTree = "<group>"; };
+		98EBFD8C82C77F9FAD87A4F0 /* UserProfileStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = UserProfileStore.swift; path = Data/UserProfileStore.swift; sourceTree = "<group>"; };
+		9BF8E65CDA6748EA2F0C7ADA /* libsqlite3.tbd */ = {isa = PBXFileReference; includeInIndex = 1; name = libsqlite3.tbd; path = usr/lib/libsqlite3.tbd; sourceTree = SDKROOT; };
+		A0947A6E5CD2BE18B5EFC47C /* UserProfileStoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = UserProfileStoreTests.swift; sourceTree = "<group>"; };
+		A10F42BCFC9F1DE3AC634AAF /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		A40F69469FCF706D55D77898 /* ShareViewController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
+		A5F908EC3F6AD49495BA60CB /* SharedTagSyncExecutor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SharedTagSyncExecutor.swift; path = App/SharedTagSyncExecutor.swift; sourceTree = "<group>"; };
+		AA1B48D4082B45D19C108A33 /* ExportSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExportSheet.swift; path = UI/ExportSheet.swift; sourceTree = "<group>"; };
+		AA734408C2E1356ECAC12605 /* MetadataCoordinator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MetadataCoordinator.swift; path = App/MetadataCoordinator.swift; sourceTree = "<group>"; };
+		B9251D16146B21401C65E7F2 /* SharedTagCloudModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SharedTagCloudModels.swift; path = Domain/SharedTagCloudModels.swift; sourceTree = "<group>"; };
+		C76102982C1A890E3AB1F6E5 /* URLRulesTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = URLRulesTests.swift; sourceTree = "<group>"; };
+		C84D138F345CD92F5C9A6197 /* AppServices.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppServices.swift; path = App/AppServices.swift; sourceTree = "<group>"; };
+		CB05544114D738939508DF8F /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; name = Info.plist; path = URLSaveriOS/Info.plist; sourceTree = "<group>"; };
+		D35D744CD3B913511BCCB5ED /* MetadataFetcher.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MetadataFetcher.swift; path = Data/MetadataFetcher.swift; sourceTree = "<group>"; };
+		D47C199B9BD5913E04FABB5C /* URLSaverAppModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = URLSaverAppModel.swift; path = App/URLSaverAppModel.swift; sourceTree = "<group>"; };
+		E23461A58F4C6AD796FC4207 /* SharedTagStoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SharedTagStoreTests.swift; sourceTree = "<group>"; };
+		E346B2EF8639E9ABC4FA9912 /* RootView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RootView.swift; path = UI/RootView.swift; sourceTree = "<group>"; };
+		EA2BCA45DFB6C10FF4D4919E /* Models.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Models.swift; path = Domain/Models.swift; sourceTree = "<group>"; };
+		EA4BF55B45BBD2FDC66E67B1 /* SharedTagSyncExecutorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SharedTagSyncExecutorTests.swift; sourceTree = "<group>"; };
+		EABA50B5267E3C2A59D6FCFC /* SharedTagCloud.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SharedTagCloud.swift; path = Data/SharedTagCloud.swift; sourceTree = "<group>"; };
+		EF5E8AB1F7A16F4583B74ED3 /* BackgroundTaskRunner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BackgroundTaskRunner.swift; path = Support/BackgroundTaskRunner.swift; sourceTree = "<group>"; };
+		F4D2BBA01CCB249C22660AB5 /* ShareHandoffStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ShareHandoffStore.swift; path = Data/ShareHandoffStore.swift; sourceTree = "<group>"; };
+		F808F07514C91AC9A73475E9 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		FA9C1770221FBEBC6C2F9C18 /* SharedTagManagementSheets.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SharedTagManagementSheets.swift; path = UI/SharedTagManagementSheets.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		3453036802291E58C6F96F3D /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				33FC997A7C5AF1226479F4D4 /* Foundation.framework in Frameworks */,
+				986CC52F088395C00B2D5C16 /* Security.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5128A2CDCFFE6C4D2E3E2C20 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E8136171B19319B4A31931AB /* Foundation.framework in Frameworks */,
+				309670F4746AEE8A56B1A603 /* libsqlite3.tbd in Frameworks */,
+				19FACF8C303E21A9F1FEBA05 /* BackgroundTasks.framework in Frameworks */,
+				31AD21D993A14FD33997408F /* Security.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B46C07195805EFE64CA180BF /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B5EE28E0A71374EE1E7A8B09 /* Foundation.framework in Frameworks */,
+				BDA937669BCFAA61FAAA02E8 /* libsqlite3.tbd in Frameworks */,
+				A97579C13CA83F77972EC71D /* Security.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		022976DBB9709DBBAED4B042 /* URLSaveriOSTests */ = {
+			isa = PBXGroup;
+			children = (
+				90E4B0D41E36442DA7F06B12 /* ExportArchiveBuilderTests.swift */,
+				8BE62A29DC1746B7B6AC0E48 /* MetadataFetcherTests.swift */,
+				1CBCC9A913013C246A1BA4E7 /* MetadataStatusTextTests.swift */,
+				086D5DBD6A136A5831490D98 /* PendingInviteStoreTests.swift */,
+				2F991B284E4B88D7A5DCF001 /* ServiceFilterTests.swift */,
+				8D23CA9C7A067C59AC497FF6 /* SQLiteDatabaseTests.swift */,
+				0FAA564A48FE4FD8D7D38104 /* SharedTagCloudLiveSyncTests.swift */,
+				E23461A58F4C6AD796FC4207 /* SharedTagStoreTests.swift */,
+				EA4BF55B45BBD2FDC66E67B1 /* SharedTagSyncExecutorTests.swift */,
+				60F87AC8EA46DCD1F4ED605D /* URLRepositoryTests.swift */,
+				C76102982C1A890E3AB1F6E5 /* URLRulesTests.swift */,
+				A0947A6E5CD2BE18B5EFC47C /* UserProfileStoreTests.swift */,
+			);
+			name = URLSaveriOSTests;
+			path = URLSaveriOSTests;
+			sourceTree = "<group>";
+		};
+		56D4A012AACAA144BC820494 /* URLSaverShared */ = {
+			isa = PBXGroup;
+			children = (
+				D35D744CD3B913511BCCB5ED /* MetadataFetcher.swift */,
+				8F1A37C3018A4F38A1D07102 /* ExportArchiveBuilder.swift */,
+				91181228076456E7A5516C5E /* PendingInviteStore.swift */,
+				F4D2BBA01CCB249C22660AB5 /* ShareHandoffStore.swift */,
+				EABA50B5267E3C2A59D6FCFC /* SharedTagCloud.swift */,
+				89B4C870FEF59AE36DA1E3FB /* URLRepository.swift */,
+				98EBFD8C82C77F9FAD87A4F0 /* UserProfileStore.swift */,
+				EA2BCA45DFB6C10FF4D4919E /* Models.swift */,
+				B9251D16146B21401C65E7F2 /* SharedTagCloudModels.swift */,
+				830EA7E3E4DEA661B358BB85 /* URLRules.swift */,
+				500F4227AC0D559F82D92553 /* UserProfile.swift */,
+				EF5E8AB1F7A16F4583B74ED3 /* BackgroundTaskRunner.swift */,
+				6434B99BBAD17B41EA9B0BBA /* SQLiteDatabase.swift */,
+				32C3F291E0922ACE67FC62BD /* SharedContainer.swift */,
+			);
+			name = URLSaverShared;
+			path = URLSaverShared;
+			sourceTree = "<group>";
+		};
+		5BB4017E1190D5E9FCCF9C36 /* URLSaveriOS */ = {
+			isa = PBXGroup;
+			children = (
+				63D661ED2DEE1AE118F43DE0 /* AppBackgroundScheduler.swift */,
+				C84D138F345CD92F5C9A6197 /* AppServices.swift */,
+				AA734408C2E1356ECAC12605 /* MetadataCoordinator.swift */,
+				A5F908EC3F6AD49495BA60CB /* SharedTagSyncExecutor.swift */,
+				D47C199B9BD5913E04FABB5C /* URLSaverAppModel.swift */,
+				370A838D8F9E9C15C600EA69 /* URLSaveriOSApp.swift */,
+				73BD32F5BDB9A6A52EAEF7F1 /* ActivityShareSheet.swift */,
+				72D762E0193496B1204EA3BE /* AppChrome.swift */,
+				72B58FD9EB800A2224CB3492 /* DetailView.swift */,
+				AA1B48D4082B45D19C108A33 /* ExportSheet.swift */,
+				E346B2EF8639E9ABC4FA9912 /* RootView.swift */,
+				16777BCE69AAFDABF256AD0D /* SharedTagCloudSheet.swift */,
+				FA9C1770221FBEBC6C2F9C18 /* SharedTagManagementSheets.swift */,
+				0676313ADADB2A4325C2F1E4 /* PrivacyInfo.xcprivacy */,
+			);
+			name = URLSaveriOS;
+			path = URLSaveriOS;
+			sourceTree = "<group>";
+		};
+		6032249914B3BA499B1704B2 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				48F9A8C4607B5E30B83D7ECD /* URLSaveriOS.app */,
+				1FE6278FBF6D17425F4AC085 /* URLSaverShareExtension.appex */,
+				36CD086A72FE330DDAC85D7D /* URLSaveriOSTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		87DB64F4E3B01E4CBCA9EE0D = {
+			isa = PBXGroup;
+			children = (
+				6032249914B3BA499B1704B2 /* Products */,
+				BE74DC7C91920EB785ACF13A /* Frameworks */,
+				56D4A012AACAA144BC820494 /* URLSaverShared */,
+				5BB4017E1190D5E9FCCF9C36 /* URLSaveriOS */,
+				BB323B6B236325C3E24AA08E /* URLSaverShareExtension */,
+				022976DBB9709DBBAED4B042 /* URLSaveriOSTests */,
+				CB05544114D738939508DF8F /* Info.plist */,
+				927CF98069CDD305752118A9 /* URLSaveriOS.entitlements */,
+				279B86E918302A4E03F88FAA /* Info.plist */,
+				88EFA67B2F06972B0C22CC72 /* URLSaverShareExtension.entitlements */,
+				0E20B74B007E29CBAC2A93F1 /* Info.plist */,
+			);
+			sourceTree = "<group>";
+		};
+		9FE864D0088A9B5FD013B5BE /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				A10F42BCFC9F1DE3AC634AAF /* Foundation.framework */,
+			);
+			name = iOS;
+			sourceTree = "<group>";
+		};
+		BB323B6B236325C3E24AA08E /* URLSaverShareExtension */ = {
+			isa = PBXGroup;
+			children = (
+				A40F69469FCF706D55D77898 /* ShareViewController.swift */,
+				F808F07514C91AC9A73475E9 /* PrivacyInfo.xcprivacy */,
+			);
+			name = URLSaverShareExtension;
+			path = URLSaverShareExtension;
+			sourceTree = "<group>";
+		};
+		BE74DC7C91920EB785ACF13A /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				9FE864D0088A9B5FD013B5BE /* iOS */,
+				9BF8E65CDA6748EA2F0C7ADA /* libsqlite3.tbd */,
+				3B7CFDA7E5872EF078C8DE19 /* BackgroundTasks.framework */,
+				172F35140576C6DFFC86EC03 /* Security.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		4D399647F491CCE4D8313F82 /* URLSaverShareExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D427B43B3747858508E27BAE /* Build configuration list for PBXNativeTarget "URLSaverShareExtension" */;
+			buildPhases = (
+				76113A9A00B31BCD6AC97FB1 /* Sources */,
+				B46C07195805EFE64CA180BF /* Frameworks */,
+				F7C7C31F1CD3B82DCB62B8EB /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = URLSaverShareExtension;
+			productName = URLSaverShareExtension;
+			productReference = 1FE6278FBF6D17425F4AC085 /* URLSaverShareExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		98AE6524C1D644C32F15635F /* URLSaveriOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D67666CD889417580EA1AD15 /* Build configuration list for PBXNativeTarget "URLSaveriOS" */;
+			buildPhases = (
+				0BBF2D930615BEB8E97895FF /* Sources */,
+				5128A2CDCFFE6C4D2E3E2C20 /* Frameworks */,
+				9509D17DE15CF31F9CD072A1 /* Resources */,
+				9886DF33EAAF95F079B33301 /* Embed App Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				739B79565330EF6C1C21488C /* PBXTargetDependency */,
+			);
+			name = URLSaveriOS;
+			productName = URLSaveriOS;
+			productReference = 48F9A8C4607B5E30B83D7ECD /* URLSaveriOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+		B5057205D8F2D8621CAE80B7 /* URLSaveriOSTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 8B95D77CA79E80E97B6C63CA /* Build configuration list for PBXNativeTarget "URLSaveriOSTests" */;
+			buildPhases = (
+				BDC016955FACD99B36790034 /* Sources */,
+				3453036802291E58C6F96F3D /* Frameworks */,
+				46C00916983C7629506859F7 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				57AE9A04E6167DD4E2CFAF49 /* PBXTargetDependency */,
+			);
+			name = URLSaveriOSTests;
+			productName = URLSaveriOSTests;
+			productReference = 36CD086A72FE330DDAC85D7D /* URLSaveriOSTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		0EC6D296E8C21DAFD142571A /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastSwiftUpdateCheck = 1700;
+				LastUpgradeCheck = 1700;
+				TargetAttributes = {
+					4D399647F491CCE4D8313F82 = {
+						CreatedOnToolsVersion = 26.4.1;
+						ProvisioningStyle = Automatic;
+					};
+					98AE6524C1D644C32F15635F = {
+						CreatedOnToolsVersion = 26.4.1;
+						ProvisioningStyle = Automatic;
+					};
+					B5057205D8F2D8621CAE80B7 = {
+						CreatedOnToolsVersion = 26.4.1;
+						TestTargetID = 98AE6524C1D644C32F15635F;
+					};
+				};
+			};
+			buildConfigurationList = 3FDA0862E3FA415A088C76FA /* Build configuration list for PBXProject "URLSaveriOS" */;
+			compatibilityVersion = "Xcode 16.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 87DB64F4E3B01E4CBCA9EE0D;
+			minimizedProjectReferenceProxies = 0;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 6032249914B3BA499B1704B2 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				98AE6524C1D644C32F15635F /* URLSaveriOS */,
+				4D399647F491CCE4D8313F82 /* URLSaverShareExtension */,
+				B5057205D8F2D8621CAE80B7 /* URLSaveriOSTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		46C00916983C7629506859F7 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9509D17DE15CF31F9CD072A1 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3CAB31ECDF9F37174D7092BB /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F7C7C31F1CD3B82DCB62B8EB /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				440B8FA629901384B9E9B0CA /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		0BBF2D930615BEB8E97895FF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8A4408DF2254C5B2CC181DE4 /* MetadataFetcher.swift in Sources */,
+				8F1A37C4018A4F38A1D07102 /* ExportArchiveBuilder.swift in Sources */,
+				0F0FAFB5CA0F217F65DD98D9 /* PendingInviteStore.swift in Sources */,
+				5D46EA8B61CA7D6477F03307 /* ShareHandoffStore.swift in Sources */,
+				A64CE20FF267C55185BD7694 /* SharedTagCloud.swift in Sources */,
+				E95A7AC13D083D585AD583A9 /* URLRepository.swift in Sources */,
+				ED3FCB994DD3E22532668B34 /* UserProfileStore.swift in Sources */,
+				98FE55AE8407199B73C5EEBF /* Models.swift in Sources */,
+				FC9AB28F87C65B3D9B12E71B /* SharedTagCloudModels.swift in Sources */,
+				1DC5D4336CD248722C473480 /* URLRules.swift in Sources */,
+				C1B757A265DC0DAADFC7F2EE /* UserProfile.swift in Sources */,
+				683F6B222DA6BFC09100FC8E /* BackgroundTaskRunner.swift in Sources */,
+				EFE1F9C785303C5D19007A3E /* SQLiteDatabase.swift in Sources */,
+				FE5F97CDA5CEF70F899B37C1 /* SharedContainer.swift in Sources */,
+				B4C2806BEA8C4B4FF06FC488 /* AppBackgroundScheduler.swift in Sources */,
+				C703D31CDA569CCBA7A9B6C2 /* AppServices.swift in Sources */,
+				C64C0DD695F35954B711E340 /* MetadataCoordinator.swift in Sources */,
+				BAC9BDD5A7BA82C04C793405 /* SharedTagSyncExecutor.swift in Sources */,
+				8890AFDD331017B1E9804776 /* URLSaverAppModel.swift in Sources */,
+				3E2FCAAC384382669CF125A3 /* URLSaveriOSApp.swift in Sources */,
+				4027F3D6300FC019900C1448 /* ActivityShareSheet.swift in Sources */,
+				8473852FE546A100382F137F /* AppChrome.swift in Sources */,
+				E2B6BC3EED867D733B542B2F /* DetailView.swift in Sources */,
+				AA1B48D5082B45D19C108A33 /* ExportSheet.swift in Sources */,
+				9B764DB055ABA113E6B57CA1 /* RootView.swift in Sources */,
+				D4412D6D464AA7FFDC4402BD /* SharedTagCloudSheet.swift in Sources */,
+				A8DB33D509FB0D8ED07AA23A /* SharedTagManagementSheets.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		76113A9A00B31BCD6AC97FB1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				97A2399E75C7091F00301DBB /* MetadataFetcher.swift in Sources */,
+				5861EC81F447D8D94A8534F1 /* PendingInviteStore.swift in Sources */,
+				FDE9924FC4E62ECEE3D640C1 /* ShareHandoffStore.swift in Sources */,
+				C42F7CC148CE3C0EDE10B431 /* SharedTagCloud.swift in Sources */,
+				2DBDC1C9A872D4ACA3397F82 /* URLRepository.swift in Sources */,
+				FB6A2498A98D528A8E29EEF1 /* UserProfileStore.swift in Sources */,
+				CA9F83282A35B2A39CD6B39A /* Models.swift in Sources */,
+				647A45EF43FB540A5941A0DC /* SharedTagCloudModels.swift in Sources */,
+				8D249A39206A3E2C177E2799 /* URLRules.swift in Sources */,
+				16FEC99A3CE34B6624BBBF2C /* UserProfile.swift in Sources */,
+				536BF4F1761A85C196754D9F /* BackgroundTaskRunner.swift in Sources */,
+				83F1E8FFDF202C1987CC277F /* SQLiteDatabase.swift in Sources */,
+				DE082E561734C1E5B0BA256C /* SharedContainer.swift in Sources */,
+				FCEC207D78C2551C11159AFA /* ShareViewController.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BDC016955FACD99B36790034 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FF45CE7B74A4160F0C66DD3E /* MetadataFetcher.swift in Sources */,
+				25080D71969F1C49C254C923 /* PendingInviteStore.swift in Sources */,
+				ACDFBC65A57156C0244FBF76 /* ShareHandoffStore.swift in Sources */,
+				DE172FDA95020FF47074537B /* SharedTagCloud.swift in Sources */,
+				57D781931F053F06DACDBF5B /* URLRepository.swift in Sources */,
+				19BF2D1EDB1D0CCCCF4D98EE /* UserProfileStore.swift in Sources */,
+				FC6D32531395FCF774563498 /* Models.swift in Sources */,
+				157DFE1D4095F8B62A072CCD /* SharedTagCloudModels.swift in Sources */,
+				854DB8C45E373D0F066A9320 /* URLRules.swift in Sources */,
+				8A5183B3C13A53AB692CE375 /* UserProfile.swift in Sources */,
+				4A623B0E0C7568040B23CADA /* BackgroundTaskRunner.swift in Sources */,
+				EEDA24437274ED4951F993F7 /* SQLiteDatabase.swift in Sources */,
+				FC643DC2D81385E73EC51EEA /* SharedContainer.swift in Sources */,
+				9ABC15E1324DF119B71EC91B /* SharedTagSyncExecutor.swift in Sources */,
+				90E4B0D51E36442DA7F06B12 /* ExportArchiveBuilderTests.swift in Sources */,
+				2E3AA4F6595E4719A89F43A1 /* MetadataFetcherTests.swift in Sources */,
+				2E8FC71A1091E61971CDB794 /* MetadataStatusTextTests.swift in Sources */,
+				F2A371DCCA662E1B6A340205 /* PendingInviteStoreTests.swift in Sources */,
+				2F991B284E4B88D7A5DCE001 /* ServiceFilterTests.swift in Sources */,
+				514634AE9875F6C33C2D6C44 /* SQLiteDatabaseTests.swift in Sources */,
+				138E11EEAAD912AED3265D35 /* SharedTagCloudLiveSyncTests.swift in Sources */,
+				1683532A53A44E2F05D474C2 /* SharedTagStoreTests.swift in Sources */,
+				954F62770554FA405F3555DD /* SharedTagSyncExecutorTests.swift in Sources */,
+				EAAB3170864EAB75B2750EEA /* URLRepositoryTests.swift in Sources */,
+				0802569D1115EDD1CFE76DD9 /* URLRulesTests.swift in Sources */,
+				A3733C721D0FC30B61AB2EEE /* UserProfileStoreTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		57AE9A04E6167DD4E2CFAF49 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = URLSaveriOS;
+			target = 98AE6524C1D644C32F15635F /* URLSaveriOS */;
+			targetProxy = B8EAF8FAAA2212A4A3752233 /* PBXContainerItemProxy */;
+		};
+		739B79565330EF6C1C21488C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = URLSaverShareExtension;
+			target = 4D399647F491CCE4D8313F82 /* URLSaverShareExtension */;
+			targetProxy = 8EDB5B10BD37C773FFDDF303 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		12BD24116737E1F7AA87C36C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = NO;
+				"CODE_SIGNING_REQUIRED[sdk=iphonesimulator*]" = NO;
+				CODE_SIGN_STYLE = Automatic;
+				DEFINES_MODULE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = URLSaveriOS/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = jp.mimac.urlsaver.ios;
+				PRODUCT_NAME = URLSaveriOS;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				URLSAVER_SHARED_TAG_CLOUD_ENABLED = true;
+				URLSAVER_SUPABASE_ANON_KEY = "dev-anon-key";
+				URLSAVER_SUPABASE_URL = "http://192.168.40.43:8787";
+			};
+			name = Debug;
+		};
+		1FEF7B856ED5A4A8E6169260 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = NO;
+				"CODE_SIGNING_REQUIRED[sdk=iphonesimulator*]" = NO;
+				CODE_SIGN_STYLE = Automatic;
+				DEFINES_MODULE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = URLSaverShareExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = jp.mimac.urlsaver.ios.share;
+				PRODUCT_NAME = URLSaverShareExtension;
+				SDKROOT = auto;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		319B8F4DAE6B463E81E7F048 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = NO;
+				"CODE_SIGNING_REQUIRED[sdk=iphonesimulator*]" = NO;
+				CODE_SIGN_STYLE = Automatic;
+				DEFINES_MODULE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = URLSaveriOSTests/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = jp.mimac.urlsaver.ios.tests;
+				PRODUCT_NAME = URLSaveriOSTests;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/URLSaveriOS.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/URLSaveriOS";
+				TEST_TARGET_NAME = URLSaveriOS;
+			};
+			name = Debug;
+		};
+		464995A6945A490C52406A61 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		7116A1598F612AA732DCDD7C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = NO;
+				"CODE_SIGNING_REQUIRED[sdk=iphonesimulator*]" = NO;
+				CODE_SIGN_STYLE = Automatic;
+				DEFINES_MODULE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = URLSaveriOSTests/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = jp.mimac.urlsaver.ios.tests;
+				PRODUCT_NAME = URLSaveriOSTests;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/URLSaveriOS.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/URLSaveriOS";
+				TEST_TARGET_NAME = URLSaveriOS;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		9389E7BA0493DFD44E365B61 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = NO;
+				"CODE_SIGNING_REQUIRED[sdk=iphonesimulator*]" = NO;
+				CODE_SIGN_STYLE = Automatic;
+				DEFINES_MODULE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = URLSaverShareExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = jp.mimac.urlsaver.ios.share;
+				PRODUCT_NAME = URLSaverShareExtension;
+				SDKROOT = auto;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		E3C69D1854B5833A67AC4CF6 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		E8AD9AB9B132E5EE55E8CCCF /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = NO;
+				"CODE_SIGNING_REQUIRED[sdk=iphonesimulator*]" = NO;
+				CODE_SIGN_STYLE = Automatic;
+				DEFINES_MODULE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = URLSaveriOS/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = jp.mimac.urlsaver.ios;
+				PRODUCT_NAME = URLSaveriOS;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				URLSAVER_SHARED_TAG_CLOUD_ENABLED = true;
+				URLSAVER_SUPABASE_ANON_KEY = "dev-anon-key";
+				URLSAVER_SUPABASE_URL = "http://192.168.40.43:8787";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		3FDA0862E3FA415A088C76FA /* Build configuration list for PBXProject "URLSaveriOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E3C69D1854B5833A67AC4CF6 /* Debug */,
+				464995A6945A490C52406A61 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		8B95D77CA79E80E97B6C63CA /* Build configuration list for PBXNativeTarget "URLSaveriOSTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7116A1598F612AA732DCDD7C /* Release */,
+				319B8F4DAE6B463E81E7F048 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		D427B43B3747858508E27BAE /* Build configuration list for PBXNativeTarget "URLSaverShareExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1FEF7B856ED5A4A8E6169260 /* Release */,
+				9389E7BA0493DFD44E365B61 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		D67666CD889417580EA1AD15 /* Build configuration list for PBXNativeTarget "URLSaveriOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E8AD9AB9B132E5EE55E8CCCF /* Release */,
+				12BD24116737E1F7AA87C36C /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 0EC6D296E8C21DAFD142571A /* Project object */;
+}
