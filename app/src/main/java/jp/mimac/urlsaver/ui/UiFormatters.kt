@@ -8,6 +8,7 @@ import java.util.Locale
 private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm", Locale.JAPAN)
 private val monthDayFormatter = DateTimeFormatter.ofPattern("M/d", Locale.JAPAN)
 private val yearMonthDayFormatter = DateTimeFormatter.ofPattern("yyyy/M/d", Locale.JAPAN)
+private val fullDateTimeFormatter = DateTimeFormatter.ofPattern("yyyy/M/d HH:mm", Locale.JAPAN)
 
 fun formatTimestamp(
     epochMillis: Long,
@@ -21,4 +22,12 @@ fun formatTimestamp(
         target.year == now.year -> target.format(monthDayFormatter)
         else -> target.format(yearMonthDayFormatter)
     }
+}
+
+fun formatDetailDateTime(
+    epochMillis: Long,
+    zoneId: ZoneId = ZoneId.systemDefault(),
+): String {
+    val target = Instant.ofEpochMilli(epochMillis).atZone(zoneId)
+    return target.format(fullDateTimeFormatter)
 }

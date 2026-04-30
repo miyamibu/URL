@@ -5,9 +5,13 @@ import androidx.activity.ComponentActivity
 import jp.mimac.urlsaver.data.EXTRA_DEEP_LINK_INVALID
 import jp.mimac.urlsaver.data.EXTRA_DEEP_LINK_TAG_ID
 import jp.mimac.urlsaver.data.EXTRA_MAIN_INTENT_EVENT_TOKEN
+import jp.mimac.urlsaver.data.EXTRA_SHARED_TAG_INVITE_INVALID
+import jp.mimac.urlsaver.data.EXTRA_SHARED_TAG_INVITE_TOKEN
 import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_CREATED
 import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_FAILED
+import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_CANCELLED
 import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_MERGED
+import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_MESSAGE
 import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_SKIPPED
 import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_TAG_ID
 import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_TAG_NAME
@@ -34,6 +38,8 @@ internal object ShareReceiverEntrypointRouter {
             putExtra(EXTRA_TAG_IMPORT_MERGED, importResult.merged)
             putExtra(EXTRA_TAG_IMPORT_SKIPPED, importResult.duplicateSkipped)
             putExtra(EXTRA_TAG_IMPORT_FAILED, importResult.failed)
+            putExtra(EXTRA_TAG_IMPORT_CANCELLED, importResult.cancelled)
+            importResult.message?.let { putExtra(EXTRA_TAG_IMPORT_MESSAGE, it) }
         }
     }
 
@@ -43,10 +49,16 @@ internal object ShareReceiverEntrypointRouter {
     }
 
     private fun buildMainIntentForDeepLink(activity: ComponentActivity, sourceIntent: Intent): Intent {
-        val tagId = parseSharedTagDeepLinkTagId(sourceIntent)
+        val uri = sourceIntent.data
+        val tagId = parseSharedTagDeepLinkTagId(uri)
+        val inviteToken = parseSharedTagInviteToken(uri)
         return buildMainRedirectIntent(activity).apply {
             if (tagId != null) {
                 putExtra(EXTRA_DEEP_LINK_TAG_ID, tagId)
+            } else if (inviteToken != null) {
+                putExtra(EXTRA_SHARED_TAG_INVITE_TOKEN, inviteToken)
+            } else if (isInviteUri(uri)) {
+                putExtra(EXTRA_SHARED_TAG_INVITE_INVALID, true)
             } else {
                 putExtra(EXTRA_DEEP_LINK_INVALID, true)
             }
@@ -60,9 +72,19 @@ internal object ShareReceiverEntrypointRouter {
         }
     }
 
-    private fun parseSharedTagDeepLinkTagId(sourceIntent: Intent): Long? {
-        val uri = sourceIntent.data ?: return null
+    private fun parseSharedTagDeepLinkTagId(uri: android.net.Uri?): Long? {
+        uri ?: return null
         if (uri.scheme != "urlsaver" || uri.host != "tag") return null
         return uri.pathSegments.singleOrNull()?.toLongOrNull()
+    }
+
+    private fun parseSharedTagInviteToken(uri: android.net.Uri?): String? {
+        uri ?: return null
+        if (!isInviteUri(uri)) return null
+        return uri.pathSegments.singleOrNull()?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
+    private fun isInviteUri(uri: android.net.Uri?): Boolean {
+        return uri?.scheme == "urlsaver" && uri.host == "invite"
     }
 }

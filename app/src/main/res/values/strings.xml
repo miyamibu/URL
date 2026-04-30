@@ -1,3 +1,19 @@
 <resources>
     <string name="app_name">URL Saver</string>
+    <string name="main_empty_title">保存したURLはまだありません</string>
+    <string name="main_empty_body">共有または手動追加であとから開くURLを保存できます</string>
+    <string name="main_filtered_empty_title">条件に合うURLはありません</string>
+    <string name="main_filtered_empty_body">フィルターを切り替えるか、URLを新しく追加してください</string>
+    <string name="main_add_url">URLを追加</string>
+    <string name="main_privacy_info">プライバシー情報</string>
+    <string name="privacy_dialog_title">データの取り扱い</string>
+    <string name="privacy_dialog_body">保存したURLやタイトル、メモは端末内に保存されます。\n\n保存後は metadata 取得のためにバックグラウンド通信を行い、ページのタイトルやサムネイルを取得します。\n\n現時点で第三者クラッシュ収集サービスは使用していません。</string>
+    <string name="privacy_dialog_close">閉じる</string>
+    <string name="detail_not_found_title">このURLは見つかりませんでした</string>
+    <string name="detail_not_found_body">すでに削除された可能性があります。一覧から確認してください。</string>
+    <string name="detail_back_to_list">一覧に戻る</string>
+    <string name="detail_original_url_label">受信したURL (originalUrl)</string>
+    <string name="detail_normalized_url_label">保存・重複判定・開くURL (normalizedUrl)</string>
+    <string name="detail_display_url_label">画面表示用URL (displayUrl)</string>
+    <string name="detail_memo_empty">メモなし</string>
 </resources>

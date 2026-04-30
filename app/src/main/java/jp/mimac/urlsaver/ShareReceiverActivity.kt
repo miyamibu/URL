@@ -105,7 +105,9 @@ class ShareReceiverActivity : ComponentActivity() {
                     -> {
                         saveResult.entryId?.let { putExtra(EXTRA_SHARE_ENTRY_ID, it) }
                     }
-                    ShareSaveResult.INPUT_TOO_LARGE -> Unit
+                    ShareSaveResult.INPUT_TOO_LARGE,
+                    ShareSaveResult.PERSONAL_URL_LIMIT_REACHED,
+                    -> Unit
                     else -> Unit
                 }
             }
@@ -137,6 +139,7 @@ class ShareReceiverActivity : ComponentActivity() {
                 ShareSaveResult.RESTORED_FROM_PENDING_DELETE -> restored += 1
                 ShareSaveResult.SAVE_FAILED,
                 ShareSaveResult.INPUT_TOO_LARGE,
+                ShareSaveResult.PERSONAL_URL_LIMIT_REACHED,
                 ShareSaveResult.INVALID_URL,
                 ShareSaveResult.NO_URL_FOUND,
                 ShareSaveResult.BATCH_PROCESSED,

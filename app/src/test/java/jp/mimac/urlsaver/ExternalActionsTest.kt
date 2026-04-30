@@ -5,9 +5,9 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
+import jp.mimac.urlsaver.ui.OpenUrlResult
 import jp.mimac.urlsaver.ui.tryOpenExternalUrl
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -16,7 +16,7 @@ import org.robolectric.RobolectricTestRunner
 class ExternalActionsTest {
 
     @Test
-    fun tryOpenExternalUrl_returnsFalseWhenNoHandler() {
+    fun tryOpenExternalUrl_returnsNoHandlerWhenNoHandler() {
         val base = ApplicationProvider.getApplicationContext<Context>()
         val context = object : ContextWrapper(base) {
             override fun startActivity(intent: Intent?) {
@@ -24,12 +24,12 @@ class ExternalActionsTest {
             }
         }
 
-        val opened = context.tryOpenExternalUrl("https://example.com")
-        assertFalse(opened)
+        val result = context.tryOpenExternalUrl("https://example.com")
+        assertEquals(OpenUrlResult.NoHandler, result)
     }
 
     @Test
-    fun tryOpenExternalUrl_returnsTrueWhenStartSucceeds() {
+    fun tryOpenExternalUrl_returnsSuccessWhenStartSucceeds() {
         val base = ApplicationProvider.getApplicationContext<Context>()
         val context = object : ContextWrapper(base) {
             var called = false
@@ -38,7 +38,21 @@ class ExternalActionsTest {
             }
         }
 
-        val opened = context.tryOpenExternalUrl("https://example.com")
-        assertTrue(opened)
+        val result = context.tryOpenExternalUrl("https://example.com")
+        assertEquals(OpenUrlResult.Success, result)
+        assertEquals(true, context.called)
+    }
+
+    @Test
+    fun tryOpenExternalUrl_returnsFailedOnUnexpectedException() {
+        val base = ApplicationProvider.getApplicationContext<Context>()
+        val context = object : ContextWrapper(base) {
+            override fun startActivity(intent: Intent?) {
+                throw SecurityException("blocked")
+            }
+        }
+
+        val result = context.tryOpenExternalUrl("https://example.com")
+        assertEquals(OpenUrlResult.Failed, result)
     }
 }

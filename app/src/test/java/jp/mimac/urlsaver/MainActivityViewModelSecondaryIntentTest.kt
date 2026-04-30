@@ -4,6 +4,8 @@ import android.content.Intent
 import jp.mimac.urlsaver.data.EXTRA_DEEP_LINK_INVALID
 import jp.mimac.urlsaver.data.EXTRA_DEEP_LINK_TAG_ID
 import jp.mimac.urlsaver.data.EXTRA_MAIN_INTENT_EVENT_TOKEN
+import jp.mimac.urlsaver.data.EXTRA_SHARED_TAG_INVITE_INVALID
+import jp.mimac.urlsaver.data.EXTRA_SHARED_TAG_INVITE_TOKEN
 import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_CREATED
 import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_FAILED
 import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_MERGED
@@ -111,6 +113,35 @@ class MainActivityViewModelSecondaryIntentTest {
         val event = viewModel.snackbarEvents.first()
         assertEquals(SnackbarEventKind.INFO, event.kind)
         assertEquals("共有フォルダリンクを開けませんでした", event.message)
+    }
+
+    @Test
+    fun consumeDeepLinkIntent_inviteNavigatesToInviteRoute() = runTest {
+        val repository = FakeRepository()
+        val viewModel = MainActivityViewModel(repository)
+        val intent = Intent().apply {
+            putExtra(EXTRA_SHARED_TAG_INVITE_TOKEN, "invite-token-1")
+        }
+
+        viewModel.consumeDeepLinkIntent(intent)
+
+        val event = viewModel.navigationEvents.first()
+        assertEquals(MainNavigationEvent.NavigateToInvite("invite-token-1"), event)
+    }
+
+    @Test
+    fun consumeDeepLinkIntent_invalidInviteShowsInfoSnackbar() = runTest {
+        val repository = FakeRepository()
+        val viewModel = MainActivityViewModel(repository)
+        val intent = Intent().apply {
+            putExtra(EXTRA_SHARED_TAG_INVITE_INVALID, true)
+        }
+
+        viewModel.consumeDeepLinkIntent(intent)
+
+        val event = viewModel.snackbarEvents.first()
+        assertEquals(SnackbarEventKind.INFO, event.kind)
+        assertEquals("共有招待リンクを開けませんでした", event.message)
     }
 
     @Test

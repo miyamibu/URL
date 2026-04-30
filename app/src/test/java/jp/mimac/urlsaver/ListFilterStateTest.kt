@@ -5,17 +5,17 @@ import jp.mimac.urlsaver.domain.ContentContext
 import jp.mimac.urlsaver.domain.MetadataState
 import jp.mimac.urlsaver.domain.RecordState
 import jp.mimac.urlsaver.domain.ServiceType
-import jp.mimac.urlsaver.ui.buildListSearchUiState
+import jp.mimac.urlsaver.ui.buildListFilterUiState
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-class ListSearchStateTest {
+class ListFilterStateTest {
 
     @Test
     fun selectedAll_returnsAllEntries() {
         val web = entry(id = 1, serviceType = ServiceType.WEB)
         val youtube = entry(id = 2, serviceType = ServiceType.YOUTUBE, displayUrl = "youtube.com/watch?v=z")
-        val state = buildListSearchUiState(
+        val state = buildListFilterUiState(
             entries = listOf(web, youtube),
             selectedService = ServiceType.ALL,
         )
@@ -30,7 +30,7 @@ class ListSearchStateTest {
         val web = entry(id = 1, serviceType = ServiceType.WEB)
         val youtube = entry(id = 2, serviceType = ServiceType.YOUTUBE, displayUrl = "youtube.com/watch?v=z")
 
-        val state = buildListSearchUiState(
+        val state = buildListFilterUiState(
             entries = listOf(web, youtube),
             selectedService = ServiceType.YOUTUBE,
         )
@@ -45,7 +45,7 @@ class ListSearchStateTest {
     fun selectedService_withNoMatches_returnsEmptyScopedList() {
         val web = entry(id = 1, serviceType = ServiceType.WEB)
 
-        val state = buildListSearchUiState(
+        val state = buildListFilterUiState(
             entries = listOf(web),
             selectedService = ServiceType.YOUTUBE,
         )
@@ -55,9 +55,72 @@ class ListSearchStateTest {
         assertEquals(0, state.entries.size)
     }
 
+    @Test
+    fun selectedWeb_excludesDedicatedTikTokEntries() {
+        val web = entry(id = 1, serviceType = ServiceType.WEB)
+        val tiktok = entry(id = 2, serviceType = ServiceType.TIKTOK, displayUrl = "www.tiktok.com/@user/video/1")
+
+        val state = buildListFilterUiState(
+            entries = listOf(web, tiktok),
+            selectedService = ServiceType.WEB,
+        )
+
+        assertEquals(2, state.globalCount)
+        assertEquals(1, state.scopeCount)
+        assertEquals(listOf(1L), state.entries.map { it.id })
+    }
+
+    @Test
+    fun selectedTikTok_includesDedicatedTikTokEntries() {
+        val web = entry(id = 1, serviceType = ServiceType.WEB)
+        val tiktok = entry(id = 2, serviceType = ServiceType.TIKTOK, displayUrl = "www.tiktok.com/@user/video/1")
+
+        val state = buildListFilterUiState(
+            entries = listOf(web, tiktok),
+            selectedService = ServiceType.TIKTOK,
+        )
+
+        assertEquals(2, state.globalCount)
+        assertEquals(1, state.scopeCount)
+        assertEquals(listOf(2L), state.entries.map { it.id })
+    }
+
+    @Test
+    fun selectedServiceAndCollection_filtersByBothConditions() {
+        val youtubeInWork = entry(
+            id = 1,
+            serviceType = ServiceType.YOUTUBE,
+            displayUrl = "youtube.com/watch?v=1",
+            collectionId = 10L,
+        )
+        val youtubeInPrivate = entry(
+            id = 2,
+            serviceType = ServiceType.YOUTUBE,
+            displayUrl = "youtube.com/watch?v=2",
+            collectionId = 20L,
+        )
+        val webInWork = entry(
+            id = 3,
+            serviceType = ServiceType.WEB,
+            displayUrl = "example.com/article",
+            collectionId = 10L,
+        )
+
+        val state = buildListFilterUiState(
+            entries = listOf(youtubeInWork, youtubeInPrivate, webInWork),
+            selectedService = ServiceType.YOUTUBE,
+            selectedCollectionId = 10L,
+        )
+
+        assertEquals(3, state.globalCount)
+        assertEquals(1, state.scopeCount)
+        assertEquals(listOf(1L), state.entries.map { it.id })
+    }
+
     private fun entry(
         id: Long = 1,
         serviceType: ServiceType = ServiceType.WEB,
+        collectionId: Long = 1L,
         userTitle: String? = null,
         fetchedTitle: String? = null,
         memo: String = "",
@@ -73,6 +136,7 @@ class ListSearchStateTest {
             openUrl = normalizedUrl,
             normalizedHost = normalizedHost,
             rawSourceHost = normalizedHost,
+            collectionId = collectionId,
             serviceType = serviceType,
             contentContext = ContentContext.STANDARD,
             userTitle = userTitle,

@@ -13,9 +13,9 @@ class ServiceFilterOrderTest {
             listOf(
                 ServiceType.ALL,
                 ServiceType.YOUTUBE,
-                ServiceType.TIKTOK,
                 ServiceType.X,
                 ServiceType.INSTAGRAM,
+                ServiceType.TIKTOK,
                 ServiceType.WEB,
             ),
             fixedServiceFilterOrder,

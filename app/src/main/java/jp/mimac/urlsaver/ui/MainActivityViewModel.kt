@@ -4,6 +4,7 @@ import android.content.Intent
 import androidx.compose.material3.SnackbarDuration
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import jp.mimac.urlsaver.data.TagRepository
 import jp.mimac.urlsaver.data.EXTRA_SHARE_BATCH_CREATED_COUNT
 import jp.mimac.urlsaver.data.EXTRA_SHARE_BATCH_DUPLICATE_COUNT
 import jp.mimac.urlsaver.data.EXTRA_SHARE_BATCH_FAILED_COUNT
@@ -38,6 +39,7 @@ sealed interface SnackbarControlEvent {
 class MainActivityViewModel(
     private val repository: UrlRepository,
     private val clock: AppClock = SystemAppClock,
+    private val tagRepository: TagRepository? = null,
 ) : ViewModel() {
 
     private val snackbarChannel = Channel<SnackbarEvent>(capacity = 64, onBufferOverflow = ChannelOverflow.SUSPEND)
@@ -116,6 +118,12 @@ class MainActivityViewModel(
             ShareSaveResult.INPUT_TOO_LARGE -> enqueueSnackbar(
                 SnackbarEvent(kind = SnackbarEventKind.INFO, message = "共有内容が長すぎるため処理できませんでした"),
             )
+            ShareSaveResult.PERSONAL_URL_LIMIT_REACHED -> enqueueSnackbar(
+                SnackbarEvent(
+                    kind = SnackbarEventKind.INFO,
+                    message = "ローンチ版の保存上限に達しました。不要なURLを整理してから追加してください。",
+                ),
+            )
             ShareSaveResult.SAVE_FAILED -> enqueueSnackbar(SnackbarEvent(kind = SnackbarEventKind.INFO, message = "保存できませんでした"))
             ShareSaveResult.INVALID_URL -> enqueueSnackbar(SnackbarEvent(kind = SnackbarEventKind.INFO, message = "有効なURLではありませんでした"))
             ShareSaveResult.NO_URL_FOUND -> enqueueSnackbar(SnackbarEvent(kind = SnackbarEventKind.INFO, message = "URLが見つかりませんでした"))
@@ -170,6 +178,12 @@ class MainActivityViewModel(
                 enqueueSnackbar(SnackbarEvent(kind = SnackbarEventKind.INFO, message = "削除を取り消して復元しました"))
             }
 
+            ShareSaveResult.PERSONAL_URL_LIMIT_REACHED -> enqueueSnackbar(
+                SnackbarEvent(
+                    kind = SnackbarEventKind.INFO,
+                    message = "ローンチ版の保存上限に達しました。不要なURLを整理してから追加してください。",
+                ),
+            )
             ShareSaveResult.SAVE_FAILED -> enqueueSnackbar(SnackbarEvent(kind = SnackbarEventKind.INFO, message = "保存できませんでした"))
             ShareSaveResult.INPUT_TOO_LARGE,
             ShareSaveResult.INVALID_URL,
@@ -259,6 +273,13 @@ class MainActivityViewModel(
         }
     }
 
+    fun enqueueForegroundSharedTagSyncIfNeeded() {
+        val tags = tagRepository ?: return
+        viewModelScope.launch {
+            tags.triggerSyncIfStale()
+        }
+    }
+
     fun cleanupOnStart() {
         viewModelScope.launch {
             repository.cleanupExpiredPendingDeletes()
@@ -277,6 +298,40 @@ class MainActivityViewModel(
         deleteTimers[entryId] = job
     }
 
+    fun onBatchPendingDelete(pendingDeletions: Map<Long, Long>) {
+        if (pendingDeletions.isEmpty()) return
+        invalidateTitleUndo()
+        pendingDeletions.forEach { (entryId, pendingUntil) ->
+            startDeleteTimer(entryId, pendingUntil)
+        }
+        val entryIds = pendingDeletions.keys.sorted()
+        enqueueSnackbar(
+            SnackbarEvent(
+                kind = SnackbarEventKind.UNDO_BATCH_PENDING_DELETE,
+                message = "${entryIds.size}件を削除しました",
+                actionLabel = "元に戻す",
+                duration = SnackbarDuration.Indefinite,
+                customDurationMillis = 5000,
+                entryIds = entryIds,
+            ),
+        )
+    }
+
+    fun onBatchArchive(entryIds: List<Long>) {
+        if (entryIds.isEmpty()) return
+        invalidateTitleUndo()
+        enqueueSnackbar(
+            SnackbarEvent(
+                kind = SnackbarEventKind.UNDO_BATCH_ARCHIVE,
+                message = "${entryIds.size}件をアーカイブしました",
+                actionLabel = "元に戻す",
+                duration = SnackbarDuration.Indefinite,
+                customDurationMillis = 5000,
+                entryIds = entryIds.sorted(),
+            ),
+        )
+    }
+
     fun cancelDeleteTimer(entryId: Long) {
         deleteTimers.remove(entryId)?.cancel()
     }
@@ -293,6 +348,20 @@ class MainActivityViewModel(
             SnackbarEventKind.UNDO_ARCHIVE -> {
                 val id = event.entryId ?: return
                 repository.unarchive(id)
+            }
+
+            SnackbarEventKind.UNDO_BATCH_PENDING_DELETE -> {
+                val ids = event.entryIds ?: return
+                ids.forEach { id ->
+                    if (repository.restore(id)) {
+                        cancelDeleteTimer(id)
+                    }
+                }
+            }
+
+            SnackbarEventKind.UNDO_BATCH_ARCHIVE -> {
+                val ids = event.entryIds ?: return
+                ids.forEach { id -> repository.unarchive(id) }
             }
 
             SnackbarEventKind.OPEN_ARCHIVE -> {

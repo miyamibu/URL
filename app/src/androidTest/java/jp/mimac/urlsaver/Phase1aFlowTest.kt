@@ -1,15 +1,21 @@
 package jp.mimac.urlsaver
 
 import android.content.Context
+import android.content.Intent
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.core.app.ApplicationProvider
-import jp.mimac.urlsaver.data.MetadataUpdate
+import jp.mimac.urlsaver.data.AppDatabase
+import jp.mimac.urlsaver.data.EXTRA_SHARE_ENTRY_ID
+import jp.mimac.urlsaver.data.EXTRA_SHARE_SAVE_RESULT
 import jp.mimac.urlsaver.domain.MetadataError
 import jp.mimac.urlsaver.domain.MetadataState
+import jp.mimac.urlsaver.domain.ShareSaveResult
 import jp.mimac.urlsaver.domain.UrlRules
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 
@@ -18,30 +24,48 @@ class Phase1aFlowTest {
     @get:Rule
     val composeRule = createAndroidComposeRule<MainActivity>()
 
+    @Before
+    fun resetAppState() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        runBlocking {
+            val db = AppDatabase.create(context)
+            try {
+                db.clearAllTables()
+            } finally {
+                db.close()
+            }
+        }
+
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.onAllNodesWithText("保存したURL").fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
     @Test
     fun manualSave_duplicateActive_cardTapDetail_andCollapsibleDetails() {
         val url = uniqueUrl("manual-dup")
-        val display = displayOf(url)
 
         composeRule.onNodeWithText("すべて").assertExists()
 
         addManualUrl(url)
         waitForText("保存しました")
-        composeRule.waitUntil(timeoutMillis = 10_000) {
-            composeRule.onAllNodesWithContentDescription("Webサイトのアイコン").fetchSemanticsNodes().isNotEmpty()
-        }
+        val entryId = waitForEntryCard(url)
 
         addManualUrl(url)
         waitForText("このURLはすでに保存済みです")
         composeRule.onNodeWithText("見る").assertExists()
 
-        composeRule.onNodeWithText(display).performClick()
+        composeRule.onNodeWithTag(entryCardTag(entryId)).performClick()
         composeRule.onNodeWithText("詳細").assertIsDisplayed()
         composeRule.onNodeWithText("開く").assertExists()
+        composeRule.onNode(hasText("保存日時:", substring = true)).assertDoesNotExist()
+        composeRule.onNodeWithText("Waybackで確認").assertDoesNotExist()
 
-        composeRule.onNodeWithText("originalUrl").assertDoesNotExist()
+        composeRule.onNodeWithText("受信したURL (originalUrl)").assertDoesNotExist()
         composeRule.onNodeWithTag("detail_section_toggle").performClick()
-        composeRule.onNodeWithText("originalUrl").assertExists()
+        composeRule.onNodeWithText("受信したURL (originalUrl)").assertExists()
+        composeRule.onNodeWithText("保存・重複判定・開くURL (normalizedUrl)").assertExists()
+        composeRule.onNodeWithText("画面表示用URL (displayUrl)").assertExists()
         composeRule.waitUntil(timeoutMillis = 10_000) {
             composeRule.onAllNodesWithText(url).fetchSemanticsNodes().isNotEmpty()
         }
@@ -50,11 +74,10 @@ class Phase1aFlowTest {
     @Test
     fun archive_duplicateArchived_viewCta_andArchiveHasNoFab() {
         val url = uniqueUrl("archived")
-        val display = displayOf(url)
 
         addManualUrl(url)
-        waitForDisplay(display)
-        composeRule.onNodeWithText(display).performClick()
+        val entryId = waitForEntryCard(url)
+        composeRule.onNodeWithTag(entryCardTag(entryId)).performClick()
         composeRule.onNodeWithText("アーカイブ").performClick()
         waitForText("アーカイブしました")
 
@@ -72,7 +95,7 @@ class Phase1aFlowTest {
         composeRule.onNodeWithText("アーカイブ").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("手動追加").assertDoesNotExist()
 
-        composeRule.onNodeWithText(display).performClick()
+        composeRule.onNodeWithTag(entryCardTag(entryId)).performClick()
         composeRule.onNodeWithText("アーカイブ解除").performClick()
         waitForText("復元しました")
         composeRule.onNodeWithText("保存したURL").assertExists()
@@ -81,54 +104,82 @@ class Phase1aFlowTest {
     @Test
     fun deletePending_restoreThenFinalizeAfterFiveSeconds() {
         val url = uniqueUrl("delete")
-        val display = displayOf(url)
 
         addManualUrl(url)
         waitForText("保存しました")
-        composeRule.onNodeWithText(display).performClick()
+        val entryId = waitForEntryCard(url)
+        composeRule.onNodeWithTag(entryCardTag(entryId)).performClick()
         composeRule.onNodeWithText("削除").performClick()
         waitForText("削除しました")
 
         addManualUrl(url)
         waitForText("削除を取り消して復元しました")
+        waitForEntryCard(url)
 
-        composeRule.onNodeWithText(display).performClick()
+        composeRule.onNodeWithTag(entryCardTag(entryId)).performClick()
         composeRule.onNodeWithText("削除").performClick()
         waitForText("削除しました")
 
         Thread.sleep(6200)
-        composeRule.waitUntil(timeoutMillis = 10_000) {
-            composeRule.onAllNodesWithText(display).fetchSemanticsNodes().isEmpty()
-        }
+        waitForEntryGone(entryId)
+    }
+
+    @Test
+    fun mainSwipeRight_archivesAndUndoRestores() {
+        val url = uniqueUrl("main-swipe-archive")
+
+        addManualUrl(url)
+        val entryId = waitForEntryCard(url)
+        swipeEntry(entryId, toArchive = true)
+        waitForText("アーカイブしました")
+        waitForEntryGone(entryId)
+
+        clickUndoAction()
+        waitForEntryCard(url)
+    }
+
+    @Test
+    fun mainSwipeLeft_marksPendingDeleteAndUndoRestores() {
+        val url = uniqueUrl("main-swipe-delete")
+
+        addManualUrl(url)
+        val entryId = waitForEntryCard(url)
+        swipeEntry(entryId, toArchive = false)
+        waitForText("削除しました")
+        waitForEntryGone(entryId)
+
+        clickUndoAction()
+        waitForEntryCard(url)
     }
 
     @Test
     fun archiveUndo_andDeleteUndoFromSnackbar() {
         val url = uniqueUrl("undo")
-        val display = displayOf(url)
 
         seedEntry(url)
-        waitForDisplay(display)
-        composeRule.onNodeWithText(display).performClick()
+        val entryId = waitForEntryCard(url)
+        composeRule.onNodeWithTag(entryCardTag(entryId)).performClick()
         composeRule.onNodeWithText("アーカイブ").performClick()
+        waitForText("アーカイブしました")
         clickUndoAction()
-        waitForDisplay(display)
+        waitForEntryCard(url)
 
-        composeRule.onNodeWithText(display).performClick()
+        composeRule.onNodeWithTag(entryCardTag(entryId)).performClick()
         composeRule.onNodeWithText("削除").performClick()
+        waitForText("削除しました")
         clickUndoAction()
-        waitForDisplay(display)
+        waitForEntryCard(url)
     }
 
     @Test
     fun titleUndo_memoDialog_andCopyNotification() {
         val url = uniqueUrl("title")
-        val display = displayOf(url)
 
         addManualUrl(url)
         waitForText("保存しました")
         applyFetchedTitle(url, "Fetched title for edit")
-        composeRule.onNodeWithText(display).performClick()
+        val entryId = waitForEntryCard(url)
+        composeRule.onNodeWithTag(entryCardTag(entryId)).performClick()
         waitForText("Fetched title for edit")
 
         composeRule.onNodeWithContentDescription("タイトルを編集").assertExists().performClick()
@@ -149,9 +200,7 @@ class Phase1aFlowTest {
         composeRule.waitUntil(timeoutMillis = 10_000) {
             composeRule.onAllNodesWithText("Second").fetchSemanticsNodes().isNotEmpty()
         }
-        waitForText("元に戻す")
-
-        composeRule.onNodeWithText("元に戻す").performClick()
+        clickUndoAction()
         composeRule.onNodeWithText("First").assertExists()
 
         composeRule.onNodeWithContentDescription("タイトルを編集").performClick()
@@ -162,6 +211,10 @@ class Phase1aFlowTest {
         composeRule.onNodeWithContentDescription("タイトルを編集").performClick()
         composeRule.onNodeWithTag("detail_title_input").assertTextEquals("")
         composeRule.onNodeWithContentDescription("編集をキャンセル").performClick()
+
+        val memoButtonBounds = composeRule.onNodeWithText("メモを編集").fetchSemanticsNode().boundsInRoot
+        val memoBodyBounds = composeRule.onNodeWithText("メモなし").fetchSemanticsNode().boundsInRoot
+        assertTrue(memoBodyBounds.top > memoButtonBounds.bottom)
 
         composeRule.onNodeWithText("メモを編集").performClick()
         composeRule.onNodeWithTag("detail_memo_input").performTextClearance()
@@ -180,10 +233,9 @@ class Phase1aFlowTest {
     @Test
     fun metadataFailed_detailShowsRetryAndRetryingState() {
         val url = uniqueUrl("metadata-retry")
-        val display = displayOf(url)
 
         addManualUrl(url)
-        waitForDisplay(display)
+        val entryId = waitForEntryCard(url)
         applyMetadataState(
             url = url,
             metadataState = MetadataState.FAILED,
@@ -191,8 +243,8 @@ class Phase1aFlowTest {
             fetchedTitle = null,
         )
 
-        composeRule.onNodeWithText(display).performClick()
-        waitForText("情報を更新できませんでした")
+        composeRule.onNodeWithTag(entryCardTag(entryId)).performClick()
+        waitForText("一時的に情報を取得できませんでした")
         composeRule.onNodeWithText("再取得").assertExists().performClick()
         composeRule.waitUntil(timeoutMillis = 10_000) {
             composeRule.onAllNodesWithText("再取得中…").fetchSemanticsNodes().isNotEmpty() ||
@@ -200,8 +252,56 @@ class Phase1aFlowTest {
         }
     }
 
+    @Test
+    fun pendingDelayed_detailShowsDelayMessageAndRetryReason() {
+        val url = uniqueUrl("metadata-delayed")
+
+        addManualUrl(url)
+        val entryId = waitForEntryCard(url)
+        applyMetadataState(
+            url = url,
+            metadataState = MetadataState.PENDING,
+            metadataError = null,
+            fetchedTitle = null,
+            metadataRequestedAt = System.currentTimeMillis() - (16 * 60 * 1000L),
+        )
+
+        composeRule.onNodeWithTag(entryCardTag(entryId)).performClick()
+        waitForText("情報の更新に時間がかかっています")
+        composeRule.onNodeWithText("再取得").assertExists().performClick()
+        waitForText("この状態では再取得できません")
+    }
+
+    @Test
+    fun detailNotFound_showsRecoveryAction() {
+        composeRule.activity.startActivity(
+            Intent(composeRule.activity, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                putExtra(EXTRA_SHARE_SAVE_RESULT, ShareSaveResult.DUPLICATE_ACTIVE.name)
+                putExtra(EXTRA_SHARE_ENTRY_ID, Long.MAX_VALUE)
+            },
+        )
+
+        waitForText("このURLはすでに保存済みです")
+        composeRule.onNodeWithText("見る").performClick()
+        composeRule.onNodeWithTag("detail_not_found").assertExists()
+        composeRule.onNodeWithText("一覧に戻る").performClick()
+        composeRule.onNodeWithText("保存したURL").assertExists()
+    }
+
+    @Test
+    fun main_hasPrivacyDisclosureDialog() {
+        composeRule.onNodeWithContentDescription("プライバシー情報").assertExists().performClick()
+        composeRule.onNodeWithText("データの取り扱い").assertExists()
+        composeRule.onNode(hasText("端末内に保存されます", substring = true)).assertExists()
+        composeRule.onNodeWithText("閉じる").performClick()
+    }
+
     private fun addManualUrl(url: String) {
         composeRule.onNodeWithContentDescription("手動追加").performClick()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.onAllNodesWithTag("manual_input_field").fetchSemanticsNodes().isNotEmpty()
+        }
         composeRule.onNodeWithTag("manual_input_field").performTextClearance()
         composeRule.onNodeWithTag("manual_input_field").performTextInput(url)
         composeRule.onNodeWithTag("manual_input_save").performClick()
@@ -222,15 +322,30 @@ class Phase1aFlowTest {
         composeRule.onNodeWithText(text).assertExists()
     }
 
-    private fun waitForDisplay(display: String) {
+    private fun waitForEntryCard(url: String): Long {
+        var entryId: Long? = null
         composeRule.waitUntil(timeoutMillis = 10_000) {
-            composeRule.onAllNodesWithText(display).fetchSemanticsNodes().isNotEmpty()
+            entryId = findEntryId(url)
+            entryId != null
+        }
+        val resolvedEntryId = checkNotNull(entryId)
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.onAllNodesWithTag(entryCardTag(resolvedEntryId)).fetchSemanticsNodes().isNotEmpty()
+        }
+        return resolvedEntryId
+    }
+
+    private fun waitForEntryGone(entryId: Long) {
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.onAllNodesWithTag(entryCardTag(entryId)).fetchSemanticsNodes().isEmpty()
         }
     }
 
     private fun clickUndoAction() {
-        waitForText("元に戻す")
-        composeRule.onNodeWithText("元に戻す").performClick()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.onAllNodesWithText("元に戻す", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText("元に戻す", useUnmergedTree = true).performClick()
     }
 
     private fun waitForContentDescription(contentDescription: String) {
@@ -238,6 +353,32 @@ class Phase1aFlowTest {
             composeRule.onAllNodesWithContentDescription(contentDescription).fetchSemanticsNodes().isNotEmpty()
         }
     }
+
+    private fun swipeEntry(entryId: Long, toArchive: Boolean) {
+        val node = composeRule.onNodeWithTag(swipeTag(entryId))
+        if (toArchive) {
+            node.performTouchInput { swipeRight() }
+        } else {
+            node.performTouchInput { swipeLeft() }
+        }
+    }
+
+    private fun findEntryId(url: String): Long? {
+        val normalized = UrlRules.normalize(url) ?: return null
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        return runBlocking {
+            val db = AppDatabase.create(context)
+            try {
+                db.urlEntryDao().findByNormalizedUrl(normalized)?.id
+            } finally {
+                db.close()
+            }
+        }
+    }
+
+    private fun entryCardTag(entryId: Long): String = "entry_card_$entryId"
+
+    private fun swipeTag(entryId: Long): String = "main_entry_swipe_$entryId"
 
     private fun uniqueUrl(prefix: String): String {
         val id = System.currentTimeMillis()
@@ -258,28 +399,32 @@ class Phase1aFlowTest {
         metadataState: MetadataState,
         metadataError: MetadataError?,
         fetchedTitle: String?,
+        metadataRequestedAt: Long? = null,
     ) {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val app = context as UrlSaverApp
         val normalized = UrlRules.normalize(url) ?: return
         runBlocking {
-            val entry = app.container.repository.observeActiveEntries().first()
-                .firstOrNull { it.normalizedUrl == normalized } ?: return@runBlocking
-            app.container.repository.applyMetadataUpdate(
-                entryId = entry.id,
-                metadata = MetadataUpdate(
-                    fetchedTitle = fetchedTitle,
-                    thumbnailUrl = entry.thumbnailUrl,
-                    metadataState = metadataState,
-                    metadataFetchedAt = if (metadataState == MetadataState.PENDING) null else System.currentTimeMillis(),
-                    metadataError = metadataError,
-                    canonicalId = entry.canonicalId,
-                    normalizedHost = entry.normalizedHost,
-                    rawSourceHost = entry.rawSourceHost,
-                ),
-            )
+            val entryId = app.container.repository.observeActiveEntries().first()
+                .firstOrNull { it.normalizedUrl == normalized }
+                ?.id ?: return@runBlocking
+
+            val db = AppDatabase.create(context)
+            try {
+                val dao = db.urlEntryDao()
+                val entry = dao.findById(entryId) ?: return@runBlocking
+                dao.update(
+                    entry.copy(
+                        fetchedTitle = fetchedTitle,
+                        metadataState = metadataState,
+                        metadataFetchedAt = if (metadataState == MetadataState.PENDING) null else System.currentTimeMillis(),
+                        metadataError = metadataError,
+                        metadataRequestedAt = metadataRequestedAt ?: entry.metadataRequestedAt,
+                    ),
+                )
+            } finally {
+                db.close()
+            }
         }
     }
-
-    private fun displayOf(url: String): String = url.removePrefix("https://")
 }

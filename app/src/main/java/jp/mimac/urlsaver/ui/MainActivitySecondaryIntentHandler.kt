@@ -4,9 +4,13 @@ import android.content.Intent
 import jp.mimac.urlsaver.data.EXTRA_DEEP_LINK_INVALID
 import jp.mimac.urlsaver.data.EXTRA_DEEP_LINK_TAG_ID
 import jp.mimac.urlsaver.data.EXTRA_MAIN_INTENT_EVENT_TOKEN
+import jp.mimac.urlsaver.data.EXTRA_SHARED_TAG_INVITE_INVALID
+import jp.mimac.urlsaver.data.EXTRA_SHARED_TAG_INVITE_TOKEN
 import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_CREATED
 import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_FAILED
+import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_CANCELLED
 import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_MERGED
+import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_MESSAGE
 import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_SKIPPED
 import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_TAG_ID
 import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_TAG_NAME
@@ -32,6 +36,8 @@ internal class MainActivitySecondaryIntentHandler(
         val merged = intent.getIntExtra(EXTRA_TAG_IMPORT_MERGED, 0)
         val skipped = intent.getIntExtra(EXTRA_TAG_IMPORT_SKIPPED, 0)
         val failed = intent.getIntExtra(EXTRA_TAG_IMPORT_FAILED, 0)
+        val cancelled = intent.getBooleanExtra(EXTRA_TAG_IMPORT_CANCELLED, false)
+        val message = intent.getStringExtra(EXTRA_TAG_IMPORT_MESSAGE)
         val signature = buildTagImportSignature(
             intent = intent,
             tagId = tagId,
@@ -40,10 +46,17 @@ internal class MainActivitySecondaryIntentHandler(
             merged = merged,
             skipped = skipped,
             failed = failed,
+            cancelled = cancelled,
+            message = message,
         )
         if (!consumedTagImportSignatures.add(signature)) return
 
-        val event = if (created == 0 && merged == 0 && failed == 0) {
+        val event = if (cancelled) {
+            SnackbarEvent(
+                kind = SnackbarEventKind.INFO,
+                message = message ?: "上限によりインポートをキャンセルしました",
+            )
+        } else if (created == 0 && merged == 0 && failed == 0) {
             SnackbarEvent(
                 kind = SnackbarEventKind.OPEN_TAG_DETAIL,
                 message = "「$tagName」の全URLは既に登録済みです",
@@ -64,15 +77,24 @@ internal class MainActivitySecondaryIntentHandler(
     fun consumeDeepLinkIntent(intent: Intent) {
         val hasTagId = intent.hasExtra(EXTRA_DEEP_LINK_TAG_ID)
         val isInvalid = intent.getBooleanExtra(EXTRA_DEEP_LINK_INVALID, false)
-        if (!hasTagId && !isInvalid) return
+        val inviteToken = intent.getStringExtra(EXTRA_SHARED_TAG_INVITE_TOKEN)?.takeIf { it.isNotBlank() }
+        val isInviteInvalid = intent.getBooleanExtra(EXTRA_SHARED_TAG_INVITE_INVALID, false)
+        if (!hasTagId && !isInvalid && inviteToken == null && !isInviteInvalid) return
 
         val tagId = if (hasTagId) intent.getLongExtra(EXTRA_DEEP_LINK_TAG_ID, 0L) else null
         val signature = buildDeepLinkSignature(
             intent = intent,
             tagId = tagId,
             isInvalid = isInvalid,
+            inviteToken = inviteToken,
+            isInviteInvalid = isInviteInvalid,
         )
         if (!consumedDeepLinkSignatures.add(signature)) return
+
+        if (inviteToken != null) {
+            navigate(MainNavigationEvent.NavigateToInvite(inviteToken))
+            return
+        }
 
         if (tagId != null) {
             navigate(MainNavigationEvent.NavigateToTagDetail(tagId))
@@ -82,7 +104,7 @@ internal class MainActivitySecondaryIntentHandler(
         enqueueSnackbar(
             SnackbarEvent(
                 kind = SnackbarEventKind.INFO,
-                message = "共有フォルダリンクを開けませんでした",
+                message = if (isInviteInvalid) "共有招待リンクを開けませんでした" else "共有フォルダリンクを開けませんでした",
             ),
         )
     }
@@ -95,23 +117,27 @@ internal class MainActivitySecondaryIntentHandler(
         merged: Int,
         skipped: Int,
         failed: Int,
+        cancelled: Boolean,
+        message: String?,
     ): String {
         val eventToken = intent.getStringExtra(EXTRA_MAIN_INTENT_EVENT_TOKEN)?.takeIf { it.isNotBlank() }
         if (eventToken != null) {
             return "event:$eventToken"
         }
-        return "legacy:$tagId:$tagName:$created:$merged:$skipped:$failed"
+        return "legacy:$tagId:$tagName:$created:$merged:$skipped:$failed:$cancelled:${message.orEmpty()}"
     }
 
     private fun buildDeepLinkSignature(
         intent: Intent,
         tagId: Long?,
         isInvalid: Boolean,
+        inviteToken: String?,
+        isInviteInvalid: Boolean,
     ): String {
         val eventToken = intent.getStringExtra(EXTRA_MAIN_INTENT_EVENT_TOKEN)?.takeIf { it.isNotBlank() }
         if (eventToken != null) {
             return "event:$eventToken"
         }
-        return "legacy:${tagId ?: "invalid"}:$isInvalid"
+        return "legacy:${tagId ?: "none"}:${inviteToken ?: "none"}:$isInvalid:$isInviteInvalid"
     }
 }

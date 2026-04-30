@@ -1,0 +1,60 @@
+package jp.mimac.urlsaver.ui
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import jp.mimac.urlsaver.data.TagRepository
+import jp.mimac.urlsaver.domain.SharedTagAuthResult
+import jp.mimac.urlsaver.domain.SharedTagCloudState
+import jp.mimac.urlsaver.domain.SharedTagInviteAcceptanceResult
+import jp.mimac.urlsaver.domain.SharedTagRecord
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.stateIn
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class SharedTagInviteViewModel(
+    private val inviteToken: String,
+    private val tagRepository: TagRepository,
+) : ViewModel() {
+
+    val cloudState: StateFlow<SharedTagCloudState> = tagRepository.cloudState
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            SharedTagCloudState(isConfigured = false, isSignedIn = false),
+        )
+
+    private val acceptedRemoteTagId = MutableStateFlow<String?>(null)
+
+    val joinedTag: StateFlow<SharedTagRecord?> = acceptedRemoteTagId
+        .flatMapLatest { remoteTagId ->
+            if (remoteTagId == null) {
+                flowOf(null)
+            } else {
+                tagRepository.observeTagByRemoteId(remoteTagId)
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    fun hasInviteToken(): Boolean = inviteToken.isNotBlank()
+
+    suspend fun signIn(email: String, password: String): SharedTagAuthResult {
+        return tagRepository.signIn(email, password)
+    }
+
+    suspend fun signUp(email: String, password: String): SharedTagAuthResult {
+        return tagRepository.signUp(email, password)
+    }
+
+    suspend fun acceptInvite(): SharedTagInviteAcceptanceResult {
+        val result = tagRepository.acceptInvite(inviteToken)
+        if (result is SharedTagInviteAcceptanceResult.Success) {
+            acceptedRemoteTagId.value = result.remoteTagId
+        }
+        return result
+    }
+}
