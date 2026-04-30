@@ -5,3 +5,23 @@ local.properties
 app/build/
 *.iml
 .DS_Store
+
+# Local agent/tooling state
+.claude/
+.codex/
+.understand-anything/
+
+# Generated evidence and temporary outputs
+artifacts/pre-edit/
+artifacts/compile*.txt
+artifacts/*classpath*.txt
+tmp_main.png
+
+# Xcode local/build outputs
+ios/build-*/
+ios/**/xcuserdata/
+ios/**/*.xcuserstate
+ios/**/DerivedData/
+ios/**/Index.noindex/
+ios/**/ModuleCache.noindex/
+ios/**/SDKStatCaches.noindex/
