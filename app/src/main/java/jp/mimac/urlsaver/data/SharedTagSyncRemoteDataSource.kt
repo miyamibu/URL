@@ -42,9 +42,17 @@ data class SharedTagSyncRemoteConfig(
     val enabled: Boolean,
     val supabaseUrl: String,
     val anonKey: String,
+    val inviteLinkBaseUrl: String = DEFAULT_INVITE_LINK_BASE_URL,
 ) {
     val isConfigured: Boolean
         get() = enabled && supabaseUrl.isNotBlank() && anonKey.isNotBlank()
+
+    val normalizedInviteLinkBaseUrl: String
+        get() = inviteLinkBaseUrl.trim().trimEnd('/').ifBlank { DEFAULT_INVITE_LINK_BASE_URL }
+
+    companion object {
+        const val DEFAULT_INVITE_LINK_BASE_URL = "https://urlsaver.app"
+    }
 }
 
 class SupabaseSharedTagSyncRemoteDataSource(

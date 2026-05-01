@@ -29,6 +29,7 @@ import jp.mimac.urlsaver.domain.PullSharedTagSnapshotResponse
 import jp.mimac.urlsaver.domain.RecordState
 import jp.mimac.urlsaver.domain.SharedTagMemberRole
 import jp.mimac.urlsaver.domain.SharedTagMemberStatus
+import jp.mimac.urlsaver.domain.SharedTagInviteCreationResult
 import jp.mimac.urlsaver.domain.SharedTagSyncOperationType
 import jp.mimac.urlsaver.domain.SharedTagSyncOperation
 import jp.mimac.urlsaver.domain.SharedTagScope
@@ -251,6 +252,55 @@ class TagRepositoryTest {
         assertTrue(targetEntries.contains(mergeOnlyEntryId))
         assertTrue(targetEntries.contains(alreadyTaggedEntryId))
         assertEquals(listOf(newEntry.id), scheduler.enqueued)
+    }
+
+    @Test
+    fun createInviteLink_usesPublicInviteBaseUrlNotSupabaseUrl() = runBlocking {
+        val authUserId = "00000000-0000-0000-0000-000000000777"
+        authProvider.updateSession(
+            SharedTagAuthSession(
+                authUserId = authUserId,
+                accessToken = "token",
+            ),
+        )
+        val repositoryWithCloud = createRepository(
+            remoteConfig = SharedTagSyncRemoteConfig(
+                enabled = true,
+                supabaseUrl = "https://example.supabase.co",
+                anonKey = "anon-key",
+            ),
+        )
+        val tagId = db.tagDao().insertTag(
+            TagEntity(
+                name = "invite-public-base",
+                createdAt = 10L,
+                scope = SharedTagScope.SYNCED,
+                authUserId = authUserId,
+                remoteTagId = "remote-tag",
+                syncStatus = SharedTagSyncStatus.SYNCED,
+            ),
+        )
+        db.sharedTagSyncDao().upsertMembers(
+            listOf(
+                SharedTagMemberEntity(
+                    tagId = tagId,
+                    authUserId = authUserId,
+                    userId = authUserId,
+                    role = SharedTagMemberRole.OWNER,
+                    status = SharedTagMemberStatus.ACTIVE,
+                    createdAt = 10L,
+                    updatedAt = 10L,
+                ),
+            ),
+        )
+
+        val result = repositoryWithCloud.createInviteLink(tagId)
+
+        assertTrue(result is SharedTagInviteCreationResult.Success)
+        assertEquals(
+            "https://urlsaver.app/invite/invite-token",
+            (result as SharedTagInviteCreationResult.Success).inviteUrl,
+        )
     }
 
     @Test

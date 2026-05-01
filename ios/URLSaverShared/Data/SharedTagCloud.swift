@@ -6,6 +6,7 @@ struct SharedTagCloudConfig: Sendable {
     let enabled: Bool
     let supabaseURL: String
     let anonKey: String
+    let inviteLinkBaseURL: String
 
     init(
         bundle: Bundle = .main,
@@ -14,10 +15,12 @@ struct SharedTagCloudConfig: Sendable {
         let envEnabled = environment["URLSAVER_SHARED_TAG_CLOUD_ENABLED"]?.trimmingCharacters(in: .whitespacesAndNewlines)
         let envURL = environment["URLSAVER_SUPABASE_URL"]?.trimmingCharacters(in: .whitespacesAndNewlines)
         let envAnonKey = environment["URLSAVER_SUPABASE_ANON_KEY"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let envInviteLinkBaseURL = environment["URLSAVER_INVITE_LINK_BASE_URL"]?.trimmingCharacters(in: .whitespacesAndNewlines)
         let bundleEnabled = bundle.object(forInfoDictionaryKey: "SharedTagCloudEnabled") as? Bool
         let bundleEnabledString = bundle.object(forInfoDictionaryKey: "SharedTagCloudEnabled") as? String
         let bundleURL = bundle.object(forInfoDictionaryKey: "SupabaseURL") as? String
         let bundleAnonKey = bundle.object(forInfoDictionaryKey: "SupabaseAnonKey") as? String
+        let bundleInviteLinkBaseURL = bundle.object(forInfoDictionaryKey: "InviteLinkBaseURL") as? String
 
         enabled = envEnabled.map(Self.parseEnabledFlag)
             ?? bundleEnabled
@@ -25,6 +28,7 @@ struct SharedTagCloudConfig: Sendable {
             ?? false
         supabaseURL = envURL ?? bundleURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         anonKey = envAnonKey ?? bundleAnonKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        inviteLinkBaseURL = Self.normalizedInviteLinkBaseURL(envInviteLinkBaseURL ?? bundleInviteLinkBaseURL)
     }
 
     var isConfigured: Bool {
@@ -38,6 +42,12 @@ struct SharedTagCloudConfig: Sendable {
         default:
             return false
         }
+    }
+
+    private static func normalizedInviteLinkBaseURL(_ raw: String?) -> String {
+        let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let value = trimmed.isEmpty ? "https://urlsaver.app" : trimmed
+        return value.trimmingTrailingSlashes()
     }
 }
 
@@ -1375,7 +1385,7 @@ final class SharedTagCloudService: @unchecked Sendable {
                 role: sharedTagInviteRole
             )
             return .success(
-                inviteURL: "urlsaver://invite/\(invite.inviteToken)",
+                inviteURL: makeInviteURL(invite.inviteToken),
                 expiresAt: SharedTagStore.parseISO8601(invite.expiresAt)
             )
         } catch let error as SharedTagCloudError {
@@ -1383,6 +1393,10 @@ final class SharedTagCloudService: @unchecked Sendable {
         } catch {
             return .failure(error.localizedDescription)
         }
+    }
+
+    private func makeInviteURL(_ inviteToken: String) -> String {
+        "\(config.inviteLinkBaseURL)/invite/\(inviteToken)"
     }
 
     func acceptInvite(inviteToken: String) async -> SharedTagInviteAcceptanceResult {
@@ -1720,4 +1734,14 @@ func parseSupabaseISO8601Date(_ value: String) -> Date? {
         return date
     }
     return ISO8601DateFormatter().date(from: value)
+}
+
+private extension String {
+    func trimmingTrailingSlashes() -> String {
+        var value = self
+        while value.hasSuffix("/") {
+            value.removeLast()
+        }
+        return value
+    }
 }

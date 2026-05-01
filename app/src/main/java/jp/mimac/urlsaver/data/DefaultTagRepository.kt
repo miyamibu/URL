@@ -809,6 +809,10 @@ class DefaultTagRepository(
     }
 
     private fun buildInviteUrl(inviteToken: String): String {
+        val baseUrl = remoteConfig.normalizedInviteLinkBaseUrl
+        if (baseUrl.isNotBlank()) {
+            return "$baseUrl/invite/$inviteToken"
+        }
         return "urlsaver://invite/$inviteToken"
     }
 

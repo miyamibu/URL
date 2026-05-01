@@ -203,9 +203,15 @@ private final class InMemorySharedTagAuthSecureStorage: SharedTagAuthSecureStora
 }
 
 private extension SharedTagCloudConfig {
-    init(enabled: Bool, supabaseURL: String, anonKey: String) {
+    init(
+        enabled: Bool,
+        supabaseURL: String,
+        anonKey: String,
+        inviteLinkBaseURL: String = "https://urlsaver.app"
+    ) {
         self.enabled = enabled
         self.supabaseURL = supabaseURL
         self.anonKey = anonKey
+        self.inviteLinkBaseURL = inviteLinkBaseURL
     }
 }

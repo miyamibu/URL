@@ -114,6 +114,7 @@ class AppContainer(context: Context) {
             enabled = BuildConfig.SHARED_TAG_CLOUD_ENABLED,
             supabaseUrl = BuildConfig.SUPABASE_URL,
             anonKey = BuildConfig.SUPABASE_ANON_KEY,
+            inviteLinkBaseUrl = BuildConfig.INVITE_LINK_BASE_URL,
         )
     }
     private val sharedTagAuthRemoteDataSource: SharedTagAuthRemoteDataSource by lazy {
