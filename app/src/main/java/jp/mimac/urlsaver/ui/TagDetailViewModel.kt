@@ -12,6 +12,7 @@ import jp.mimac.urlsaver.domain.MigrateSharedTagResult
 import jp.mimac.urlsaver.domain.SharedTagCloudState
 import jp.mimac.urlsaver.domain.SharedTagInviteCreationResult
 import jp.mimac.urlsaver.domain.SharedTagMemberRecord
+import jp.mimac.urlsaver.domain.SharedTagOwnershipTransferResult
 import jp.mimac.urlsaver.domain.SharedTagRecord
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -130,6 +131,10 @@ class TagDetailViewModel(
 
     suspend fun createInviteLink(): SharedTagInviteCreationResult {
         return tagRepository.createInviteLink(tagId)
+    }
+
+    suspend fun transferOwnership(newOwnerUserId: String): SharedTagOwnershipTransferResult {
+        return tagRepository.transferOwnership(tagId, newOwnerUserId)
     }
 
     suspend fun leaveSharedTag(): Boolean {

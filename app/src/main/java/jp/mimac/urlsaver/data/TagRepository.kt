@@ -8,6 +8,7 @@ import jp.mimac.urlsaver.domain.SharedTagInviteCreationResult
 import jp.mimac.urlsaver.domain.TagImportResult
 import jp.mimac.urlsaver.domain.TagSharePayload
 import jp.mimac.urlsaver.domain.SharedTagMemberRecord
+import jp.mimac.urlsaver.domain.SharedTagOwnershipTransferResult
 import jp.mimac.urlsaver.domain.SharedTagRecord
 import jp.mimac.urlsaver.domain.TagWithCount
 import jp.mimac.urlsaver.domain.AssignTagResult
@@ -47,5 +48,6 @@ interface TagRepository {
     suspend fun createInviteLink(tagId: Long): SharedTagInviteCreationResult
     suspend fun acceptInvite(inviteToken: String): SharedTagInviteAcceptanceResult
     suspend fun leaveSharedTag(tagId: Long): Boolean
+    suspend fun transferOwnership(tagId: Long, newOwnerUserId: String): SharedTagOwnershipTransferResult
     suspend fun removeMember(tagId: Long, userId: String): Boolean
 }

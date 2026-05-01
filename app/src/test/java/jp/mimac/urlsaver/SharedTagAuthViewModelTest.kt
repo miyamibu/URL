@@ -14,6 +14,7 @@ import jp.mimac.urlsaver.domain.SharedTagCloudState
 import jp.mimac.urlsaver.domain.SharedTagInviteAcceptanceResult
 import jp.mimac.urlsaver.domain.SharedTagInviteCreationResult
 import jp.mimac.urlsaver.domain.SharedTagMemberRecord
+import jp.mimac.urlsaver.domain.SharedTagOwnershipTransferResult
 import jp.mimac.urlsaver.domain.SharedTagRecord
 import jp.mimac.urlsaver.domain.TagImportResult
 import jp.mimac.urlsaver.domain.TagSharePayload
@@ -132,6 +133,8 @@ private class FakeTagRepository(
         SharedTagInviteCreationResult.AuthRequired
     override suspend fun acceptInvite(inviteToken: String): SharedTagInviteAcceptanceResult =
         SharedTagInviteAcceptanceResult.AuthRequired
+    override suspend fun transferOwnership(tagId: Long, newOwnerUserId: String): SharedTagOwnershipTransferResult =
+        SharedTagOwnershipTransferResult.AuthRequired
     override suspend fun leaveSharedTag(tagId: Long): Boolean = false
     override suspend fun removeMember(tagId: Long, userId: String): Boolean = false
 }

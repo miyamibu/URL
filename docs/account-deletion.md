@@ -12,7 +12,8 @@
 - この RPC は次の安全条件で動作する。
   - 通常メンバーは自分の membership を外して auth user を削除できる。
   - 自分だけが所属する owner shared tag は server-side cleanup の対象にできる。
-  - 他の active member がいる shared tag の owner は、所有権移譲未実装のため削除をブロックする。
+  - 他の active member がいる shared tag の owner は、先に `transfer_shared_tag_ownership()` で owner を移譲する必要がある。
+  - 削除アカウントの `created_by` / `added_by` が残る共有タグデータは、残存する current owner に寄せてから auth user を削除する。
 
 ## Google Play web route
 
@@ -25,5 +26,5 @@
 - Android release では `release.supabase.url` / `release.supabase.anon.key` / `release.shared.tag.cloud.enabled=true`、または対応する `URLSAVER_RELEASE_*` 環境変数を設定して cloud を有効化する。
 - iOS release では `ruby ios/generate_xcodeproj.rb` 実行前に `URLSAVER_SHARED_TAG_CLOUD_ENABLED=true` / `URLSAVER_SUPABASE_URL` / `URLSAVER_SUPABASE_ANON_KEY` を設定して Info.plist へ反映させる。
 - iOS / Android の shared-tag cloud を public release で有効化する前に、実運用用の Supabase 設定と web deletion route の公開をそろえる。
-- owner transfer 未実装のため、owner with active members の削除は引き続きブロックされる。
+- owner with active members の削除は引き続きブロックされるが、アプリ内の owner 移譲後は削除できる。
 - `delete_my_account()` を production で有効にする前に、Supabase project 側で migration 適用と public web deletion route の配信を完了する。

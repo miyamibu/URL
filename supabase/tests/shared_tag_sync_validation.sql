@@ -31,6 +31,7 @@ grant execute on function auth.uid() to anon, authenticated;
 \i supabase/migrations/20260420120000_shared_tag_sync.sql
 \i supabase/migrations/20260422120000_shared_tag_invites.sql
 \i supabase/migrations/20260423150000_account_deletion.sql
+\i supabase/migrations/20260501090000_shared_tag_owner_transfer.sql
 \i supabase/migrations/20260501120000_entitlement_grants.sql
 
 insert into auth.users (id)
@@ -303,6 +304,45 @@ begin
                 raise;
             end if;
     end;
+
+    perform set_config('request.jwt.claim.sub', owner_id::text, true);
+    perform public.transfer_shared_tag_ownership(tag_uuid, viewer_id);
+
+    if (
+        select role
+        from public.shared_tag_members member
+        where member.tag_id = tag_uuid
+          and member.user_id = viewer_id
+    ) <> 'owner' then
+        raise exception 'ownership transfer did not promote viewer';
+    end if;
+
+    if (
+        select role
+        from public.shared_tag_members member
+        where member.tag_id = tag_uuid
+          and member.user_id = owner_id
+    ) <> 'editor' then
+        raise exception 'ownership transfer did not demote previous owner';
+    end if;
+
+    perform public.delete_my_account();
+
+    if exists (
+        select 1
+        from auth.users
+        where id = owner_id
+    ) then
+        raise exception 'transferred previous owner auth user was not deleted';
+    end if;
+
+    if (
+        select created_by
+        from public.shared_tags
+        where id = tag_uuid
+    ) <> viewer_id then
+        raise exception 'retained shared tag was not reattributed to current owner';
+    end if;
 
     perform set_config('request.jwt.claim.sub', editor_id::text, true);
     perform public.delete_my_account();

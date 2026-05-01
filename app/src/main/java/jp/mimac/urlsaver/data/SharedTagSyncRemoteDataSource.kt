@@ -5,6 +5,7 @@ import jp.mimac.urlsaver.domain.AcceptSharedTagInviteResponse
 import jp.mimac.urlsaver.domain.CreateSharedTagInviteResponse
 import jp.mimac.urlsaver.domain.PullSharedTagSnapshotResponse
 import jp.mimac.urlsaver.domain.SharedTagSyncOperation
+import jp.mimac.urlsaver.domain.TransferSharedTagOwnershipResponse
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -32,6 +33,12 @@ interface SharedTagSyncRemoteDataSource {
         session: SharedTagAuthSession,
         inviteToken: String,
     ): AcceptSharedTagInviteResponse
+
+    suspend fun transferOwnership(
+        session: SharedTagAuthSession,
+        remoteTagId: String,
+        newOwnerUserId: String,
+    ): TransferSharedTagOwnershipResponse
 
     suspend fun deleteAccount(
         session: SharedTagAuthSession,
@@ -120,6 +127,26 @@ class SupabaseSharedTagSyncRemoteDataSource(
                 session = session,
                 requestBody = json.encodeToString(
                     mapOf("p_token" to inviteToken),
+                ),
+            )
+        }
+        return json.decodeFromString(response)
+    }
+
+    override suspend fun transferOwnership(
+        session: SharedTagAuthSession,
+        remoteTagId: String,
+        newOwnerUserId: String,
+    ): TransferSharedTagOwnershipResponse {
+        val response = withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/transfer_shared_tag_ownership",
+                session = session,
+                requestBody = json.encodeToString(
+                    mapOf(
+                        "p_tag_id" to remoteTagId,
+                        "p_new_owner_user_id" to newOwnerUserId,
+                    ),
                 ),
             )
         }

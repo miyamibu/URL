@@ -31,6 +31,7 @@ import jp.mimac.urlsaver.domain.RemoteSharedTagUrl
 import jp.mimac.urlsaver.domain.SharedTagScope
 import jp.mimac.urlsaver.domain.SharedTagSyncOperation
 import jp.mimac.urlsaver.domain.SharedTagSyncStatus
+import jp.mimac.urlsaver.domain.TransferSharedTagOwnershipResponse
 import jp.mimac.urlsaver.domain.ServiceType
 import jp.mimac.urlsaver.util.AppClock
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -468,6 +469,18 @@ class SharedTagSyncRepositoryTest {
             session: SharedTagAuthSession,
             inviteToken: String,
         ): AcceptSharedTagInviteResponse = acceptInviteResponse
+
+        override suspend fun transferOwnership(
+            session: SharedTagAuthSession,
+            remoteTagId: String,
+            newOwnerUserId: String,
+        ): TransferSharedTagOwnershipResponse {
+            return TransferSharedTagOwnershipResponse(
+                tagId = remoteTagId,
+                previousOwnerUserId = session.authUserId,
+                newOwnerUserId = newOwnerUserId,
+            )
+        }
 
         override suspend fun deleteAccount(session: SharedTagAuthSession) = Unit
     }

@@ -8,6 +8,7 @@ import jp.mimac.urlsaver.domain.SharedTagAccountDeletionResult
 import jp.mimac.urlsaver.domain.SharedTagCloudState
 import jp.mimac.urlsaver.domain.SharedTagInviteAcceptanceResult
 import jp.mimac.urlsaver.domain.SharedTagInviteCreationResult
+import jp.mimac.urlsaver.domain.SharedTagOwnershipTransferResult
 import jp.mimac.urlsaver.domain.AssignTagResult
 import jp.mimac.urlsaver.domain.CreateTagResult
 import jp.mimac.urlsaver.domain.FeatureEntitlements
@@ -621,6 +622,59 @@ class DefaultTagRepository(
                 SharedTagInviteAcceptanceResult.InvalidInvite
             } else {
                 SharedTagInviteAcceptanceResult.Failure(message.ifBlank { "招待に参加できませんでした" })
+            }
+        }
+    }
+
+    override suspend fun transferOwnership(
+        tagId: Long,
+        newOwnerUserId: String,
+    ): SharedTagOwnershipTransferResult {
+        val session = currentSyncSessionOrNull() ?: return SharedTagOwnershipTransferResult.AuthRequired
+        val targetUserId = newOwnerUserId.trim()
+        if (targetUserId.isBlank() || targetUserId == session.authUserId) {
+            return SharedTagOwnershipTransferResult.InvalidTarget
+        }
+        val tag = tagDao.findTagById(tagId) ?: return SharedTagOwnershipTransferResult.InvalidTarget
+        val remoteTagId = tag.remoteTagId ?: return SharedTagOwnershipTransferResult.InvalidTarget
+        if (tag.scope != SharedTagScope.SYNCED) return SharedTagOwnershipTransferResult.InvalidTarget
+
+        val currentMember = tagDao.findCurrentUserMember(tagId, session.authUserId)
+        if (currentMember?.role != SharedTagMemberRole.OWNER) {
+            return SharedTagOwnershipTransferResult.OwnerOnly
+        }
+
+        val targetMember = tagDao.findMember(tagId, session.authUserId, targetUserId)
+            ?: return SharedTagOwnershipTransferResult.InvalidTarget
+        if (targetMember.status != SharedTagMemberStatus.ACTIVE ||
+            targetMember.role == SharedTagMemberRole.OWNER
+        ) {
+            return SharedTagOwnershipTransferResult.InvalidTarget
+        }
+
+        return runCatching {
+            remoteDataSource.transferOwnership(
+                session = session,
+                remoteTagId = remoteTagId,
+                newOwnerUserId = targetUserId,
+            )
+            syncNowOrSchedule(session.authUserId)
+            SharedTagOwnershipTransferResult.Success
+        }.getOrElse { error ->
+            val message = error.message.orEmpty()
+            when {
+                message.contains("auth_required", ignoreCase = true) ->
+                    SharedTagOwnershipTransferResult.AuthRequired
+                message.contains("forbidden", ignoreCase = true) ->
+                    SharedTagOwnershipTransferResult.OwnerOnly
+                message.contains("invalid_new_owner", ignoreCase = true) ||
+                    message.contains("target_member_not_found", ignoreCase = true) ||
+                    message.contains("target_member_not_active", ignoreCase = true) ||
+                    message.contains("target_already_owner", ignoreCase = true) ->
+                    SharedTagOwnershipTransferResult.InvalidTarget
+                else -> SharedTagOwnershipTransferResult.Failure(
+                    message.ifBlank { "オーナー権限を移譲できませんでした" },
+                )
             }
         }
     }

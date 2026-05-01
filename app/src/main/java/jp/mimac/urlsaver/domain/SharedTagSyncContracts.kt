@@ -119,3 +119,10 @@ data class AcceptSharedTagInviteResponse(
     val role: String,
     val status: String,
 )
+
+@Serializable
+data class TransferSharedTagOwnershipResponse(
+    @SerialName("tag_id") val tagId: String,
+    @SerialName("previous_owner_user_id") val previousOwnerUserId: String,
+    @SerialName("new_owner_user_id") val newOwnerUserId: String,
+)

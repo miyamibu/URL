@@ -38,6 +38,7 @@ import jp.mimac.urlsaver.domain.ServiceType
 import jp.mimac.urlsaver.domain.TagSharePayload
 import jp.mimac.urlsaver.domain.TagShareUrl
 import jp.mimac.urlsaver.domain.AssignTagResult
+import jp.mimac.urlsaver.domain.TransferSharedTagOwnershipResponse
 import jp.mimac.urlsaver.util.AppClock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -581,6 +582,18 @@ class TagRepositoryTest {
                 tagName = "joined-tag",
                 role = "editor",
                 status = "active",
+            )
+        }
+
+        override suspend fun transferOwnership(
+            session: SharedTagAuthSession,
+            remoteTagId: String,
+            newOwnerUserId: String,
+        ): TransferSharedTagOwnershipResponse {
+            return TransferSharedTagOwnershipResponse(
+                tagId = remoteTagId,
+                previousOwnerUserId = session.authUserId,
+                newOwnerUserId = newOwnerUserId,
             )
         }
 

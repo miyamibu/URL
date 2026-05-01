@@ -476,7 +476,7 @@ final class URLSaverAppModel: ObservableObject {
         case .authRequired:
             enqueueNotification(AppNotification(message: "先に共有タグクラウドへサインインしてください", actionLabel: nil, action: nil, autoDismissAfter: 4))
         case .ownerTransferRequired:
-            enqueueNotification(AppNotification(message: "他のメンバーがいる共有タグのオーナー権限を移譲してから削除してください", actionLabel: nil, action: nil, autoDismissAfter: 5))
+            enqueueNotification(AppNotification(message: "共有タグ詳細の参加者からオーナー権限を移譲してから削除してください", actionLabel: nil, action: nil, autoDismissAfter: 5))
         case .failure(let message):
             enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 4))
         }
@@ -567,6 +567,21 @@ final class URLSaverAppModel: ObservableObject {
         case .success:
             await refreshSharedTagCloudState()
             enqueueNotification(AppNotification(message: "共有タグから抜けました", actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return true
+        case .authRequired:
+            enqueueNotification(AppNotification(message: "先に共有タグクラウドへサインインしてください", actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return false
+        case .failure(let message):
+            enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return false
+        }
+    }
+
+    func transferSharedTagOwnership(remoteTagID: String, newOwnerUserID: String) async -> Bool {
+        switch await services.sharedTagCloud.transferOwnership(remoteTagID: remoteTagID, newOwnerUserID: newOwnerUserID) {
+        case .success:
+            await refreshSharedTagCloudState()
+            enqueueNotification(AppNotification(message: "オーナー権限を移譲しました", actionLabel: nil, action: nil, autoDismissAfter: 4))
             return true
         case .authRequired:
             enqueueNotification(AppNotification(message: "先に共有タグクラウドへサインインしてください", actionLabel: nil, action: nil, autoDismissAfter: 4))

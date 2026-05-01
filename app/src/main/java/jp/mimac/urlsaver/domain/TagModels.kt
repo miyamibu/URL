@@ -148,6 +148,14 @@ sealed interface SharedTagInviteAcceptanceResult {
     data class Failure(val message: String) : SharedTagInviteAcceptanceResult
 }
 
+sealed interface SharedTagOwnershipTransferResult {
+    data object Success : SharedTagOwnershipTransferResult
+    data object AuthRequired : SharedTagOwnershipTransferResult
+    data object OwnerOnly : SharedTagOwnershipTransferResult
+    data object InvalidTarget : SharedTagOwnershipTransferResult
+    data class Failure(val message: String) : SharedTagOwnershipTransferResult
+}
+
 sealed interface SharedTagAccountDeletionResult {
     data object Success : SharedTagAccountDeletionResult
     data object AuthRequired : SharedTagAccountDeletionResult

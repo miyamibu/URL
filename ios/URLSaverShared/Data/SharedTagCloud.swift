@@ -288,6 +288,19 @@ private struct SharedTagSyncRemoteDataSource {
         return try makeSharedTagCloudDecoder().decode(AcceptSharedTagInviteResponse.self, from: data)
     }
 
+    func transferOwnership(
+        session: SharedTagAuthSession,
+        remoteTagID: String,
+        newOwnerUserID: String
+    ) async throws -> TransferSharedTagOwnershipResponse {
+        let data = try await executeRPC(
+            path: "/rest/v1/rpc/transfer_shared_tag_ownership",
+            session: session,
+            body: TransferOwnershipPayload(tagID: remoteTagID, newOwnerUserID: newOwnerUserID)
+        )
+        return try makeSharedTagCloudDecoder().decode(TransferSharedTagOwnershipResponse.self, from: data)
+    }
+
     func deleteAccount(session: SharedTagAuthSession) async throws {
         _ = try await executeRPC(
             path: "/rest/v1/rpc/delete_my_account",
@@ -395,7 +408,7 @@ enum SharedTagCloudError: Error {
         case .invalidInvite:
             return "招待リンクが無効か期限切れです"
         case .ownerTransferRequired:
-            return "他のメンバーがいる共有タグのオーナー権限を移譲してから削除してください"
+            return "共有タグ詳細の参加者からオーナー権限を移譲してから削除してください"
         case .httpStatus(_, let message):
             return message.isEmpty ? "通信に失敗しました" : message
         case .message(let message):
@@ -1295,6 +1308,41 @@ final class SharedTagCloudService: @unchecked Sendable {
         }
     }
 
+    func transferOwnership(remoteTagID: String, newOwnerUserID: String) async -> SharedTagMutationResult {
+        guard let session = try? sessionStore.load() else {
+            return .authRequired
+        }
+        let targetUserID = newOwnerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !targetUserID.isEmpty, targetUserID != session.authUserID else {
+            return .failure("移譲先は参加中の別メンバーを選んでください")
+        }
+        do {
+            guard let tag = try store.loadTag(authUserID: session.authUserID, remoteTagID: remoteTagID) else {
+                return .failure("共有タグが見つかりませんでした")
+            }
+            guard tag.currentUserRole == .owner else {
+                return .failure("オーナー権限を移譲できるのは現在のオーナーだけです")
+            }
+            guard let target = try store.loadActiveMembersForTag(authUserID: session.authUserID, remoteTagID: remoteTagID)
+                .first(where: { $0.userID == targetUserID && !$0.isCurrentUser && $0.role != .owner })
+            else {
+                return .failure("移譲先は参加中のメンバーを選んでください")
+            }
+            _ = target
+            _ = try await syncRemoteDataSource.transferOwnership(
+                session: session,
+                remoteTagID: remoteTagID,
+                newOwnerUserID: targetUserID
+            )
+            try await refreshLocalState(session: session)
+            return .success
+        } catch let error as SharedTagCloudError {
+            return .failure(error.userMessage)
+        } catch {
+            return .failure(error.localizedDescription)
+        }
+    }
+
     func assignEntry(remoteTagID: String, entryID: Int64) async -> SharedTagMutationResult {
         guard let session = try? sessionStore.load() else {
             return .authRequired
@@ -1508,6 +1556,21 @@ private struct CreateInvitePayload: Encodable {
     }
 }
 
+private struct TransferOwnershipPayload: Encodable {
+    let pTagID: String
+    let pNewOwnerUserID: String
+
+    enum CodingKeys: String, CodingKey {
+        case pTagID = "p_tag_id"
+        case pNewOwnerUserID = "p_new_owner_user_id"
+    }
+
+    init(tagID: String, newOwnerUserID: String) {
+        self.pTagID = tagID
+        self.pNewOwnerUserID = newOwnerUserID
+    }
+}
+
 private struct SupabasePasswordAuthRequest: Encodable {
     let email: String
     let password: String
@@ -1706,6 +1769,18 @@ private struct AcceptSharedTagInviteResponse: Decodable {
     enum CodingKeys: String, CodingKey {
         case tagName = "tag_name"
         case role
+    }
+}
+
+private struct TransferSharedTagOwnershipResponse: Decodable {
+    let tagID: String
+    let previousOwnerUserID: String
+    let newOwnerUserID: String
+
+    enum CodingKeys: String, CodingKey {
+        case tagID = "tag_id"
+        case previousOwnerUserID = "previous_owner_user_id"
+        case newOwnerUserID = "new_owner_user_id"
     }
 }
 
