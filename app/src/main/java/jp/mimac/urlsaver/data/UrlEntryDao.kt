@@ -72,6 +72,7 @@ interface UrlEntryDao {
         """
         UPDATE url_entries
         SET fetchedTitle = :fetchedTitle,
+            fetchedAuthorName = :fetchedAuthorName,
             fetchedBody = :fetchedBody,
             fetchedBodyKind = :fetchedBodyKind,
             bodySummary = :bodySummary,
@@ -90,6 +91,7 @@ interface UrlEntryDao {
     suspend fun updateMetadata(
         entryId: Long,
         fetchedTitle: String?,
+        fetchedAuthorName: String?,
         fetchedBody: String?,
         fetchedBodyKind: MetadataBodyKind?,
         bodySummary: String?,
@@ -151,6 +153,20 @@ interface UrlEntryDao {
         """
     )
     suspend fun markMetadataPending(entryId: Long, requestedAt: Long)
+
+    @Query(
+        """
+        SELECT id
+        FROM url_entries
+        WHERE localProvenanceCount > 0
+          AND recordState != 'PENDING_DELETE'
+          AND serviceType = 'YOUTUBE'
+          AND (fetchedAuthorName IS NULL OR TRIM(fetchedAuthorName) = '')
+        ORDER BY createdAt DESC
+        LIMIT :limit
+        """
+    )
+    suspend fun findYouTubeEntriesMissingAuthorName(limit: Int): List<Long>
 
     @Query(
         """

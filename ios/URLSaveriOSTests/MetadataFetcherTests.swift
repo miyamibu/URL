@@ -436,6 +436,36 @@ final class MetadataFetcherTests: XCTestCase {
         XCTAssertEqual(update.badgeImageURL, "https://yt3.ggpht.com/badge-avatar=s176-c-k-c0x00ffffff-no-rj")
     }
 
+    func testYouTubePrefersChannelBadgeOverAuthorPageOgImage() async {
+        let oEmbed = URL(string: "https://mock.local/youtube-oembed-og-and-avatar")!
+        let original = URL(string: "https://www.youtube.com/watch?v=authorAvatar")!
+        MockURLProtocol.responses[oEmbed.absoluteString] = .json(
+            """
+            {
+              "title": "Author avatar test",
+              "author_url": "https://www.youtube.com/@AvatarChannel",
+              "thumbnail_url": "https://images.example/youtube-thumb.jpg"
+            }
+            """
+        )
+        MockURLProtocol.responses["https://www.youtube.com/@AvatarChannel"] = .html(
+            #"""
+            <html>
+              <head><meta property="og:image" content="https://images.example/channel-og-image.jpg"></head>
+              <script>{"avatar":{"thumbnails":[{"url":"https:\/\/yt3.googleusercontent.com\/real-avatar=s900-c-k-c0x00ffffff-no-rj"}]}}</script>
+            </html>
+            """#
+        )
+        MockURLProtocol.responses[original.absoluteString] = .html("", statusCode: 404)
+
+        let update = await makeFetcher(
+            youtubeOEmbedEndpointBuilder: { _ in oEmbed }
+        ).fetch(for: makeRecord(serviceType: .youtube, url: original.absoluteString))
+
+        XCTAssertEqual(update.metadataState, .ready)
+        XCTAssertEqual(update.badgeImageURL, "https://yt3.googleusercontent.com/real-avatar=s176-c-k-c0x00ffffff-no-rj")
+    }
+
     func testYouTubeNormalizesLargeChannelBadgeForListIcon() async {
         let oEmbed = URL(string: "https://mock.local/youtube-oembed-large-badge")!
         let original = URL(string: "https://www.youtube.com/watch?v=largeBadge")!

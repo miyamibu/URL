@@ -46,6 +46,7 @@ interface UrlRepository : MainListRepository {
     suspend fun applyMetadataUpdate(entryId: Long, metadata: MetadataUpdate)
     suspend fun retryMetadata(entryId: Long): Boolean
     suspend fun refreshMetadata(entryId: Long): Boolean = retryMetadata(entryId)
+    suspend fun backfillYouTubeAuthorNames(limit: Int = 50): Int = 0
 
     suspend fun loadEntry(entryId: Long): UrlEntryEntity?
 }

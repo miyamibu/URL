@@ -50,6 +50,7 @@ class FetchMetadataWorker(
                     entryId,
                     MetadataUpdate(
                         fetchedTitle = outcome.fetchedTitle,
+                        fetchedAuthorName = outcome.fetchedAuthorName ?: entry.fetchedAuthorName,
                         fetchedBody = outcome.fetchedBody ?: entry.fetchedBody,
                         fetchedBodyKind = outcome.fetchedBodyKind ?: entry.fetchedBodyKind,
                         bodySummary = outcome.bodySummary ?: entry.bodySummary,
@@ -72,6 +73,7 @@ class FetchMetadataWorker(
                     entryId,
                     MetadataUpdate(
                         fetchedTitle = entry.fetchedTitle,
+                        fetchedAuthorName = entry.fetchedAuthorName,
                         fetchedBody = entry.fetchedBody,
                         fetchedBodyKind = entry.fetchedBodyKind,
                         bodySummary = entry.bodySummary,
@@ -98,6 +100,7 @@ class FetchMetadataWorker(
                         entryId,
                         MetadataUpdate(
                             fetchedTitle = entry.fetchedTitle,
+                            fetchedAuthorName = entry.fetchedAuthorName,
                             fetchedBody = entry.fetchedBody,
                             fetchedBodyKind = entry.fetchedBodyKind,
                             bodySummary = entry.bodySummary,

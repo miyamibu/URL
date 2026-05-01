@@ -373,6 +373,7 @@ class DefaultUrlRepository(
         dao.updateMetadata(
             entryId = entryId,
             fetchedTitle = metadata.fetchedTitle,
+            fetchedAuthorName = metadata.fetchedAuthorName,
             fetchedBody = metadata.fetchedBody,
             fetchedBodyKind = metadata.fetchedBodyKind,
             bodySummary = metadata.bodySummary,
@@ -403,6 +404,21 @@ class DefaultUrlRepository(
         val now = clock.nowEpochMillis()
         dao.markMetadataPending(entryId, now)
         return enqueueMetadataOrMarkUnavailable(entryId, now)
+    }
+
+    override suspend fun backfillYouTubeAuthorNames(limit: Int): Int {
+        val entryIds = dao.findYouTubeEntriesMissingAuthorName(limit)
+        if (entryIds.isEmpty()) return 0
+
+        val now = clock.nowEpochMillis()
+        var enqueuedCount = 0
+        for (entryId in entryIds) {
+            dao.markMetadataPending(entryId, now)
+            if (enqueueMetadataOrMarkUnavailable(entryId, now)) {
+                enqueuedCount += 1
+            }
+        }
+        return enqueuedCount
     }
 
     override suspend fun loadEntry(entryId: Long): UrlEntryEntity? = dao.findById(entryId)

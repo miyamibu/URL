@@ -35,6 +35,7 @@ data class UrlEntryEntity(
     val contentContext: ContentContext,
     val userTitle: String? = null,
     val fetchedTitle: String? = null,
+    val fetchedAuthorName: String? = null,
     val fetchedBody: String? = null,
     val fetchedBodyKind: MetadataBodyKind? = null,
     val bodySummary: String? = null,
@@ -73,6 +74,7 @@ data class UserLabelEntity(
 
 data class MetadataUpdate(
     val fetchedTitle: String?,
+    val fetchedAuthorName: String? = null,
     val fetchedBody: String?,
     val fetchedBodyKind: MetadataBodyKind? = null,
     val bodySummary: String?,

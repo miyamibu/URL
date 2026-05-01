@@ -19,7 +19,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         SharedTagSyncOutboxEntity::class,
         SharedTagSyncStateEntity::class,
     ],
-    version = 11,
+    version = 12,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -44,6 +44,7 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_8_9,
                     MIGRATION_9_10,
                     MIGRATION_10_11,
+                    MIGRATION_11_12,
                 )
                 .addCallback(
                     object : Callback() {
@@ -326,6 +327,12 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE url_entries ADD COLUMN sharedReferenceCount INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_url_entries_localProvenanceCount_recordState ON url_entries(localProvenanceCount, recordState)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_url_entries_sharedReferenceCount ON url_entries(sharedReferenceCount)")
+            }
+        }
+
+        val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE url_entries ADD COLUMN fetchedAuthorName TEXT")
             }
         }
     }

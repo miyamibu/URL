@@ -34,6 +34,7 @@ struct MetadataFetcher: Sendable {
         guard let url = URL(string: record.openURL) else {
             return MetadataUpdate(
                 fetchedTitle: nil,
+                fetchedAuthorName: nil,
                 fetchedBody: nil,
                 fetchedBodyKind: nil,
                 bodySummary: nil,
@@ -147,6 +148,7 @@ struct MetadataFetcher: Sendable {
 
             return MetadataUpdate(
                 fetchedTitle: metadata.title,
+                fetchedAuthorName: metadata.authorName,
                 fetchedBody: metadata.body,
                 fetchedBodyKind: metadata.bodyKind,
                 bodySummary: metadata.summary,
@@ -216,6 +218,25 @@ struct MetadataFetcher: Sendable {
             ?? extractYouTubeChannelBadge(html: document.html)
     }
 
+    private func fetchYouTubeBadgeImageURL(from pageURLString: String?) async -> String? {
+        guard let pageURLString,
+              let pageURL = URL(string: pageURLString),
+              let document = try? await fetchHTMLDocument(url: pageURL) else {
+            return nil
+        }
+
+        if let channelBadge = extractYouTubeChannelBadge(html: document.html) {
+            return channelBadge
+        }
+
+        return absoluteURLString(metaContent(property: "og:image", html: document.html), relativeTo: document.finalURL)
+            .flatMap(normalizeYouTubeBadgeImageURL)
+            .flatMap { isYouTubeChannelBadgeImageURL($0) ? $0 : nil }
+            ?? absoluteURLString(metaContent(property: "twitter:image", html: document.html), relativeTo: document.finalURL)
+                .flatMap(normalizeYouTubeBadgeImageURL)
+                .flatMap { isYouTubeChannelBadgeImageURL($0) ? $0 : nil }
+    }
+
     private func fetchYouTubePageBadgeImageURL(from pageURL: URL) async -> String? {
         guard let document = try? await fetchHTMLDocument(url: pageURL) else {
             return nil
@@ -256,6 +277,7 @@ struct MetadataFetcher: Sendable {
     private func failedUpdate(error: MetadataError) -> MetadataUpdate {
         MetadataUpdate(
             fetchedTitle: nil,
+            fetchedAuthorName: nil,
             fetchedBody: nil,
             fetchedBodyKind: nil,
             bodySummary: nil,
@@ -274,6 +296,7 @@ struct MetadataFetcher: Sendable {
     private func unavailableUpdate(error: MetadataError) -> MetadataUpdate {
         MetadataUpdate(
             fetchedTitle: nil,
+            fetchedAuthorName: nil,
             fetchedBody: nil,
             fetchedBodyKind: nil,
             bodySummary: nil,
@@ -304,13 +327,14 @@ struct MetadataFetcher: Sendable {
               let payload = await fetchJSONObject(url: endpoint) else {
             return .empty
         }
-        var badgeImageURL = await fetchBadgeImageURL(from: stringField(payload, "author_url"))
+        var badgeImageURL = await fetchYouTubeBadgeImageURL(from: stringField(payload, "author_url"))
         if badgeImageURL == nil {
             badgeImageURL = await fetchYouTubePageBadgeImageURL(from: inputURL)
         }
 
         return ExtractedMetadata(
             title: stringField(payload, "title"),
+            authorName: stringField(payload, "author_name"),
             body: nil,
             bodyKind: nil,
             summary: nil,
@@ -413,6 +437,7 @@ struct MetadataFetcher: Sendable {
         let body = oEmbedParagraphBody(from: stringField(payload, "html"))
         return ExtractedMetadata(
             title: stringField(payload, "author_name"),
+            authorName: stringField(payload, "author_name"),
             body: body,
             bodyKind: body == nil ? nil : .xPostText,
             summary: summarize(body),
@@ -438,6 +463,7 @@ struct MetadataFetcher: Sendable {
 
         return ExtractedMetadata(
             title: user.flatMap { stringField($0, "name", "screen_name") },
+            authorName: user.flatMap { stringField($0, "name", "screen_name") },
             body: body,
             bodyKind: body == nil ? nil : .xPostText,
             summary: summarize(body),
@@ -462,6 +488,7 @@ struct MetadataFetcher: Sendable {
 
         return ExtractedMetadata(
             title: stringField(payload, "author_name"),
+            authorName: stringField(payload, "author_name"),
             body: body,
             bodyKind: body == nil ? nil : .instagramCaption,
             summary: summarize(body),
@@ -740,6 +767,10 @@ struct MetadataFetcher: Sendable {
             }
         }
         return value
+    }
+
+    private func isYouTubeChannelBadgeImageURL(_ value: String) -> Bool {
+        value.contains("yt3.ggpht.com") || value.contains("yt3.googleusercontent.com")
     }
 
     private func instagramProfileBadgeImage(in html: String) -> String? {
@@ -1258,6 +1289,7 @@ struct MetadataFetcher: Sendable {
     private func readyUpdate(from metadata: ExtractedMetadata, finalURL: URL) -> MetadataUpdate {
         MetadataUpdate(
             fetchedTitle: metadata.title,
+            fetchedAuthorName: metadata.authorName,
             fetchedBody: metadata.body,
             fetchedBodyKind: metadata.bodyKind,
             bodySummary: metadata.summary,
@@ -1276,13 +1308,15 @@ struct MetadataFetcher: Sendable {
     private func merge(update: MetadataUpdate, with supplement: ExtractedMetadata) -> MetadataUpdate {
         guard supplement.hasAnyContent else { return update }
         let title = update.fetchedTitle ?? supplement.title
+        let authorName = update.fetchedAuthorName ?? supplement.authorName
         let body = update.fetchedBody ?? supplement.body
         let thumbnail = update.thumbnailURL ?? supplement.thumbnail
         let badgeImageURL = update.badgeImageURL ?? supplement.badgeImageURL
-        let state: MetadataState = (title != nil || body != nil || thumbnail != nil || badgeImageURL != nil) ? .ready : update.metadataState
+        let state: MetadataState = (title != nil || authorName != nil || body != nil || thumbnail != nil || badgeImageURL != nil) ? .ready : update.metadataState
 
         return MetadataUpdate(
             fetchedTitle: title,
+            fetchedAuthorName: authorName,
             fetchedBody: body,
             fetchedBodyKind: update.fetchedBodyKind ?? supplement.bodyKind,
             bodySummary: update.bodySummary ?? supplement.summary,
@@ -1300,13 +1334,15 @@ struct MetadataFetcher: Sendable {
 
     private func merge(primary: MetadataUpdate, supplement: MetadataUpdate) -> MetadataUpdate {
         let title = primary.fetchedTitle ?? supplement.fetchedTitle
+        let authorName = primary.fetchedAuthorName ?? supplement.fetchedAuthorName
         let body = primary.fetchedBody ?? supplement.fetchedBody
         let thumbnail = primary.thumbnailURL ?? supplement.thumbnailURL
         let badgeImageURL = primary.badgeImageURL ?? supplement.badgeImageURL
-        let state: MetadataState = (title != nil || body != nil || thumbnail != nil || badgeImageURL != nil) ? .ready : primary.metadataState
+        let state: MetadataState = (title != nil || authorName != nil || body != nil || thumbnail != nil || badgeImageURL != nil) ? .ready : primary.metadataState
 
         return MetadataUpdate(
             fetchedTitle: title,
+            fetchedAuthorName: authorName,
             fetchedBody: body,
             fetchedBodyKind: primary.fetchedBodyKind ?? supplement.fetchedBodyKind,
             bodySummary: primary.bodySummary ?? supplement.bodySummary,
@@ -1417,6 +1453,7 @@ struct MetadataFetcher: Sendable {
 
 private struct ExtractedMetadata {
     let title: String?
+    var authorName: String? = nil
     let body: String?
     let bodyKind: MetadataBodyKind?
     let summary: String?
@@ -1426,11 +1463,12 @@ private struct ExtractedMetadata {
     let canonicalID: String?
 
     var hasAnyContent: Bool {
-        title != nil || body != nil || thumbnail != nil || badgeImageURL != nil
+        title != nil || authorName != nil || body != nil || thumbnail != nil || badgeImageURL != nil
     }
 
     static let empty = ExtractedMetadata(
         title: nil,
+        authorName: nil,
         body: nil,
         bodyKind: nil,
         summary: nil,
@@ -1443,6 +1481,7 @@ private struct ExtractedMetadata {
     func merging(with supplement: ExtractedMetadata) -> ExtractedMetadata {
         ExtractedMetadata(
             title: title ?? supplement.title,
+            authorName: authorName ?? supplement.authorName,
             body: body ?? supplement.body,
             bodyKind: bodyKind ?? supplement.bodyKind,
             summary: summary ?? supplement.summary,

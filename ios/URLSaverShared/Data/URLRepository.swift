@@ -192,6 +192,18 @@ final class URLRepository: @unchecked Sendable {
             AND (
                 metadata_state = 'PENDING'
                 OR metadata_state = 'FAILED'
+                OR (
+                    service_type = 'youtube'
+                    AND (
+                        fetched_author_name IS NULL
+                        OR TRIM(fetched_author_name) = ''
+                        OR badge_image_url IS NULL
+                        OR (
+                            badge_image_url NOT LIKE '%yt3.ggpht.com%'
+                            AND badge_image_url NOT LIKE '%yt3.googleusercontent.com%'
+                        )
+                    )
+                )
             )
             ORDER BY created_at DESC
             LIMIT \(limit)
@@ -421,6 +433,7 @@ final class URLRepository: @unchecked Sendable {
             """
             UPDATE url_entries
             SET fetched_title = ?,
+                fetched_author_name = ?,
                 fetched_body = ?,
                 fetched_body_kind = ?,
                 body_summary = ?,
@@ -437,6 +450,7 @@ final class URLRepository: @unchecked Sendable {
             """,
             binds: [
                 sql(metadata.fetchedTitle),
+                sql(metadata.fetchedAuthorName),
                 sql(metadata.fetchedBody),
                 sql(metadata.fetchedBodyKind?.rawValue),
                 sql(metadata.bodySummary),
@@ -654,7 +668,8 @@ final class URLRepository: @unchecked Sendable {
             updated_at REAL NOT NULL,
             archived_at REAL,
             pending_deletion_until REAL,
-            badge_image_url TEXT
+            badge_image_url TEXT,
+            fetched_author_name TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_url_entries_state ON url_entries(record_state);
         CREATE INDEX IF NOT EXISTS idx_url_entries_metadata ON url_entries(metadata_state);
@@ -696,12 +711,17 @@ final class URLRepository: @unchecked Sendable {
             column: "badge_image_url",
             definition: "badge_image_url TEXT"
         )
+        try database.addColumnIfMissing(
+            table: "url_entries",
+            column: "fetched_author_name",
+            definition: "fetched_author_name TEXT"
+        )
         try executeBatch("CREATE INDEX IF NOT EXISTS idx_url_entries_local_visibility ON url_entries(local_provenance_count, record_state);")
         try scheduleSocialBadgeBackfillIfNeeded()
     }
 
     private func scheduleSocialBadgeBackfillIfNeeded() throws {
-        let flagKey = "social_badge_backfill_v6"
+        let flagKey = "social_badge_backfill_v7"
         let existingFlag = try database.fetchString(
             "SELECT key FROM schema_flags WHERE key = ? LIMIT 1;",
             binds: [sql(flagKey)]
@@ -725,6 +745,11 @@ final class URLRepository: @unchecked Sendable {
                             OR badge_image_url LIKE '%.ico'
                             OR badge_image_url LIKE '%.svg'
                             OR badge_image_url LIKE '%google.com/s2/favicons%'
+                            OR (
+                                service_type = 'youtube'
+                                AND badge_image_url NOT LIKE '%yt3.ggpht.com%'
+                                AND badge_image_url NOT LIKE '%yt3.googleusercontent.com%'
+                            )
                         )
                     )
                     OR (
@@ -797,6 +822,7 @@ final class URLRepository: @unchecked Sendable {
             contentContext: ContentContext(rawValue: textColumn(statement, name: "content_context") ?? "") ?? .standard,
             userTitle: textColumn(statement, name: "user_title"),
             fetchedTitle: textColumn(statement, name: "fetched_title"),
+            fetchedAuthorName: textColumn(statement, name: "fetched_author_name"),
             fetchedBody: textColumn(statement, name: "fetched_body"),
             fetchedBodyKind: textColumn(statement, name: "fetched_body_kind").flatMap(MetadataBodyKind.init(rawValue:)),
             bodySummary: textColumn(statement, name: "body_summary"),
@@ -851,6 +877,7 @@ final class URLRepository: @unchecked Sendable {
         case "archived_at": return 27
         case "pending_deletion_until": return 28
         case "badge_image_url": return 29
+        case "fetched_author_name": return 30
         default: return 0
         }
     }

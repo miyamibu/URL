@@ -24,6 +24,7 @@ import java.util.Locale
 sealed interface FetchOutcome {
     data class Ready(
         val fetchedTitle: String? = null,
+        val fetchedAuthorName: String? = null,
         val fetchedBody: String? = null,
         val fetchedBodyKind: MetadataBodyKind? = null,
         val bodySummary: String? = null,
@@ -132,6 +133,7 @@ class MetadataFetcher(
     ): FetchOutcome.Ready {
         return primary.copy(
             fetchedTitle = primary.fetchedTitle ?: supplement.fetchedTitle,
+            fetchedAuthorName = primary.fetchedAuthorName ?: supplement.fetchedAuthorName,
             fetchedBody = primary.fetchedBody ?: supplement.fetchedBody,
             fetchedBodyKind = primary.fetchedBodyKind ?: supplement.fetchedBodyKind,
             bodySummary = primary.bodySummary ?: supplement.bodySummary,
@@ -160,6 +162,7 @@ class MetadataFetcher(
 
             FetchOutcome.Ready(
                 fetchedTitle = title,
+                fetchedAuthorName = oEmbedMetadata.authorName,
                 fetchedBody = body,
                 fetchedBodyKind = body?.let { MetadataBodyKind.YOUTUBE_DESCRIPTION },
                 bodySummary = body?.let(::buildRuleSummary),
@@ -188,6 +191,7 @@ class MetadataFetcher(
             val parsed = runCatching { URI(inputUrl) }.getOrNull()
             return FetchOutcome.Ready(
                 fetchedTitle = firstNonBlank(oEmbedMetadata.title, playerMetadata.title),
+                fetchedAuthorName = oEmbedMetadata.authorName,
                 fetchedBody = playerMetadata.body,
                 fetchedBodyKind = playerMetadata.body?.let { MetadataBodyKind.YOUTUBE_DESCRIPTION },
                 bodySummary = playerMetadata.body?.let(::buildRuleSummary),
@@ -213,6 +217,7 @@ class MetadataFetcher(
         if (!supplement.hasAnyMetadata) return primary
         return primary.copy(
             fetchedTitle = primary.fetchedTitle ?: supplement.title,
+            fetchedAuthorName = primary.fetchedAuthorName,
             fetchedBody = primary.fetchedBody ?: supplement.body,
             fetchedBodyKind = primary.fetchedBodyKind ?: supplement.body?.let { MetadataBodyKind.YOUTUBE_DESCRIPTION },
             bodySummary = primary.bodySummary ?: supplement.body?.let(::buildRuleSummary),
@@ -298,6 +303,7 @@ class MetadataFetcher(
             }
             return htmlOutcome.copy(
                 fetchedTitle = htmlOutcome.fetchedTitle ?: supplementalTitle,
+                fetchedAuthorName = htmlOutcome.fetchedAuthorName ?: supplementalTitle,
                 fetchedBody = htmlOutcome.fetchedBody ?: supplementalBody,
                 fetchedBodyKind = htmlOutcome.fetchedBodyKind
                     ?: supplementalBody?.let { MetadataBodyKind.INSTAGRAM_CAPTION },
@@ -312,6 +318,7 @@ class MetadataFetcher(
             val parsed = runCatching { URI(inputUrl) }.getOrNull()
             return FetchOutcome.Ready(
                 fetchedTitle = supplementalTitle,
+                fetchedAuthorName = supplementalTitle,
                 fetchedBody = supplementalBody,
                 fetchedBodyKind = supplementalBody?.let { MetadataBodyKind.INSTAGRAM_CAPTION },
                 bodySummary = supplementalBody?.let(::buildRuleSummary),
@@ -409,6 +416,7 @@ class MetadataFetcher(
     ): FetchOutcome.Ready {
         return primary.copy(
             fetchedTitle = primary.fetchedTitle ?: supplement.fetchedTitle,
+            fetchedAuthorName = primary.fetchedAuthorName ?: supplement.fetchedAuthorName,
             fetchedBody = primary.fetchedBody ?: supplement.fetchedBody,
             fetchedBodyKind = primary.fetchedBodyKind ?: supplement.fetchedBodyKind,
             bodySummary = primary.bodySummary ?: supplement.bodySummary,
@@ -591,6 +599,7 @@ class MetadataFetcher(
         var authorUrl: String? = null
         val outcome = fetchJsonPayload(endpoint) { payload ->
             val title = payload.firstNonBlankString("title")
+            val authorName = normalizeTitleText(payload.firstNonBlankString("author_name"))
             val thumbnail = payload.firstNonBlankString("thumbnail_url")
             authorUrl = payload.firstNonBlankString("author_url")
             if (title == null && thumbnail == null) {
@@ -598,6 +607,7 @@ class MetadataFetcher(
             }
             FetchOutcome.Ready(
                 fetchedTitle = title,
+                fetchedAuthorName = authorName,
                 thumbnailUrl = thumbnail,
             )
         }
@@ -605,6 +615,7 @@ class MetadataFetcher(
         return when (outcome) {
             is FetchOutcome.Ready -> YouTubeOEmbedMetadata(
                 title = outcome.fetchedTitle,
+                authorName = outcome.fetchedAuthorName,
                 thumbnailUrl = outcome.thumbnailUrl,
                 authorUrl = authorUrl,
                 failureOutcome = null,
@@ -2304,12 +2315,13 @@ class MetadataFetcher(
 
     private data class YouTubeOEmbedMetadata(
         val title: String?,
+        val authorName: String? = null,
         val thumbnailUrl: String?,
         val authorUrl: String?,
         val failureOutcome: FetchOutcome?,
     ) {
         val hasAnyMetadata: Boolean
-            get() = !title.isNullOrBlank() || !thumbnailUrl.isNullOrBlank()
+            get() = !title.isNullOrBlank() || !authorName.isNullOrBlank() || !thumbnailUrl.isNullOrBlank()
     }
 
     private data class YouTubePlayerMetadata(
