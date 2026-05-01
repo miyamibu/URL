@@ -7,9 +7,12 @@ import androidx.work.WorkManager
 import jp.mimac.urlsaver.BuildConfig
 import jp.mimac.urlsaver.data.AppDatabase
 import jp.mimac.urlsaver.data.DataStoreEntryCardDisplayModeStore
+import jp.mimac.urlsaver.data.DataStoreEntitlementGrantStore
 import jp.mimac.urlsaver.data.DefaultTagRepository
 import jp.mimac.urlsaver.data.DefaultUrlRepository
 import jp.mimac.urlsaver.data.EntryCardDisplayModeStore
+import jp.mimac.urlsaver.data.EntitlementGrantRepository
+import jp.mimac.urlsaver.data.EntitlementGrantStore
 import jp.mimac.urlsaver.data.ExportRepository
 import jp.mimac.urlsaver.data.MetadataScheduler
 import jp.mimac.urlsaver.data.MetadataWorkScheduler
@@ -25,6 +28,7 @@ import jp.mimac.urlsaver.data.SharedTagSyncRemoteConfig
 import jp.mimac.urlsaver.data.SharedTagSyncRemoteDataSource
 import jp.mimac.urlsaver.data.SharedTagSyncScheduler
 import jp.mimac.urlsaver.data.SupabaseSharedTagAuthRemoteDataSource
+import jp.mimac.urlsaver.data.SupabaseEntitlementGrantRemoteDataSource
 import jp.mimac.urlsaver.data.SupabaseSharedTagSyncRemoteDataSource
 import jp.mimac.urlsaver.data.WorkManagerSharedTagSyncScheduler
 import jp.mimac.urlsaver.data.TagRepository
@@ -35,10 +39,16 @@ import jp.mimac.urlsaver.data.DataStoreUserProfileStore
 import jp.mimac.urlsaver.data.DefaultUsageSummaryDataSource
 import jp.mimac.urlsaver.data.UsageSummaryDataSource
 import jp.mimac.urlsaver.domain.DefaultEntitlementResolver
+import jp.mimac.urlsaver.domain.BuildVariantEntitlementOverrides
 import jp.mimac.urlsaver.util.AppClock
 import jp.mimac.urlsaver.util.SystemAppClock
 import jp.mimac.urlsaver.worker.MetadataFetcher
 import jp.mimac.urlsaver.worker.UrlSaverWorkerFactory
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 import java.net.URI
 import java.net.URLEncoder
 
@@ -46,6 +56,7 @@ class AppContainer(context: Context) {
     private val appContext = context.applicationContext
     private val database = AppDatabase.create(appContext)
     private val clock: AppClock = SystemAppClock
+    private val entitlementRefreshScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val instagramPublicOEmbedEndpointBuilder: (String) -> String = { targetUrl ->
         val encodedUrl = URLEncoder.encode(targetUrl, Charsets.UTF_8.name())
         "$INSTAGRAM_PUBLIC_OEMBED_ENDPOINT?omitscript=true&url=$encodedUrl"
@@ -115,6 +126,21 @@ class AppContainer(context: Context) {
             authRemoteDataSource = sharedTagAuthRemoteDataSource,
         )
     }
+    private val entitlementGrantStore: EntitlementGrantStore by lazy {
+        DataStoreEntitlementGrantStore(appContext)
+    }
+    private val entitlementGrantRepository: EntitlementGrantRepository by lazy {
+        EntitlementGrantRepository(
+            authSessionProvider = sharedTagAuthSessionProvider,
+            remoteDataSource = SupabaseEntitlementGrantRemoteDataSource(
+                config = sharedTagSyncRemoteConfig,
+                authSessionProvider = sharedTagAuthSessionProvider,
+                authRemoteDataSource = sharedTagAuthRemoteDataSource,
+            ),
+            grantStore = entitlementGrantStore,
+            clock = clock,
+        )
+    }
     private val sharedTagSyncScheduler: SharedTagSyncScheduler by lazy {
         WorkManagerSharedTagSyncScheduler(WorkManager.getInstance(appContext))
     }
@@ -135,8 +161,24 @@ class AppContainer(context: Context) {
             urlEntryDao = database.urlEntryDao(),
             tagDao = database.tagDao(),
             authSessionProvider = sharedTagAuthSessionProvider,
-            entitlementResolver = DefaultEntitlementResolver(),
+            entitlementResolver = DefaultEntitlementResolver(
+                grantsProvider = {
+                    val now = clock.nowEpochMillis()
+                    entitlementGrantRepository.currentGrantsSnapshot() +
+                        BuildVariantEntitlementOverrides.grants(now)
+                },
+            ),
         )
+    }
+
+    init {
+        entitlementRefreshScope.launch {
+            sharedTagAuthSessionProvider.session.collectLatest { session ->
+                if (session != null) {
+                    entitlementGrantRepository.refreshForCurrentSession()
+                }
+            }
+        }
     }
 
     val repository: UrlRepository by lazy {

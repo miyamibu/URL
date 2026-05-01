@@ -394,6 +394,222 @@ enum SharedTagCloudError: Error {
     }
 }
 
+final class EntitlementGrantCache: @unchecked Sendable {
+    static let cacheTTL: TimeInterval = 7 * 24 * 60 * 60
+
+    private let userDefaults: UserDefaults
+    private let key: String
+    private let encoder: JSONEncoder
+    private let decoder: JSONDecoder
+    private let cacheTTL: TimeInterval
+    private let lock = NSLock()
+    private var snapshot: Snapshot?
+
+    init(
+        userDefaults: UserDefaults = .standard,
+        key: String = "jp.mimac.urlsaver.entitlement_grants.last_known",
+        cacheTTL: TimeInterval = EntitlementGrantCache.cacheTTL
+    ) {
+        self.userDefaults = userDefaults
+        self.key = key
+        self.cacheTTL = cacheTTL
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        self.encoder = encoder
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        self.decoder = decoder
+    }
+
+    func load(authUserID: String, now: Date) -> [EntitlementGrant] {
+        lock.lock()
+        defer { lock.unlock() }
+        if let snapshot, snapshot.isValid(authUserID: authUserID, now: now, cacheTTL: cacheTTL) {
+            return snapshot.grants
+        }
+        guard let data = userDefaults.data(forKey: key),
+              let loaded = try? decoder.decode(Snapshot.self, from: data) else {
+            snapshot = nil
+            return []
+        }
+        snapshot = loaded
+        return loaded.isValid(authUserID: authUserID, now: now, cacheTTL: cacheTTL) ? loaded.grants : []
+    }
+
+    func save(authUserID: String, grants: [EntitlementGrant], fetchedAt: Date) {
+        lock.lock()
+        defer { lock.unlock() }
+        let saved = Snapshot(authUserID: authUserID, fetchedAt: fetchedAt, grants: grants)
+        if let data = try? encoder.encode(saved) {
+            userDefaults.set(data, forKey: key)
+        }
+        snapshot = saved
+    }
+
+    func cachedSnapshot(authUserID: String?, now: Date) -> [EntitlementGrant] {
+        guard let authUserID else { return [] }
+        lock.lock()
+        defer { lock.unlock() }
+        return snapshot?.isValid(authUserID: authUserID, now: now, cacheTTL: cacheTTL) == true
+            ? snapshot?.grants ?? []
+            : []
+    }
+
+    struct Snapshot: Codable, Equatable, Sendable {
+        let authUserID: String
+        let fetchedAt: Date
+        let grants: [EntitlementGrant]
+
+        func isValid(authUserID currentAuthUserID: String, now: Date, cacheTTL: TimeInterval) -> Bool {
+            authUserID == currentAuthUserID && now.timeIntervalSince(fetchedAt) <= cacheTTL
+        }
+    }
+}
+
+private struct EntitlementGrantRemoteDataSource {
+    private let config: SharedTagCloudConfig
+    private let authRemoteDataSource: SharedTagAuthRemoteDataSource
+    private let sessionStore: SharedTagAuthSessionStore
+
+    init(
+        config: SharedTagCloudConfig,
+        authRemoteDataSource: SharedTagAuthRemoteDataSource,
+        sessionStore: SharedTagAuthSessionStore
+    ) {
+        self.config = config
+        self.authRemoteDataSource = authRemoteDataSource
+        self.sessionStore = sessionStore
+    }
+
+    func fetchGrants(session: SharedTagAuthSession) async throws -> [EntitlementGrant] {
+        let data = try await executeRPC(
+            path: "/rest/v1/rpc/get_my_entitlement_grants",
+            session: session,
+            body: EmptyPayload()
+        )
+        return try makeSharedTagCloudDecoder()
+            .decode([RemoteEntitlementGrant].self, from: data)
+            .compactMap { $0.toDomain() }
+    }
+
+    private func executeRPC<T: Encodable>(
+        path: String,
+        session: SharedTagAuthSession,
+        body: T
+    ) async throws -> Data {
+        do {
+            return try await SharedTagRemoteRequestExecutor(config: config).execute(
+                path: path,
+                bearerToken: session.accessToken,
+                body: body
+            )
+        } catch SharedTagCloudError.httpStatus(let code, _) where code == 401 {
+            guard let refreshToken = session.refreshToken, !refreshToken.isEmpty else {
+                throw SharedTagCloudError.authRequired
+            }
+            let refreshed = try await authRemoteDataSource.refreshSession(refreshToken: refreshToken)
+            try sessionStore.save(refreshed)
+            return try await SharedTagRemoteRequestExecutor(config: config).execute(
+                path: path,
+                bearerToken: refreshed.accessToken,
+                body: body
+            )
+        }
+    }
+}
+
+private struct RemoteEntitlementGrant: Decodable {
+    let id: String
+    let plan: String
+    let source: String
+    let storePlatform: String?
+    let storeTransactionID: String?
+    let startsAt: String
+    let expiresAt: String?
+    let status: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case plan
+        case source
+        case storePlatform = "store_platform"
+        case storeTransactionID = "store_transaction_id"
+        case startsAt = "starts_at"
+        case expiresAt = "expires_at"
+        case status
+    }
+
+    func toDomain() -> EntitlementGrant? {
+        guard let planType = PlanType(rawValue: plan),
+              let sourceType = EntitlementSource(rawValue: source),
+              let grantStatus = EntitlementGrantStatus(rawValue: status),
+              let startDate = parseSupabaseISO8601Date(startsAt) else {
+            return nil
+        }
+        let endDate = expiresAt.flatMap(parseSupabaseISO8601Date)
+        return EntitlementGrant(
+            planType: planType,
+            source: sourceType,
+            status: grantStatus,
+            startsAt: startDate,
+            endsAt: endDate,
+            sourceID: storeTransactionID ?? id,
+            note: storePlatform
+        )
+    }
+}
+
+final class EntitlementService: @unchecked Sendable {
+    private let sessionStore: SharedTagAuthSessionStore
+    private let remoteDataSource: EntitlementGrantRemoteDataSource
+    private let cache: EntitlementGrantCache
+
+    init(
+        config: SharedTagCloudConfig,
+        sessionStore: SharedTagAuthSessionStore,
+        cache: EntitlementGrantCache = EntitlementGrantCache()
+    ) {
+        self.sessionStore = sessionStore
+        self.cache = cache
+        let authRemoteDataSource = SharedTagAuthRemoteDataSource(config: config)
+        self.remoteDataSource = EntitlementGrantRemoteDataSource(
+            config: config,
+            authRemoteDataSource: authRemoteDataSource,
+            sessionStore: sessionStore
+        )
+    }
+
+    func currentEntitlements(now: Date = Date()) -> FeatureEntitlements {
+        let authUserID = (try? sessionStore.load())?.authUserID
+        let grants = cache.cachedSnapshot(authUserID: authUserID, now: now) +
+            BuildVariantEntitlementOverrides.grants(at: now)
+        return EntitlementResolver(grantsProvider: { grants }).resolve(at: now)
+    }
+
+    @discardableResult
+    func refreshForCurrentSession(now: Date = Date()) async -> FeatureEntitlements {
+        guard let session = try? sessionStore.load() else {
+            return EntitlementResolver(
+                grantsProvider: { BuildVariantEntitlementOverrides.grants(at: now) }
+            ).resolve(at: now)
+        }
+        let grants = await fetchOrLoadCachedGrants(session: session, now: now)
+        return EntitlementResolver(
+            grantsProvider: { grants + BuildVariantEntitlementOverrides.grants(at: now) }
+        ).resolve(at: now)
+    }
+
+    private func fetchOrLoadCachedGrants(session: SharedTagAuthSession, now: Date) async -> [EntitlementGrant] {
+        do {
+            let remoteGrants = try await remoteDataSource.fetchGrants(session: session)
+            cache.save(authUserID: session.authUserID, grants: remoteGrants, fetchedAt: now)
+            return remoteGrants
+        } catch {
+            return cache.load(authUserID: session.authUserID, now: now)
+        }
+    }
+}
+
 final class SharedTagStore: @unchecked Sendable {
     private let database: SQLiteDatabase
 
@@ -1495,4 +1711,13 @@ private func makeSharedTagCloudEncoder() -> JSONEncoder {
 
 private func makeSharedTagCloudDecoder() -> JSONDecoder {
     JSONDecoder()
+}
+
+func parseSupabaseISO8601Date(_ value: String) -> Date? {
+    let fractionalFormatter = ISO8601DateFormatter()
+    fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = fractionalFormatter.date(from: value) {
+        return date
+    }
+    return ISO8601DateFormatter().date(from: value)
 }

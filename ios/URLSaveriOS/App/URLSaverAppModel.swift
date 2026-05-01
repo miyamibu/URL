@@ -29,6 +29,7 @@ final class URLSaverAppModel: ObservableObject {
     @Published private(set) var profile: UserProfile = .empty
     @Published private(set) var pendingInviteRecord: PendingInviteRecord?
     @Published private(set) var sharedTagCloudState = SharedTagCloudState(isConfigured: false, isSignedIn: false, signedInEmail: nil)
+    @Published private(set) var entitlements: FeatureEntitlements = LaunchStandardPlan.entitlements
     @Published private(set) var sharedTags: [SharedTagSummary] = []
     @Published private(set) var localTags: [LocalTagSummary] = []
     @Published private(set) var localTagAssignments: [Int64: Set<Int64>] = [:]
@@ -55,6 +56,7 @@ final class URLSaverAppModel: ObservableObject {
         try? services.repository.cleanupExpiredPendingDeletes()
         await reload()
         await refreshSharedTagCloudState()
+        await refreshEntitlements()
         await scheduleDeleteTimersForPersistedEntries()
         await consumeShareHandoffReport()
         startPostBootstrapRefresh()
@@ -81,6 +83,10 @@ final class URLSaverAppModel: ObservableObject {
         AppBackgroundScheduler.schedule()
         _ = await services.metadataCoordinator.processBacklog(limit: 60)
         await reload()
+    }
+
+    func refreshEntitlements() async {
+        entitlements = await services.entitlementService.refreshForCurrentSession()
     }
 
     func consumeShareHandoffReport() async {
@@ -338,6 +344,7 @@ final class URLSaverAppModel: ObservableObject {
         switch await services.sharedTagCloud.signIn(email: email, password: password) {
         case .success(let email):
             await refreshSharedTagCloudState()
+            await refreshEntitlements()
             profileStatusMessage = "サインインしました。プロフィールと共有タグを使えます。"
             enqueueNotification(
                 AppNotification(
@@ -349,6 +356,7 @@ final class URLSaverAppModel: ObservableObject {
             )
             _ = await services.sharedTagCloud.syncCurrentSession()
             await refreshSharedTagCloudState()
+            await refreshEntitlements()
         case .needsEmailConfirmation:
             enqueueNotification(
                 AppNotification(
@@ -373,6 +381,7 @@ final class URLSaverAppModel: ObservableObject {
                 saveProfile(displayName: String(localPart))
             }
             await refreshSharedTagCloudState()
+            await refreshEntitlements()
             profileStatusMessage = "新規登録が完了しました。プロフィールと共有タグを使えます。"
             enqueueNotification(
                 AppNotification(
@@ -384,6 +393,7 @@ final class URLSaverAppModel: ObservableObject {
             )
             _ = await services.sharedTagCloud.syncCurrentSession()
             await refreshSharedTagCloudState()
+            await refreshEntitlements()
         case .needsEmailConfirmation:
             enqueueNotification(
                 AppNotification(
@@ -402,6 +412,7 @@ final class URLSaverAppModel: ObservableObject {
         do {
             try services.sharedTagCloud.signOut()
             await refreshSharedTagCloudState()
+            await refreshEntitlements()
             profileStatusMessage = "サインアウトしました。プロフィールはこのiPhoneに残ります。"
             enqueueNotification(AppNotification(message: "共有タグクラウドからサインアウトしました", actionLabel: nil, action: nil, autoDismissAfter: 4))
             await reload()

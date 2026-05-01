@@ -90,4 +90,177 @@ final class URLRulesTests: XCTestCase {
         let groups = ShareCandidateGroups(extraCandidates: [oversized])
         XCTAssertEqual(URLRules.extractFromCandidateGroups(groups), .inputTooLarge)
     }
+
+    func testEntitlementResolverFallsBackWithoutGrant() {
+        let resolver = EntitlementResolver(grantsProvider: { [] })
+
+        let resolved = resolver.resolve(at: Date(timeIntervalSince1970: 1_000))
+
+        XCTAssertEqual(resolved.planType, .launchStandard)
+        XCTAssertEqual(resolved.limits.personalURLLimit, 200)
+    }
+
+    func testEntitlementResolverReturnsProForActiveGrant() {
+        let resolver = EntitlementResolver(
+            grantsProvider: {
+                [
+                    EntitlementGrant(
+                        planType: .pro,
+                        source: .storeSubscription,
+                        startsAt: Date(timeIntervalSince1970: 0)
+                    )
+                ]
+            }
+        )
+
+        let resolved = resolver.resolve(at: Date(timeIntervalSince1970: 1_000))
+
+        XCTAssertEqual(resolved.planType, .pro)
+        XCTAssertEqual(resolved.limits.personalURLLimit, 10_000)
+    }
+
+    func testEntitlementResolverIgnoresRevokedExpiredAndPendingGrants() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let resolver = EntitlementResolver(
+            grantsProvider: {
+                [
+                    EntitlementGrant(
+                        planType: .pro,
+                        source: .storeSubscription,
+                        status: .revoked,
+                        startsAt: Date(timeIntervalSince1970: 0)
+                    ),
+                    EntitlementGrant(
+                        planType: .promoPro,
+                        source: .adminGrant,
+                        startsAt: Date(timeIntervalSince1970: 0),
+                        endsAt: Date(timeIntervalSince1970: 999)
+                    ),
+                    EntitlementGrant(
+                        planType: .pro,
+                        source: .storePromoCode,
+                        status: .pending,
+                        startsAt: Date(timeIntervalSince1970: 0)
+                    )
+                ]
+            }
+        )
+
+        let resolved = resolver.resolve(at: now)
+
+        XCTAssertEqual(resolved.planType, .launchStandard)
+    }
+
+    func testEntitlementResolverUsesHighestPlanPriority() {
+        let resolver = EntitlementResolver(
+            grantsProvider: {
+                [
+                    EntitlementGrant(
+                        planType: .free,
+                        source: .adminGrant,
+                        startsAt: Date(timeIntervalSince1970: 0)
+                    ),
+                    EntitlementGrant(
+                        planType: .pro,
+                        source: .storeSubscription,
+                        startsAt: Date(timeIntervalSince1970: 0)
+                    )
+                ]
+            }
+        )
+
+        let resolved = resolver.resolve(at: Date(timeIntervalSince1970: 1_000))
+
+        XCTAssertEqual(resolved.planType, .pro)
+    }
+
+    func testLimitCheckerMatchesLaunchStandardLimits() {
+        let checker = LimitChecker(entitlements: LaunchStandardPlan.entitlements)
+        let result = checker.checkCanSavePersonalURL(
+            UsageSummary(
+                personalURLCount: LaunchStandardPlan.limits.personalURLLimit,
+                normalTagCount: 0,
+                sharedTagCount: 0,
+                sharedTagUsages: []
+            )
+        )
+
+        XCTAssertEqual(
+            result,
+            .blocked(
+                target: .personalURL,
+                message: "ローンチ版の保存上限に達しました。不要なURLを整理してから追加してください。"
+            )
+        )
+    }
+
+    func testLimitCheckerAllowsProBeyondLaunchStandardLimits() {
+        let checker = LimitChecker(entitlements: ProPlan.entitlements)
+        let result = checker.checkCanSavePersonalURL(
+            UsageSummary(
+                personalURLCount: LaunchStandardPlan.limits.personalURLLimit,
+                normalTagCount: 0,
+                sharedTagCount: 0,
+                sharedTagUsages: []
+            )
+        )
+
+        XCTAssertEqual(result, .allowed)
+    }
+
+    func testEntitlementCacheReturnsLastKnownWithinTTL() {
+        let suiteName = "EntitlementCacheTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let cache = EntitlementGrantCache(userDefaults: defaults)
+        let grant = EntitlementGrant(
+            planType: .pro,
+            source: .storeSubscription,
+            startsAt: Date(timeIntervalSince1970: 0)
+        )
+        cache.save(
+            authUserID: "user-1",
+            grants: [grant],
+            fetchedAt: Date(timeIntervalSince1970: 1_000)
+        )
+
+        let loaded = cache.load(
+            authUserID: "user-1",
+            now: Date(timeIntervalSince1970: 1_000 + EntitlementGrantCache.cacheTTL - 1)
+        )
+
+        XCTAssertEqual(loaded, [grant])
+    }
+
+    func testEntitlementCacheDropsWrongUserAndExpiredTTL() {
+        let suiteName = "EntitlementCacheTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let cache = EntitlementGrantCache(userDefaults: defaults)
+        cache.save(
+            authUserID: "user-1",
+            grants: [
+                EntitlementGrant(
+                    planType: .pro,
+                    source: .storeSubscription,
+                    startsAt: Date(timeIntervalSince1970: 0)
+                )
+            ],
+            fetchedAt: Date(timeIntervalSince1970: 1_000)
+        )
+
+        XCTAssertEqual(cache.load(authUserID: "user-2", now: Date(timeIntervalSince1970: 1_000)), [])
+        XCTAssertEqual(
+            cache.load(
+                authUserID: "user-1",
+                now: Date(timeIntervalSince1970: 1_000 + EntitlementGrantCache.cacheTTL + 1)
+            ),
+            []
+        )
+    }
+
+    func testSupabaseEntitlementTimestampParserAcceptsFractionalSeconds() {
+        XCTAssertNotNil(parseSupabaseISO8601Date("2026-05-01T04:05:06.789123Z"))
+        XCTAssertNotNil(parseSupabaseISO8601Date("2026-05-01T04:05:06Z"))
+    }
 }

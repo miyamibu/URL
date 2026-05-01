@@ -8,6 +8,9 @@ create table if not exists auth.users (
 
 do $$
 begin
+    if not exists (select 1 from pg_roles where rolname = 'anon') then
+        create role anon;
+    end if;
     if not exists (select 1 from pg_roles where rolname = 'authenticated') then
         create role authenticated;
     end if;
@@ -22,9 +25,142 @@ as $$
     select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
 $$;
 
+grant usage on schema auth to anon, authenticated;
+grant execute on function auth.uid() to anon, authenticated;
+
 \i supabase/migrations/20260420120000_shared_tag_sync.sql
 \i supabase/migrations/20260422120000_shared_tag_invites.sql
 \i supabase/migrations/20260423150000_account_deletion.sql
+\i supabase/migrations/20260501120000_entitlement_grants.sql
+
+insert into auth.users (id)
+values
+    ('00000000-0000-0000-0000-000000000011'),
+    ('00000000-0000-0000-0000-000000000012')
+on conflict (id) do nothing;
+
+insert into public.user_entitlement_grants (
+    id,
+    user_id,
+    plan,
+    source,
+    store_platform,
+    store_transaction_id,
+    starts_at,
+    expires_at,
+    status
+)
+values
+    (
+        '50000000-0000-0000-0000-000000000001',
+        '00000000-0000-0000-0000-000000000011',
+        'pro',
+        'admin_grant',
+        null,
+        null,
+        now() - interval '1 day',
+        null,
+        'active'
+    ),
+    (
+        '50000000-0000-0000-0000-000000000002',
+        '00000000-0000-0000-0000-000000000011',
+        'pro',
+        'store_subscription',
+        'google_play',
+        'txn-expired',
+        now() - interval '10 days',
+        now() - interval '1 day',
+        'active'
+    ),
+    (
+        '50000000-0000-0000-0000-000000000003',
+        '00000000-0000-0000-0000-000000000011',
+        'promo_pro',
+        'store_promo_code',
+        null,
+        null,
+        now() - interval '1 day',
+        null,
+        'pending'
+    ),
+    (
+        '50000000-0000-0000-0000-000000000004',
+        '00000000-0000-0000-0000-000000000012',
+        'pro',
+        'admin_grant',
+        null,
+        null,
+        now() - interval '1 day',
+        null,
+        'active'
+    )
+on conflict (id) do nothing;
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000011', false);
+
+do $$
+begin
+    if (
+        select count(*)
+        from public.user_entitlement_grants
+    ) <> 3 then
+        raise exception 'RLS SELECT did not limit entitlement grants to current user';
+    end if;
+
+    if (
+        select count(*)
+        from public.get_my_entitlement_grants()
+    ) <> 1 then
+        raise exception 'get_my_entitlement_grants did not return exactly one active non-expired grant';
+    end if;
+
+    if (
+        select plan
+        from public.get_my_entitlement_grants()
+        limit 1
+    ) <> 'pro' then
+        raise exception 'get_my_entitlement_grants did not return the active pro grant';
+    end if;
+
+    begin
+        insert into public.user_entitlement_grants (user_id, plan, source, starts_at, status)
+        values (
+            '00000000-0000-0000-0000-000000000011',
+            'pro',
+            'admin_grant',
+            now(),
+            'active'
+        );
+        raise exception 'authenticated client unexpectedly inserted entitlement grant';
+    exception
+        when insufficient_privilege then
+            null;
+    end;
+
+    begin
+        update public.user_entitlement_grants
+        set status = 'active'
+        where id = '50000000-0000-0000-0000-000000000003';
+        raise exception 'authenticated client unexpectedly updated entitlement grant';
+    exception
+        when insufficient_privilege then
+            null;
+    end;
+
+    begin
+        delete from public.user_entitlement_grants
+        where id = '50000000-0000-0000-0000-000000000001';
+        raise exception 'authenticated client unexpectedly deleted entitlement grant';
+    exception
+        when insufficient_privilege then
+            null;
+    end;
+end
+$$;
+
+reset role;
 
 do $$
 declare

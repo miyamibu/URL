@@ -1,22 +1,31 @@
 package jp.mimac.urlsaver.domain
 
 enum class EntitlementSource {
-    LOCAL_DEFAULT,
     STORE_SUBSCRIPTION,
     STORE_PROMO_CODE,
     ADMIN_GRANT,
     REFERRAL_GRANT,
 }
 
+enum class EntitlementGrantStatus {
+    ACTIVE,
+    REVOKED,
+    PENDING,
+}
+
 data class EntitlementGrant(
     val planType: PlanType,
     val source: EntitlementSource,
+    val status: EntitlementGrantStatus = EntitlementGrantStatus.ACTIVE,
     val startsAt: Long,
     val endsAt: Long? = null,
     val sourceId: String? = null,
     val note: String? = null,
 ) {
     fun isActiveAt(currentTimeMillis: Long): Boolean {
+        if (status != EntitlementGrantStatus.ACTIVE) {
+            return false
+        }
         val started = currentTimeMillis >= startsAt
         val notExpired = endsAt == null || currentTimeMillis < endsAt
         return started && notExpired
@@ -36,7 +45,12 @@ class DefaultEntitlementResolver(
         val activeGrant = grantsProvider()
             .asSequence()
             .filter { it.isActiveAt(currentTimeMillis) }
-            .minByOrNull { it.source.priority }
+            .sortedWith(
+                compareBy<EntitlementGrant> { it.planType.priority }
+                    .thenBy { it.source.priority }
+                    .thenByDescending { it.startsAt },
+            )
+            .firstOrNull()
 
         return if (activeGrant == null) {
             defaultEntitlements
@@ -52,5 +66,12 @@ private val EntitlementSource.priority: Int
         EntitlementSource.STORE_SUBSCRIPTION -> 1
         EntitlementSource.STORE_PROMO_CODE -> 2
         EntitlementSource.REFERRAL_GRANT -> 3
-        EntitlementSource.LOCAL_DEFAULT -> 4
+    }
+
+private val PlanType.priority: Int
+    get() = when (this) {
+        PlanType.PROMO_PRO -> 0
+        PlanType.PRO -> 1
+        PlanType.LAUNCH_STANDARD -> 2
+        PlanType.FREE -> 3
     }

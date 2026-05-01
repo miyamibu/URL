@@ -20,6 +20,328 @@ enum ServiceType: String, Codable, CaseIterable, Sendable {
     }
 }
 
+enum PlanType: String, Codable, CaseIterable, Sendable {
+    case free
+    case launchStandard = "launch_standard"
+    case pro
+    case promoPro = "promo_pro"
+}
+
+struct PlanLimits: Codable, Equatable, Sendable {
+    let personalURLLimit: Int
+    let normalTagLimit: Int
+    let sharedTagLimit: Int
+    let sharedTagURLLimitPerTag: Int
+}
+
+struct FeatureEntitlements: Codable, Equatable, Sendable {
+    let planType: PlanType
+    let limits: PlanLimits
+    let subscriptionEnabled: Bool
+    let shouldShowAds: Bool
+    let exportEnabled: Bool
+    let sharedSyncEnabled: Bool
+}
+
+struct SharedTagUsage: Codable, Equatable, Sendable {
+    let tagID: Int64
+    let tagName: String
+    let urlCount: Int
+    let limit: Int
+}
+
+struct UsageSummary: Codable, Equatable, Sendable {
+    let personalURLCount: Int
+    let normalTagCount: Int
+    let sharedTagCount: Int
+    let sharedTagUsages: [SharedTagUsage]
+
+    func sharedTagUsage(tagID: Int64) -> SharedTagUsage? {
+        sharedTagUsages.first { $0.tagID == tagID }
+    }
+}
+
+enum LimitTarget: Equatable, Sendable {
+    case personalURL
+    case normalTag
+    case sharedTag
+    case sharedTagURL
+}
+
+enum LimitResult: Equatable, Sendable {
+    case allowed
+    case blocked(target: LimitTarget, message: String)
+}
+
+struct LimitChecker: Sendable {
+    let entitlements: FeatureEntitlements
+
+    private var limits: PlanLimits { entitlements.limits }
+    private var planLabel: String { entitlements.planType.limitMessageLabel }
+
+    func checkCanSavePersonalURL(_ usage: UsageSummary) -> LimitResult {
+        if usage.personalURLCount >= limits.personalURLLimit {
+            return .blocked(
+                target: .personalURL,
+                message: "\(planLabel)の保存上限に達しました。不要なURLを整理してから追加してください。"
+            )
+        }
+        return .allowed
+    }
+
+    func checkCanCreateNormalTag(_ usage: UsageSummary) -> LimitResult {
+        if usage.normalTagCount >= limits.normalTagLimit {
+            return .blocked(
+                target: .normalTag,
+                message: "通常タグは\(planLabel)では\(limits.normalTagLimit)個まで作成できます。"
+            )
+        }
+        return .allowed
+    }
+
+    func checkCanCreateSharedTag(_ usage: UsageSummary) -> LimitResult {
+        if usage.sharedTagCount >= limits.sharedTagLimit {
+            return .blocked(
+                target: .sharedTag,
+                message: "共有タグは\(planLabel)では\(limits.sharedTagLimit)個まで作成できます。"
+            )
+        }
+        return .allowed
+    }
+
+    func checkCanAddURLToSharedTag(_ usage: UsageSummary, tagID: Int64) -> LimitResult {
+        if let tagUsage = usage.sharedTagUsage(tagID: tagID),
+           tagUsage.urlCount >= limits.sharedTagURLLimitPerTag {
+            return .blocked(
+                target: .sharedTagURL,
+                message: "この共有タグには\(limits.sharedTagURLLimitPerTag)件までURLを追加できます。"
+            )
+        }
+        return .allowed
+    }
+}
+
+enum LaunchStandardPlan {
+    static let limits = PlanLimits(
+        personalURLLimit: 200,
+        normalTagLimit: 10,
+        sharedTagLimit: 2,
+        sharedTagURLLimitPerTag: 20
+    )
+
+    static let entitlements = FeatureEntitlements(
+        planType: .launchStandard,
+        limits: limits,
+        subscriptionEnabled: false,
+        shouldShowAds: false,
+        exportEnabled: true,
+        sharedSyncEnabled: true
+    )
+}
+
+enum FreePlan {
+    static let limits = PlanLimits(
+        personalURLLimit: 100,
+        normalTagLimit: 5,
+        sharedTagLimit: 1,
+        sharedTagURLLimitPerTag: 10
+    )
+
+    static let entitlements = FeatureEntitlements(
+        planType: .free,
+        limits: limits,
+        subscriptionEnabled: false,
+        shouldShowAds: true,
+        exportEnabled: false,
+        sharedSyncEnabled: false
+    )
+}
+
+enum ProPlan {
+    static let limits = PlanLimits(
+        personalURLLimit: 10_000,
+        normalTagLimit: 200,
+        sharedTagLimit: 50,
+        sharedTagURLLimitPerTag: 10_000
+    )
+
+    static let entitlements = FeatureEntitlements(
+        planType: .pro,
+        limits: limits,
+        subscriptionEnabled: false,
+        shouldShowAds: false,
+        exportEnabled: true,
+        sharedSyncEnabled: true
+    )
+}
+
+enum PromoProPlan {
+    static let entitlements = FeatureEntitlements(
+        planType: .promoPro,
+        limits: ProPlan.limits,
+        subscriptionEnabled: false,
+        shouldShowAds: false,
+        exportEnabled: true,
+        sharedSyncEnabled: true
+    )
+}
+
+enum PlanEntitlements {
+    static func entitlements(for planType: PlanType) -> FeatureEntitlements {
+        switch planType {
+        case .free:
+            return FreePlan.entitlements
+        case .launchStandard:
+            return LaunchStandardPlan.entitlements
+        case .pro:
+            return ProPlan.entitlements
+        case .promoPro:
+            return PromoProPlan.entitlements
+        }
+    }
+}
+
+enum EntitlementSource: String, Codable, Sendable {
+    case storeSubscription = "store_subscription"
+    case storePromoCode = "store_promo_code"
+    case adminGrant = "admin_grant"
+    case referralGrant = "referral_grant"
+}
+
+enum EntitlementGrantStatus: String, Codable, Sendable {
+    case active
+    case revoked
+    case pending
+}
+
+struct EntitlementGrant: Codable, Equatable, Sendable {
+    let planType: PlanType
+    let source: EntitlementSource
+    let status: EntitlementGrantStatus
+    let startsAt: Date
+    let endsAt: Date?
+    let sourceID: String?
+    let note: String?
+
+    init(
+        planType: PlanType,
+        source: EntitlementSource,
+        status: EntitlementGrantStatus = .active,
+        startsAt: Date,
+        endsAt: Date? = nil,
+        sourceID: String? = nil,
+        note: String? = nil
+    ) {
+        self.planType = planType
+        self.source = source
+        self.status = status
+        self.startsAt = startsAt
+        self.endsAt = endsAt
+        self.sourceID = sourceID
+        self.note = note
+    }
+
+    func isActive(at date: Date) -> Bool {
+        guard status == .active else { return false }
+        return date >= startsAt && (endsAt == nil || date < endsAt!)
+    }
+}
+
+protocol EntitlementResolving: Sendable {
+    func resolve(at date: Date) -> FeatureEntitlements
+}
+
+struct EntitlementResolver: EntitlementResolving {
+    let defaultEntitlements: FeatureEntitlements
+    let grantsProvider: @Sendable () -> [EntitlementGrant]
+
+    init(
+        defaultEntitlements: FeatureEntitlements = LaunchStandardPlan.entitlements,
+        grantsProvider: @escaping @Sendable () -> [EntitlementGrant] = { [] }
+    ) {
+        self.defaultEntitlements = defaultEntitlements
+        self.grantsProvider = grantsProvider
+    }
+
+    func resolve(at date: Date = Date()) -> FeatureEntitlements {
+        guard let grant = grantsProvider()
+            .filter({ $0.isActive(at: date) })
+            .sorted(by: Self.grantSort)
+            .first
+        else {
+            return defaultEntitlements
+        }
+        return PlanEntitlements.entitlements(for: grant.planType)
+    }
+
+    private static func grantSort(_ lhs: EntitlementGrant, _ rhs: EntitlementGrant) -> Bool {
+        if lhs.planType.priority != rhs.planType.priority {
+            return lhs.planType.priority < rhs.planType.priority
+        }
+        if lhs.source.priority != rhs.source.priority {
+            return lhs.source.priority < rhs.source.priority
+        }
+        return lhs.startsAt > rhs.startsAt
+    }
+}
+
+private extension PlanType {
+    var priority: Int {
+        switch self {
+        case .promoPro: return 0
+        case .pro: return 1
+        case .launchStandard: return 2
+        case .free: return 3
+        }
+    }
+
+    var limitMessageLabel: String {
+        switch self {
+        case .free: return "無料プラン"
+        case .launchStandard: return "ローンチ版"
+        case .pro: return "Proプラン"
+        case .promoPro: return "優待Pro"
+        }
+    }
+}
+
+private extension EntitlementSource {
+    var priority: Int {
+        switch self {
+        case .adminGrant: return 0
+        case .storeSubscription: return 1
+        case .storePromoCode: return 2
+        case .referralGrant: return 3
+        }
+    }
+}
+
+enum BuildVariantEntitlementOverrides {
+    #if DEBUG
+    static let debugPlanOverrideKey = "urlsaver.debug.entitlement.plan"
+
+    static func grants(at date: Date) -> [EntitlementGrant] {
+        guard let rawPlan = UserDefaults.standard.string(forKey: debugPlanOverrideKey),
+              let planType = PlanType(rawValue: rawPlan.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            return []
+        }
+        return [
+            EntitlementGrant(
+                planType: planType,
+                source: .adminGrant,
+                status: .active,
+                startsAt: date,
+                sourceID: "debug_override"
+            )
+        ]
+    }
+    #else
+    static func grants(at date: Date) -> [EntitlementGrant] {
+        []
+    }
+    #endif
+}
+
 enum ContentContext: String, Codable, Sendable {
     case standard
     case video
@@ -149,6 +471,7 @@ struct ShareHandoffReport: Codable, Equatable, Sendable {
 
 struct MetadataUpdate: Equatable, Sendable {
     let fetchedTitle: String?
+    var fetchedAuthorName: String? = nil
     let fetchedBody: String?
     let fetchedBodyKind: MetadataBodyKind?
     let bodySummary: String?
@@ -175,6 +498,7 @@ struct URLRecord: Identifiable, Equatable, Sendable {
     let contentContext: ContentContext
     let userTitle: String?
     let fetchedTitle: String?
+    var fetchedAuthorName: String? = nil
     let fetchedBody: String?
     let fetchedBodyKind: MetadataBodyKind?
     let bodySummary: String?
