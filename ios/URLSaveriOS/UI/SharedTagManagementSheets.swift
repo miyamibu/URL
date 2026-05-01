@@ -20,6 +20,7 @@ struct SharedTagDetailSheet: View {
     @State private var shareItems: [Any] = []
     @State private var inviteNotice: String?
     @State private var syncNotice: String?
+    @State private var pendingOwnershipTransferMember: SharedTagMemberSummary?
 
     var body: some View {
         GeometryReader { proxy in
@@ -44,7 +45,11 @@ struct SharedTagDetailSheet: View {
                                 ScrollView {
                                     VStack(alignment: .leading, spacing: 16) {
                                         syncedTagInfo(for: tag)
-                                        SharedTagMembersStrip(members: members)
+                                        SharedTagMembersStrip(
+                                            members: members,
+                                            canTransferOwnership: tag.currentUserRole == .owner,
+                                            onTransferOwnership: { pendingOwnershipTransferMember = $0 }
+                                        )
 
                                         SharedTagEmptyState(isSyncing: isSyncing, syncNotice: syncNotice)
                                             .frame(maxWidth: .infinity, minHeight: 260)
@@ -61,7 +66,11 @@ struct SharedTagDetailSheet: View {
                                 ScrollView {
                                     VStack(alignment: .leading, spacing: 16) {
                                         syncedTagInfo(for: tag)
-                                        SharedTagMembersStrip(members: members)
+                                        SharedTagMembersStrip(
+                                            members: members,
+                                            canTransferOwnership: tag.currentUserRole == .owner,
+                                            onTransferOwnership: { pendingOwnershipTransferMember = $0 }
+                                        )
 
                                         Text("\(entries.count)件")
                                             .font(.system(size: 19, weight: .heavy, design: .rounded))
@@ -158,6 +167,29 @@ struct SharedTagDetailSheet: View {
             Button("閉じる", role: .cancel) {}
         } message: {
             Text(sharedTagInfoMessage(for: tag))
+        }
+        .alert("オーナー権限を移譲", isPresented: Binding(
+            get: { pendingOwnershipTransferMember != nil },
+            set: { if !$0 { pendingOwnershipTransferMember = nil } }
+        )) {
+            Button("キャンセル", role: .cancel) {
+                pendingOwnershipTransferMember = nil
+            }
+            Button("移譲する") {
+                guard let member = pendingOwnershipTransferMember, !isWorking else { return }
+                isWorking = true
+                Task {
+                    if await model.transferSharedTagOwnership(remoteTagID: remoteTagID, newOwnerUserID: member.userID) {
+                        await syncAndReload(showSuccessNotice: false)
+                    }
+                    pendingOwnershipTransferMember = nil
+                    isWorking = false
+                }
+            }
+        } message: {
+            if let member = pendingOwnershipTransferMember {
+                Text("\(memberLabel(member))へオーナー権限を移します。移譲後、あなたは編集者になり、共有タグの削除や招待リンク作成はできなくなります。")
+            }
         }
     }
 
@@ -410,6 +442,8 @@ private struct SharedTagEmptyState: View {
 
 private struct SharedTagMembersStrip: View {
     let members: [SharedTagMemberSummary]
+    let canTransferOwnership: Bool
+    let onTransferOwnership: (SharedTagMemberSummary) -> Void
 
     @State private var selectedMember: SharedTagMemberSummary?
 
@@ -438,8 +472,15 @@ private struct SharedTagMembersStrip: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .sheet(item: $selectedMember) { member in
-            SharedTagMemberProfileSheet(member: member)
-                .presentationDetents([.height(280), .medium])
+            SharedTagMemberProfileSheet(
+                member: member,
+                canTransferOwnership: canTransferOwnership && !member.isCurrentUser && member.role != .owner,
+                onTransferOwnership: {
+                    selectedMember = nil
+                    onTransferOwnership(member)
+                }
+            )
+                .presentationDetents([.height(340), .medium])
         }
     }
 }
@@ -478,6 +519,8 @@ private struct SharedTagMemberProfileSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let member: SharedTagMemberSummary
+    let canTransferOwnership: Bool
+    let onTransferOwnership: () -> Void
 
     var body: some View {
         VStack(spacing: 14) {
@@ -503,6 +546,15 @@ private struct SharedTagMemberProfileSheet: View {
             Text("権限: \(member.role.displayName)")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(AppPalette.textSecondary)
+
+            if canTransferOwnership {
+                Button("オーナー権限を移譲") {
+                    dismiss()
+                    onTransferOwnership()
+                }
+                .buttonStyle(.bordered)
+                .padding(.top, 4)
+            }
 
             Button("閉じる") {
                 dismiss()

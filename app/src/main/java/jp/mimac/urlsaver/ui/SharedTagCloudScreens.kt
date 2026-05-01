@@ -418,7 +418,7 @@ fun SharedTagCloudAuthScreen(
                                 SharedTagAccountDeletionResult.Success -> "アカウントを削除しました"
                                 SharedTagAccountDeletionResult.AuthRequired -> "アカウント削除にはサインインが必要です"
                                 SharedTagAccountDeletionResult.OwnerTransferRequired ->
-                                    "他のメンバーがいる共有タグのオーナー権限を先に移譲してください"
+                                    "共有タグ詳細の参加者からオーナー権限を先に移譲してください"
                                 is SharedTagAccountDeletionResult.Failure -> result.message
                             }
                             isSubmitting = false
@@ -435,7 +435,7 @@ fun SharedTagCloudAuthScreen(
             },
             title = { Text("アカウント削除") },
             text = {
-                Text("共有タグのクラウドアカウントを削除します。共有タグのオーナー権限が残っている場合は削除できません。")
+                Text("共有タグのクラウドアカウントを削除します。他のメンバーがいる共有タグのオーナー権限は、共有タグ詳細の参加者から先に移譲してください。")
             },
         )
     }

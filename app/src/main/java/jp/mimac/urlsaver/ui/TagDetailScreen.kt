@@ -43,6 +43,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
@@ -73,6 +75,7 @@ import jp.mimac.urlsaver.domain.MigrateSharedTagResult
 import jp.mimac.urlsaver.domain.SharedTagInviteCreationResult
 import jp.mimac.urlsaver.domain.SharedTagMemberRecord
 import jp.mimac.urlsaver.domain.SharedTagMemberRole
+import jp.mimac.urlsaver.domain.SharedTagOwnershipTransferResult
 import jp.mimac.urlsaver.domain.SharedTagScope
 import jp.mimac.urlsaver.ui.components.EntryCard
 import jp.mimac.urlsaver.ui.theme.OrbitTokens
@@ -105,10 +108,13 @@ fun TagDetailScreen(
     var showLeaveDialog by remember { mutableStateOf(false) }
     var showInfoDialog by remember { mutableStateOf(false) }
     var migrateError by remember { mutableStateOf<String?>(null) }
+    var pendingOwnershipTransferMember by remember { mutableStateOf<SharedTagMemberRecord?>(null) }
     var shareError by remember { mutableStateOf<String?>(null) }
     var memberRemoveError by remember { mutableStateOf<String?>(null) }
+    var ownershipTransferError by remember { mutableStateOf<String?>(null) }
     var entryRemoveError by remember { mutableStateOf<String?>(null) }
     var entryAddError by remember { mutableStateOf<String?>(null) }
+    val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(tag?.id, tag?.scope) {
         if (tag?.scope == SharedTagScope.SYNCED) {
@@ -195,6 +201,7 @@ fun TagDetailScreen(
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text(currentTag.name) },
@@ -360,7 +367,20 @@ fun TagDetailScreen(
                             )
                             SharedTagMembersPanel(
                                 members = members,
+                                canTransferOwnership = currentTag.currentUserRole == SharedTagMemberRole.OWNER,
+                                onTransferOwnership = { member ->
+                                    ownershipTransferError = null
+                                    pendingOwnershipTransferMember = member
+                                },
                             )
+                            ownershipTransferError?.let { message ->
+                                Text(
+                                    text = message,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    textAlign = TextAlign.Center,
+                                )
+                            }
                             memberRemoveError?.let { message ->
                                 Text(
                                     text = message,
@@ -419,7 +439,20 @@ fun TagDetailScreen(
                         item {
                             SharedTagMembersPanel(
                                 members = members,
+                                canTransferOwnership = currentTag.currentUserRole == SharedTagMemberRole.OWNER,
+                                onTransferOwnership = { member ->
+                                    ownershipTransferError = null
+                                    pendingOwnershipTransferMember = member
+                                },
                             )
+                            ownershipTransferError?.let { message ->
+                                Text(
+                                    text = message,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                                )
+                            }
                             memberRemoveError?.let { message ->
                                 Text(
                                     text = message,
@@ -592,6 +625,57 @@ fun TagDetailScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showMigrateDialog = false }) {
+                    Text("キャンセル")
+                }
+            },
+        )
+    }
+
+    pendingOwnershipTransferMember?.let { member ->
+        AlertDialog(
+            onDismissRequest = { pendingOwnershipTransferMember = null },
+            title = { Text("オーナー権限を移譲") },
+            text = {
+                Text(
+                    "${sharedTagMemberLabel(member)}へオーナー権限を移します。" +
+                        "移譲後、あなたは編集者になり、共有タグの削除や招待リンク作成はできなくなります。",
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            when (val result = viewModel.transferOwnership(member.userId)) {
+                                SharedTagOwnershipTransferResult.Success -> {
+                                    ownershipTransferError = null
+                                    pendingOwnershipTransferMember = null
+                                    snackbarHostState.showSnackbar("オーナー権限を移譲しました")
+                                }
+                                SharedTagOwnershipTransferResult.AuthRequired -> {
+                                    ownershipTransferError = "オーナー権限の移譲にはサインインが必要です"
+                                    pendingOwnershipTransferMember = null
+                                }
+                                SharedTagOwnershipTransferResult.OwnerOnly -> {
+                                    ownershipTransferError = "オーナー権限を移譲できるのは現在のオーナーだけです"
+                                    pendingOwnershipTransferMember = null
+                                }
+                                SharedTagOwnershipTransferResult.InvalidTarget -> {
+                                    ownershipTransferError = "移譲先は参加中のメンバーを選んでください"
+                                    pendingOwnershipTransferMember = null
+                                }
+                                is SharedTagOwnershipTransferResult.Failure -> {
+                                    ownershipTransferError = result.message
+                                    pendingOwnershipTransferMember = null
+                                }
+                            }
+                        }
+                    },
+                ) {
+                    Text("移譲する")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingOwnershipTransferMember = null }) {
                     Text("キャンセル")
                 }
             },
@@ -909,6 +993,8 @@ private fun TagEntryRemoveSwipeBackground(
 @Composable
 private fun SharedTagMembersPanel(
     members: List<SharedTagMemberRecord>,
+    canTransferOwnership: Boolean,
+    onTransferOwnership: (SharedTagMemberRecord) -> Unit,
 ) {
     var selectedMember by remember { mutableStateOf<SharedTagMemberRecord?>(null) }
 
@@ -949,6 +1035,13 @@ private fun SharedTagMembersPanel(
     selectedMember?.let { member ->
         SharedTagMemberProfileDialog(
             member = member,
+            canTransferOwnership = canTransferOwnership &&
+                !member.isCurrentUser &&
+                member.role != SharedTagMemberRole.OWNER,
+            onTransferOwnership = {
+                selectedMember = null
+                onTransferOwnership(member)
+            },
             onDismiss = { selectedMember = null },
         )
     }
@@ -1016,6 +1109,8 @@ private fun SharedTagMemberAvatarItem(
 @Composable
 private fun SharedTagMemberProfileDialog(
     member: SharedTagMemberRecord,
+    canTransferOwnership: Boolean,
+    onTransferOwnership: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
@@ -1072,8 +1167,15 @@ private fun SharedTagMemberProfileDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("閉じる")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (canTransferOwnership) {
+                    TextButton(onClick = onTransferOwnership) {
+                        Text("オーナー権限を移譲")
+                    }
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("閉じる")
+                }
             }
         },
     )
