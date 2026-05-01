@@ -188,6 +188,7 @@ class AppContainer(context: Context) {
             dao = database.urlEntryDao(),
             collectionDao = database.collectionDao(),
             userLabelDao = database.userLabelDao(),
+            tagDao = database.tagDao(),
             clock = clock,
             scheduler = scheduler,
             usageSummaryDataSource = usageSummaryDataSource,

@@ -13,13 +13,16 @@ import jp.mimac.urlsaver.domain.ShareExtractionResult
 import jp.mimac.urlsaver.domain.ShareSaveResult
 import jp.mimac.urlsaver.domain.UrlRules
 import jp.mimac.urlsaver.util.AppClock
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 
 class DefaultUrlRepository(
     private val database: AppDatabase,
     private val dao: UrlEntryDao,
     private val collectionDao: CollectionDao,
     private val userLabelDao: UserLabelDao,
+    private val tagDao: TagDao,
     private val clock: AppClock,
     private val scheduler: MetadataScheduler,
     private val usageSummaryDataSource: UsageSummaryDataSource,
@@ -29,12 +32,19 @@ class DefaultUrlRepository(
         dao = dao,
         collectionDao = collectionDao,
         userLabelDao = userLabelDao,
+        tagDao = tagDao,
         clock = clock,
     )
 
-    override fun observeActiveEntries(): Flow<List<UrlEntryEntity>> = dao.observeActiveEntries()
+    override fun observeActiveEntries(): Flow<List<UrlEntryEntity>> = flow {
+        reconcileLocalTagCollectionAssignments()
+        emitAll(dao.observeActiveEntries())
+    }
 
-    override fun observeArchiveEntries(): Flow<List<UrlEntryEntity>> = dao.observeArchiveEntries()
+    override fun observeArchiveEntries(): Flow<List<UrlEntryEntity>> = flow {
+        reconcileLocalTagCollectionAssignments()
+        emitAll(dao.observeArchiveEntries())
+    }
 
     override fun observeEntry(entryId: Long): Flow<UrlEntryEntity?> = dao.observeEntry(entryId)
     override fun observeCollections(): Flow<List<CollectionEntity>> = collectionsSupport.observeCollections()
@@ -70,6 +80,13 @@ class DefaultUrlRepository(
         if (entry.collectionId == target.id) return true
         dao.updateCollection(entryId = entryId, collectionId = target.id, updatedAt = clock.nowEpochMillis())
         return true
+    }
+
+    override suspend fun reconcileLocalTagCollectionAssignments(): Int {
+        return dao.moveInboxEntriesToMatchingLocalTagCollection(
+            defaultCollectionId = DEFAULT_COLLECTION_ID,
+            updatedAt = clock.nowEpochMillis(),
+        )
     }
 
     override suspend fun reorderCollections(collectionIds: List<Long>): Boolean = collectionsSupport.reorderCollections(collectionIds)

@@ -174,6 +174,23 @@ final class URLRepository: @unchecked Sendable {
         return true
     }
 
+    func deleteLocalTag(id tagID: Int64) throws -> Bool {
+        guard try loadLocalTag(id: tagID) != nil else {
+            return false
+        }
+        try database.transaction {
+            try execute(
+                "DELETE FROM local_tag_entries WHERE tag_id = ?;",
+                binds: [sql(tagID)]
+            )
+            try execute(
+                "DELETE FROM local_tags WHERE id = ?;",
+                binds: [sql(tagID)]
+            )
+        }
+        return true
+    }
+
     func loadEntry(id: Int64) throws -> URLRecord? {
         let statementSQL = "SELECT * FROM url_entries WHERE id = ? LIMIT 1;"
         return try fetchOne(sql: statementSQL, binds: [sql(id)])

@@ -146,6 +146,44 @@ interface UrlEntryDao {
     @Query(
         """
         UPDATE url_entries
+        SET collectionId = (
+                SELECT c.id
+                FROM tag_url_cross_refs AS r
+                INNER JOIN tags AS t ON t.id = r.tagId
+                INNER JOIN collections AS c ON lower(c.name) = lower(t.name)
+                WHERE r.entryId = url_entries.id
+                  AND r.deletedAt IS NULL
+                  AND t.deletedAt IS NULL
+                  AND t.scope = 'LOCAL_ONLY'
+                  AND c.id != :defaultCollectionId
+                ORDER BY c.sortOrder ASC, c.id ASC
+                LIMIT 1
+            ),
+            updatedAt = :updatedAt
+        WHERE collectionId = :defaultCollectionId
+          AND localProvenanceCount > 0
+          AND recordState != 'PENDING_DELETE'
+          AND EXISTS (
+                SELECT 1
+                FROM tag_url_cross_refs AS r
+                INNER JOIN tags AS t ON t.id = r.tagId
+                INNER JOIN collections AS c ON lower(c.name) = lower(t.name)
+                WHERE r.entryId = url_entries.id
+                  AND r.deletedAt IS NULL
+                  AND t.deletedAt IS NULL
+                  AND t.scope = 'LOCAL_ONLY'
+                  AND c.id != :defaultCollectionId
+            )
+        """
+    )
+    suspend fun moveInboxEntriesToMatchingLocalTagCollection(
+        defaultCollectionId: Long,
+        updatedAt: Long,
+    ): Int
+
+    @Query(
+        """
+        UPDATE url_entries
         SET metadataState = 'PENDING',
             metadataError = NULL,
             metadataRequestedAt = :requestedAt

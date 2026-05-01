@@ -10,6 +10,7 @@ internal class DefaultUrlRepositoryCollectionsSupport(
     private val dao: UrlEntryDao,
     private val collectionDao: CollectionDao,
     private val userLabelDao: UserLabelDao,
+    private val tagDao: TagDao,
     private val clock: AppClock,
 ) {
     fun observeCollections(): Flow<List<CollectionEntity>> = collectionDao.observeCollections()
@@ -90,6 +91,9 @@ internal class DefaultUrlRepositoryCollectionsSupport(
                     sourceCollectionId = collectionId,
                     targetCollectionId = defaultCollectionId,
                 )
+                tagDao.findLocalTagByName(collection.name)?.let { localTag ->
+                    tagDao.deleteTag(localTag.id)
+                }
                 collectionDao.deleteById(collectionId)
                 true
             }

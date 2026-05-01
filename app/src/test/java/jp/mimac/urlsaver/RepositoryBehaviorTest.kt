@@ -4,10 +4,15 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import jp.mimac.urlsaver.data.AppDatabase
+import jp.mimac.urlsaver.data.CollectionEntity
+import jp.mimac.urlsaver.data.DEFAULT_COLLECTION_ID
+import jp.mimac.urlsaver.data.DEFAULT_COLLECTION_NAME
 import jp.mimac.urlsaver.data.DefaultUrlRepository
 import jp.mimac.urlsaver.data.DefaultUsageSummaryDataSource
 import jp.mimac.urlsaver.data.MetadataScheduler
 import jp.mimac.urlsaver.data.MetadataUpdate
+import jp.mimac.urlsaver.data.TagEntity
+import jp.mimac.urlsaver.data.TagUrlCrossRef
 import jp.mimac.urlsaver.data.UrlEntryEntity
 import jp.mimac.urlsaver.domain.ContentContext
 import jp.mimac.urlsaver.domain.MetadataError
@@ -46,6 +51,7 @@ class RepositoryBehaviorTest {
             dao = db.urlEntryDao(),
             collectionDao = db.collectionDao(),
             userLabelDao = db.userLabelDao(),
+            tagDao = db.tagDao(),
             clock = clock,
             scheduler = scheduler,
             usageSummaryDataSource = DefaultUsageSummaryDataSource(
@@ -92,6 +98,38 @@ class RepositoryBehaviorTest {
 
         val updated = db.urlEntryDao().findById(first.entryId!!)!!
         assertEquals(c2Id, updated.collectionId)
+    }
+
+    @Test
+    fun deleteCollection_removesSameNameLocalTagAndRefs() = runBlocking {
+        db.collectionDao().insert(
+            CollectionEntity(
+                id = DEFAULT_COLLECTION_ID,
+                name = DEFAULT_COLLECTION_NAME,
+                sortOrder = 0,
+                createdAt = clock.nowEpochMillis(),
+                updatedAt = clock.nowEpochMillis(),
+            ),
+        )
+        val createdCollection = repository.createCollection("たあか")
+        val collectionId = createdCollection.collectionId!!
+        val saved = repository.saveFromManualInput("https://example.com/tag-delete", collectionId)
+        val entryId = saved.entryId!!
+        val tagId = db.tagDao().insertTag(
+            TagEntity(
+                name = "たあか",
+                createdAt = clock.nowEpochMillis(),
+            ),
+        )
+        db.tagDao().insertCrossRef(TagUrlCrossRef(tagId = tagId, entryId = entryId))
+
+        val deleted = repository.deleteCollection(collectionId)
+
+        assertTrue(deleted)
+        assertEquals(null, db.collectionDao().findById(collectionId))
+        assertEquals(null, db.tagDao().findLocalTagByName("たあか"))
+        assertTrue(db.tagDao().getVisibleTagsForEntry(entryId, authUserId = null).isEmpty())
+        assertEquals(DEFAULT_COLLECTION_ID, db.urlEntryDao().findById(entryId)?.collectionId)
     }
 
     @Test

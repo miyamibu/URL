@@ -16,6 +16,7 @@ interface MainListRepository {
         return CreateCollectionResult(success = false, invalidName = true)
     }
     suspend fun assignCollection(entryId: Long, collectionId: Long): Boolean = false
+    suspend fun reconcileLocalTagCollectionAssignments(): Int = 0
     suspend fun reorderCollections(collectionIds: List<Long>): Boolean = false
     suspend fun deleteCollection(collectionId: Long): Boolean = false
     suspend fun createUserLabel(name: String): Long = 0L
