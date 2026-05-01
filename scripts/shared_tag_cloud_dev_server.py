@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import html
 import json
 import os
 import secrets
@@ -229,7 +230,12 @@ class Store:
                 member = self.data["members"].get(tag_id, {}).get(target_user_id)
                 if member is None:
                     raise ValueError("not_found")
-                member["role"] = op["role"]
+                next_role = op["role"]
+                if next_role == "owner":
+                    raise ValueError("use_transfer_ownership")
+                if target_user_id == user_id and member["role"] == "owner":
+                    raise ValueError("owner_transfer_required")
+                member["role"] = next_role
                 member["updated_at"] = now_iso()
                 self._bump_tag(tag_id)
                 result["tag_id"] = tag_id
@@ -307,6 +313,35 @@ class Store:
             "role": role,
         }
 
+    def transfer_ownership(self, user_id: str, tag_id: str, new_owner_user_id: str) -> dict:
+        if not new_owner_user_id or new_owner_user_id == user_id:
+            raise ValueError("invalid_new_owner")
+        tag = self.data["tags"].get(tag_id)
+        if tag is None or tag.get("deleted_at") is not None:
+            raise ValueError("not_found")
+        self._require_active_role(tag_id, user_id, {"owner"})
+        members = self.data["members"].get(tag_id, {})
+        current_member = members.get(user_id)
+        target_member = members.get(new_owner_user_id)
+        if target_member is None:
+            raise ValueError("target_member_not_found")
+        if target_member["status"] != "active":
+            raise ValueError("target_member_not_active")
+        if target_member["role"] == "owner":
+            raise ValueError("target_already_owner")
+        timestamp = now_iso()
+        current_member["role"] = "editor"
+        current_member["updated_at"] = timestamp
+        target_member["role"] = "owner"
+        target_member["updated_at"] = timestamp
+        self._bump_tag(tag_id)
+        self.save()
+        return {
+            "tag_id": tag_id,
+            "previous_owner_user_id": user_id,
+            "new_owner_user_id": new_owner_user_id,
+        }
+
     def accept_invite(self, user_id: str, invite_token: str) -> dict:
         invite = self.data["invites"].get(invite_token)
         if invite is None:
@@ -331,6 +366,19 @@ class Store:
             "tag_name": self.data["tags"][tag_id]["name"],
             "role": invite["role"],
             "status": "active",
+        }
+
+    def preview_invite(self, invite_token: str) -> dict:
+        invite = self.data["invites"].get(invite_token)
+        if invite is None:
+            raise ValueError("invalid_invite")
+        if datetime.fromisoformat(invite["expires_at"].replace("Z", "+00:00")) < datetime.now(timezone.utc):
+            raise ValueError("invalid_invite")
+        tag = self.data["tags"].get(invite["tag_id"])
+        if tag is None or tag.get("deleted_at") is not None:
+            raise ValueError("invalid_invite")
+        return {
+            "tag_name": tag["name"],
         }
 
     def delete_account(self, user_id: str) -> None:
@@ -358,6 +406,23 @@ class Store:
                 tag["updated_at"] = now_iso()
                 tag["version"] += 1
             else:
+                active_owner_id = next(
+                    (
+                        other_id
+                        for other_id, record in self.data["members"].get(tag_id, {}).items()
+                        if other_id != user_id and record["status"] == "active" and record["role"] == "owner"
+                    ),
+                    None,
+                )
+                if active_owner_id is not None:
+                    if tag.get("created_by") == user_id:
+                        tag["created_by"] = active_owner_id
+                    for invite in self.data["invites"].values():
+                        if invite.get("tag_id") == tag_id and invite.get("created_by") == user_id:
+                            invite["created_by"] = active_owner_id
+                    for url_record in self.data["urls"].get(tag_id, {}).values():
+                        if url_record.get("added_by") == user_id:
+                            url_record["added_by"] = active_owner_id
                 member["status"] = "removed"
                 member["updated_at"] = now_iso()
 
@@ -401,6 +466,43 @@ class Handler(BaseHTTPRequestHandler):
 
     def _send_error_json(self, status: int, message: str) -> None:
         self._send_json(status, {"message": message})
+
+    def _send_html(self, status: int, body: str) -> None:
+        encoded = body.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    def do_GET(self) -> None:
+        parsed = urlparse(self.path)
+        segments = [segment for segment in parsed.path.split("/") if segment]
+        if len(segments) == 2 and segments[0] == "invite":
+            token = segments[1]
+            escaped_app_url = html.escape(f"urlsaver://invite/{token}", quote=True)
+            escaped_token = html.escape(token)
+            return self._send_html(
+                200,
+                f"""<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UrlSaver 共有タグ招待</title>
+  <meta http-equiv="refresh" content="0; url={escaped_app_url}">
+</head>
+<body>
+  <p>UrlSaver の共有タグ招待を開いています。</p>
+  <p><a href="{escaped_app_url}">アプリで開く</a></p>
+  <script>
+    window.location.href = "{escaped_app_url}";
+  </script>
+  <noscript>招待トークン: {escaped_token}</noscript>
+</body>
+</html>""",
+            )
+        return self._send_error_json(404, "not_found")
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
@@ -448,6 +550,12 @@ class Handler(BaseHTTPRequestHandler):
                         return self._send_json(200, session)
                     return self._send_error_json(400, "unsupported_grant_type")
 
+                if parsed.path == "/rest/v1/rpc/preview_shared_tag_invite":
+                    payload = self._read_json()
+                    assert isinstance(payload, dict)
+                    token = str(payload.get("p_token", ""))
+                    return self._send_json(200, self.store.preview_invite(token))
+
                 user_id = self.store.auth_user_id(self.headers)
                 if user_id is None:
                     return self._send_error_json(401, "auth_required")
@@ -470,6 +578,13 @@ class Handler(BaseHTTPRequestHandler):
                     tag_id = str(payload.get("p_tag_id", ""))
                     role = str(payload.get("p_role", "editor"))
                     return self._send_json(200, self.store.create_invite(user_id, tag_id, role))
+
+                if parsed.path == "/rest/v1/rpc/transfer_shared_tag_ownership":
+                    payload = self._read_json()
+                    assert isinstance(payload, dict)
+                    tag_id = str(payload.get("p_tag_id", ""))
+                    new_owner_user_id = str(payload.get("p_new_owner_user_id", ""))
+                    return self._send_json(200, self.store.transfer_ownership(user_id, tag_id, new_owner_user_id))
 
                 if parsed.path == "/rest/v1/rpc/accept_shared_tag_invite":
                     payload = self._read_json()
