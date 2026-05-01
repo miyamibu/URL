@@ -113,6 +113,11 @@ data class CreateSharedTagInviteResponse(
 )
 
 @Serializable
+data class PreviewSharedTagInviteResponse(
+    @SerialName("tag_name") val tagName: String,
+)
+
+@Serializable
 data class AcceptSharedTagInviteResponse(
     @SerialName("tag_id") val tagId: String,
     @SerialName("tag_name") val tagName: String,

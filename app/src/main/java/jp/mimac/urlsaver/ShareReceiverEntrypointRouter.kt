@@ -81,10 +81,19 @@ internal object ShareReceiverEntrypointRouter {
     private fun parseSharedTagInviteToken(uri: android.net.Uri?): String? {
         uri ?: return null
         if (!isInviteUri(uri)) return null
-        return uri.pathSegments.singleOrNull()?.trim()?.takeIf { it.isNotEmpty() }
+        val token = when {
+            uri.scheme == "urlsaver" -> uri.pathSegments.singleOrNull()
+            uri.scheme == "http" || uri.scheme == "https" -> {
+                uri.pathSegments.takeIf { it.firstOrNull() == "invite" }?.drop(1)?.singleOrNull()
+            }
+            else -> null
+        }
+        return token?.trim()?.takeIf { it.isNotEmpty() }
     }
 
     private fun isInviteUri(uri: android.net.Uri?): Boolean {
-        return uri?.scheme == "urlsaver" && uri.host == "invite"
+        uri ?: return false
+        return (uri.scheme == "urlsaver" && uri.host == "invite") ||
+            ((uri.scheme == "http" || uri.scheme == "https") && uri.pathSegments.firstOrNull() == "invite")
     }
 }

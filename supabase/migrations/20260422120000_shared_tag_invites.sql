@@ -412,7 +412,43 @@ begin
 end;
 $$;
 
+create or replace function public.preview_shared_tag_invite(p_token text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+declare
+    invite_record public.shared_tag_invites%rowtype;
+    tag_name text;
+begin
+    select invite.*
+    into invite_record
+    from public.shared_tag_invites invite
+    join public.shared_tags tag
+      on tag.id = invite.tag_id
+    where invite.token_hash = private.hash_shared_tag_invite_token(p_token)
+      and invite.revoked_at is null
+      and invite.expires_at > now()
+      and tag.deleted_at is null
+    limit 1;
+
+    if invite_record.token_hash is null then
+        raise exception 'invalid_or_expired_invite';
+    end if;
+
+    select tag.name into tag_name
+    from public.shared_tags tag
+    where tag.id = invite_record.tag_id;
+
+    return jsonb_build_object(
+        'tag_name', tag_name
+    );
+end;
+$$;
+
 alter table public.shared_tag_invites enable row level security;
 
 grant execute on function public.create_shared_tag_invite(uuid, text) to authenticated;
+grant execute on function public.preview_shared_tag_invite(text) to anon, authenticated;
 grant execute on function public.accept_shared_tag_invite(text) to authenticated;

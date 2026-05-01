@@ -8,6 +8,7 @@ import jp.mimac.urlsaver.domain.SharedTagAccountDeletionResult
 import jp.mimac.urlsaver.domain.SharedTagCloudState
 import jp.mimac.urlsaver.domain.SharedTagInviteAcceptanceResult
 import jp.mimac.urlsaver.domain.SharedTagInviteCreationResult
+import jp.mimac.urlsaver.domain.SharedTagInvitePreviewResult
 import jp.mimac.urlsaver.domain.SharedTagOwnershipTransferResult
 import jp.mimac.urlsaver.domain.AssignTagResult
 import jp.mimac.urlsaver.domain.CreateTagResult
@@ -605,20 +606,42 @@ class DefaultTagRepository(
         }
     }
 
+    override suspend fun previewInvite(inviteToken: String): SharedTagInvitePreviewResult {
+        val token = inviteToken.trim()
+        if (token.isBlank()) return SharedTagInvitePreviewResult.InvalidInvite
+        return runCatching {
+            val preview = remoteDataSource.previewInvite(token)
+            SharedTagInvitePreviewResult.Success(
+                tagName = preview.tagName,
+            )
+        }.getOrElse { error ->
+            val message = error.message.orEmpty()
+            if (message.contains("invalid_invite", ignoreCase = true) ||
+                message.contains("invalid_or_expired_invite", ignoreCase = true)
+            ) {
+                SharedTagInvitePreviewResult.InvalidInvite
+            } else {
+                SharedTagInvitePreviewResult.Failure(message.ifBlank { "招待リンクを確認できませんでした" })
+            }
+        }
+    }
+
     override suspend fun acceptInvite(inviteToken: String): SharedTagInviteAcceptanceResult {
         val session = currentSyncSessionOrNull() ?: return SharedTagInviteAcceptanceResult.AuthRequired
         val token = inviteToken.trim()
         if (token.isBlank()) return SharedTagInviteAcceptanceResult.InvalidInvite
         return runCatching {
             val accepted = remoteDataSource.acceptInvite(session, token)
-            scheduleSync(session.authUserId)
+            syncNowOrSchedule(session.authUserId)
             SharedTagInviteAcceptanceResult.Success(
                 remoteTagId = accepted.tagId,
                 tagName = accepted.tagName,
             )
         }.getOrElse { error ->
             val message = error.message.orEmpty()
-            if (message.contains("invalid_or_expired_invite", ignoreCase = true)) {
+            if (message.contains("invalid_invite", ignoreCase = true) ||
+                message.contains("invalid_or_expired_invite", ignoreCase = true)
+            ) {
                 SharedTagInviteAcceptanceResult.InvalidInvite
             } else {
                 SharedTagInviteAcceptanceResult.Failure(message.ifBlank { "招待に参加できませんでした" })

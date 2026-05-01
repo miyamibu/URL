@@ -278,6 +278,9 @@ begin
     if coalesce(invite_payload ->> 'invite_token', '') = '' then
         raise exception 'invite token was not returned';
     end if;
+    if public.preview_shared_tag_invite(invite_payload ->> 'invite_token') ->> 'tag_name' <> 'Cloud Shared' then
+        raise exception 'invite preview returned unexpected tag name';
+    end if;
 
     perform set_config('request.jwt.claim.sub', viewer_id::text, true);
     accepted_invite := public.accept_shared_tag_invite(invite_payload ->> 'invite_token');

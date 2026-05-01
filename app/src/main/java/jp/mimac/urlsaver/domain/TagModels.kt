@@ -137,6 +137,15 @@ sealed interface SharedTagInviteCreationResult {
     data class Failure(val message: String) : SharedTagInviteCreationResult
 }
 
+sealed interface SharedTagInvitePreviewResult {
+    data class Success(
+        val tagName: String,
+    ) : SharedTagInvitePreviewResult
+
+    data object InvalidInvite : SharedTagInvitePreviewResult
+    data class Failure(val message: String) : SharedTagInvitePreviewResult
+}
+
 sealed interface SharedTagInviteAcceptanceResult {
     data class Success(
         val remoteTagId: String,

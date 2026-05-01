@@ -878,13 +878,24 @@ private enum IncomingURLRoute {
     case unknown
 
     init(url: URL) {
-        guard url.scheme?.lowercased() == "urlsaver" else {
+        let scheme = url.scheme?.lowercased()
+        let host = url.host?.lowercased()
+        let token = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if scheme == "http" || scheme == "https" {
+            let pathComponents = url.pathComponents.filter { $0 != "/" }
+            if pathComponents.count == 2, pathComponents.first?.lowercased() == "invite" {
+                self = .invite(pathComponents[1])
+            } else {
+                self = .unknown
+            }
+            return
+        }
+
+        guard scheme == "urlsaver" else {
             self = .unknown
             return
         }
 
-        let host = url.host?.lowercased()
-        let token = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         switch host {
         case "invite":
             self = .invite(token)

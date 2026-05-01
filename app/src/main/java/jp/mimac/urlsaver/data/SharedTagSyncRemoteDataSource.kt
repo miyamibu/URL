@@ -3,6 +3,7 @@ package jp.mimac.urlsaver.data
 import jp.mimac.urlsaver.domain.ApplySharedTagOpsResponse
 import jp.mimac.urlsaver.domain.AcceptSharedTagInviteResponse
 import jp.mimac.urlsaver.domain.CreateSharedTagInviteResponse
+import jp.mimac.urlsaver.domain.PreviewSharedTagInviteResponse
 import jp.mimac.urlsaver.domain.PullSharedTagSnapshotResponse
 import jp.mimac.urlsaver.domain.SharedTagSyncOperation
 import jp.mimac.urlsaver.domain.TransferSharedTagOwnershipResponse
@@ -28,6 +29,8 @@ interface SharedTagSyncRemoteDataSource {
         remoteTagId: String,
         role: String,
     ): CreateSharedTagInviteResponse
+
+    suspend fun previewInvite(inviteToken: String): PreviewSharedTagInviteResponse
 
     suspend fun acceptInvite(
         session: SharedTagAuthSession,
@@ -117,6 +120,19 @@ class SupabaseSharedTagSyncRemoteDataSource(
         return json.decodeFromString(response)
     }
 
+    override suspend fun previewInvite(inviteToken: String): PreviewSharedTagInviteResponse {
+        val response = withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/preview_shared_tag_invite",
+                session = null,
+                requestBody = json.encodeToString(
+                    mapOf("p_token" to inviteToken),
+                ),
+            )
+        }
+        return json.decodeFromString(response)
+    }
+
     override suspend fun acceptInvite(
         session: SharedTagAuthSession,
         inviteToken: String,
@@ -165,7 +181,7 @@ class SupabaseSharedTagSyncRemoteDataSource(
 
     private suspend fun executeRpc(
         path: String,
-        session: SharedTagAuthSession,
+        session: SharedTagAuthSession?,
         requestBody: String,
         allowRefresh: Boolean = true,
     ): String {
@@ -178,7 +194,7 @@ class SupabaseSharedTagSyncRemoteDataSource(
             readTimeout = READ_TIMEOUT_MS
             setRequestProperty("Content-Type", "application/json")
             setRequestProperty("apikey", config.anonKey)
-            setRequestProperty("Authorization", "Bearer ${session.accessToken}")
+            setRequestProperty("Authorization", "Bearer ${session?.accessToken ?: config.anonKey}")
         }
 
         connection.outputStream.use { it.write(requestBody.toByteArray(Charsets.UTF_8)) }
@@ -189,9 +205,9 @@ class SupabaseSharedTagSyncRemoteDataSource(
         }.getOrDefault("")
         if (responseCode == HttpURLConnection.HTTP_UNAUTHORIZED &&
             allowRefresh &&
-            !session.refreshToken.isNullOrBlank()
+            !session?.refreshToken.isNullOrBlank()
         ) {
-            val refreshedSession = authRemoteDataSource.refreshSession(requireNotNull(session.refreshToken))
+            val refreshedSession = authRemoteDataSource.refreshSession(requireNotNull(session?.refreshToken))
             authSessionProvider.updateSession(refreshedSession)
             return executeRpc(
                 path = path,

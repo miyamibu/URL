@@ -83,3 +83,9 @@ enum SharedTagInviteAcceptanceResult: Equatable, Sendable {
     case invalidInvite
     case failure(String)
 }
+
+enum SharedTagInvitePreviewResult: Equatable, Sendable {
+    case success(tagName: String)
+    case invalidInvite
+    case failure(String)
+}

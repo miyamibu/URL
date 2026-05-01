@@ -122,6 +122,38 @@ class ShareReceiverActivityEntrypointTest {
     }
 
     @Test
+    fun actionView_httpsInviteLink_routesToMainWithInviteTokenExtra() {
+        val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
+        val intent = Intent(context, ShareReceiverActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = Uri.parse("https://urlsaver.app/invite/invite-token-https-123")
+        }
+
+        val controller = Robolectric.buildActivity(ShareReceiverActivity::class.java, intent).setup()
+        ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+
+        val started = shadowOf(controller.get()).nextStartedActivity
+        assertEquals("invite-token-https-123", started.getStringExtra(EXTRA_SHARED_TAG_INVITE_TOKEN))
+        assertFalse(started.getBooleanExtra(EXTRA_SHARED_TAG_INVITE_INVALID, false))
+    }
+
+    @Test
+    fun actionView_httpInviteLink_routesToMainWithInviteTokenExtra() {
+        val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
+        val intent = Intent(context, ShareReceiverActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = Uri.parse("http://example.test/invite/invite-token-http-123")
+        }
+
+        val controller = Robolectric.buildActivity(ShareReceiverActivity::class.java, intent).setup()
+        ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+
+        val started = shadowOf(controller.get()).nextStartedActivity
+        assertEquals("invite-token-http-123", started.getStringExtra(EXTRA_SHARED_TAG_INVITE_TOKEN))
+        assertFalse(started.getBooleanExtra(EXTRA_SHARED_TAG_INVITE_INVALID, false))
+    }
+
+    @Test
     fun actionView_missingInviteToken_routesToMainSafelyWithInviteInvalidFlag() {
         val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
         val intent = Intent(context, ShareReceiverActivity::class.java).apply {
@@ -409,6 +441,24 @@ class ShareReceiverActivityEntrypointTest {
     fun manifest_allowsSharedTagInviteLinks() {
         val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse("urlsaver://invite/test-token")).apply {
+            setPackage(context.packageName)
+            addCategory(Intent.CATEGORY_BROWSABLE)
+        }
+
+        val resolved = context.packageManager.queryIntentActivities(
+            intent,
+            PackageManager.MATCH_DEFAULT_ONLY,
+        )
+
+        assertTrue(
+            resolved.any { it.activityInfo?.name == ShareReceiverActivity::class.java.name },
+        )
+    }
+
+    @Test
+    fun manifest_allowsHttpsSharedTagInviteLinks() {
+        val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://urlsaver.app/invite/test-token")).apply {
             setPackage(context.packageName)
             addCategory(Intent.CATEGORY_BROWSABLE)
         }

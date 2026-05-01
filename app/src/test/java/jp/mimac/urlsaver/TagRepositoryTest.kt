@@ -24,6 +24,7 @@ import jp.mimac.urlsaver.domain.ApplySharedTagOpsResponse
 import jp.mimac.urlsaver.domain.ContentContext
 import jp.mimac.urlsaver.domain.CreateTagResult
 import jp.mimac.urlsaver.domain.CreateSharedTagInviteResponse
+import jp.mimac.urlsaver.domain.PreviewSharedTagInviteResponse
 import jp.mimac.urlsaver.domain.MetadataState
 import jp.mimac.urlsaver.domain.PullSharedTagSnapshotResponse
 import jp.mimac.urlsaver.domain.RecordState
@@ -570,6 +571,12 @@ class TagRepositoryTest {
                 inviteToken = "invite-token",
                 expiresAt = "2026-05-01T00:00:00Z",
                 role = role,
+            )
+        }
+
+        override suspend fun previewInvite(inviteToken: String): PreviewSharedTagInviteResponse {
+            return PreviewSharedTagInviteResponse(
+                tagName = "joined-tag",
             )
         }
 

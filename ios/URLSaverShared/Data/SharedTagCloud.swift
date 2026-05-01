@@ -279,6 +279,14 @@ private struct SharedTagSyncRemoteDataSource {
         return try makeSharedTagCloudDecoder().decode(CreateSharedTagInviteResponse.self, from: data)
     }
 
+    func previewInvite(inviteToken: String) async throws -> PreviewSharedTagInviteResponse {
+        let data = try await executeUnauthenticatedRPC(
+            path: "/rest/v1/rpc/preview_shared_tag_invite",
+            body: AcceptInvitePayload(token: inviteToken)
+        )
+        return try makeSharedTagCloudDecoder().decode(PreviewSharedTagInviteResponse.self, from: data)
+    }
+
     func acceptInvite(session: SharedTagAuthSession, inviteToken: String) async throws -> AcceptSharedTagInviteResponse {
         let data = try await executeRPC(
             path: "/rest/v1/rpc/accept_shared_tag_invite",
@@ -306,6 +314,17 @@ private struct SharedTagSyncRemoteDataSource {
             path: "/rest/v1/rpc/delete_my_account",
             session: session,
             body: EmptyPayload()
+        )
+    }
+
+    private func executeUnauthenticatedRPC<T: Encodable>(
+        path: String,
+        body: T
+    ) async throws -> Data {
+        try await SharedTagRemoteRequestExecutor(config: config).execute(
+            path: path,
+            bearerToken: nil,
+            body: body
         )
     }
 
@@ -1447,6 +1466,33 @@ final class SharedTagCloudService: @unchecked Sendable {
         "\(config.inviteLinkBaseURL)/invite/\(inviteToken)"
     }
 
+    func previewInvite(inviteToken: String) async -> SharedTagInvitePreviewResult {
+        guard config.isConfigured else {
+            return .failure("共有タグクラウドの設定がありません")
+        }
+        let token = inviteToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else {
+            return .invalidInvite
+        }
+        do {
+            let preview = try await syncRemoteDataSource.previewInvite(inviteToken: token)
+            return .success(tagName: preview.tagName)
+        } catch let error as SharedTagCloudError {
+            switch error {
+            case .invalidInvite:
+                return .invalidInvite
+            default:
+                return .failure(error.userMessage)
+            }
+        } catch {
+            let message = error.localizedDescription.lowercased()
+            if message.contains("invalid") || message.contains("expired") || message.contains("token") {
+                return .invalidInvite
+            }
+            return .failure(error.localizedDescription)
+        }
+    }
+
     func acceptInvite(inviteToken: String) async -> SharedTagInviteAcceptanceResult {
         guard config.isConfigured else {
             return .failure("共有タグクラウドの設定がありません")
@@ -1781,6 +1827,14 @@ private struct TransferSharedTagOwnershipResponse: Decodable {
         case tagID = "tag_id"
         case previousOwnerUserID = "previous_owner_user_id"
         case newOwnerUserID = "new_owner_user_id"
+    }
+}
+
+private struct PreviewSharedTagInviteResponse: Decodable {
+    let tagName: String
+
+    enum CodingKeys: String, CodingKey {
+        case tagName = "tag_name"
     }
 }
 
