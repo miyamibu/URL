@@ -62,8 +62,12 @@ Done when
   - 環境変数 `URLSAVER_SHARED_TAG_CLOUD_ENABLED`
   - 環境変数 `URLSAVER_SUPABASE_URL`
   - 環境変数 `URLSAVER_SUPABASE_ANON_KEY`
-  - `ios/URLSaveriOS/Info.plist` の `SharedTagCloudEnabled` / `SupabaseURL` / `SupabaseAnonKey`
+  - 環境変数 `URLSAVER_INVITE_LINK_BASE_URL`
+  - `ios/URLSaveriOS/Info.plist` の `SharedTagCloudEnabled` / `SupabaseURL` / `SupabaseAnonKey` / `InviteLinkBaseURL`
 - 未設定時は cloud シート内で未設定メッセージを出し、既存の local saver 契約はそのまま保ちます。
+- `URLSaveriOS.xcodeproj` には dev LAN URL や dev key を固定しません。Archive/TestFlight では `ios/Config/URLSaverSecrets.xcconfig.example` を `ios/Config/URLSaverSecrets.xcconfig` にコピーし、実値を入れて `xcodebuild ... -xcconfig ios/Config/URLSaverSecrets.xcconfig archive` のように渡してください。実値入り xcconfig は gitignore 済みです。
+- Supabase key は publishable key または legacy anon key のみを使い、`service_role` / `sb_secret` は app binary に入れません。
+- 招待リンクの正本は `https://urlsaver.app/invite/{token}` です。`urlsaver://invite/{token}` は fallback deep link として残します。
 
 ## Known iOS-specific notes
 

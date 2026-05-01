@@ -29,6 +29,38 @@ fun buildConfigString(value: String): String {
     return "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
 }
 
+val publicInviteLinkBaseUrl = configString(
+    propertyName = "invite.link.base.url",
+    envName = "URLSAVER_INVITE_LINK_BASE_URL",
+    defaultValue = "https://urlsaver.app",
+).trim().trimEnd('/')
+
+val releaseSharedTagCloudEnabled = configBoolean(
+    propertyName = "release.shared.tag.cloud.enabled",
+    envName = "URLSAVER_RELEASE_SHARED_TAG_CLOUD_ENABLED",
+)
+val releaseSupabaseUrl = configString(
+    propertyName = "release.supabase.url",
+    envName = "URLSAVER_RELEASE_SUPABASE_URL",
+).trim()
+val releaseSupabaseAnonKey = configString(
+    propertyName = "release.supabase.anon.key",
+    envName = "URLSAVER_RELEASE_SUPABASE_ANON_KEY",
+).trim()
+val releaseBuildRequested = gradle.startParameter.taskNames.any { taskName ->
+    taskName.contains("Release", ignoreCase = true) || taskName == "build"
+}
+if (releaseBuildRequested &&
+    (!releaseSharedTagCloudEnabled || releaseSupabaseUrl.isBlank() || releaseSupabaseAnonKey.isBlank())
+) {
+    throw GradleException(
+        "Release builds require beta/production Supabase config. Set " +
+            "release.shared.tag.cloud.enabled=true, release.supabase.url, release.supabase.anon.key " +
+            "or URLSAVER_RELEASE_SHARED_TAG_CLOUD_ENABLED=true, URLSAVER_RELEASE_SUPABASE_URL, " +
+            "URLSAVER_RELEASE_SUPABASE_ANON_KEY. Use a publishable/anon key, never service_role/secret.",
+    )
+}
+
 android {
     namespace = "jp.mimac.urlsaver"
     compileSdk = 35
@@ -56,6 +88,7 @@ android {
             buildConfigField("boolean", "SHARED_TAG_CLOUD_ENABLED", configBoolean("shared.tag.cloud.enabled", "URLSAVER_SHARED_TAG_CLOUD_ENABLED").toString())
             buildConfigField("String", "SUPABASE_URL", buildConfigString(configString("supabase.url", "URLSAVER_SUPABASE_URL")))
             buildConfigField("String", "SUPABASE_ANON_KEY", buildConfigString(configString("supabase.anon.key", "URLSAVER_SUPABASE_ANON_KEY")))
+            buildConfigField("String", "INVITE_LINK_BASE_URL", buildConfigString(publicInviteLinkBaseUrl))
         }
         release {
             isMinifyEnabled = false
@@ -64,9 +97,10 @@ android {
             buildConfigField("String", "ADMOB_BANNER_AD_UNIT_ID", buildConfigString(""))
             buildConfigField("String", "ADMOB_INTERSTITIAL_AD_UNIT_ID", buildConfigString(""))
             buildConfigField("String", "INSTAGRAM_OEMBED_ACCESS_TOKEN", buildConfigString(configString("instagram.oembed.access.token", "URLSAVER_INSTAGRAM_OEMBED_ACCESS_TOKEN")))
-            buildConfigField("boolean", "SHARED_TAG_CLOUD_ENABLED", configBoolean("release.shared.tag.cloud.enabled", "URLSAVER_RELEASE_SHARED_TAG_CLOUD_ENABLED").toString())
-            buildConfigField("String", "SUPABASE_URL", buildConfigString(configString("release.supabase.url", "URLSAVER_RELEASE_SUPABASE_URL")))
-            buildConfigField("String", "SUPABASE_ANON_KEY", buildConfigString(configString("release.supabase.anon.key", "URLSAVER_RELEASE_SUPABASE_ANON_KEY")))
+            buildConfigField("boolean", "SHARED_TAG_CLOUD_ENABLED", releaseSharedTagCloudEnabled.toString())
+            buildConfigField("String", "SUPABASE_URL", buildConfigString(releaseSupabaseUrl))
+            buildConfigField("String", "SUPABASE_ANON_KEY", buildConfigString(releaseSupabaseAnonKey))
+            buildConfigField("String", "INVITE_LINK_BASE_URL", buildConfigString(publicInviteLinkBaseUrl))
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -127,7 +161,8 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
-    implementation("com.google.android.gms:play-services-ads:23.6.0")
+    compileOnly("com.google.android.gms:play-services-ads:23.6.0")
+    debugImplementation("com.google.android.gms:play-services-ads:23.6.0")
     implementation("io.coil-kt:coil-compose:2.6.0")
     implementation("org.jsoup:jsoup:1.18.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")

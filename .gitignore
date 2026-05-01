@@ -28,3 +28,4 @@ ios/**/DerivedData/
 ios/**/Index.noindex/
 ios/**/ModuleCache.noindex/
 ios/**/SDKStatCaches.noindex/
+ios/Config/URLSaverSecrets.xcconfig

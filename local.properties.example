@@ -1,0 +1,18 @@
+# Copy selected values to local.properties or provide the matching environment variables.
+# Do not put service_role, secret keys, or production credentials in git.
+
+# Android SDK path is local-machine specific.
+# sdk.dir=/Users/you/Library/Android/sdk
+
+# Debug/internal shared-tag cloud.
+# supabase.url=https://<project-ref>.supabase.co
+# supabase.anon.key=<supabase publishable or legacy anon key>
+# shared.tag.cloud.enabled=true
+
+# Beta/release shared-tag cloud. Required for assembleRelease.
+# release.supabase.url=https://<project-ref>.supabase.co
+# release.supabase.anon.key=<supabase publishable or legacy anon key>
+# release.shared.tag.cloud.enabled=true
+
+# Public invite links. Defaults to https://urlsaver.app.
+# invite.link.base.url=https://urlsaver.app

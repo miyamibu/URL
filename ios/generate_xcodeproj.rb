@@ -4,6 +4,7 @@ require "xcodeproj"
 shared_tag_cloud_enabled = ENV.fetch("URLSAVER_SHARED_TAG_CLOUD_ENABLED", "false")
 shared_tag_supabase_url = ENV.fetch("URLSAVER_SUPABASE_URL", "")
 shared_tag_supabase_anon_key = ENV.fetch("URLSAVER_SUPABASE_ANON_KEY", "")
+invite_link_base_url = ENV.fetch("URLSAVER_INVITE_LINK_BASE_URL", "https://urlsaver.app")
 ios_development_team = ENV.fetch("URLSAVER_IOS_DEVELOPMENT_TEAM", "")
 ios_code_sign_identity = ENV.fetch("URLSAVER_IOS_CODE_SIGN_IDENTITY", "")
 ios_app_profile_specifier = ENV.fetch("URLSAVER_IOS_APP_PROFILE_SPECIFIER", "")
@@ -85,6 +86,7 @@ app_target.build_configurations.each do |config|
   config.build_settings["URLSAVER_SHARED_TAG_CLOUD_ENABLED"] = shared_tag_cloud_enabled
   config.build_settings["URLSAVER_SUPABASE_URL"] = shared_tag_supabase_url
   config.build_settings["URLSAVER_SUPABASE_ANON_KEY"] = shared_tag_supabase_anon_key
+  config.build_settings["URLSAVER_INVITE_LINK_BASE_URL"] = invite_link_base_url
   if manual_signing_enabled
     config.build_settings["DEVELOPMENT_TEAM"] = ios_development_team
     config.build_settings["CODE_SIGN_IDENTITY"] = ios_code_sign_identity
