@@ -8,6 +8,7 @@ import jp.mimac.urlsaver.domain.FeatureEntitlements
 import jp.mimac.urlsaver.domain.SharedTagAccountDeletionResult
 import jp.mimac.urlsaver.domain.SharedTagAuthResult
 import jp.mimac.urlsaver.domain.SharedTagCloudState
+import jp.mimac.urlsaver.domain.SharedTagInviteAcceptanceResult
 import jp.mimac.urlsaver.domain.UsageSummary
 import jp.mimac.urlsaver.domain.UserProfile
 import kotlinx.coroutines.flow.SharingStarted
@@ -74,14 +75,25 @@ class SharedTagAuthViewModel(
     fun canApplyInviteCode(code: String): Boolean = code.trim().isNotEmpty()
 
     suspend fun applyInviteCode(code: String): InviteCodeApplyResult {
-        if (!canApplyInviteCode(code)) {
+        val trimmedCode = code.trim()
+        if (trimmedCode.isEmpty()) {
             return InviteCodeApplyResult.InvalidCode
         }
-        return InviteCodeApplyResult.NotAvailable("招待コード機能は現在準備中です")
+        return when (val result = tagRepository.acceptInvite(trimmedCode)) {
+            is SharedTagInviteAcceptanceResult.Success -> InviteCodeApplyResult.Success(
+                tagName = result.tagName,
+            )
+            SharedTagInviteAcceptanceResult.AuthRequired -> InviteCodeApplyResult.AuthRequired
+            SharedTagInviteAcceptanceResult.InvalidInvite -> InviteCodeApplyResult.InvalidInvite
+            is SharedTagInviteAcceptanceResult.Failure -> InviteCodeApplyResult.Failure(result.message)
+        }
     }
 }
 
 sealed interface InviteCodeApplyResult {
+    data class Success(val tagName: String) : InviteCodeApplyResult
     data object InvalidCode : InviteCodeApplyResult
-    data class NotAvailable(val message: String) : InviteCodeApplyResult
+    data object AuthRequired : InviteCodeApplyResult
+    data object InvalidInvite : InviteCodeApplyResult
+    data class Failure(val message: String) : InviteCodeApplyResult
 }

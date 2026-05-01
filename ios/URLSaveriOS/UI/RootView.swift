@@ -136,6 +136,20 @@ struct RootView: View {
                     )
                 }
             }
+            .fullScreenCover(
+                isPresented: Binding(
+                    get: { model.inviteConfirmationToken != nil },
+                    set: { if !$0 { model.clearInviteConfirmation() } }
+                )
+            ) {
+                if let token = model.inviteConfirmationToken {
+                    SharedTagInviteConfirmationView(
+                        inviteToken: token,
+                        model: model,
+                        onClose: { model.clearInviteConfirmation() }
+                    )
+                }
+            }
             .alert("プライバシー情報", isPresented: $isShowingPrivacyInfo) {
                 Button("閉じる", role: .cancel) {}
             } message: {
@@ -308,6 +322,160 @@ private func buildMainShareSummary(
     }
 
     return lines.joined(separator: "\n")
+}
+
+
+private struct SharedTagInviteConfirmationView: View {
+    let inviteToken: String
+    @ObservedObject var model: URLSaverAppModel
+    let onClose: () -> Void
+
+    @State private var previewState: InvitePreviewState = .loading
+    @State private var message: String?
+    @State private var isWorking = false
+    @State private var didJoin = false
+
+    var body: some View {
+        ScreenContainer {
+            VStack(spacing: 0) {
+                ScreenHeader(
+                    title: "",
+                    leadingButton: ScreenHeaderButton(
+                        icon: "chevron.left",
+                        accessibilityLabel: "閉じる",
+                        action: onClose
+                    ),
+                    trailingButtons: []
+                )
+
+                VStack(spacing: 20) {
+                    Spacer(minLength: 40)
+
+                    switch previewState {
+                    case .loading:
+                        ProgressView()
+                            .tint(AppPalette.textSecondary)
+                        Text("招待リンクを確認しています")
+                            .font(.system(size: 16, weight: .bold, design: .rounded))
+                            .foregroundStyle(AppPalette.textSecondary)
+                    case .invalid:
+                        inviteTitle("招待リンクを確認できませんでした")
+                        Text("招待リンクが無効か期限切れです。")
+                            .font(.system(size: 17, weight: .medium))
+                            .foregroundStyle(AppPalette.textSecondary)
+                            .multilineTextAlignment(.center)
+                    case .failure(let text):
+                        inviteTitle("招待リンクを確認できませんでした")
+                        Text(text)
+                            .font(.system(size: 17, weight: .medium))
+                            .foregroundStyle(AppPalette.textSecondary)
+                            .multilineTextAlignment(.center)
+                    case .ready(let tagName):
+                        inviteTitle("共有タグに参加しますか？")
+                        Text("「\(tagName)」")
+                            .font(.system(size: 30, weight: .heavy, design: .rounded))
+                            .foregroundStyle(AppPalette.textPrimary)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(3)
+                            .minimumScaleFactor(0.75)
+
+                        Text("参加すると、この共有タグのURL一覧が同期されます。")
+                            .font(.system(size: 17, weight: .medium))
+                            .foregroundStyle(AppPalette.textSecondary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        VStack(spacing: 12) {
+                            AppActionButton(
+                                tone: .primary,
+                                enabled: !isWorking && !didJoin
+                            ) {
+                                joinInvite()
+                            } label: {
+                                if isWorking {
+                                    ProgressView().tint(AppPalette.textPrimary)
+                                } else {
+                                    Text(didJoin ? "参加しました" : "参加する")
+                                }
+                            }
+
+                            Button("参加しない", action: onClose)
+                                .font(.system(size: 17, weight: .heavy))
+                                .foregroundStyle(AppPalette.primaryStrong)
+                                .disabled(isWorking || didJoin)
+                        }
+                        .padding(.top, 8)
+                    }
+
+                    if let message {
+                        Text(message)
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(AppPalette.textSecondary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer(minLength: 40)
+                }
+                .frame(maxWidth: 420)
+                .padding(.horizontal, 24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .task(id: inviteToken) {
+            await loadPreview()
+        }
+    }
+
+    private func inviteTitle(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 25, weight: .heavy, design: .rounded))
+            .foregroundStyle(AppPalette.textPrimary)
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func loadPreview() async {
+        previewState = .loading
+        message = nil
+        switch await model.previewInvite(inviteToken: inviteToken) {
+        case .success(let tagName):
+            previewState = .ready(tagName: tagName)
+        case .invalidInvite:
+            previewState = .invalid
+        case .failure(let text):
+            previewState = .failure(text)
+        }
+    }
+
+    private func joinInvite() {
+        guard !isWorking else { return }
+        isWorking = true
+        message = nil
+        Task {
+            switch await model.acceptInvite(inviteToken: inviteToken) {
+            case .accepted:
+                didJoin = true
+                message = "共有タグに参加しました。"
+                try? await Task.sleep(nanoseconds: 700_000_000)
+                onClose()
+            case .authRequired:
+                message = "参加するにはプロフィール画面でサインインしてください。"
+            case .invalidInvite:
+                previewState = .invalid
+            case .failure(let text):
+                message = text
+            }
+            isWorking = false
+        }
+    }
+
+    private enum InvitePreviewState: Equatable {
+        case loading
+        case ready(tagName: String)
+        case invalid
+        case failure(String)
+    }
 }
 
 private struct ArchiveScreen: View {

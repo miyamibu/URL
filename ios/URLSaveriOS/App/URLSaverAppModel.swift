@@ -28,6 +28,7 @@ final class URLSaverAppModel: ObservableObject {
     @Published private(set) var archivedEntries: [URLRecord] = []
     @Published private(set) var profile: UserProfile = .empty
     @Published private(set) var pendingInviteRecord: PendingInviteRecord?
+    @Published var inviteConfirmationToken: String?
     @Published private(set) var sharedTagCloudState = SharedTagCloudState(isConfigured: false, isSignedIn: false, signedInEmail: nil)
     @Published private(set) var entitlements: FeatureEntitlements = LaunchStandardPlan.entitlements
     @Published private(set) var sharedTags: [SharedTagSummary] = []
@@ -255,13 +256,7 @@ final class URLSaverAppModel: ObservableObject {
                 enqueueNotification(AppNotification(message: "共有招待リンクを開けませんでした", actionLabel: nil, action: nil, autoDismissAfter: 4))
                 return
             }
-            do {
-                try services.pendingInviteStore.save(inviteToken: token)
-                pendingInviteRecord = try services.pendingInviteStore.load()
-                enqueueNotification(AppNotification(message: "共有招待を受け取りました", actionLabel: nil, action: nil, autoDismissAfter: 4))
-            } catch {
-                enqueueNotification(AppNotification(message: "共有招待を保存できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 4))
-            }
+            inviteConfirmationToken = token
         case .save(let rawURL, let degradationNotice):
             guard let saveResult = try? services.repository.saveFromResolvedURL(rawURL) else {
                 enqueueNotification(AppNotification(message: "保存できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
@@ -280,6 +275,10 @@ final class URLSaverAppModel: ObservableObject {
         } catch {
             enqueueNotification(AppNotification(message: "共有招待の状態を更新できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 4))
         }
+    }
+
+    func clearInviteConfirmation() {
+        inviteConfirmationToken = nil
     }
 
     func refreshSharedTagCloudState() async {
@@ -462,6 +461,23 @@ final class URLSaverAppModel: ObservableObject {
         case .failure(let message):
             enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 4))
         }
+    }
+
+    func previewInvite(inviteToken: String) async -> SharedTagInvitePreviewResult {
+        await services.sharedTagCloud.previewInvite(inviteToken: inviteToken)
+    }
+
+    func acceptInvite(inviteToken: String) async -> SharedTagInviteAcceptanceResult {
+        let result = await services.sharedTagCloud.acceptInvite(inviteToken: inviteToken)
+        switch result {
+        case .accepted:
+            inviteConfirmationToken = nil
+            await refreshSharedTagCloudState()
+            await reload()
+        default:
+            break
+        }
+        return result
     }
 
     func deleteSharedTagCloudAccount() async {

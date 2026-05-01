@@ -6,7 +6,9 @@ import jp.mimac.urlsaver.data.TagRepository
 import jp.mimac.urlsaver.domain.SharedTagAuthResult
 import jp.mimac.urlsaver.domain.SharedTagCloudState
 import jp.mimac.urlsaver.domain.SharedTagInviteAcceptanceResult
+import jp.mimac.urlsaver.domain.SharedTagInvitePreviewResult
 import jp.mimac.urlsaver.domain.SharedTagRecord
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -29,6 +31,8 @@ class SharedTagInviteViewModel(
         )
 
     private val acceptedRemoteTagId = MutableStateFlow<String?>(null)
+    private val _previewResult = MutableStateFlow<SharedTagInvitePreviewResult?>(null)
+    val previewResult: StateFlow<SharedTagInvitePreviewResult?> = _previewResult.asStateFlow()
 
     val joinedTag: StateFlow<SharedTagRecord?> = acceptedRemoteTagId
         .flatMapLatest { remoteTagId ->
@@ -41,6 +45,14 @@ class SharedTagInviteViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     fun hasInviteToken(): Boolean = inviteToken.isNotBlank()
+
+    suspend fun loadPreview() {
+        if (inviteToken.isBlank()) {
+            _previewResult.value = SharedTagInvitePreviewResult.InvalidInvite
+            return
+        }
+        _previewResult.value = tagRepository.previewInvite(inviteToken)
+    }
 
     suspend fun signIn(email: String, password: String): SharedTagAuthResult {
         return tagRepository.signIn(email, password)

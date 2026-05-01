@@ -58,6 +58,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -67,6 +68,7 @@ import jp.mimac.urlsaver.domain.SharedTagAccountDeletionResult
 import jp.mimac.urlsaver.domain.SharedTagAuthResult
 import jp.mimac.urlsaver.domain.FeatureEntitlements
 import jp.mimac.urlsaver.domain.SharedTagInviteAcceptanceResult
+import jp.mimac.urlsaver.domain.SharedTagInvitePreviewResult
 import jp.mimac.urlsaver.domain.UsageSummary
 import jp.mimac.urlsaver.ui.theme.AppThemeMode
 import kotlinx.coroutines.Dispatchers
@@ -169,8 +171,11 @@ fun SharedTagCloudAuthScreen(
         scope.launch {
             isApplyingInviteCode = true
             inviteMessage = when (val result = viewModel.applyInviteCode(inviteCode)) {
+                is InviteCodeApplyResult.Success -> "参加しました。同期後に「${result.tagName}」が表示されます。"
                 InviteCodeApplyResult.InvalidCode -> "コードを入力してください"
-                is InviteCodeApplyResult.NotAvailable -> result.message
+                InviteCodeApplyResult.AuthRequired -> "参加するにはサインインが必要です"
+                InviteCodeApplyResult.InvalidInvite -> "招待コードが無効か期限切れです"
+                is InviteCodeApplyResult.Failure -> result.message
             }
             isApplyingInviteCode = false
         }
@@ -494,6 +499,7 @@ fun SharedTagInviteScreen(
     onInviteJoined: (Long) -> Unit,
 ) {
     val cloudState by viewModel.cloudState.collectAsStateWithLifecycle()
+    val previewResult by viewModel.previewResult.collectAsStateWithLifecycle()
     val joinedTag by viewModel.joinedTag.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
@@ -502,6 +508,11 @@ fun SharedTagInviteScreen(
     var message by remember { mutableStateOf<String?>(null) }
     var accepted by remember { mutableStateOf(false) }
     var isSubmitting by remember { mutableStateOf(false) }
+    var showAuthForm by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        viewModel.loadPreview()
+    }
 
     LaunchedEffect(joinedTag?.id) {
         val tagId = joinedTag?.id ?: return@LaunchedEffect
@@ -530,10 +541,19 @@ fun SharedTagInviteScreen(
         }
     }
 
+    fun handleJoinClick() {
+        if (!cloudState.isSignedIn) {
+            showAuthForm = true
+            message = "参加するにはサインインが必要です"
+            return
+        }
+        acceptInvite()
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("共有タグに参加") },
+                title = {},
                 windowInsets = TopAppBarDefaults.windowInsets.only(WindowInsetsSides.Horizontal),
                 navigationIcon = {
                     IconButton(onClick = onBack) {
@@ -552,7 +572,8 @@ fun SharedTagInviteScreen(
         ) {
             Column(
                 modifier = Modifier.widthIn(max = 420.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 if (!viewModel.hasInviteToken()) {
                     InviteInfoState("共有招待リンクを開けませんでした")
@@ -564,15 +585,33 @@ fun SharedTagInviteScreen(
                     return@Column
                 }
 
-                if (!cloudState.isSignedIn) {
-                    Text(
-                        text = "共有タグの招待を受け取りました",
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    Text(
-                        text = "参加するにはサインインが必要です。アカウントがない場合はここから作成できます。",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                when (val preview = previewResult) {
+                    null -> {
+                        CircularProgressIndicator()
+                        Text(
+                            text = "招待リンクを確認しています",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    SharedTagInvitePreviewResult.InvalidInvite -> {
+                        InviteInfoState("招待リンクが無効か期限切れです")
+                    }
+                    is SharedTagInvitePreviewResult.Failure -> {
+                        InviteInfoState(preview.message)
+                    }
+                    is SharedTagInvitePreviewResult.Success -> {
+                        SharedTagInviteConfirmContent(
+                            tagName = preview.tagName,
+                            isSubmitting = isSubmitting,
+                            accepted = accepted,
+                            message = message,
+                            onJoin = ::handleJoinClick,
+                            onDecline = onBack,
+                        )
+                    }
+                }
+
+                if (showAuthForm && previewResult is SharedTagInvitePreviewResult.Success && !cloudState.isSignedIn) {
                     SharedTagAuthForm(
                         email = email,
                         password = password,
@@ -591,7 +630,8 @@ fun SharedTagInviteScreen(
                                 isSubmitting = true
                                 when (val result = viewModel.signIn(email, password)) {
                                     is SharedTagAuthResult.Success -> {
-                                        message = "サインインしました。招待に参加しています…"
+                                        message = "サインインしました。参加しています…"
+                                        showAuthForm = false
                                         isSubmitting = false
                                         acceptInvite()
                                     }
@@ -610,10 +650,11 @@ fun SharedTagInviteScreen(
                                 isSubmitting = true
                                 val result = viewModel.signUp(email, password)
                                 message = result.toUiMessage(
-                                    success = "アカウントを作成しました。招待に参加しています…",
+                                    success = "アカウントを作成しました。参加しています…",
                                     emailConfirmation = "確認メールを送信しました。確認後にこの招待リンクをもう一度開いてください。",
                                 )
                                 if (result is SharedTagAuthResult.Success) {
+                                    showAuthForm = false
                                     isSubmitting = false
                                     acceptInvite()
                                 } else {
@@ -622,32 +663,68 @@ fun SharedTagInviteScreen(
                             }
                         },
                     )
-                } else {
-                    Text(
-                        text = "共有タグの招待を受け取りました",
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    Text(
-                        text = "参加すると、この共有タグの URL 一覧だけが同期されます。",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    if (accepted && joinedTag == null) {
-                        CircularProgressIndicator()
-                    }
-                    Button(
-                        onClick = ::acceptInvite,
-                        enabled = !isSubmitting && !accepted,
-                    ) {
-                        Text(if (accepted) "同期中…" else "招待に参加")
-                    }
-                    message?.let {
-                        Text(
-                            text = it,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun SharedTagInviteConfirmContent(
+    tagName: String,
+    isSubmitting: Boolean,
+    accepted: Boolean,
+    message: String?,
+    onJoin: () -> Unit,
+    onDecline: () -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Text(
+            text = "共有タグに参加しますか？",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        )
+        Text(
+            text = "「$tagName」",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        )
+        Text(
+            text = "参加すると、この共有タグのURL一覧が同期されます。",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        )
+        Button(
+            onClick = onJoin,
+            enabled = !isSubmitting && !accepted,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(if (accepted) "同期中…" else "参加する")
+        }
+        OutlinedButton(
+            onClick = onDecline,
+            enabled = !isSubmitting && !accepted,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("参加しない")
+        }
+        if (accepted) {
+            CircularProgressIndicator()
+        }
+        message?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            )
         }
     }
 }
