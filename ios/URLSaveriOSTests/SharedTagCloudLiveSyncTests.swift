@@ -86,6 +86,7 @@ final class SharedTagCloudLiveSyncTests: XCTestCase {
         }
 
         let inviteToken = try XCTUnwrap(inviteURL.components(separatedBy: "/").last)
+        print("URLSAVER_LIVE_INVITE_TOKEN=\(inviteToken)")
         let acceptResult = await collaboratorHarness.service.acceptInvite(inviteToken: inviteToken)
         switch acceptResult {
         case .accepted(let acceptedTagName, let role):
@@ -105,6 +106,53 @@ final class SharedTagCloudLiveSyncTests: XCTestCase {
         XCTAssertEqual(collaboratorEntries.first?.normalizedURL, rawURL)
         XCTAssertEqual(collaboratorEntries.first?.sharedReferenceCount, 1)
     }
+
+    func testCreateInviteForAndroidDeviceAcceptance() async throws {
+        let env = try XCTUnwrap(LiveSharedTagTestEnvironment.fromEnvironment())
+        let ownerHarness = try TestSharedTagCloudHarness.make(baseURL: env.baseURL)
+
+        let testID = UUID().uuidString.lowercased()
+        let ownerEmail = "ios-owner-\(testID.prefix(8))@example.com"
+        let ownerPassword = "pass12345"
+        let tagName = "Android Join \(testID.prefix(6))"
+        let rawURL = "https://example.com/android-join-\(testID)"
+
+        let ownerSignUpResult = await ownerHarness.service.signUp(email: ownerEmail, password: ownerPassword)
+        guard case .success = ownerSignUpResult else {
+            XCTFail("Owner sign-up failed: \(ownerSignUpResult)")
+            return
+        }
+        let ownerSynced = await ownerHarness.service.syncCurrentSession()
+        XCTAssertTrue(ownerSynced)
+
+        let saveResult = try ownerHarness.repository.saveFromResolvedURL(rawURL)
+        let entryID = try XCTUnwrap(saveResult.entryID)
+
+        let createTagResult = await ownerHarness.service.createTag(name: tagName)
+        guard case .success = createTagResult else {
+            XCTFail("Tag creation failed: \(createTagResult)")
+            return
+        }
+
+        let ownerTag = try XCTUnwrap(try ownerHarness.service.loadVisibleTags().first(where: { $0.name == tagName }))
+        let assignResult = await ownerHarness.service.assignEntry(remoteTagID: ownerTag.remoteTagID, entryID: entryID)
+        guard case .success = assignResult else {
+            XCTFail("Entry assign failed: \(assignResult)")
+            return
+        }
+
+        let inviteResult = await ownerHarness.service.createInvite(remoteTagID: ownerTag.remoteTagID)
+        switch inviteResult {
+        case .success(let inviteURL, _):
+            let inviteToken = try XCTUnwrap(inviteURL.components(separatedBy: "/").last)
+            print("URLSAVER_ANDROID_ACCEPT_TAG_NAME=\(tagName)")
+            print("URLSAVER_ANDROID_ACCEPT_INVITE_TOKEN=\(inviteToken)")
+            print("URLSAVER_ANDROID_ACCEPT_EXPECTED_URL=\(rawURL)")
+        default:
+            XCTFail("Invite creation failed: \(inviteResult)")
+        }
+    }
+
 }
 
 private struct LiveSharedTagTestEnvironment {
@@ -119,6 +167,7 @@ private struct LiveSharedTagTestEnvironment {
         let fileConfig = loadFromRepositoryConfig()
         let baseURL = environment["URLSAVER_LIVE_SHARED_TAG_BASE_URL"]?.trimmingCharacters(in: .whitespacesAndNewlines)
             ?? fileConfig?["base_url"]
+            ?? (Bundle.main.object(forInfoDictionaryKey: "SupabaseURL") as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let trimmedBaseURL = baseURL?.trimmingCharacters(in: .whitespacesAndNewlines),
               !trimmedBaseURL.isEmpty else {
             return nil
