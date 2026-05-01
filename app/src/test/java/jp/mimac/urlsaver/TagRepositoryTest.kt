@@ -300,7 +300,7 @@ class TagRepositoryTest {
 
         assertTrue(result is SharedTagInviteCreationResult.Success)
         assertEquals(
-            "https://urlsaver.app/invite/invite-token",
+            "https://invite-link-omega.vercel.app/invite/invite-token",
             (result as SharedTagInviteCreationResult.Success).inviteUrl,
         )
     }

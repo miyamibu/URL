@@ -14,5 +14,5 @@
 # release.supabase.anon.key=<supabase publishable or legacy anon key>
 # release.shared.tag.cloud.enabled=true
 
-# Public invite links. Defaults to https://urlsaver.app.
-# invite.link.base.url=https://urlsaver.app
+# Public invite links. Defaults to the beta Vercel URL until urlsaver.app is active.
+# invite.link.base.url=https://invite-link-omega.vercel.app

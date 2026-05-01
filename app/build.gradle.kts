@@ -32,7 +32,7 @@ fun buildConfigString(value: String): String {
 val publicInviteLinkBaseUrl = configString(
     propertyName = "invite.link.base.url",
     envName = "URLSAVER_INVITE_LINK_BASE_URL",
-    defaultValue = "https://urlsaver.app",
+    defaultValue = "https://invite-link-omega.vercel.app",
 ).trim().trimEnd('/')
 
 val releaseSharedTagCloudEnabled = configBoolean(

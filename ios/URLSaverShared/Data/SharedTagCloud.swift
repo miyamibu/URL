@@ -46,7 +46,7 @@ struct SharedTagCloudConfig: Sendable {
 
     private static func normalizedInviteLinkBaseURL(_ raw: String?) -> String {
         let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let value = trimmed.isEmpty ? "https://urlsaver.app" : trimmed
+        let value = trimmed.isEmpty ? "https://invite-link-omega.vercel.app" : trimmed
         return value.trimmingTrailingSlashes()
     }
 }

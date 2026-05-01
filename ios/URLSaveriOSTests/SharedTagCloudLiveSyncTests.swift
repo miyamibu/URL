@@ -256,7 +256,7 @@ private extension SharedTagCloudConfig {
         enabled: Bool,
         supabaseURL: String,
         anonKey: String,
-        inviteLinkBaseURL: String = "https://urlsaver.app"
+        inviteLinkBaseURL: String = "https://invite-link-omega.vercel.app"
     ) {
         self.enabled = enabled
         self.supabaseURL = supabaseURL
