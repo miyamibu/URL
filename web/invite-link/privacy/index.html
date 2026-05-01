@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>URL Saver Privacy Policy</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f7f7f4;
+      --text: #151814;
+      --muted: #5d665d;
+      --panel: #ffffff;
+      --line: #d8ded5;
+      --accent: #176b4d;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #101411;
+        --text: #f4f7f2;
+        --muted: #bac4b8;
+        --panel: #171d18;
+        --line: #2f3a31;
+        --accent: #7bd7ad;
+      }
+    }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.75;
+    }
+    main {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 40px 20px 64px;
+    }
+    h1 {
+      font-size: 2rem;
+      line-height: 1.2;
+      margin: 0 0 8px;
+    }
+    h2 {
+      margin: 32px 0 8px;
+      font-size: 1.2rem;
+    }
+    p, li {
+      color: var(--muted);
+    }
+    section {
+      border-top: 1px solid var(--line);
+      margin-top: 28px;
+      padding-top: 4px;
+    }
+    .summary {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px 18px;
+      margin-top: 24px;
+    }
+    a {
+      color: var(--accent);
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>URL Saver プライバシーポリシー</h1>
+    <p>最終更新日: 2026年5月1日</p>
+
+    <div class="summary">
+      <p>URL Saver は、あとで開き直したい URL を保存し、必要な場合に共有タグの参加者と共有するためのアプリです。クローズドβでは広告表示、本物の課金、外部アナリティクスを行いません。</p>
+    </div>
+
+    <section>
+      <h2>取得・保存する可能性がある情報</h2>
+      <ul>
+        <li>ユーザーが保存した URL、正規化した URL、表示用 URL</li>
+        <li>URL から取得したタイトル、説明文、サムネイル、投稿者名などのメタデータ</li>
+        <li>ユーザーが入力したタイトル、メモ、タグ</li>
+        <li>共有タグの作成、参加、役割、招待、オーナー移譲に関する情報</li>
+        <li>Supabase Auth でサインインする場合のメールアドレス、認証に必要なアカウント情報</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>利用目的</h2>
+      <p>保存した URL の一覧表示、詳細表示、重複判定、アーカイブ、削除猶予、メタデータ取得、共有タグ同期、招待リンクの発行と参加、アカウント管理のために利用します。</p>
+    </section>
+
+    <section>
+      <h2>保存先と共有範囲</h2>
+      <p>通常の保存 URL やローカルタグは端末内に保存されます。共有タグクラウドを有効にしている場合、共有タグに追加した URL と共有タグ参加情報は Supabase に保存されます。共有タグ内の URL は、その共有タグの参加者が閲覧できます。</p>
+    </section>
+
+    <section>
+      <h2>URL メタデータ取得</h2>
+      <p>保存された URL のタイトルやサムネイルを取得するため、アプリが対象ページや公開 oEmbed エンドポイントへ通信することがあります。取得できない場合でも、保存済み URL 自体は保持されます。</p>
+    </section>
+
+    <section>
+      <h2>広告・トラッキング・課金</h2>
+      <p>クローズドβでは広告を表示せず、本物の課金も行いません。Google Mobile Ads SDK は release ビルドに同梱しない方針です。外部アナリティクスや第三者クラッシュ収集サービスも現時点では導入していません。</p>
+    </section>
+
+    <section>
+      <h2>削除方法</h2>
+      <p>保存 URL やタグはアプリ内から削除できます。共有タグクラウドのアカウント削除は、アプリ内のアカウント削除導線、または公開アカウント削除ページから依頼できます。他の参加者がいる共有タグのオーナーは、先にオーナー権限を移譲する必要があります。</p>
+    </section>
+
+    <section>
+      <h2>問い合わせ先</h2>
+      <p>プライバシーに関する問い合わせは <a href="mailto:support@urlsaver.app">support@urlsaver.app</a> までご連絡ください。</p>
+    </section>
+  </main>
+</body>
+</html>
