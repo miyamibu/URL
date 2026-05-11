@@ -29,3 +29,4 @@ ios/**/Index.noindex/
 ios/**/ModuleCache.noindex/
 ios/**/SDKStatCaches.noindex/
 ios/Config/URLSaverSecrets.xcconfig
+ios/Config/URLSaverSecrets.local-only.xcconfig
