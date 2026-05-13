@@ -126,7 +126,7 @@ class ShareReceiverActivityEntrypointTest {
         val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
         val intent = Intent(context, ShareReceiverActivity::class.java).apply {
             action = Intent.ACTION_VIEW
-            data = Uri.parse("https://invite-link-omega.vercel.app/invite/invite-token-https-123")
+            data = Uri.parse("https://miyamibu.xyz/invite/invite-token-https-123")
         }
 
         val controller = Robolectric.buildActivity(ShareReceiverActivity::class.java, intent).setup()
@@ -458,7 +458,7 @@ class ShareReceiverActivityEntrypointTest {
     @Test
     fun manifest_allowsHttpsSharedTagInviteLinks() {
         val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://invite-link-omega.vercel.app/invite/test-token")).apply {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://miyamibu.xyz/invite/test-token")).apply {
             setPackage(context.packageName)
             addCategory(Intent.CATEGORY_BROWSABLE)
         }

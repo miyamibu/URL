@@ -251,7 +251,7 @@ class MainActivityViewModel(
                         message = "タイトルを保存しました",
                         actionLabel = "元に戻す",
                         duration = SnackbarDuration.Indefinite,
-                        customDurationMillis = 5000,
+                        customDurationMillis = 15000,
                         entryId = effect.entryId,
                     ),
                 )
@@ -282,7 +282,9 @@ class MainActivityViewModel(
 
     fun cleanupOnStart() {
         viewModelScope.launch {
+            repository.reconcileLocalTagCollectionAssignments()
             repository.cleanupExpiredPendingDeletes()
+            repository.backfillYouTubeAuthorNames()
         }
     }
 
@@ -427,6 +429,14 @@ class MainActivityViewModel(
 
     fun notifyDeleteFailed() {
         enqueueSnackbar(SnackbarEvent(kind = SnackbarEventKind.INFO, message = "削除できませんでした"))
+    }
+
+    fun notifyCollectionDeleted() {
+        enqueueSnackbar(SnackbarEvent(kind = SnackbarEventKind.INFO, message = "タグを削除しました"))
+    }
+
+    fun notifyCollectionDeleteFailed() {
+        enqueueSnackbar(SnackbarEvent(kind = SnackbarEventKind.INFO, message = "タグを削除できませんでした"))
     }
 
     private fun invalidateTitleUndo() {

@@ -25,6 +25,7 @@ import jp.mimac.urlsaver.domain.SharedTagSyncStatus
     ],
     indices = [
         Index(value = ["entryId"]),
+        Index(value = ["tagId", "createdAt"]),
         Index(value = ["authUserId"]),
         Index(value = ["authUserId", "remoteUrlId"], unique = true),
     ],
@@ -32,6 +33,7 @@ import jp.mimac.urlsaver.domain.SharedTagSyncStatus
 data class TagUrlCrossRef(
     val tagId: Long,
     val entryId: Long,
+    val createdAt: Long = 0L,
     val scope: SharedTagScope = SharedTagScope.LOCAL_ONLY,
     val authUserId: String? = null,
     val remoteUrlId: String? = null,

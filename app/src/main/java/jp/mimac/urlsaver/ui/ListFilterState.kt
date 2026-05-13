@@ -41,11 +41,13 @@ internal fun buildListFilterUiState(
     entries: List<UrlEntryEntity>,
     selectedService: ServiceType,
     selectedCollectionId: Long?,
+    localTagCollectionEntryIds: Map<Long, Set<Long>> = emptyMap(),
 ): ListFilterUiState {
     val collectionScopedEntries = if (selectedCollectionId == null) {
         entries
     } else {
-        entries.filter { it.collectionId == selectedCollectionId }
+        val localTagEntryIds = localTagCollectionEntryIds[selectedCollectionId].orEmpty()
+        entries.filter { it.collectionId == selectedCollectionId || it.id in localTagEntryIds }
     }
 
     val serviceScoped = if (selectedService == ServiceType.ALL) {

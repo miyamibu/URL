@@ -960,4 +960,143 @@ class MigrationDedupTest {
         helper.close()
         context.deleteDatabase(dbName)
     }
+
+    @Test
+    fun migration_12_13_backfillsTagUrlCrossRefCreatedAtFromEntry() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val dbName = "migration-tag-ref-created-at.db"
+        context.deleteDatabase(dbName)
+
+        val helper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(dbName)
+                .callback(
+                    object : SupportSQLiteOpenHelper.Callback(12) {
+                        override fun onCreate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                            db.execSQL(
+                                """
+                                CREATE TABLE IF NOT EXISTS url_entries (
+                                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                    originalUrl TEXT NOT NULL,
+                                    normalizedUrl TEXT NOT NULL,
+                                    displayUrl TEXT NOT NULL,
+                                    openUrl TEXT NOT NULL,
+                                    normalizedHost TEXT NOT NULL,
+                                    rawSourceHost TEXT NOT NULL,
+                                    collectionId INTEGER NOT NULL,
+                                    serviceType TEXT NOT NULL,
+                                    contentContext TEXT NOT NULL,
+                                    userTitle TEXT,
+                                    fetchedTitle TEXT,
+                                    fetchedBody TEXT,
+                                    fetchedBodyKind TEXT,
+                                    bodySummary TEXT,
+                                    memo TEXT NOT NULL,
+                                    thumbnailUrl TEXT,
+                                    badgeImageUrl TEXT,
+                                    canonicalId TEXT,
+                                    metadataState TEXT NOT NULL,
+                                    metadataError TEXT,
+                                    metadataRequestedAt INTEGER,
+                                    metadataFetchedAt INTEGER,
+                                    fetchedAuthorName TEXT,
+                                    recordState TEXT NOT NULL,
+                                    localProvenanceCount INTEGER NOT NULL,
+                                    sharedReferenceCount INTEGER NOT NULL,
+                                    createdAt INTEGER NOT NULL,
+                                    updatedAt INTEGER NOT NULL,
+                                    archivedAt INTEGER,
+                                    pendingDeletionUntil INTEGER
+                                )
+                                """.trimIndent(),
+                            )
+                            db.execSQL(
+                                """
+                                CREATE TABLE IF NOT EXISTS tags (
+                                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                    name TEXT NOT NULL,
+                                    createdAt INTEGER NOT NULL,
+                                    scope TEXT NOT NULL,
+                                    authUserId TEXT,
+                                    remoteTagId TEXT,
+                                    syncStatus TEXT NOT NULL,
+                                    remoteVersion INTEGER,
+                                    deletedAt INTEGER,
+                                    lastSyncedAt INTEGER,
+                                    syncErrorMessage TEXT
+                                )
+                                """.trimIndent(),
+                            )
+                            db.execSQL(
+                                """
+                                CREATE TABLE IF NOT EXISTS tag_url_cross_refs (
+                                    tagId INTEGER NOT NULL,
+                                    entryId INTEGER NOT NULL,
+                                    scope TEXT NOT NULL,
+                                    authUserId TEXT,
+                                    remoteUrlId TEXT,
+                                    rawUrl TEXT,
+                                    normalizedUrl TEXT,
+                                    normalizationVersion INTEGER,
+                                    syncStatus TEXT NOT NULL,
+                                    deletedAt INTEGER,
+                                    lastSyncedAt INTEGER,
+                                    syncErrorMessage TEXT,
+                                    PRIMARY KEY(tagId, entryId)
+                                )
+                                """.trimIndent(),
+                            )
+                        }
+
+                        override fun onUpgrade(
+                            db: androidx.sqlite.db.SupportSQLiteDatabase,
+                            oldVersion: Int,
+                            newVersion: Int,
+                        ) = Unit
+                    },
+                )
+                .build(),
+        )
+
+        val db = helper.writableDatabase
+        db.execSQL(
+            """
+            INSERT INTO url_entries (
+                id, originalUrl, normalizedUrl, displayUrl, openUrl, normalizedHost, rawSourceHost,
+                collectionId, serviceType, contentContext, memo, metadataState, recordState,
+                localProvenanceCount, sharedReferenceCount, createdAt, updatedAt
+            ) VALUES (
+                10, 'https://example.com/old', 'https://example.com/old', 'example.com/old',
+                'https://example.com/old', 'example.com', 'example.com', 1, 'WEB', 'STANDARD',
+                '', 'PENDING', 'ACTIVE', 1, 0, 12345, 12345
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            "INSERT INTO tags (id, name, createdAt, scope, syncStatus) VALUES (20, 'tag', 1, 'LOCAL_ONLY', 'LOCAL_ONLY')",
+        )
+        db.execSQL(
+            """
+            INSERT INTO tag_url_cross_refs (
+                tagId, entryId, scope, syncStatus
+            ) VALUES (
+                20, 10, 'LOCAL_ONLY', 'LOCAL_ONLY'
+            )
+            """.trimIndent(),
+        )
+
+        AppDatabase.MIGRATION_12_13.migrate(db)
+
+        db.query("SELECT createdAt FROM tag_url_cross_refs WHERE tagId = 20 AND entryId = 10").use {
+            it.moveToFirst()
+            assertEquals(12345L, it.getLong(0))
+        }
+        db.query("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'index_tag_url_cross_refs_tagId_createdAt'").use {
+            it.moveToFirst()
+            assertEquals(1, it.getInt(0))
+        }
+
+        helper.close()
+        context.deleteDatabase(dbName)
+    }
 }

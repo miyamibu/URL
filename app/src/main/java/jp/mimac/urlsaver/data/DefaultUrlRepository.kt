@@ -48,6 +48,8 @@ class DefaultUrlRepository(
 
     override fun observeEntry(entryId: Long): Flow<UrlEntryEntity?> = dao.observeEntry(entryId)
     override fun observeCollections(): Flow<List<CollectionEntity>> = collectionsSupport.observeCollections()
+    override fun observeLocalTagCollectionEntryRefs(): Flow<List<LocalTagCollectionEntryRef>> =
+        tagDao.observeLocalTagCollectionEntryRefs()
     override fun observeUserLabels(): Flow<List<UserLabelEntity>> = collectionsSupport.observeUserLabels()
 
     override suspend fun saveFromIntent(intent: Intent): SaveResult = saveFromIntent(intent, collectionId = null)

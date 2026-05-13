@@ -54,7 +54,7 @@ import java.net.URLEncoder
 
 class AppContainer(context: Context) {
     private val appContext = context.applicationContext
-    private val database = AppDatabase.create(appContext)
+    internal val database = AppDatabase.create(appContext)
     private val clock: AppClock = SystemAppClock
     private val entitlementRefreshScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val instagramPublicOEmbedEndpointBuilder: (String) -> String = { targetUrl ->

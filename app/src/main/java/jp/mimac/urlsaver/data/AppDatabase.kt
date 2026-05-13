@@ -19,7 +19,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         SharedTagSyncOutboxEntity::class,
         SharedTagSyncStateEntity::class,
     ],
-    version = 12,
+    version = 13,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -45,6 +45,7 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_9_10,
                     MIGRATION_10_11,
                     MIGRATION_11_12,
+                    MIGRATION_12_13,
                 )
                 .addCallback(
                     object : Callback() {
@@ -333,6 +334,28 @@ abstract class AppDatabase : RoomDatabase() {
         val MIGRATION_11_12 = object : Migration(11, 12) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE url_entries ADD COLUMN fetchedAuthorName TEXT")
+            }
+        }
+
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE tag_url_cross_refs ADD COLUMN createdAt INTEGER NOT NULL DEFAULT 0")
+                db.execSQL(
+                    """
+                    UPDATE tag_url_cross_refs
+                    SET createdAt = COALESCE(
+                        (
+                            SELECT createdAt
+                            FROM url_entries
+                            WHERE url_entries.id = tag_url_cross_refs.entryId
+                        ),
+                        0
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_tag_url_cross_refs_tagId_createdAt ON tag_url_cross_refs(tagId, createdAt)",
+                )
             }
         }
     }

@@ -1,12 +1,14 @@
 package jp.mimac.urlsaver.ui
 
 import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,6 +16,7 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -24,10 +27,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.ExitToApp
 import androidx.compose.material.icons.automirrored.outlined.ViewList
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.IosShare
 import androidx.compose.material.icons.outlined.LinkOff
@@ -35,6 +41,7 @@ import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.ViewAgenda
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -43,14 +50,17 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -71,15 +81,17 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import jp.mimac.urlsaver.domain.EntryCardDisplayMode
 import jp.mimac.urlsaver.domain.AssignTagResult
-import jp.mimac.urlsaver.domain.MigrateSharedTagResult
 import jp.mimac.urlsaver.domain.SharedTagInviteCreationResult
 import jp.mimac.urlsaver.domain.SharedTagMemberRecord
 import jp.mimac.urlsaver.domain.SharedTagMemberRole
 import jp.mimac.urlsaver.domain.SharedTagOwnershipTransferResult
 import jp.mimac.urlsaver.domain.SharedTagScope
 import jp.mimac.urlsaver.ui.components.EntryCard
+import jp.mimac.urlsaver.ui.components.OrbitActionButton
+import jp.mimac.urlsaver.ui.components.OrbitActionStyle
 import jp.mimac.urlsaver.ui.theme.OrbitTokens
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -102,12 +114,10 @@ fun TagDetailScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var showMigrateDialog by remember { mutableStateOf(false) }
     var showAddEntrySheet by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showLeaveDialog by remember { mutableStateOf(false) }
     var showInfoDialog by remember { mutableStateOf(false) }
-    var migrateError by remember { mutableStateOf<String?>(null) }
     var pendingOwnershipTransferMember by remember { mutableStateOf<SharedTagMemberRecord?>(null) }
     var shareError by remember { mutableStateOf<String?>(null) }
     var memberRemoveError by remember { mutableStateOf<String?>(null) }
@@ -115,6 +125,7 @@ fun TagDetailScreen(
     var entryRemoveError by remember { mutableStateOf<String?>(null) }
     var entryAddError by remember { mutableStateOf<String?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
+    val addEntrySheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     LaunchedEffect(tag?.id, tag?.scope) {
         if (tag?.scope == SharedTagScope.SYNCED) {
@@ -170,14 +181,16 @@ fun TagDetailScreen(
         return
     }
     val listState = remember(currentTag.id) { LazyListState() }
+    var pendingRemovedEntryIds by remember(currentTag.id) { mutableStateOf<Set<Long>>(emptySet()) }
+    val visibleEntries = entries.filterNot { it.id in pendingRemovedEntryIds }
 
     LaunchedEffect(currentTag.id) {
         listState.scrollToItem(0)
     }
 
-    LaunchedEffect(currentTag.id, currentTag.scope, isSyncing, syncNotice) {
-        if (currentTag.scope == SharedTagScope.SYNCED && (isSyncing || !syncNotice.isNullOrBlank())) {
-            listState.scrollToItem(0)
+    LaunchedEffect(currentTag.id, currentTag.scope, cloudState.isSignedIn) {
+        if (currentTag.scope == SharedTagScope.LOCAL_ONLY && cloudState.isSignedIn) {
+            viewModel.migrateToCloud()
         }
     }
 
@@ -186,8 +199,8 @@ fun TagDetailScreen(
         currentTag.currentUserRole == SharedTagMemberRole.EDITOR
     val canShareInvite = currentTag.scope == SharedTagScope.SYNCED &&
         currentTag.currentUserRole == SharedTagMemberRole.OWNER
-    val canDeleteSharedTag = currentTag.scope == SharedTagScope.SYNCED &&
-        currentTag.currentUserRole == SharedTagMemberRole.OWNER
+    val canDeleteSharedTag = currentTag.scope == SharedTagScope.LOCAL_ONLY ||
+        (currentTag.scope == SharedTagScope.SYNCED && currentTag.currentUserRole == SharedTagMemberRole.OWNER)
     val canLeaveSharedTag = currentTag.scope == SharedTagScope.SYNCED &&
         currentTag.currentUserRole != null &&
         currentTag.currentUserRole != SharedTagMemberRole.OWNER
@@ -200,11 +213,35 @@ fun TagDetailScreen(
         context.startActivity(Intent.createChooser(shareIntent, chooserTitle))
     }
 
+    fun scheduleEntryRemoval(entryId: Long) {
+        if (entryId in pendingRemovedEntryIds) return
+        entryRemoveError = null
+        pendingRemovedEntryIds = pendingRemovedEntryIds + entryId
+        scope.launch {
+            val result = withTimeoutOrNull(5_000L) {
+                snackbarHostState.showSnackbar(
+                    message = "共有タグから外しました",
+                    actionLabel = "元に戻す",
+                    duration = SnackbarDuration.Indefinite,
+                )
+            }
+            if (result == SnackbarResult.ActionPerformed) {
+                pendingRemovedEntryIds = pendingRemovedEntryIds - entryId
+                return@launch
+            }
+            val removed = viewModel.removeEntryFromTag(entryId)
+            pendingRemovedEntryIds = pendingRemovedEntryIds - entryId
+            if (!removed) {
+                entryRemoveError = "共有タグから外せませんでした"
+            }
+        }
+    }
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text(currentTag.name) },
+                title = {},
                 windowInsets = TopAppBarDefaults.windowInsets.only(WindowInsetsSides.Horizontal),
                 navigationIcon = {
                     IconButton(onClick = onBack) {
@@ -212,15 +249,14 @@ fun TagDetailScreen(
                     }
                 },
                 actions = {
-                    if (currentTag.scope == SharedTagScope.SYNCED) {
-                        IconButton(onClick = { showInfoDialog = true }) {
-                            Icon(
-                                Icons.Outlined.Info,
-                                contentDescription = "共有タグの説明",
-                            )
-                        }
+                    SharedTagHeaderIconButton(onClick = { showInfoDialog = true }) {
+                        Icon(
+                            Icons.Outlined.Info,
+                            contentDescription = "共有タグの説明",
+                            modifier = Modifier.size(SharedTagHeaderIconSize),
+                        )
                     }
-                    IconButton(onClick = { viewModel.toggleEntryCardDisplayMode() }) {
+                    SharedTagHeaderIconButton(onClick = { viewModel.toggleEntryCardDisplayMode() }) {
                         Icon(
                             imageVector = if (entryCardDisplayMode == EntryCardDisplayMode.RICH) {
                                 Icons.AutoMirrored.Outlined.ViewList
@@ -232,70 +268,77 @@ fun TagDetailScreen(
                             } else {
                                 "画像つき表示へ切り替える"
                             },
+                            modifier = Modifier.size(SharedTagHeaderIconSize),
                         )
                     }
                     if (currentTag.scope == SharedTagScope.SYNCED) {
-                        IconButton(
+                        SharedTagHeaderIconButton(
                             enabled = !isSyncing,
                             onClick = { viewModel.syncSharedTagNow() },
                         ) {
                             if (isSyncing) {
                                 CircularProgressIndicator(
-                                    modifier = Modifier.size(20.dp),
+                                    modifier = Modifier.size(24.dp),
                                     strokeWidth = 2.dp,
                                 )
                             } else {
                                 Icon(
                                     Icons.Outlined.Refresh,
                                     contentDescription = "共有タグを更新",
+                                    modifier = Modifier.size(SharedTagHeaderIconSize),
                                 )
                             }
                         }
                     }
                     if (canEditEntries) {
-                        IconButton(onClick = { showAddEntrySheet = true }) {
-                            Icon(Icons.Outlined.Add, contentDescription = "保存済みURLを追加")
+                        SharedTagHeaderIconButton(onClick = { showAddEntrySheet = true }) {
+                            Icon(
+                                Icons.Outlined.Add,
+                                contentDescription = "保存済みURLを追加",
+                                modifier = Modifier.size(SharedTagHeaderIconSize),
+                            )
                         }
                     }
-                    if (currentTag.scope == SharedTagScope.LOCAL_ONLY || canShareInvite) {
-                        IconButton(
+                    if (canLeaveSharedTag) {
+                        SharedTagHeaderIconButton(onClick = { showLeaveDialog = true }) {
+                            Icon(
+                                Icons.AutoMirrored.Outlined.ExitToApp,
+                                contentDescription = "この共有タグから抜ける",
+                                modifier = Modifier.size(SharedTagHeaderIconSize),
+                            )
+                        }
+                    }
+                    if (canShareInvite) {
+                        SharedTagHeaderIconButton(
                             onClick = {
-                                if (currentTag.scope == SharedTagScope.LOCAL_ONLY) {
-                                    shareError = null
-                                    launchShare(
-                                        text = viewModel.buildLocalShareLink(),
-                                        chooserTitle = "共有フォルダを共有",
-                                    )
-                                } else {
-                                    scope.launch {
-                                        when (val result = viewModel.createInviteLink()) {
-                                            is SharedTagInviteCreationResult.Success -> {
-                                                shareError = null
-                                                launchShare(
-                                                    text = "UrlSaver の共有タグに参加する\n${result.inviteUrl}",
-                                                    chooserTitle = "共有招待リンクを共有",
-                                                )
-                                            }
+                                scope.launch {
+                                    when (val result = viewModel.createInviteLink()) {
+                                        is SharedTagInviteCreationResult.Success -> {
+                                            shareError = null
+                                            launchShare(
+                                                text = inviteShareText(result.inviteUrl),
+                                                chooserTitle = "共有招待リンクを共有",
+                                            )
+                                        }
 
-                                            SharedTagInviteCreationResult.AuthRequired -> {
-                                                shareError = "招待リンクを作るにはサインインが必要です"
-                                            }
+                                        SharedTagInviteCreationResult.AuthRequired -> {
+                                            shareError = "招待リンクを作るにはサインインが必要です"
+                                        }
 
-                                            SharedTagInviteCreationResult.NotSharedTag -> {
-                                                shareError = "この共有タグはまだクラウド共有ではありません"
-                                            }
+                                        SharedTagInviteCreationResult.NotSharedTag -> {
+                                            shareError = "この共有タグはまだクラウド共有ではありません"
+                                        }
 
-                                            SharedTagInviteCreationResult.OwnerOnly -> {
-                                                shareError = "招待リンクを共有できるのはオーナーだけです"
-                                            }
+                                        SharedTagInviteCreationResult.OwnerOnly -> {
+                                            shareError = "招待リンクを共有できるのはオーナーだけです"
+                                        }
 
-                                            SharedTagInviteCreationResult.SyncPending -> {
-                                                shareError = "同期が終わってから招待リンクを共有してください"
-                                            }
+                                        SharedTagInviteCreationResult.SyncPending -> {
+                                            shareError = "同期が終わってから招待リンクを共有してください"
+                                        }
 
-                                            is SharedTagInviteCreationResult.Failure -> {
-                                                shareError = result.message
-                                            }
+                                        is SharedTagInviteCreationResult.Failure -> {
+                                            shareError = result.message
                                         }
                                     }
                                 }
@@ -303,11 +346,17 @@ fun TagDetailScreen(
                         ) {
                             Icon(
                                 Icons.Outlined.IosShare,
-                                contentDescription = if (currentTag.scope == SharedTagScope.LOCAL_ONLY) {
-                                    "共有フォルダリンクを共有"
-                                } else {
-                                    "共有招待リンクを共有"
-                                },
+                                contentDescription = "共有招待リンクを共有",
+                                modifier = Modifier.size(SharedTagHeaderIconSize),
+                            )
+                        }
+                    }
+                    if (canDeleteSharedTag) {
+                        SharedTagHeaderIconButton(onClick = { showDeleteDialog = true }) {
+                            Icon(
+                                Icons.Outlined.Delete,
+                                contentDescription = "共有タグを削除",
+                                modifier = Modifier.size(SharedTagHeaderIconSize),
                             )
                         }
                     }
@@ -321,200 +370,41 @@ fun TagDetailScreen(
                 .fillMaxSize(),
             contentAlignment = Alignment.TopCenter,
         ) {
-            if (entries.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(24.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .widthIn(max = 680.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.LinkOff,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Spacer(Modifier.height(12.dp))
-                        Text(
-                            text = "この共有タグにはまだURLがありません",
-                            style = MaterialTheme.typography.titleMedium,
-                            textAlign = TextAlign.Center,
-                            maxLines = 1,
-                            overflow = TextOverflow.Clip,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            text = "詳細画面からURLに共有タグを追加すると、ここにまとまって表示されます",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        if (currentTag.scope == SharedTagScope.SYNCED) {
-                            Spacer(Modifier.height(12.dp))
-                            SyncedTagInfo(
-                                shareError = shareError,
-                                isSyncing = isSyncing,
-                                syncNotice = syncNotice,
-                                syncNoticeIsError = syncNoticeIsError,
-                            )
-                            SharedTagMembersPanel(
-                                members = members,
-                                canTransferOwnership = currentTag.currentUserRole == SharedTagMemberRole.OWNER,
-                                onTransferOwnership = { member ->
-                                    ownershipTransferError = null
-                                    pendingOwnershipTransferMember = member
-                                },
-                            )
-                            ownershipTransferError?.let { message ->
-                                Text(
-                                    text = message,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.error,
-                                    textAlign = TextAlign.Center,
-                                )
-                            }
-                            memberRemoveError?.let { message ->
-                                Text(
-                                    text = message,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.error,
-                                    textAlign = TextAlign.Center,
-                                )
-                            }
-                            if (canLeaveSharedTag) {
-                                TextButton(onClick = { showLeaveDialog = true }) {
-                                    Text("この共有タグから抜ける")
-                                }
-                            }
-                        }
-                        if (currentTag.scope == SharedTagScope.LOCAL_ONLY && cloudState.isConfigured && !cloudState.isSignedIn) {
-                            Spacer(Modifier.height(12.dp))
-                            OutlinedButton(onClick = onOpenCloudAuth) {
-                                Text("クラウド共有にサインイン")
-                            }
-                        } else if (currentTag.scope == SharedTagScope.LOCAL_ONLY && cloudState.isSignedIn) {
-                            Spacer(Modifier.height(12.dp))
-                            OutlinedButton(onClick = { showMigrateDialog = true }) {
-                                Text("クラウド共有へ移行")
-                            }
-                        }
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .widthIn(max = 680.dp),
+            ) {
+                item {
+                    SharedTagInlineTitle(
+                        title = currentTag.name,
+                        isSyncing = isSyncing,
+                        syncNotice = syncNotice,
+                        syncNoticeIsError = syncNoticeIsError,
+                    )
+                }
+                if (currentTag.scope == SharedTagScope.LOCAL_ONLY && cloudState.isConfigured && !cloudState.isSignedIn) {
+                    item {
+                        CloudSignInBanner(onOpenCloudAuth = onOpenCloudAuth)
                     }
                 }
-            } else {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .widthIn(max = 680.dp),
-                ) {
-                    if (currentTag.scope == SharedTagScope.LOCAL_ONLY && cloudState.isConfigured && !cloudState.isSignedIn) {
-                        item {
-                            CloudSignInBanner(onOpenCloudAuth = onOpenCloudAuth)
-                        }
-                    } else if (currentTag.scope == SharedTagScope.LOCAL_ONLY && cloudState.isSignedIn) {
-                        item {
-                            MigrateBanner(
-                                migrateError = migrateError,
-                                onMigrate = { showMigrateDialog = true },
-                            )
-                        }
-                    }
-                    if (currentTag.scope == SharedTagScope.SYNCED) {
-                        item {
-                            SyncedTagInfo(
-                                shareError = shareError,
-                                isSyncing = isSyncing,
-                                syncNotice = syncNotice,
-                                syncNoticeIsError = syncNoticeIsError,
-                            )
-                        }
-                        item {
-                            SharedTagMembersPanel(
-                                members = members,
-                                canTransferOwnership = currentTag.currentUserRole == SharedTagMemberRole.OWNER,
-                                onTransferOwnership = { member ->
-                                    ownershipTransferError = null
-                                    pendingOwnershipTransferMember = member
-                                },
-                            )
-                            ownershipTransferError?.let { message ->
-                                Text(
-                                    text = message,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                                )
-                            }
-                            memberRemoveError?.let { message ->
-                                Text(
-                                    text = message,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                                )
-                            }
-                        }
-                    }
-                    if (currentTag.scope == SharedTagScope.SYNCED) {
-                        item {
-                            Spacer(Modifier.height(2.dp))
-                        }
+                if (currentTag.scope == SharedTagScope.SYNCED) {
+                    item {
+                        SyncedTagInfo(
+                            shareError = shareError,
+                        )
                     }
                     item {
-                        Text(
-                            text = "${entries.size}件",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                        )
-                    }
-                    if (canDeleteSharedTag) {
-                        item {
-                            TextButton(
-                                onClick = { showDeleteDialog = true },
-                                modifier = Modifier.padding(horizontal = 8.dp),
-                            ) {
-                                Text("この共有タグを削除")
-                            }
-                        }
-                    }
-                    if (canLeaveSharedTag) {
-                        item {
-                            TextButton(
-                                onClick = { showLeaveDialog = true },
-                                modifier = Modifier.padding(horizontal = 8.dp),
-                            ) {
-                                Text("この共有タグから抜ける")
-                            }
-                        }
-                    }
-                    items(entries, key = { it.id }) { entry ->
-                        SwipeableTagEntry(
-                            entry = entry,
-                            displayMode = entryCardDisplayMode,
-                            canRemove = canEditEntries,
-                            onClick = { onOpenDetail(entry.id) },
-                            onRemove = {
-                                entryRemoveError = null
-                                scope.launch {
-                                    val removed = viewModel.removeEntryFromTag(entry.id)
-                                    if (!removed) {
-                                        entryRemoveError = "共有タグから外せませんでした"
-                                    }
-                                }
+                        SharedTagMembersPanel(
+                            members = members,
+                            canTransferOwnership = currentTag.currentUserRole == SharedTagMemberRole.OWNER,
+                            onTransferOwnership = { member ->
+                                ownershipTransferError = null
+                                pendingOwnershipTransferMember = member
                             },
                         )
-                    }
-                    entryRemoveError?.let { message ->
-                        item {
+                        ownershipTransferError?.let { message ->
                             Text(
                                 text = message,
                                 style = MaterialTheme.typography.bodySmall,
@@ -522,6 +412,59 @@ fun TagDetailScreen(
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                             )
                         }
+                        memberRemoveError?.let { message ->
+                            Text(
+                                text = message,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                            )
+                        }
+                    }
+                }
+                if (currentTag.scope == SharedTagScope.SYNCED) {
+                    item {
+                        Spacer(Modifier.height(2.dp))
+                    }
+                }
+                item {
+                    SharedTagEntryCountRow(
+                        count = visibleEntries.size,
+                    )
+                }
+                if (visibleEntries.isEmpty()) {
+                    item {
+                        SharedTagEmptyPlaceholder()
+                    }
+                } else {
+                    items(visibleEntries, key = { it.id }) { entry ->
+                        SwipeableTagEntry(
+                            entry = entry,
+                            displayMode = entryCardDisplayMode,
+                            canRemove = canEditEntries,
+                            onClick = { onOpenDetail(entry.id) },
+                            onRemove = { scheduleEntryRemoval(entry.id) },
+                        )
+                    }
+                }
+                if (canDeleteSharedTag) {
+                    item {
+                        TextButton(
+                            onClick = { showDeleteDialog = true },
+                            modifier = Modifier.padding(horizontal = 8.dp),
+                        ) {
+                            Text("この共有タグを削除")
+                        }
+                    }
+                }
+                entryRemoveError?.let { message ->
+                    item {
+                        Text(
+                            text = message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        )
                     }
                 }
             }
@@ -545,24 +488,26 @@ fun TagDetailScreen(
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
             title = { Text("共有タグを削除") },
-            text = { Text("この共有タグを削除すると、参加中メンバーの一覧からも外れます。") },
+            text = {
+                Text(
+                    if (currentTag.scope == SharedTagScope.LOCAL_ONLY) {
+                        "この共有タグをこの端末から削除します。タグ内のURL自体は削除されません。"
+                    } else {
+                        "この共有タグを削除すると、参加中メンバーの一覧からも外れます。タグ内のURL自体は削除されません。"
+                    },
+                )
+            },
             confirmButton = {
-                Button(
-                    onClick = {
+                CenteredDeleteDialogActions(
+                    onCancel = { showDeleteDialog = false },
+                    onDelete = {
                         scope.launch {
                             viewModel.deleteTag()
                             showDeleteDialog = false
                             onBack()
                         }
                     },
-                ) {
-                    Text("削除する")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDeleteDialog = false }) {
-                    Text("キャンセル")
-                }
+                )
             },
         )
     }
@@ -598,47 +543,13 @@ fun TagDetailScreen(
         )
     }
 
-    if (showMigrateDialog) {
-        AlertDialog(
-            onDismissRequest = { showMigrateDialog = false },
-            title = { Text("クラウド共有へ移行") },
-            text = {
-                Text("この共有タグを同期対象に切り替えます。共有リンクは同じ端末上のこのアプリでのみ開けます。")
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        scope.launch {
-                            migrateError = when (val migrated = viewModel.migrateToCloud()) {
-                                MigrateSharedTagResult.Success -> null
-                                is MigrateSharedTagResult.LimitReached -> migrated.message
-                                MigrateSharedTagResult.NotEligible,
-                                MigrateSharedTagResult.Failed,
-                                -> "クラウド共有への移行を開始できませんでした"
-                            }
-                            showMigrateDialog = false
-                        }
-                    },
-                ) {
-                    Text("移行する")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showMigrateDialog = false }) {
-                    Text("キャンセル")
-                }
-            },
-        )
-    }
-
     pendingOwnershipTransferMember?.let { member ->
         AlertDialog(
             onDismissRequest = { pendingOwnershipTransferMember = null },
             title = { Text("オーナー権限を移譲") },
             text = {
                 Text(
-                    "${sharedTagMemberLabel(member)}へオーナー権限を移します。" +
-                        "移譲後、あなたは編集者になり、共有タグの削除や招待リンク作成はできなくなります。",
+                    "${sharedTagMemberLabel(member)}へオーナー権限を移します。移譲後、あなたは編集者になり、共有タグの削除や招待リンク作成はできなくなります。",
                 )
             },
             confirmButton = {
@@ -683,22 +594,44 @@ fun TagDetailScreen(
     }
 
     if (showAddEntrySheet) {
+        LaunchedEffect(Unit) {
+            addEntrySheetState.expand()
+        }
         ModalBottomSheet(
+            sheetState = addEntrySheetState,
             onDismissRequest = {
                 showAddEntrySheet = false
                 entryAddError = null
             },
+            dragHandle = null,
+            containerColor = MaterialTheme.colorScheme.background,
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = 24.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp, bottom = 16.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(72.dp)
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(MaterialTheme.colorScheme.outlineVariant),
+                    )
+                }
                 Text(
                     text = "保存済みURLを追加",
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = "まだこの共有タグに入っていない保存済みURLを後から追加できます",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
                 )
                 if (!entryAddError.isNullOrBlank()) {
                     Spacer(Modifier.height(8.dp))
@@ -708,68 +641,111 @@ fun TagDetailScreen(
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(16.dp))
                 if (!canEditEntries) {
                     Text(
                         text = "この共有タグでは URL を追加できません",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Spacer(Modifier.height(12.dp))
                 } else if (availableEntriesToAdd.isEmpty()) {
                     Text(
                         text = "追加できる保存済みURLはありません",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Spacer(Modifier.height(12.dp))
                 } else {
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(420.dp),
+                            .weight(1f),
+                        contentPadding = PaddingValues(bottom = 20.dp),
                     ) {
                         items(availableEntriesToAdd, key = { it.id }) { entry ->
-                            EntryCard(
+                            AddEntryCandidateCard(
                                 entry = entry,
-                                timestampMillis = entry.createdAt,
                                 displayMode = entryCardDisplayMode,
-                                showDisplayUrl = false,
-                                footerContent = {
-                                    TextButton(
-                                        onClick = {
-                                            scope.launch {
-                                                when (val result = viewModel.addEntryToTag(entry.id)) {
-                                                    AssignTagResult.Success,
-                                                    AssignTagResult.AlreadyAssigned,
-                                                    -> {
-                                                        showAddEntrySheet = false
-                                                        entryAddError = null
-                                                    }
-                                                    is AssignTagResult.LimitReached -> {
-                                                        entryAddError = result.message
-                                                    }
-                                                    AssignTagResult.Failed -> {
-                                                        entryAddError = "この共有タグにはURLを追加できませんでした"
-                                                    }
-                                                }
+                                enabled = canEditEntries,
+                                onClick = { onOpenDetail(entry.id) },
+                                onAdd = {
+                                    scope.launch {
+                                        when (val result = viewModel.addEntryToTag(entry.id)) {
+                                            AssignTagResult.Success,
+                                            AssignTagResult.AlreadyAssigned,
+                                            -> {
+                                                showAddEntrySheet = false
+                                                entryAddError = null
                                             }
-                                        },
-                                        modifier = Modifier
-                                            .align(Alignment.End)
-                                            .padding(top = 4.dp),
-                                    ) {
-                                        Text("この共有タグに追加")
+                                            is AssignTagResult.LimitReached -> {
+                                                entryAddError = result.message
+                                            }
+                                            AssignTagResult.Failed -> {
+                                                entryAddError = "この共有タグにはURLを追加できませんでした"
+                                            }
+                                        }
                                     }
                                 },
-                                onClick = { onOpenDetail(entry.id) },
                             )
                         }
                     }
-                    Spacer(Modifier.height(12.dp))
                 }
             }
         }
+    }
+}
+
+private val SharedTagHeaderButtonSize = 46.dp
+private val SharedTagHeaderIconSize = 30.dp
+
+@Composable
+private fun CenteredDeleteDialogActions(
+    onCancel: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        OutlinedButton(
+            onClick = onCancel,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(58.dp),
+            shape = RoundedCornerShape(18.dp),
+        ) {
+            Text("キャンセルする")
+        }
+        Button(
+            onClick = onDelete,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(58.dp),
+            shape = RoundedCornerShape(18.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.error,
+                contentColor = MaterialTheme.colorScheme.onError,
+            ),
+        ) {
+            Text("削除する")
+        }
+    }
+}
+
+@Composable
+private fun SharedTagHeaderIconButton(
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    content: @Composable () -> Unit,
+) {
+    IconButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier.size(SharedTagHeaderButtonSize),
+    ) {
+        content()
     }
 }
 
@@ -787,11 +763,6 @@ private fun CloudSignInBanner(
             text = "クラウド共有を使うにはサインインが必要です",
             style = MaterialTheme.typography.bodyMedium,
         )
-        Text(
-            text = "通常の共有タグはこの端末だけで使われます。必要なタグだけ後からクラウド共有へ移行できます。",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
         OutlinedButton(onClick = onOpenCloudAuth) {
             Text("サインイン")
         }
@@ -799,46 +770,132 @@ private fun CloudSignInBanner(
 }
 
 @Composable
-private fun MigrateBanner(
-    migrateError: String?,
-    onMigrate: () -> Unit,
+private fun SharedTagInlineTitle(
+    title: String,
+    isSyncing: Boolean,
+    syncNotice: String?,
+    syncNoticeIsError: Boolean,
 ) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .padding(top = 14.dp, bottom = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        SharedTagTitleSyncStatus(
+            isSyncing = isSyncing,
+            syncNotice = syncNotice,
+            syncNoticeIsError = syncNoticeIsError,
+        )
+    }
+}
+
+@Composable
+private fun SharedTagTitleSyncStatus(
+    isSyncing: Boolean,
+    syncNotice: String?,
+    syncNoticeIsError: Boolean,
+) {
+    when {
+        isSyncing -> Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(14.dp),
+                strokeWidth = 2.dp,
+            )
+            Text(
+                text = "同期中",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+        }
+
+        !syncNotice.isNullOrBlank() -> Text(
+            text = if (syncNoticeIsError) "更新できませんでした" else syncNotice,
+            style = MaterialTheme.typography.bodySmall,
+            color = if (syncNoticeIsError) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.onSurface
+            },
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun SharedTagEntryCountRow(
+    count: Int,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "${count}件",
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun SharedTagEmptyPlaceholder() {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 24.dp, vertical = 40.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        Icon(
+            imageVector = Icons.Outlined.LinkOff,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(12.dp))
         Text(
-            text = "このローカル共有タグはクラウド共有へ移行できます",
+            text = "この共有タグにはまだURLがありません",
+            style = MaterialTheme.typography.titleMedium,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Clip,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = "詳細画面からURLに共有タグを追加すると、ここにまとまって表示されます",
             style = MaterialTheme.typography.bodyMedium,
-        )
-        Text(
-            text = "右上の共有ボタンでは、この端末内の共有フォルダを開くリンクを共有できます。クラウド共有へ移行すると、オーナーは別端末向けの招待リンクを作れます。",
-            style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
         )
-        OutlinedButton(onClick = onMigrate) {
-            Text("クラウド共有へ移行")
-        }
-        migrateError?.let { message ->
-            Text(
-                text = message,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
     }
 }
 
 @Composable
 private fun SyncedTagInfo(
     shareError: String?,
-    isSyncing: Boolean,
-    syncNotice: String?,
-    syncNoticeIsError: Boolean,
 ) {
-    if (!isSyncing && syncNotice.isNullOrBlank() && shareError.isNullOrBlank()) return
+    if (shareError.isNullOrBlank()) return
 
     Column(
         modifier = Modifier
@@ -846,40 +903,11 @@ private fun SyncedTagInfo(
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        if (isSyncing) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(14.dp),
-                    strokeWidth = 2.dp,
-                )
-                Text(
-                    text = "同期中",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        syncNotice?.let { message ->
-            Text(
-                text = message,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (syncNoticeIsError) {
-                    MaterialTheme.colorScheme.error
-                } else {
-                    MaterialTheme.colorScheme.onSurface
-                },
-            )
-        }
-        shareError?.let { message ->
-            Text(
-                text = message,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
+        Text(
+            text = shareError,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+        )
     }
 }
 
@@ -891,6 +919,48 @@ private fun sharedTagInfoMessage(role: SharedTagMemberRole?): String {
         null -> "同期が完了すると権限情報が表示されます。"
     }
     return "この共有タグでは URL 一覧だけを同期します。\n\n$roleText"
+}
+
+private fun inviteShareText(inviteUrl: String): String {
+    val token = runCatching { Uri.parse(inviteUrl).lastPathSegment.orEmpty() }.getOrDefault("")
+    if (token.isBlank()) return inviteUrl
+    return """
+        URL Saverの共有タグに参加:
+        $inviteUrl
+
+        開けない場合:
+        urlsaver://invite/$token
+    """.trimIndent()
+}
+
+@Composable
+private fun AddEntryCandidateCard(
+    entry: jp.mimac.urlsaver.data.UrlEntryEntity,
+    displayMode: EntryCardDisplayMode,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    onAdd: () -> Unit,
+) {
+    EntryCard(
+        entry = entry,
+        timestampMillis = entry.createdAt,
+        displayMode = displayMode,
+        showDisplayUrl = false,
+        footerContent = {
+            OrbitActionButton(
+                onClick = onAdd,
+                enabled = enabled,
+                style = OrbitActionStyle.PRIMARY,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp),
+                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
+            ) {
+                Text("この共有タグに追加")
+            }
+        },
+        onClick = onClick,
+    )
 }
 
 @Composable
@@ -1005,7 +1075,7 @@ private fun SharedTagMembersPanel(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            text = "参加者 ${members.size}人",
+            text = "参加者 ${members.size}名",
             style = MaterialTheme.typography.titleSmall,
         )
         if (members.isEmpty()) {

@@ -47,11 +47,16 @@ class ArchiveViewModel(
         repository.observeArchiveEntries(),
         selectedService,
         selectedCollectionId,
-    ) { entries, selectedService, selectedCollection ->
+        repository.observeLocalTagCollectionEntryRefs(),
+    ) { entries, selectedService, selectedCollection, localTagRefs ->
         buildListFilterUiState(
             entries = entries,
             selectedService = selectedService,
             selectedCollectionId = selectedCollection,
+            localTagCollectionEntryIds = localTagRefs.groupBy(
+                keySelector = { it.collectionId },
+                valueTransform = { it.entryId },
+            ).mapValues { (_, entryIds) -> entryIds.toSet() },
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ListFilterUiState())
 

@@ -33,6 +33,8 @@ interface TagRepository {
 
     suspend fun createTag(name: String): Long?
     suspend fun createTagWithResult(name: String): CreateTagResult
+    suspend fun createLocalTagWithResult(name: String): CreateTagResult
+    suspend fun createSyncedTagWithResult(name: String): CreateTagResult
     suspend fun deleteTag(tagId: Long)
     suspend fun assignTag(tagId: Long, entryId: Long)
     suspend fun assignTagWithResult(tagId: Long, entryId: Long): AssignTagResult
@@ -49,7 +51,7 @@ interface TagRepository {
     suspend fun createInviteLink(tagId: Long): SharedTagInviteCreationResult
     suspend fun previewInvite(inviteToken: String): SharedTagInvitePreviewResult
     suspend fun acceptInvite(inviteToken: String): SharedTagInviteAcceptanceResult
-    suspend fun leaveSharedTag(tagId: Long): Boolean
     suspend fun transferOwnership(tagId: Long, newOwnerUserId: String): SharedTagOwnershipTransferResult
+    suspend fun leaveSharedTag(tagId: Long): Boolean
     suspend fun removeMember(tagId: Long, userId: String): Boolean
 }

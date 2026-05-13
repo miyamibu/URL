@@ -16,8 +16,8 @@ class TagListViewModel(
     val tags: StateFlow<List<TagWithCount>> = tagRepository.observeAllTagsWithCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    suspend fun createTag(name: String): CreateTagResult {
-        return tagRepository.createTagWithResult(name)
+    suspend fun createSharedTag(name: String): CreateTagResult {
+        return tagRepository.createSyncedTagWithResult(name)
     }
 
     suspend fun deleteTag(tagId: Long) {

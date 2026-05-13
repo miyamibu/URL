@@ -52,7 +52,9 @@ fun metadataDetailMessage(
             body = failedReasonText(error),
         )
         MetadataState.UNAVAILABLE -> MetadataDetailMessage(
-            title = if (isLikelyServiceRestriction(error, serviceType)) {
+            title = if (error == MetadataError.OVERSIZED) {
+                "URLを保存しました"
+            } else if (isLikelyServiceRestriction(error, serviceType)) {
                 "${serviceLabelForRestriction(serviceType)}では自動取得に制限があります"
             } else {
                 "このURLは自動取得できません"
@@ -221,7 +223,7 @@ private fun unavailableReasonText(error: MetadataError?, serviceType: ServiceTyp
         } else {
             "このURLはHTMLページではないため、自動取得できません。"
         }
-        MetadataError.OVERSIZED -> "ページサイズが大きく、自動取得対象外でした。"
+        MetadataError.OVERSIZED -> "ページが大きいため、内容の自動取得はできませんでした。"
         MetadataError.TOO_MANY_REDIRECTS -> "転送が多く、情報取得を完了できませんでした。"
         MetadataError.HTTP_404 -> "ページが見つからないため、自動取得できませんでした。"
         MetadataError.HTTP_4XX -> if (isLikelyServiceRestriction(error, serviceType)) {

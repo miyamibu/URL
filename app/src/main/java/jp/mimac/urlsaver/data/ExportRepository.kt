@@ -485,12 +485,13 @@ class DefaultExportRepository(
 }
 
 private fun List<TagWithCount>.toExportTagOptions(): List<ExportTagOption> {
-    return map {
-        ExportTagOption(
-            id = it.id,
-            name = it.name,
-            scope = it.scope,
-            urlCount = it.urlCount,
-        )
-    }
+    return filter { it.urlCount > 0 }
+        .map {
+            ExportTagOption(
+                id = it.id,
+                name = it.name,
+                scope = it.scope,
+                urlCount = it.urlCount,
+            )
+        }
 }

@@ -7,8 +7,8 @@ import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -47,10 +47,10 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.AccountCircle
-import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.IosShare
 import androidx.compose.material.icons.outlined.LinkOff
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Sell
 import androidx.compose.material.icons.outlined.ViewAgenda
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -67,6 +67,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
@@ -131,6 +132,7 @@ import jp.mimac.urlsaver.domain.ShareSaveResult
 import jp.mimac.urlsaver.domain.SnackbarEvent
 import jp.mimac.urlsaver.domain.SnackbarEventKind
 import jp.mimac.urlsaver.domain.UrlRules
+import jp.mimac.urlsaver.domain.normalizeSharedTagName
 import jp.mimac.urlsaver.domain.validateSharedTagName
 import jp.mimac.urlsaver.ui.components.OrbitActionButton
 import jp.mimac.urlsaver.ui.components.OrbitActionStyle
@@ -150,6 +152,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.ZoneId
 import kotlin.math.abs
+
+fun shouldShowSharedTagCloudEntryPoints(
+    isConfigured: Boolean,
+    hasSharedTags: Boolean,
+    hasPendingInvite: Boolean = false,
+): Boolean = isConfigured || hasSharedTags || hasPendingInvite
 
 @Composable
 fun UrlSaverRoot(
@@ -300,6 +308,8 @@ fun UrlSaverRoot(
     }
 }
 
+private val MainTopBarActionIconSize = 30.dp
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun orbitTopAppBarColors() = TopAppBarDefaults.topAppBarColors(
@@ -364,6 +374,8 @@ private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
             },
             onArchiveFailed = { activityViewModel.notifyArchiveFailed() },
             onDeleteFailed = { activityViewModel.notifyDeleteFailed() },
+            onCollectionDeleted = { activityViewModel.notifyCollectionDeleted() },
+            onCollectionDeleteFailed = { activityViewModel.notifyCollectionDeleteFailed() },
         )
     }
 
@@ -557,6 +569,8 @@ private fun MainScreen(
     onBatchPendingDeleteEntries: (Map<Long, Long>) -> Unit,
     onArchiveFailed: () -> Unit,
     onDeleteFailed: () -> Unit,
+    onCollectionDeleted: () -> Unit,
+    onCollectionDeleteFailed: () -> Unit,
 ) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -582,11 +596,25 @@ private fun MainScreen(
             )
         },
     )
+    val sharedTagCloudState by profileVm.cloudState.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val mainListState = rememberLazyListState()
     val customCollections = remember(collections) {
         collections.filter { it.id != DEFAULT_COLLECTION_ID }
     }
+    val localCollectionNameSet = remember(customCollections) {
+        customCollections.map { normalizeSharedTagName(it.name) }.toSet()
+    }
+    val visibleSharedTags = remember(sharedTags, localCollectionNameSet) {
+        sharedTags.filter { tag ->
+            tag.scope == SharedTagScope.SYNCED &&
+                normalizeSharedTagName(tag.name) !in localCollectionNameSet
+        }
+    }
+    val showSharedTagCloudUi = shouldShowSharedTagCloudEntryPoints(
+        isConfigured = sharedTagCloudState.isConfigured,
+        hasSharedTags = visibleSharedTags.isNotEmpty(),
+    )
 
     var manualInputState by remember { mutableStateOf(ManualInputUiState()) }
     var showPrivacyDialog by remember { mutableStateOf(false) }
@@ -596,6 +624,8 @@ private fun MainScreen(
     val exportSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showProfileSheet by rememberSaveable { mutableStateOf(false) }
     val profileSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var showLocalTagManagerSheet by rememberSaveable { mutableStateOf(false) }
+    var pendingDeleteCollection by remember { mutableStateOf<CollectionEntity?>(null) }
     var selectedEntryIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var previousTopEntryId by remember { mutableStateOf<Long?>(null) }
     var previousVisibleEntryCount by remember { mutableStateOf(0) }
@@ -699,15 +729,21 @@ private fun MainScreen(
 
     fun confirmCreateSharedTag() {
         scope.launch {
-            val error = when (validateSharedTagName(sharedTagDialogState.name)) {
-                SharedTagNameValidationError.BLANK -> "共有タグ名を入力してください"
-                SharedTagNameValidationError.TOO_LONG -> "共有タグ名は50文字以内で入力してください"
-                null -> null
+            val normalizedName = normalizeSharedTagName(sharedTagDialogState.name)
+            val error = when {
+                normalizedName in localCollectionNameSet -> {
+                    "同じ名前の通常タグがあります。通常タグとして追加してください"
+                }
+                else -> when (validateSharedTagName(sharedTagDialogState.name)) {
+                    SharedTagNameValidationError.BLANK -> "共有タグ名を入力してください"
+                    SharedTagNameValidationError.TOO_LONG -> "共有タグ名は50文字以内で入力してください"
+                    null -> null
+                }
             }
             sharedTagDialogState = sharedTagDialogState.copy(error = error)
             if (error != null) return@launch
 
-            when (val created = tagViewModel.createTag(sharedTagDialogState.name)) {
+            when (val created = tagViewModel.createSharedTag(sharedTagDialogState.name)) {
                 is CreateTagResult.Success -> closeCreateSharedTagDialog()
                 CreateTagResult.InvalidName -> {
                     sharedTagDialogState = sharedTagDialogState.copy(error = "共有タグ名を入力してください")
@@ -794,6 +830,17 @@ private fun MainScreen(
         }
     }
 
+    fun deleteCollection(collection: CollectionEntity) {
+        scope.launch {
+            val deleted = viewModel.deleteCollection(collection.id)
+            if (deleted) {
+                onCollectionDeleted()
+            } else {
+                onCollectionDeleteFailed()
+            }
+        }
+    }
+
     if (showPrivacyDialog) {
         AlertDialog(
             onDismissRequest = { showPrivacyDialog = false },
@@ -855,6 +902,42 @@ private fun MainScreen(
         onSave = { submitManualSave() },
     )
 
+    LocalTagManagementSheet(
+        visible = showLocalTagManagerSheet,
+        collections = customCollections,
+        onDismiss = { showLocalTagManagerSheet = false },
+        onRequestDelete = { collection ->
+            showLocalTagManagerSheet = false
+            pendingDeleteCollection = collection
+        },
+    )
+
+    pendingDeleteCollection?.let { collection ->
+        AlertDialog(
+            onDismissRequest = { pendingDeleteCollection = null },
+            title = { Text("タグを削除") },
+            text = {
+                Text("「${collection.name}」を削除します。URL自体は削除されず、受信箱に戻ります。")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingDeleteCollection = null
+                        deleteCollection(collection)
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                ) {
+                    Text("削除する")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteCollection = null }) {
+                    Text("キャンセル")
+                }
+            },
+        )
+    }
+
     CreateCollectionDialog(
         visible = createCollectionState.visible,
         newCollectionName = createCollectionState.name,
@@ -870,7 +953,7 @@ private fun MainScreen(
     )
 
     CreateSharedTagDialog(
-        visible = sharedTagDialogState.visible,
+        visible = sharedTagDialogState.visible && showSharedTagCloudUi,
         newSharedTagName = sharedTagDialogState.name,
         createSharedTagError = sharedTagDialogState.error,
         onDismiss = { closeCreateSharedTagDialog() },
@@ -896,7 +979,7 @@ private fun MainScreen(
         }
     }
 
-    if (showProfileSheet) {
+    if (showProfileSheet && showSharedTagCloudUi) {
         ModalBottomSheet(
             onDismissRequest = { showProfileSheet = false },
             sheetState = profileSheetState,
@@ -932,31 +1015,46 @@ private fun MainScreen(
                             } else {
                                 "画像つき表示へ切り替える"
                             },
+                            modifier = Modifier.size(MainTopBarActionIconSize),
                         )
                     }
-                    IconButton(onClick = { showProfileSheet = true }) {
-                        Icon(
-                            Icons.Outlined.AccountCircle,
-                            contentDescription = "プロフィール",
-                        )
-                    }
-                    IconButton(onClick = { showPrivacyDialog = true }) {
-                        Icon(
-                            Icons.Outlined.Info,
-                            contentDescription = stringResource(R.string.main_privacy_info),
-                        )
+                    if (showSharedTagCloudUi) {
+                        IconButton(onClick = { showProfileSheet = true }) {
+                            Icon(
+                                Icons.Outlined.AccountCircle,
+                                contentDescription = "プロフィール",
+                                modifier = Modifier.size(MainTopBarActionIconSize),
+                            )
+                        }
                     }
                     IconButton(onClick = { showExportSheet = true }) {
-                        Icon(Icons.Outlined.IosShare, contentDescription = "エクスポート")
+                        Icon(
+                            Icons.Outlined.IosShare,
+                            contentDescription = "エクスポート",
+                            modifier = Modifier.size(MainTopBarActionIconSize),
+                        )
                     }
                     IconButton(onClick = onOpenArchive) {
-                        Icon(Icons.Outlined.Archive, contentDescription = "アーカイブ")
+                        Icon(
+                            Icons.Outlined.Archive,
+                            contentDescription = "アーカイブ",
+                            modifier = Modifier.size(MainTopBarActionIconSize),
+                        )
+                    }
+                    IconButton(onClick = { showLocalTagManagerSheet = true }) {
+                        Icon(
+                            Icons.Outlined.Sell,
+                            contentDescription = "タグ管理",
+                            modifier = Modifier.size(MainTopBarActionIconSize),
+                        )
                     }
                 },
             )
         },
         bottomBar = {
-            MainAddUrlBar(onClick = { openManualInput() })
+            if (selectedEntryIds.isEmpty()) {
+                MainAddUrlBar(onClick = { openManualInput() })
+            }
         },
     ) { paddingValues ->
         Box(
@@ -974,7 +1072,8 @@ private fun MainScreen(
                 MainListContent(
                     uiState = uiState,
                     customCollections = customCollections,
-                    sharedTags = sharedTags,
+                    sharedTags = visibleSharedTags,
+                    showSharedTagCloudUi = showSharedTagCloudUi,
                     selectedService = selectedService,
                     selectedCollectionId = selectedCollectionId,
                     serviceFilterOrder = serviceFilterOrder,
@@ -1020,7 +1119,6 @@ private fun MainScreen(
                     },
                     onArchiveSelectedEntries = { archiveSelectedEntries() },
                     onDeleteSelectedEntries = { deleteSelectedEntries() },
-                    onOpenManualInput = { openManualInput() },
                     onOpenDetail = onOpenDetail,
                     onArchiveActiveEntry = { entryId -> archiveActiveEntry(entryId) },
                     onPendingDeleteActiveEntry = { entryId -> pendingDeleteActiveEntry(entryId) },
@@ -1151,6 +1249,100 @@ private fun ManualInputSheet(
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+private fun LocalTagManagementSheet(
+    visible: Boolean,
+    collections: List<CollectionEntity>,
+    onDismiss: () -> Unit,
+    onRequestDelete: (CollectionEntity) -> Unit,
+) {
+    if (!visible) return
+
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "タグ管理",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleLarge,
+                )
+                TextButton(onClick = onDismiss) {
+                    Text("閉じる")
+                }
+            }
+
+            if (collections.isEmpty()) {
+                OrbitPanel(tone = OrbitPanelTone.SOFT) {
+                    Text(
+                        text = "削除できるタグはまだありません",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            } else {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    collections.forEach { collection ->
+                        Surface(
+                            shape = RoundedCornerShape(22.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            border = BorderStroke(1.dp, OrbitTokens.outline),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(start = 14.dp, top = 8.dp, end = 8.dp, bottom = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = collection.name,
+                                    modifier = Modifier.widthIn(max = 120.dp),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                TextButton(
+                                    onClick = { onRequestDelete(collection) },
+                                    modifier = Modifier.height(40.dp),
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
+                                    colors = ButtonDefaults.textButtonColors(
+                                        contentColor = MaterialTheme.colorScheme.error,
+                                    ),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Delete,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(
+                                        text = "削除",
+                                        style = MaterialTheme.typography.titleSmall,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+        }
+    }
+}
+
+@Composable
 private fun CreateCollectionDialog(
     visible: Boolean,
     newCollectionName: String,
@@ -1212,7 +1404,7 @@ private fun CreateSharedTagDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    text = "新しい共有タグは最初はこの端末だけで使われます。必要になったら詳細画面からクラウド共有へ移行できます。",
+                    text = "サインイン中は作成後すぐクラウド共有できます。未サインインの場合はこの端末だけで使われます。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1305,6 +1497,7 @@ private fun MainListContent(
     uiState: ListFilterUiState,
     customCollections: List<jp.mimac.urlsaver.data.CollectionEntity>,
     sharedTags: List<jp.mimac.urlsaver.domain.TagWithCount>,
+    showSharedTagCloudUi: Boolean,
     selectedService: ServiceType,
     selectedCollectionId: Long?,
     serviceFilterOrder: List<ServiceType>,
@@ -1326,7 +1519,6 @@ private fun MainListContent(
     onClearEntrySelection: () -> Unit,
     onArchiveSelectedEntries: () -> Unit,
     onDeleteSelectedEntries: () -> Unit,
-    onOpenManualInput: () -> Unit,
     onOpenDetail: (Long) -> Unit,
     onArchiveActiveEntry: (Long) -> Unit,
     onPendingDeleteActiveEntry: (Long) -> Unit,
@@ -1345,12 +1537,14 @@ private fun MainListContent(
         onReorderCollections = onReorderCollections,
     )
     Spacer(modifier = Modifier.height(8.dp))
-    TagFilterRow(
-        tags = sharedTags,
-        onOpenTag = onOpenTagDetail,
-        onCreateTag = onRequestCreateSharedTag,
-    )
-    Spacer(modifier = Modifier.height(8.dp))
+    if (showSharedTagCloudUi) {
+        TagFilterRow(
+            tags = sharedTags,
+            onOpenTag = onOpenTagDetail,
+            onCreateTag = onRequestCreateSharedTag,
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+    }
     if (selectedEntryIds.isNotEmpty()) {
         EntrySelectionBar(
             selectedCount = selectedEntryIds.size,
@@ -1365,15 +1559,14 @@ private fun MainListContent(
 
     when {
         uiState.globalCount == 0 -> {
-            Unit
+            EmptyState(
+                title = stringResource(R.string.main_empty_title),
+            )
         }
 
         uiState.scopeCount == 0 -> {
             EmptyState(
                 title = stringResource(R.string.main_filtered_empty_title),
-                body = stringResource(R.string.main_filtered_empty_body),
-                actionLabel = stringResource(R.string.main_add_url),
-                onAction = onOpenManualInput,
             )
         }
 
@@ -1428,15 +1621,21 @@ private fun EntrySelectionBar(
     onDelete: () -> Unit,
     onCancel: () -> Unit,
 ) {
+    val buttonShape = androidx.compose.foundation.shape.RoundedCornerShape(50)
     Row(
         modifier = Modifier
+            .padding(horizontal = 12.dp)
             .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
             .background(
                 color = OrbitTokens.panelSoft,
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(OrbitTokens.radiusChip),
             )
-            .padding(horizontal = 14.dp, vertical = 8.dp),
+            .border(
+                width = 1.dp,
+                color = OrbitTokens.outline,
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(OrbitTokens.radiusChip),
+            )
+            .padding(horizontal = 12.dp, vertical = 9.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1444,19 +1643,98 @@ private fun EntrySelectionBar(
             text = "${selectedCount}件選択",
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
         )
-        TextButton(onClick = onSelectAll, enabled = !allSelected) {
-            Text("すべて選択")
+
+        Row(
+            modifier = Modifier
+                .height(36.dp)
+                .background(OrbitTokens.panelStrong, buttonShape)
+                .clickable(enabled = !allSelected, onClick = onSelectAll)
+                .padding(horizontal = 10.dp)
+                .semantics { contentDescription = "すべて選択" },
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Check,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = 0.95f),
+                modifier = Modifier.size(23.dp),
+            )
+            Text(
+                text = "すべて選択",
+                style = MaterialTheme.typography.labelLarge,
+                color = Color.White.copy(alpha = if (allSelected) 0.45f else 0.95f),
+                maxLines = 1,
+            )
         }
-        TextButton(onClick = onArchive) {
-            Text("アーカイブ")
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SelectionIconButton(
+                contentDescription = "アーカイブ",
+                onClick = onArchive,
+                icon = {
+                    Icon(
+                        imageVector = Icons.Outlined.Archive,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.95f),
+                        modifier = Modifier.size(30.dp),
+                    )
+                },
+            )
+            SelectionIconButton(
+                contentDescription = "削除",
+                onClick = onDelete,
+                icon = {
+                    Icon(
+                        imageVector = Icons.Outlined.Delete,
+                        contentDescription = null,
+                        tint = OrbitTokens.danger,
+                        modifier = Modifier.size(30.dp),
+                    )
+                },
+            )
+            SelectionIconButton(
+                contentDescription = "キャンセル",
+                onClick = onCancel,
+                icon = {
+                    Icon(
+                        imageVector = Icons.Outlined.Close,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.95f),
+                        modifier = Modifier.size(30.dp),
+                    )
+                },
+            )
         }
-        TextButton(onClick = onDelete) {
-            Text("削除")
-        }
-        TextButton(onClick = onCancel) {
-            Text("キャンセル")
-        }
+    }
+}
+
+@Composable
+private fun SelectionIconButton(
+    contentDescription: String,
+    onClick: () -> Unit,
+    icon: @Composable () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .width(42.dp)
+            .height(36.dp)
+            .background(
+                color = OrbitTokens.panelStrong,
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(50),
+            )
+            .clickable(onClick = onClick)
+            .semantics { this.contentDescription = contentDescription },
+        contentAlignment = Alignment.Center,
+    ) {
+        icon()
     }
 }
 
@@ -1758,6 +2036,7 @@ private fun DetailScreen(
     val entry by viewModel.entry.collectAsStateWithLifecycle(initialValue = null)
     val assignedTags by viewModel.assignedTags.collectAsStateWithLifecycle()
     val allTagsWithCount by viewModel.allTagsWithCount.collectAsStateWithLifecycle()
+    val cloudState by viewModel.cloudState.collectAsStateWithLifecycle()
     val collections by viewModel.collections.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1780,6 +2059,9 @@ private fun DetailScreen(
     var showAddSharedTagSheet by rememberSaveable { mutableStateOf(false) }
     var newSharedTagName by rememberSaveable { mutableStateOf("") }
     var sharedTagError by rememberSaveable { mutableStateOf<String?>(null) }
+    var locallyRemovedCollectionIds by remember { mutableStateOf(emptySet<Long>()) }
+    var locallyRemovedTagIds by remember { mutableStateOf(emptySet<Long>()) }
+    var locallyAssignedTagIds by remember(entryId) { mutableStateOf(emptySet<Long>()) }
     val localTagSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     val current = entry
@@ -1789,11 +2071,14 @@ private fun DetailScreen(
     val assignedSyncedTags = remember(assignedTags) {
         assignedTags.filter { it.scope == SharedTagScope.SYNCED }
     }
-    val assignedTagIds = remember(assignedTags) { assignedTags.map { it.id }.toSet() }
-    val availableLocalTags = remember(allTagsWithCount, assignedTagIds) {
-        allTagsWithCount
-            .filterNot { it.id in assignedTagIds }
-            .filter { it.scope == SharedTagScope.LOCAL_ONLY }
+    val assignedTagIds = remember(assignedTags, locallyAssignedTagIds) {
+        detailAssignedTagIds(
+            assignedTags = assignedTags,
+            locallyAssignedTagIds = locallyAssignedTagIds,
+        )
+    }
+    LaunchedEffect(assignedTagIds) {
+        locallyRemovedTagIds = locallyRemovedTagIds.intersect(assignedTagIds)
     }
     val customCollections = remember(collections) {
         collections.filter { it.id != DEFAULT_COLLECTION_ID }
@@ -1801,27 +2086,87 @@ private fun DetailScreen(
     val currentCollection = remember(current?.collectionId, customCollections) {
         customCollections.firstOrNull { it.id == current?.collectionId }
     }
-    val assignedLocalTagItems = remember(assignedLocalTags, currentCollection) {
-        buildList {
-            if (currentCollection != null) {
-                add(DetailTagItem.Collection(currentCollection))
-            }
-            assignedLocalTags.forEach { add(DetailTagItem.LocalTag(it)) }
+    LaunchedEffect(current?.collectionId) {
+        val currentCollectionId = current?.collectionId
+        locallyRemovedCollectionIds = locallyRemovedCollectionIds.filterTo(mutableSetOf()) { it == currentCollectionId }
+    }
+    val localCollectionNameSet = remember(customCollections) {
+        customCollections.map { normalizeSharedTagName(it.name) }.toSet()
+    }
+    val assignedLocalTagNameSet = remember(assignedLocalTags, currentCollection) {
+        buildSet {
+            currentCollection?.let { add(normalizeSharedTagName(it.name)) }
+            assignedLocalTags.forEach { add(normalizeSharedTagName(it.name)) }
         }
     }
-    val availableCollectionTags = remember(customCollections, current?.collectionId) {
-        customCollections.filterNot { it.id == current?.collectionId }
+    val availableLocalTags = remember(
+        allTagsWithCount,
+        assignedTagIds,
+        assignedLocalTagNameSet,
+        localCollectionNameSet,
+    ) {
+        allTagsWithCount
+            .asSequence()
+            .filter { it.scope == SharedTagScope.LOCAL_ONLY }
+            .filterNot { it.id in assignedTagIds }
+            .filter { it.urlCount > 0 }
+            .filter { tag -> normalizeSharedTagName(tag.name) !in assignedLocalTagNameSet }
+            .filter { tag -> normalizeSharedTagName(tag.name) !in localCollectionNameSet }
+            .distinctBy { normalizeSharedTagName(it.name) }
+            .toList()
     }
-    val availableSharedTags = remember(allTagsWithCount, assignedTagIds) {
+    val localTagNameSet = remember(allTagsWithCount) {
+        allTagsWithCount
+            .filter { it.scope == SharedTagScope.LOCAL_ONLY }
+            .map { normalizeSharedTagName(it.name) }
+            .toSet()
+    }
+    val localReservedTagNameSet = remember(localTagNameSet, localCollectionNameSet) {
+        localTagNameSet + localCollectionNameSet
+    }
+    val availableCollectionTags = remember(customCollections, current?.collectionId, assignedLocalTagNameSet) {
+        detailAvailableCollectionTags(
+            customCollections = customCollections,
+            currentCollectionId = current?.collectionId,
+            assignedLocalTagNameSet = assignedLocalTagNameSet,
+        )
+    }
+    val assignedLocalTagItems = remember(
+        assignedLocalTags,
+        currentCollection,
+        locallyRemovedCollectionIds,
+        locallyRemovedTagIds,
+    ) {
+        val currentCollectionName = currentCollection?.let { normalizeSharedTagName(it.name) }
+        buildList {
+            if (currentCollection != null && currentCollection.id !in locallyRemovedCollectionIds) {
+                add(DetailTagItem.Collection(currentCollection))
+            }
+            assignedLocalTags
+                .filterNot { it.id in locallyRemovedTagIds }
+                .filter { normalizeSharedTagName(it.name) != currentCollectionName }
+                .distinctBy { normalizeSharedTagName(it.name) }
+                .forEach { add(DetailTagItem.LocalTag(it)) }
+        }
+    }
+    val visibleAssignedSyncedTags = remember(assignedSyncedTags, locallyRemovedTagIds) {
+        assignedSyncedTags.filterNot { it.id in locallyRemovedTagIds }
+    }
+    val availableSharedTags = remember(allTagsWithCount, assignedTagIds, localReservedTagNameSet) {
         allTagsWithCount
             .filterNot { it.id in assignedTagIds }
             .filter { tag ->
                 tag.scope == SharedTagScope.SYNCED &&
+                    normalizeSharedTagName(tag.name) !in localReservedTagNameSet &&
                     (tag.currentUserRole == SharedTagMemberRole.OWNER ||
                     tag.currentUserRole == SharedTagMemberRole.EDITOR
                     )
             }
     }
+    val showSharedTagCloudUi = shouldShowSharedTagCloudEntryPoints(
+        isConfigured = cloudState.isConfigured,
+        hasSharedTags = assignedSyncedTags.isNotEmpty() || availableSharedTags.isNotEmpty(),
+    )
 
     fun requestSaveTitle() {
         if (titleTooLong) return
@@ -1845,6 +2190,30 @@ private fun DetailScreen(
             if (!accepted) {
                 retryRequested = false
                 onMetadataRetryUnavailable()
+            }
+        }
+    }
+
+    fun removeDetailTag(item: DetailTagItem) {
+        when (item) {
+            is DetailTagItem.Collection -> {
+                val collectionName = normalizeSharedTagName(item.collection.name)
+                val matchingLocalTagIds = assignedLocalTags
+                    .filter { normalizeSharedTagName(it.name) == collectionName }
+                    .map { it.id }
+                locallyRemovedCollectionIds = locallyRemovedCollectionIds + item.collection.id
+                locallyRemovedTagIds = locallyRemovedTagIds + matchingLocalTagIds
+                viewModel.clearCollectionAndRemoveTags(matchingLocalTagIds)
+            }
+            is DetailTagItem.LocalTag -> {
+                locallyRemovedTagIds = locallyRemovedTagIds + item.tag.id
+                locallyAssignedTagIds = locallyAssignedTagIds - item.tag.id
+                viewModel.removeTag(item.tag.id)
+            }
+            is DetailTagItem.SharedTag -> {
+                locallyRemovedTagIds = locallyRemovedTagIds + item.tag.id
+                locallyAssignedTagIds = locallyAssignedTagIds - item.tag.id
+                viewModel.removeTag(item.tag.id)
             }
         }
     }
@@ -1986,6 +2355,7 @@ private fun DetailScreen(
             },
             confirmButton = {
                 TextButton(
+                    modifier = Modifier.testTag("detail_memo_save"),
                     onClick = {
                         scope.launch {
                             when (viewModel.saveMemo(memoInput)) {
@@ -2035,7 +2405,7 @@ private fun DetailScreen(
         )
     }
 
-    if (showAddSharedTagSheet) {
+    if (showAddSharedTagSheet && showSharedTagCloudUi) {
         ModalBottomSheet(
             onDismissRequest = {
                 showAddSharedTagSheet = false
@@ -2044,10 +2414,26 @@ private fun DetailScreen(
             },
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
-                Text(
-                    text = "共有タグを選ぶ / 作る",
-                    style = MaterialTheme.typography.titleMedium,
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "共有タグを選ぶ / 作る",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    TextButton(
+                        onClick = {
+                            showAddSharedTagSheet = false
+                            newSharedTagName = ""
+                            sharedTagError = null
+                        },
+                        modifier = Modifier.testTag("detail_shared_tags_close"),
+                    ) {
+                        Text("閉じる")
+                    }
+                }
                 Spacer(Modifier.height(12.dp))
                 Text(
                     text = "既存の共有タグに追加",
@@ -2061,17 +2447,22 @@ private fun DetailScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
                         availableSharedTags.forEach { tag ->
                             DetailTagAssignmentOptionRow(
                                 label = tag.name,
                                 actionLabel = "追加",
+                                actionTestTag = "detail_shared_tag_add_${tag.id}",
                                 onClick = {
                                     scope.launch {
                                         when (val assigned = viewModel.assignTag(tag.id)) {
                                             AssignTagResult.Success,
                                             AssignTagResult.AlreadyAssigned,
                                             -> {
+                                                locallyAssignedTagIds = locallyAssignedTagIds + tag.id
                                                 showAddSharedTagSheet = false
                                                 newSharedTagName = ""
                                                 sharedTagError = null
@@ -2096,7 +2487,9 @@ private fun DetailScreen(
                         newSharedTagName = it
                         sharedTagError = null
                     },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("detail_shared_tag_name_input"),
                     label = { Text("新しい共有タグ") },
                     placeholder = { Text("あとで共有 / 旅行 / 調査 など") },
                     supportingText = {
@@ -2110,7 +2503,12 @@ private fun DetailScreen(
                 Button(
                     onClick = {
                         scope.launch {
-                            when (val result = viewModel.createAndAssignTag(newSharedTagName)) {
+                            val normalizedName = normalizeSharedTagName(newSharedTagName)
+                            if (normalizedName in localReservedTagNameSet) {
+                                sharedTagError = "同じ名前の通常タグがあります。通常タグとして追加してください"
+                                return@launch
+                            }
+                            when (val result = viewModel.createSharedAndAssignTag(newSharedTagName)) {
                                 CreateAndAssignTagResult.Success -> {
                                     showAddSharedTagSheet = false
                                     newSharedTagName = ""
@@ -2134,7 +2532,9 @@ private fun DetailScreen(
                             }
                         }
                     },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("detail_shared_tag_create"),
                     enabled = newSharedTagName.trim().isNotEmpty(),
                 ) {
                     Text("作成して追加")
@@ -2204,9 +2604,8 @@ private fun DetailScreen(
                     Button(
                         onClick = {
                             scope.launch {
-                                when (val result = viewModel.createAndAssignTag(newLocalTagName)) {
+                                when (val result = viewModel.createLocalAndAssignTag(newLocalTagName)) {
                                     CreateAndAssignTagResult.Success -> {
-                                        showAddLocalTagSheet = false
                                         newLocalTagName = ""
                                         localTagError = null
                                     }
@@ -2249,10 +2648,13 @@ private fun DetailScreen(
                                     label = item.name,
                                     actionLabel = "外す",
                                     enabled = item.canRemove,
+                                    actionTestTag = when (item) {
+                                        is DetailTagItem.Collection -> "detail_local_tag_remove_collection_${item.collection.id}"
+                                        is DetailTagItem.LocalTag -> "detail_local_tag_remove_tag_${item.tag.id}"
+                                        is DetailTagItem.SharedTag -> null
+                                    },
                                     onClick = {
-                                        if (item is DetailTagItem.LocalTag) {
-                                            viewModel.removeTag(item.tag.id)
-                                        }
+                                        removeDetailTag(item)
                                     },
                                 )
                             }
@@ -2277,11 +2679,31 @@ private fun DetailScreen(
                                 DetailTagAssignmentOptionRow(
                                     label = collection.name,
                                     actionLabel = "追加",
+                                    actionTestTag = "detail_local_tag_add_collection_${collection.id}",
                                     onClick = {
-                                        viewModel.assignCollection(collection.id)
-                                        showAddLocalTagSheet = false
-                                        newLocalTagName = ""
-                                        localTagError = null
+                                        scope.launch {
+                                            when (val result = viewModel.assignCollectionAndCreateLocalTag(collection)) {
+                                                CreateAndAssignTagResult.Success -> {
+                                                    newLocalTagName = ""
+                                                    localTagError = null
+                                                }
+                                                CreateAndAssignTagResult.Blank -> {
+                                                    localTagError = "タグ名を入力してください"
+                                                }
+                                                CreateAndAssignTagResult.TooLong -> {
+                                                    localTagError = "タグ名は50文字以内で入力してください"
+                                                }
+                                                CreateAndAssignTagResult.Duplicate -> {
+                                                    localTagError = "このタグはすでに割り当て済みです"
+                                                }
+                                                is CreateAndAssignTagResult.LimitReached -> {
+                                                    localTagError = result.message
+                                                }
+                                                CreateAndAssignTagResult.Failed -> {
+                                                    localTagError = "タグを追加できませんでした"
+                                                }
+                                            }
+                                        }
                                     },
                                 )
                             }
@@ -2289,13 +2711,14 @@ private fun DetailScreen(
                                 DetailTagAssignmentOptionRow(
                                     label = tag.name,
                                     actionLabel = "追加",
+                                    actionTestTag = "detail_local_tag_add_tag_${tag.id}",
                                     onClick = {
                                         scope.launch {
                                             when (val assigned = viewModel.assignTag(tag.id)) {
                                                 AssignTagResult.Success,
                                                 AssignTagResult.AlreadyAssigned,
                                                 -> {
-                                                    showAddLocalTagSheet = false
+                                                    locallyAssignedTagIds = locallyAssignedTagIds + tag.id
                                                     newLocalTagName = ""
                                                     localTagError = null
                                                 }
@@ -2394,7 +2817,7 @@ private fun DetailScreen(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .testTag("detail_title_input"),
-                                    textStyle = MaterialTheme.typography.headlineSmall,
+                                    textStyle = MaterialTheme.typography.titleLarge,
                                     maxLines = 2,
                                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                                     keyboardActions = KeyboardActions(onDone = { requestSaveTitle() }),
@@ -2408,7 +2831,7 @@ private fun DetailScreen(
                             } else {
                                 Text(
                                     text = effectiveTitle,
-                                    style = MaterialTheme.typography.headlineSmall,
+                                    style = MaterialTheme.typography.titleLarge,
                                     maxLines = 3,
                                     overflow = TextOverflow.Ellipsis,
                                 )
@@ -2458,7 +2881,9 @@ private fun DetailScreen(
                                 onClick = { requestSaveTitle() },
                                 enabled = !titleTooLong,
                                 style = OrbitActionStyle.PRIMARY,
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("detail_title_save"),
                             ) {
                                 Icon(Icons.Outlined.Check, contentDescription = null)
                                 Spacer(Modifier.width(6.dp))
@@ -2662,30 +3087,21 @@ private fun DetailScreen(
                         emptyText = "まだタグは付いていません",
                         tags = assignedLocalTagItems,
                         onEdit = { showAddLocalTagSheet = true },
-                        onRemove = { item ->
-                            when (item) {
-                                is DetailTagItem.Collection -> Unit
-                                is DetailTagItem.LocalTag -> viewModel.removeTag(item.tag.id)
-                                is DetailTagItem.SharedTag -> Unit
-                            }
-                        },
+                        editButtonTestTag = "detail_local_tags_edit",
+                        onRemove = ::removeDetailTag,
                         modifier = Modifier.weight(1f),
                     )
-                    DetailTagSummaryPanel(
-                        title = "共有タグ",
-                        emptyText = "まだ共有タグは付いていません",
-                        tags = assignedSyncedTags.map(DetailTagItem::SharedTag),
-                        onEdit = { showAddSharedTagSheet = true },
-                        onRemove = { item ->
-                            when (item) {
-                                is DetailTagItem.SharedTag -> viewModel.removeTag(item.tag.id)
-                                is DetailTagItem.Collection,
-                                is DetailTagItem.LocalTag,
-                                -> Unit
-                            }
-                        },
-                        modifier = Modifier.weight(1f),
-                    )
+                    if (showSharedTagCloudUi) {
+                        DetailTagSummaryPanel(
+                            title = "共有タグ",
+                            emptyText = "まだ共有タグは付いていません",
+                            tags = visibleAssignedSyncedTags.map(DetailTagItem::SharedTag),
+                            onEdit = { showAddSharedTagSheet = true },
+                            editButtonTestTag = "detail_shared_tags_edit",
+                            onRemove = ::removeDetailTag,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
                 }
 
                 OrbitPanel(
@@ -2787,10 +3203,36 @@ private fun DetailValue(label: String, value: String) {
 }
 
 private fun detailServiceLabelForEntry(entry: UrlEntryEntity): String {
-    if (entry.serviceType == ServiceType.TIKTOK) {
-        entry.fetchedTitle?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
+    if (
+        entry.serviceType == ServiceType.YOUTUBE ||
+        entry.serviceType == ServiceType.X ||
+        entry.serviceType == ServiceType.INSTAGRAM ||
+        entry.serviceType == ServiceType.TIKTOK
+    ) {
+        entry.fetchedAuthorName?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
+        if (entry.serviceType != ServiceType.YOUTUBE) {
+            entry.fetchedTitle?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
+        }
     }
     return serviceLabelForList(entry.serviceType, entry.normalizedHost)
+}
+
+internal fun detailAssignedTagIds(
+    assignedTags: List<SharedTagRecord>,
+    locallyAssignedTagIds: Set<Long>,
+): Set<Long> {
+    return assignedTags.mapTo(mutableSetOf()) { it.id } + locallyAssignedTagIds
+}
+
+internal fun detailAvailableCollectionTags(
+    customCollections: List<CollectionEntity>,
+    currentCollectionId: Long?,
+    assignedLocalTagNameSet: Set<String>,
+): List<CollectionEntity> {
+    return customCollections.filter { collection ->
+        collection.id != currentCollectionId &&
+            normalizeSharedTagName(collection.name) !in assignedLocalTagNameSet
+    }
 }
 
 @Composable
@@ -2800,6 +3242,7 @@ private fun DetailTagSummaryPanel(
     tags: List<DetailTagItem>,
     onEdit: () -> Unit,
     onRemove: (DetailTagItem) -> Unit,
+    editButtonTestTag: String? = null,
     modifier: Modifier = Modifier,
 ) {
     OrbitPanel(
@@ -2813,7 +3256,14 @@ private fun DetailTagSummaryPanel(
                 text = title,
                 modifier = Modifier.fillMaxWidth(),
             )
-            DetailTagEditButton(onClick = onEdit)
+            DetailTagEditButton(
+                onClick = onEdit,
+                modifier = if (editButtonTestTag == null) {
+                    Modifier
+                } else {
+                    Modifier.testTag(editButtonTestTag)
+                },
+            )
 
             if (tags.isEmpty()) {
                 DetailTagValuePill(
@@ -2852,7 +3302,7 @@ private sealed interface DetailTagItem {
 
     data class Collection(val collection: CollectionEntity) : DetailTagItem {
         override val name: String = collection.name
-        override val canRemove: Boolean = false
+        override val canRemove: Boolean = true
     }
 
     data class LocalTag(val tag: SharedTagRecord) : DetailTagItem {
@@ -2871,14 +3321,20 @@ private fun DetailTagAssignmentOptionRow(
     label: String,
     actionLabel: String,
     enabled: Boolean = true,
+    actionTestTag: String? = null,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
     Row(
         modifier = modifier
             .background(
                 color = MaterialTheme.colorScheme.surfaceVariant,
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+                shape = shape,
+            )
+            .border(
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                shape = shape,
             )
             .padding(start = 16.dp, top = 10.dp, end = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -2894,7 +3350,11 @@ private fun DetailTagAssignmentOptionRow(
         Button(
             onClick = onClick,
             enabled = enabled,
-            modifier = Modifier.height(40.dp),
+            modifier = (if (actionTestTag == null) {
+                Modifier
+            } else {
+                Modifier.testTag(actionTestTag)
+            }).height(40.dp),
             shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
         ) {
@@ -2908,10 +3368,13 @@ private fun DetailTagAssignmentOptionRow(
 }
 
 @Composable
-private fun DetailTagEditButton(onClick: () -> Unit) {
+private fun DetailTagEditButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Button(
         onClick = onClick,
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .height(42.dp),
         shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
@@ -3027,7 +3490,7 @@ private fun ExpandableMetadataSection(
 @Composable
 private fun EmptyState(
     title: String,
-    body: String,
+    body: String? = null,
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
 ) {
@@ -3043,17 +3506,20 @@ private fun EmptyState(
         ) {
             Text(
                 text = title,
-                style = MaterialTheme.typography.headlineMedium,
+                style = MaterialTheme.typography.titleMedium,
                 textAlign = TextAlign.Center,
+                maxLines = 1,
                 modifier = Modifier.fillMaxWidth(),
             )
-            Text(
-                text = body,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            if (!body.isNullOrBlank()) {
+                Text(
+                    text = body,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
             if (!actionLabel.isNullOrBlank() && onAction != null) {
                 OrbitActionButton(
                     onClick = onAction,

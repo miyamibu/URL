@@ -3,6 +3,7 @@ package jp.mimac.urlsaver.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import jp.mimac.urlsaver.data.CollectionEntity
+import jp.mimac.urlsaver.data.DEFAULT_COLLECTION_ID
 import jp.mimac.urlsaver.data.TagRepository
 import jp.mimac.urlsaver.data.UrlEntryEntity
 import jp.mimac.urlsaver.data.UrlRepository
@@ -12,12 +13,14 @@ import jp.mimac.urlsaver.domain.TagWithCount
 import jp.mimac.urlsaver.domain.DetailEffect
 import jp.mimac.urlsaver.domain.SharedTagRecord
 import jp.mimac.urlsaver.domain.SharedTagNameValidationError
+import jp.mimac.urlsaver.domain.SharedTagCloudState
 import jp.mimac.urlsaver.domain.normalizeSharedTagName
 import jp.mimac.urlsaver.domain.validateSharedTagName
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -35,6 +38,12 @@ class DetailViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val collections: StateFlow<List<CollectionEntity>> = repository.observeCollections()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val cloudState: StateFlow<SharedTagCloudState> = tagRepository.cloudState
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            SharedTagCloudState(isConfigured = false, isSignedIn = false),
+        )
 
     private val effectChannel = Channel<DetailEffect>(capacity = Channel.BUFFERED)
     val effects = effectChannel.receiveAsFlow()
@@ -78,14 +87,73 @@ class DetailViewModel(
         }
     }
 
-    suspend fun createAndAssignTag(name: String): CreateAndAssignTagResult {
+    fun clearCollection() {
+        viewModelScope.launch {
+            repository.assignCollection(entryId = entryId, collectionId = DEFAULT_COLLECTION_ID)
+        }
+    }
+
+    fun clearCollectionAndRemoveTags(tagIds: Collection<Long>) {
+        viewModelScope.launch {
+            repository.assignCollection(entryId = entryId, collectionId = DEFAULT_COLLECTION_ID)
+            tagIds.forEach { tagId ->
+                tagRepository.removeTag(tagId = tagId, entryId = entryId)
+            }
+        }
+    }
+
+    suspend fun createLocalAndAssignTag(name: String): CreateAndAssignTagResult {
+        return createAndAssignTag(
+            name = name,
+            createTag = tagRepository::createLocalTagWithResult,
+            existingMatches = { tag -> tag.scope == jp.mimac.urlsaver.domain.SharedTagScope.LOCAL_ONLY },
+        )
+    }
+
+    suspend fun assignCollectionAndCreateLocalTag(collection: CollectionEntity): CreateAndAssignTagResult {
+        val previousCollection = entry.first()?.collectionId
+            ?.takeIf { it != DEFAULT_COLLECTION_ID && it != collection.id }
+            ?.let { previousId -> collections.value.firstOrNull { it.id == previousId } }
+
+        if (!repository.assignCollection(entryId = entryId, collectionId = collection.id)) {
+            return CreateAndAssignTagResult.Failed
+        }
+
+        if (previousCollection != null) {
+            when (val previousResult = createLocalAndAssignTag(previousCollection.name)) {
+                CreateAndAssignTagResult.Success,
+                CreateAndAssignTagResult.Duplicate,
+                -> Unit
+                else -> return previousResult
+            }
+        }
+
+        return when (val result = createLocalAndAssignTag(collection.name)) {
+            CreateAndAssignTagResult.Duplicate -> CreateAndAssignTagResult.Success
+            else -> result
+        }
+    }
+
+    suspend fun createSharedAndAssignTag(name: String): CreateAndAssignTagResult {
+        return createAndAssignTag(
+            name = name,
+            createTag = tagRepository::createSyncedTagWithResult,
+            existingMatches = { tag -> tag.scope == jp.mimac.urlsaver.domain.SharedTagScope.SYNCED },
+        )
+    }
+
+    private suspend fun createAndAssignTag(
+        name: String,
+        createTag: suspend (String) -> CreateTagResult,
+        existingMatches: (TagWithCount) -> Boolean,
+    ): CreateAndAssignTagResult {
         when (validateSharedTagName(name)) {
             SharedTagNameValidationError.BLANK -> return CreateAndAssignTagResult.Blank
             SharedTagNameValidationError.TOO_LONG -> return CreateAndAssignTagResult.TooLong
             null -> Unit
         }
 
-        when (val created = tagRepository.createTagWithResult(name)) {
+        when (val created = createTag(name)) {
             is CreateTagResult.Success -> {
                 return when (val assigned = tagRepository.assignTagWithResult(tagId = created.tagId, entryId = entryId)) {
                     AssignTagResult.Success,
@@ -102,7 +170,8 @@ class DetailViewModel(
         }
 
         val normalized = normalizeSharedTagName(name)
-        val existing = allTagsWithCount.value.firstOrNull { it.name == normalized } ?: return CreateAndAssignTagResult.Failed
+        val existing = allTagsWithCount.value.firstOrNull { it.name == normalized && existingMatches(it) }
+            ?: return CreateAndAssignTagResult.Failed
         val alreadyAssigned = assignedTags.value.any { it.id == existing.id }
         if (alreadyAssigned) {
             return CreateAndAssignTagResult.Duplicate

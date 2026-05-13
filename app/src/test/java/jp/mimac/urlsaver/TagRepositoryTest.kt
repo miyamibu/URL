@@ -1,12 +1,17 @@
 package jp.mimac.urlsaver
 
+import android.content.Intent
 import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import jp.mimac.urlsaver.data.AppDatabase
+import jp.mimac.urlsaver.data.CollectionEntity
 import jp.mimac.urlsaver.data.DefaultTagRepository
 import jp.mimac.urlsaver.data.DefaultUsageSummaryDataSource
+import jp.mimac.urlsaver.data.MetadataUpdate
 import jp.mimac.urlsaver.data.MetadataScheduler
+import jp.mimac.urlsaver.data.SaveMemoResult
+import jp.mimac.urlsaver.data.SaveTitleResult
 import jp.mimac.urlsaver.data.SharedTagAuthRemoteDataSource
 import jp.mimac.urlsaver.data.SharedTagAuthRemoteResult
 import jp.mimac.urlsaver.data.SharedTagAuthSession
@@ -19,6 +24,7 @@ import jp.mimac.urlsaver.data.SharedTagSyncScheduler
 import jp.mimac.urlsaver.data.TagEntity
 import jp.mimac.urlsaver.data.TagUrlCrossRef
 import jp.mimac.urlsaver.data.UrlEntryEntity
+import jp.mimac.urlsaver.data.UrlRepository
 import jp.mimac.urlsaver.domain.AcceptSharedTagInviteResponse
 import jp.mimac.urlsaver.domain.ApplySharedTagOpsResponse
 import jp.mimac.urlsaver.domain.ContentContext
@@ -38,12 +44,17 @@ import jp.mimac.urlsaver.domain.SharedTagSyncStatus
 import jp.mimac.urlsaver.domain.ServiceType
 import jp.mimac.urlsaver.domain.TagSharePayload
 import jp.mimac.urlsaver.domain.TagShareUrl
-import jp.mimac.urlsaver.domain.AssignTagResult
 import jp.mimac.urlsaver.domain.TransferSharedTagOwnershipResponse
+import jp.mimac.urlsaver.domain.AssignTagResult
+import jp.mimac.urlsaver.domain.SaveResult
+import jp.mimac.urlsaver.domain.ShareSaveResult
+import jp.mimac.urlsaver.ui.CreateAndAssignTagResult
+import jp.mimac.urlsaver.ui.DetailViewModel
 import jp.mimac.urlsaver.util.AppClock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -125,18 +136,103 @@ class TagRepositoryTest {
     }
 
     @Test
-    fun createTag_signedInStillCreatesLocalTagByDefault() = runBlocking {
+    fun createTag_signedInStillCreatesLocalTag() = runBlocking {
+        val authUserId = "00000000-0000-0000-0000-000000000111"
         authProvider.updateSession(
             SharedTagAuthSession(
-                authUserId = "00000000-0000-0000-0000-000000000111",
+                authUserId = authUserId,
                 accessToken = "token",
             ),
         )
 
-        val createdId = repository.createTag("local-by-default")
+        val createdId = repository.createTag("cloud-by-default")
         val created = db.tagDao().findTagById(requireNotNull(createdId))
 
         assertEquals(SharedTagScope.LOCAL_ONLY, created?.scope)
+        assertNull(created?.authUserId)
+        assertNull(created?.remoteTagId)
+        assertEquals(SharedTagSyncStatus.LOCAL_ONLY, created?.syncStatus)
+        val currentUserMember = db.tagDao().findCurrentUserMember(createdId, authUserId)
+        assertNull(currentUserMember)
+        val pending = db.sharedTagSyncDao().getPendingOutbox(authUserId)
+        assertEquals(0, pending.size)
+        assertTrue(syncScheduler.enqueued.isEmpty())
+    }
+
+    @Test
+    fun createSyncedTagWithResult_signedInCreatesCloudSharedTag() = runBlocking {
+        val authUserId = "00000000-0000-0000-0000-000000000111"
+        authProvider.updateSession(
+            SharedTagAuthSession(
+                authUserId = authUserId,
+                accessToken = "token",
+            ),
+        )
+
+        val result = repository.createSyncedTagWithResult("cloud-explicit")
+        assertTrue(result is CreateTagResult.Success)
+        val createdId = (result as CreateTagResult.Success).tagId
+        val created = db.tagDao().findTagById(createdId)
+
+        assertEquals(SharedTagScope.SYNCED, created?.scope)
+        assertEquals(authUserId, created?.authUserId)
+        assertNotNull(created?.remoteTagId)
+        assertEquals(SharedTagSyncStatus.PENDING_PUSH, created?.syncStatus)
+        val currentUserMember = db.tagDao().findCurrentUserMember(createdId, authUserId)
+        assertEquals(SharedTagMemberRole.OWNER, currentUserMember?.role)
+        val pending = db.sharedTagSyncDao().getPendingOutbox(authUserId)
+        assertEquals(1, pending.size)
+        assertEquals(SharedTagSyncOperationType.CREATE_TAG, pending.first().operationType)
+        assertEquals(listOf(authUserId), syncScheduler.enqueued)
+    }
+
+    @Test
+    fun createLocalTagWithResult_signedInStillCreatesLocalTag() = runBlocking {
+        authProvider.updateSession(
+            SharedTagAuthSession(
+                authUserId = "00000000-0000-0000-0000-000000000222",
+                accessToken = "token",
+            ),
+        )
+
+        val result = repository.createLocalTagWithResult("normal-detail-tag")
+        assertTrue(result is CreateTagResult.Success)
+        val created = db.tagDao().findTagById((result as CreateTagResult.Success).tagId)
+
+        assertEquals(SharedTagScope.LOCAL_ONLY, created?.scope)
+        assertNull(created?.remoteTagId)
+        assertTrue(syncScheduler.enqueued.isEmpty())
+    }
+
+    @Test
+    fun detailViewModel_createLocalAndAssignTag_signedInDoesNotCreateSharedTag() = runBlocking {
+        val authUserId = "00000000-0000-0000-0000-000000000333"
+        authProvider.updateSession(
+            SharedTagAuthSession(
+                authUserId = authUserId,
+                accessToken = "token",
+            ),
+        )
+        val entryId = insertEntry(
+            url = "https://example.com/detail-local",
+            createdAt = 2_000L,
+        )
+        val viewModel = DetailViewModel(
+            entryId = entryId,
+            repository = FakeUrlRepository(),
+            tagRepository = repository,
+        )
+
+        val result = viewModel.createLocalAndAssignTag("local-from-detail")
+
+        assertEquals(CreateAndAssignTagResult.Success, result)
+        val assignedTags = db.tagDao().getVisibleTagsForEntry(entryId, authUserId = null)
+        assertEquals(listOf("local-from-detail"), assignedTags.map { it.name })
+        val created = db.tagDao().findTagById(assignedTags.single().id)
+        assertEquals(SharedTagScope.LOCAL_ONLY, created?.scope)
+        assertNull(created?.remoteTagId)
+        assertNull(created?.authUserId)
+        assertTrue(syncScheduler.enqueued.isEmpty())
     }
 
     @Test
@@ -300,7 +396,7 @@ class TagRepositoryTest {
 
         assertTrue(result is SharedTagInviteCreationResult.Success)
         assertEquals(
-            "https://invite-link-omega.vercel.app/invite/invite-token",
+            "https://miyamibu.xyz/invite/invite-token",
             (result as SharedTagInviteCreationResult.Success).inviteUrl,
         )
     }
@@ -501,6 +597,28 @@ class TagRepositoryTest {
         var now: Long,
     ) : AppClock {
         override fun nowEpochMillis(): Long = now
+    }
+
+    private class FakeUrlRepository : UrlRepository {
+        override fun observeActiveEntries() = flowOf(emptyList<UrlEntryEntity>())
+        override fun observeCollections() = flowOf(emptyList<CollectionEntity>())
+        override fun observeArchiveEntries() = flowOf(emptyList<UrlEntryEntity>())
+        override fun observeEntry(entryId: Long) = flowOf<UrlEntryEntity?>(null)
+        override suspend fun saveFromManualInput(input: String): SaveResult = SaveResult(ShareSaveResult.SAVE_FAILED)
+        override suspend fun archive(entryId: Long): Boolean = false
+        override suspend fun markPendingDelete(entryId: Long, gracePeriodMillis: Long): Long? = null
+        override suspend fun saveFromIntent(intent: Intent): SaveResult = SaveResult(ShareSaveResult.SAVE_FAILED)
+        override suspend fun unarchive(entryId: Long): Boolean = false
+        override suspend fun finalizePendingDelete(entryId: Long) = Unit
+        override suspend fun cleanupExpiredPendingDeletes() = Unit
+        override suspend fun restore(entryId: Long): Boolean = false
+        override suspend fun saveUserTitle(entryId: Long, rawTitle: String): SaveTitleResult = SaveTitleResult(false)
+        override suspend fun restoreUserTitle(entryId: Long, oldTitle: String?): Boolean = false
+        override suspend fun saveMemo(entryId: Long, rawMemo: String): SaveMemoResult = SaveMemoResult(false)
+        override suspend fun applyCanonicalId(entryId: Long, canonicalId: String?) = Unit
+        override suspend fun applyMetadataUpdate(entryId: Long, metadata: MetadataUpdate) = Unit
+        override suspend fun retryMetadata(entryId: Long): Boolean = false
+        override suspend fun loadEntry(entryId: Long): UrlEntryEntity? = null
     }
 
     private class FakeAuthSessionProvider : SharedTagAuthSessionProvider {

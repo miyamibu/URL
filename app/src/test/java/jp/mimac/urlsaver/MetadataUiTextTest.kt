@@ -136,6 +136,14 @@ class MetadataUiTextTest {
         )
         assertEquals("Instagramでは自動取得に制限があります", socialRestricted?.title)
         assertEquals("Instagram側のアクセス制限により、自動取得できない場合があります。", socialRestricted?.body)
+
+        val oversized = metadataDetailMessage(
+            MetadataState.UNAVAILABLE,
+            MetadataError.OVERSIZED,
+            isPendingDelayed = false,
+        )
+        assertEquals("URLを保存しました", oversized?.title)
+        assertEquals("ページが大きいため、内容の自動取得はできませんでした。", oversized?.body)
     }
 
     @Test

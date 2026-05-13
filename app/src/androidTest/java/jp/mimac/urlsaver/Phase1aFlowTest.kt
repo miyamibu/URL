@@ -5,15 +5,23 @@ import android.content.Intent
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.core.app.ApplicationProvider
-import jp.mimac.urlsaver.data.AppDatabase
+import androidx.work.WorkManager
+import jp.mimac.urlsaver.data.CollectionEntity
+import jp.mimac.urlsaver.data.DEFAULT_COLLECTION_ID
+import jp.mimac.urlsaver.data.DEFAULT_COLLECTION_NAME
 import jp.mimac.urlsaver.data.EXTRA_SHARE_ENTRY_ID
 import jp.mimac.urlsaver.data.EXTRA_SHARE_SAVE_RESULT
+import jp.mimac.urlsaver.data.SharedTagAuthSession
 import jp.mimac.urlsaver.domain.MetadataError
 import jp.mimac.urlsaver.domain.MetadataState
 import jp.mimac.urlsaver.domain.ShareSaveResult
+import jp.mimac.urlsaver.domain.SharedTagScope
+import jp.mimac.urlsaver.domain.CreateTagResult
 import jp.mimac.urlsaver.domain.UrlRules
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -30,13 +38,21 @@ class Phase1aFlowTest {
     @Before
     fun resetAppState() {
         val context = ApplicationProvider.getApplicationContext<Context>()
+        val app = context as UrlSaverApp
+        app.container.sharedTagAuthSessionProvider.updateSession(null)
         runBlocking {
-            val db = AppDatabase.create(context)
-            try {
-                db.clearAllTables()
-            } finally {
-                db.close()
-            }
+            val db = app.container.database
+            db.clearAllTables()
+            val now = System.currentTimeMillis()
+            db.collectionDao().insert(
+                CollectionEntity(
+                    id = DEFAULT_COLLECTION_ID,
+                    name = DEFAULT_COLLECTION_NAME,
+                    sortOrder = 0,
+                    createdAt = now,
+                    updatedAt = now,
+                ),
+            )
         }
 
         composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MS) {
@@ -186,10 +202,7 @@ class Phase1aFlowTest {
         composeRule.onNodeWithContentDescription("タイトルを編集").performClick()
         composeRule.onNodeWithTag("detail_title_input").performTextClearance()
         composeRule.onNodeWithTag("detail_title_input").performTextInput("Second")
-        composeRule.onNodeWithTag("detail_title_input").performImeAction()
-        composeRule.waitUntil(timeoutMillis = 10_000) {
-            composeRule.onAllNodesWithText("Second").fetchSemanticsNodes().isNotEmpty()
-        }
+        composeRule.onNodeWithTag("detail_title_save").performClick()
         clickUndoAction()
         composeRule.onNodeWithText("First").assertExists()
 
@@ -209,8 +222,10 @@ class Phase1aFlowTest {
         composeRule.onNodeWithText("メモを編集").performClick()
         composeRule.onNodeWithTag("detail_memo_input").performTextClearance()
         composeRule.onNodeWithTag("detail_memo_input").performTextInput("   ")
-        composeRule.onNodeWithText("保存").performClick()
-        waitForText("メモを保存しました")
+        composeRule.onNodeWithTag("detail_memo_save").performClick()
+        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MS) {
+            composeRule.onAllNodesWithTag("detail_memo_input").fetchSemanticsNodes().isEmpty()
+        }
         composeRule.onNodeWithText("メモなし").assertExists()
 
         composeRule.onNodeWithText("コピー").performClick()
@@ -272,11 +287,120 @@ class Phase1aFlowTest {
     }
 
     @Test
-    fun main_hasPrivacyDisclosureDialog() {
-        composeRule.onNodeWithContentDescription("プライバシー情報").assertExists().performClick()
-        composeRule.onNodeWithText("データの取り扱い").assertExists()
-        composeRule.onNode(hasText("端末内に保存されます", substring = true)).assertExists()
+    fun detailLocalTags_addCandidateDoesNotReplaceCurrentTag_andCurrentTagCanBeRemoved() {
+        val suffix = System.currentTimeMillis()
+        val firstTagName = "first-$suffix"
+        val secondTagName = "second-$suffix"
+        val orphanTagName = "orphan-$suffix"
+        val url = uniqueUrl("detail-tags")
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val app = context as UrlSaverApp
+        val authUserId = "00000000-0000-0000-0000-000000000333"
+        app.container.sharedTagAuthSessionProvider.updateSession(
+            SharedTagAuthSession(
+                authUserId = authUserId,
+                accessToken = "token",
+            ),
+        )
+        val (_, secondTagId, entryId, sameNameSharedTagId, orphanLocalTagId) = runBlocking {
+            val first = app.container.repository.createCollection(firstTagName).collectionId!!
+            val second = app.container.repository.createCollection(secondTagName).collectionId!!
+            val saved = app.container.repository.saveFromManualInput(url, first)
+            val sharedResult = app.container.tagRepository.createSyncedTagWithResult(secondTagName)
+            check(sharedResult is CreateTagResult.Success)
+            val orphanResult = app.container.tagRepository.createLocalTagWithResult(orphanTagName)
+            check(orphanResult is CreateTagResult.Success)
+            DetailLocalTagFixture(
+                firstTagId = first,
+                secondTagId = second,
+                entryId = saved.entryId!!,
+                sameNameSharedTagId = sharedResult.tagId,
+                orphanLocalTagId = orphanResult.tagId,
+            )
+        }
+
+        waitForEntryCard(url)
+        composeRule.onNodeWithTag(entryCardTag(entryId)).performClick()
+        waitForText(firstTagName)
+        composeRule.onNodeWithTag("detail_local_tags_edit").performClick()
+        waitForText("現在のタグ")
+        composeRule.onNodeWithTag("detail_local_tag_add_tag_$orphanLocalTagId").assertDoesNotExist()
+
+        composeRule.onNodeWithTag("detail_local_tag_add_collection_$secondTagId").performClick()
+        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MS) {
+            val state = loadEntryTagState(entryId, authUserId)
+            state.collectionId == secondTagId &&
+                state.scopesFor(firstTagName) == listOf(SharedTagScope.LOCAL_ONLY) &&
+                state.scopesFor(secondTagName) == listOf(SharedTagScope.LOCAL_ONLY)
+        }
+        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MS) {
+            composeRule.onAllNodesWithText(secondTagName, useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        }
+
+        val afterAdd = loadEntryTagState(entryId, authUserId)
+        assertEquals(secondTagId, afterAdd.collectionId)
+        assertEquals(listOf(SharedTagScope.LOCAL_ONLY), afterAdd.scopesFor(firstTagName))
+        assertEquals(listOf(SharedTagScope.LOCAL_ONLY), afterAdd.scopesFor(secondTagName))
+        val secondLocalTagId = afterAdd.tagIdsFor(secondTagName).single()
+        composeRule.onNodeWithTag("detail_local_tag_add_tag_$secondLocalTagId").assertDoesNotExist()
+
         composeRule.onNodeWithText("閉じる").performClick()
+        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MS) {
+            composeRule.onAllNodesWithTag("detail_local_tag_add_collection_$secondTagId", useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .isEmpty()
+        }
+        composeRule.onNodeWithTag("detail_shared_tags_edit").performClick()
+        waitForText("共有タグを選ぶ / 作る")
+        composeRule.onNodeWithTag("detail_shared_tag_add_$sameNameSharedTagId").assertDoesNotExist()
+        composeRule.onNodeWithTag("detail_shared_tag_name_input").performTextInput(secondTagName)
+        composeRule.onNodeWithTag("detail_shared_tag_create").performClick()
+        waitForText("同じ名前の通常タグがあります。通常タグとして追加してください")
+        val afterSharedBlocked = loadEntryTagState(entryId, authUserId)
+        assertEquals(listOf(SharedTagScope.LOCAL_ONLY), afterSharedBlocked.scopesFor(secondTagName))
+        composeRule.onNodeWithTag("detail_shared_tags_close").performClick()
+        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MS) {
+            composeRule.onAllNodesWithText("共有タグを選ぶ / 作る", useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .isEmpty()
+        }
+        composeRule.onNodeWithTag("detail_local_tags_edit").performClick()
+        waitForText("現在のタグ")
+
+        val firstLocalTagId = afterAdd.tagIdsFor(firstTagName).single()
+        composeRule.onNodeWithTag("detail_local_tag_remove_tag_$firstLocalTagId").performClick()
+        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MS) {
+            val state = loadEntryTagState(entryId, authUserId)
+            state.collectionId == secondTagId &&
+                state.scopesFor(firstTagName).isEmpty() &&
+                state.scopesFor(secondTagName) == listOf(SharedTagScope.LOCAL_ONLY)
+        }
+
+        val afterRemoveFirst = loadEntryTagState(entryId, authUserId)
+        assertEquals(secondTagId, afterRemoveFirst.collectionId)
+        assertTrue(afterRemoveFirst.scopesFor(firstTagName).isEmpty())
+        assertEquals(listOf(SharedTagScope.LOCAL_ONLY), afterRemoveFirst.scopesFor(secondTagName))
+
+        val secondRemoveTag = "detail_local_tag_remove_collection_$secondTagId"
+        composeRule.onNodeWithTag(secondRemoveTag).performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(secondRemoveTag).assertDoesNotExist()
+        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MS) {
+            val state = loadEntryTagState(entryId, authUserId)
+            state.collectionId == DEFAULT_COLLECTION_ID &&
+                state.scopesFor(secondTagName).isEmpty()
+        }
+
+        val afterRemoveSecond = loadEntryTagState(entryId, authUserId)
+        assertEquals(DEFAULT_COLLECTION_ID, afterRemoveSecond.collectionId)
+        assertTrue(afterRemoveSecond.scopesFor(secondTagName).isEmpty())
+    }
+
+    @Test
+    fun main_doesNotShowPrivacyDisclosureActionInTopBar() {
+        composeRule.onNodeWithContentDescription("プライバシー情報").assertDoesNotExist()
     }
 
     private fun addManualUrl(url: String) {
@@ -370,14 +494,44 @@ class Phase1aFlowTest {
         val normalized = UrlRules.normalize(url) ?: return null
         val context = ApplicationProvider.getApplicationContext<Context>()
         return runBlocking {
-            val db = AppDatabase.create(context)
-            try {
-                db.urlEntryDao().findByNormalizedUrl(normalized)?.id
-            } finally {
-                db.close()
-            }
+            (context as UrlSaverApp).container.database.urlEntryDao().findByNormalizedUrl(normalized)?.id
         }
     }
+
+    private fun loadEntryTagState(entryId: Long, authUserId: String?): EntryTagState {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        return runBlocking {
+            val db = (context as UrlSaverApp).container.database
+            val entry = checkNotNull(db.urlEntryDao().findById(entryId))
+            val tags = db.tagDao().getVisibleTagsForEntry(entryId, authUserId = authUserId)
+            EntryTagState(
+                collectionId = entry.collectionId,
+                tagScopes = tags
+                    .groupBy { it.name }
+                    .mapValues { (_, values) -> values.map { it.scope }.sortedBy { it.name } },
+                tagIds = tags
+                    .groupBy { it.name }
+                    .mapValues { (_, values) -> values.map { it.id }.sorted() },
+            )
+        }
+    }
+
+    private data class EntryTagState(
+        val collectionId: Long,
+        val tagScopes: Map<String, List<SharedTagScope>>,
+        val tagIds: Map<String, List<Long>>,
+    ) {
+        fun scopesFor(name: String): List<SharedTagScope> = tagScopes[name].orEmpty()
+        fun tagIdsFor(name: String): List<Long> = tagIds[name].orEmpty()
+    }
+
+    private data class DetailLocalTagFixture(
+        val firstTagId: Long,
+        val secondTagId: Long,
+        val entryId: Long,
+        val sameNameSharedTagId: Long,
+        val orphanLocalTagId: Long,
+    )
 
     private fun entryCardTag(entryId: Long): String = "entry_card_$entryId"
 
@@ -412,22 +566,19 @@ class Phase1aFlowTest {
                 .firstOrNull { it.normalizedUrl == normalized }
                 ?.id ?: return@runBlocking
 
-            val db = AppDatabase.create(context)
-            try {
-                val dao = db.urlEntryDao()
-                val entry = dao.findById(entryId) ?: return@runBlocking
-                dao.update(
-                    entry.copy(
-                        fetchedTitle = fetchedTitle,
-                        metadataState = metadataState,
-                        metadataFetchedAt = if (metadataState == MetadataState.PENDING) null else System.currentTimeMillis(),
-                        metadataError = metadataError,
-                        metadataRequestedAt = metadataRequestedAt ?: entry.metadataRequestedAt,
-                    ),
-                )
-            } finally {
-                db.close()
-            }
+            WorkManager.getInstance(context).cancelUniqueWork("metadata:$entryId")
+            delay(250)
+            val dao = app.container.database.urlEntryDao()
+            val entry = dao.findById(entryId) ?: return@runBlocking
+            dao.update(
+                entry.copy(
+                    fetchedTitle = fetchedTitle,
+                    metadataState = metadataState,
+                    metadataFetchedAt = if (metadataState == MetadataState.PENDING) null else System.currentTimeMillis(),
+                    metadataError = metadataError,
+                    metadataRequestedAt = metadataRequestedAt ?: entry.metadataRequestedAt,
+                ),
+            )
         }
     }
 }

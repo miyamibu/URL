@@ -5,9 +5,6 @@ import jp.mimac.urlsaver.domain.AdPolicy
 import jp.mimac.urlsaver.domain.LaunchStandardPlan
 
 object AdsConfig {
-    // Trial launch switch. Set this back to true when AdMob display should return.
-    private const val SHOW_ADS_FOR_TRIAL_LAUNCH = false
-
     private val runningUnderTest: Boolean by lazy {
         isClassAvailable("org.robolectric.RuntimeEnvironment") ||
             runCatching {
@@ -17,7 +14,8 @@ object AdsConfig {
             }.getOrDefault(false)
     }
 
-    val adsEnabled: Boolean = SHOW_ADS_FOR_TRIAL_LAUNCH &&
+    // Both the launch gate and runtime ads flag must be true before ads can render.
+    val adsEnabled: Boolean = BuildConfig.ADS_TRIAL_LAUNCH_ADS_ENABLED &&
         BuildConfig.ADS_ENABLED &&
         AdPolicy.shouldShowAds(LaunchStandardPlan.entitlements) &&
         !runningUnderTest

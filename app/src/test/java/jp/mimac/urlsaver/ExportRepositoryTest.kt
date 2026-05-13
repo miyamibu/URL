@@ -228,8 +228,17 @@ class ExportRepositoryTest {
     }
 
     @Test
-    fun observeAvailableTags_includesLocalTags() = runBlocking {
-        db.tagDao().insertTag(TagEntity(name = "あとで読む", createdAt = 1L))
+    fun observeAvailableTags_includesAssignedLocalTags() = runBlocking {
+        val tagId = db.tagDao().insertTag(TagEntity(name = "あとで読む", createdAt = 1L))
+        val entryId = insertEntry(
+            normalizedUrl = "https://example.com/assigned-local",
+            recordState = RecordState.ACTIVE,
+            memo = "",
+            serviceType = ServiceType.WEB,
+            createdAt = 10L,
+        )
+        db.tagDao().insertCrossRef(TagUrlCrossRef(tagId = tagId, entryId = entryId))
+
         val names = withTimeout(2_000L) {
             repository.observeAvailableTags()
                 .map { tags -> tags.map { it.name } }
@@ -240,18 +249,19 @@ class ExportRepositoryTest {
     }
 
     @Test
-    fun loadAvailableTags_includesLocalAndCurrentUserSharedTags() = runBlocking {
+    fun loadAvailableTags_excludesZeroCountTagsAndIncludesLocalAndCurrentUserSharedTags() = runBlocking {
         authProvider.updateSession(
             SharedTagAuthSession(
                 authUserId = "user-a",
                 accessToken = "token",
             ),
         )
-        db.tagDao().insertTag(TagEntity(name = "local", createdAt = 1L))
-        db.tagDao().insertTag(
+        val localTagId = db.tagDao().insertTag(TagEntity(name = "local", createdAt = 1L))
+        db.tagDao().insertTag(TagEntity(name = "unused", createdAt = 2L))
+        val sharedTagId = db.tagDao().insertTag(
             TagEntity(
                 name = "shared mine",
-                createdAt = 2L,
+                createdAt = 3L,
                 scope = SharedTagScope.SYNCED,
                 authUserId = "user-a",
                 remoteTagId = "remote-a",
@@ -261,11 +271,42 @@ class ExportRepositoryTest {
         db.tagDao().insertTag(
             TagEntity(
                 name = "shared other",
-                createdAt = 3L,
+                createdAt = 4L,
                 scope = SharedTagScope.SYNCED,
                 authUserId = "user-b",
                 remoteTagId = "remote-b",
                 syncStatus = SharedTagSyncStatus.SYNCED,
+            ),
+        )
+        val localEntryId = insertEntry(
+            normalizedUrl = "https://example.com/local-tagged",
+            recordState = RecordState.ACTIVE,
+            memo = "",
+            serviceType = ServiceType.WEB,
+            createdAt = 20L,
+        )
+        val sharedEntryId = insertEntry(
+            normalizedUrl = "https://example.com/shared-tagged",
+            recordState = RecordState.ACTIVE,
+            memo = "",
+            serviceType = ServiceType.WEB,
+            createdAt = 21L,
+            localProvenanceCount = 0,
+        )
+        db.tagDao().insertCrossRef(TagUrlCrossRef(tagId = localTagId, entryId = localEntryId))
+        db.tagDao().upsertCrossRefs(
+            listOf(
+                TagUrlCrossRef(
+                    tagId = sharedTagId,
+                    entryId = sharedEntryId,
+                    scope = SharedTagScope.SYNCED,
+                    authUserId = "user-a",
+                    remoteUrlId = "remote-url-a",
+                    rawUrl = "https://example.com/shared-tagged",
+                    normalizedUrl = "https://example.com/shared-tagged",
+                    normalizationVersion = 1,
+                    syncStatus = SharedTagSyncStatus.SYNCED,
+                ),
             ),
         )
 

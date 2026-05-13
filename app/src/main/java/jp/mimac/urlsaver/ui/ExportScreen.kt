@@ -147,7 +147,7 @@ fun ExportScreen(
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            text = "ChatGPTや\nCodexやClaudeに\n共有も可能だよ！",
+                            text = "ChatGPT、\nCodex、Claudeにも\n共有できるよ！",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
                             textAlign = TextAlign.End,

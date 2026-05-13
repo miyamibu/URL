@@ -214,6 +214,7 @@ class SharedTagSyncCoordinator(
                     TagUrlCrossRef(
                         tagId = localTagId,
                         entryId = entryId,
+                        createdAt = Instant.parse(remoteUrl.createdAt).toEpochMilli(),
                         scope = SharedTagScope.SYNCED,
                         authUserId = authUserId,
                         remoteUrlId = remoteUrl.id,

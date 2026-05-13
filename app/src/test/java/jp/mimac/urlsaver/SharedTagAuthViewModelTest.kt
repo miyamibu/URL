@@ -46,15 +46,22 @@ class SharedTagAuthViewModelTest {
     }
 
     @Test
-    fun applyInviteCode_returnsNotAvailableForNow() = runBlocking {
+    fun applyInviteCode_acceptsInviteTokenThroughRepository() = runBlocking {
+        val repository = FakeTagRepository(
+            acceptInviteResult = SharedTagInviteAcceptanceResult.Success(
+                remoteTagId = "remote-tag",
+                tagName = "旅行",
+            ),
+        )
         val viewModel = SharedTagAuthViewModel(
-            tagRepository = FakeTagRepository(),
+            tagRepository = repository,
             userProfileStore = FakeUserProfileStore(),
         )
 
         val result = viewModel.applyInviteCode("MIBU100")
 
-        assertTrue(result is InviteCodeApplyResult.NotAvailable)
+        assertTrue(result is InviteCodeApplyResult.Success)
+        assertTrue((result as InviteCodeApplyResult.Success).tagName == "旅行")
     }
 }
 
@@ -74,6 +81,7 @@ private class FakeUserProfileStore : UserProfileStore {
 
 private class FakeTagRepository(
     private val entitlements: FeatureEntitlements = LaunchStandardPlan.entitlements,
+    private val acceptInviteResult: SharedTagInviteAcceptanceResult = SharedTagInviteAcceptanceResult.AuthRequired,
 ) : TagRepository {
     override val isSyncAvailable: Flow<Boolean> = flowOf(false)
     override val cloudState: Flow<SharedTagCloudState> = flowOf(
@@ -103,6 +111,8 @@ private class FakeTagRepository(
 
     override suspend fun createTag(name: String): Long? = null
     override suspend fun createTagWithResult(name: String): CreateTagResult = CreateTagResult.Failed
+    override suspend fun createLocalTagWithResult(name: String): CreateTagResult = CreateTagResult.Failed
+    override suspend fun createSyncedTagWithResult(name: String): CreateTagResult = CreateTagResult.Failed
     override suspend fun deleteTag(tagId: Long) = Unit
     override suspend fun assignTag(tagId: Long, entryId: Long) = Unit
     override suspend fun assignTagWithResult(tagId: Long, entryId: Long): AssignTagResult = AssignTagResult.Failed
@@ -135,7 +145,7 @@ private class FakeTagRepository(
     override suspend fun previewInvite(inviteToken: String): SharedTagInvitePreviewResult =
         SharedTagInvitePreviewResult.Success(tagName = "joined-tag")
     override suspend fun acceptInvite(inviteToken: String): SharedTagInviteAcceptanceResult =
-        SharedTagInviteAcceptanceResult.AuthRequired
+        acceptInviteResult
     override suspend fun transferOwnership(tagId: Long, newOwnerUserId: String): SharedTagOwnershipTransferResult =
         SharedTagOwnershipTransferResult.AuthRequired
     override suspend fun leaveSharedTag(tagId: Long): Boolean = false

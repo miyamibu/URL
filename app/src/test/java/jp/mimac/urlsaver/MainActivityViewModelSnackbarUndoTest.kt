@@ -86,7 +86,7 @@ class MainActivityViewModelSnackbarUndoTest {
     }
 
     @Test
-    fun titleUndo_eventUsesIndefiniteWithFiveSeconds() = runTest {
+    fun titleUndo_eventUsesIndefiniteWithFifteenSeconds() = runTest {
         val repository = FakeRepository()
         val viewModel = MainActivityViewModel(repository)
 
@@ -95,7 +95,7 @@ class MainActivityViewModelSnackbarUndoTest {
         val event = viewModel.snackbarEvents.first()
         assertEquals(SnackbarEventKind.UNDO_TITLE_EDIT, event.kind)
         assertEquals(SnackbarDuration.Indefinite, event.duration)
-        assertEquals(5000L, event.customDurationMillis)
+        assertEquals(15000L, event.customDurationMillis)
         assertEquals("元に戻す", event.actionLabel)
     }
 

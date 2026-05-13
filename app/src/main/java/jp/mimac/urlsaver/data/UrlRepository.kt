@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.flowOf
 interface MainListRepository {
     fun observeActiveEntries(): Flow<List<UrlEntryEntity>>
     fun observeCollections(): Flow<List<CollectionEntity>> = flowOf(emptyList())
+    fun observeLocalTagCollectionEntryRefs(): Flow<List<LocalTagCollectionEntryRef>> = flowOf(emptyList())
     fun observeUserLabels(): Flow<List<UserLabelEntity>> = flowOf(emptyList())
 
     suspend fun saveFromManualInput(input: String): SaveResult

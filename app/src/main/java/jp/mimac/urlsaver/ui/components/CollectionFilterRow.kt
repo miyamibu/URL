@@ -49,6 +49,7 @@ private data class ItemBounds(
     val right: Float,
 ) {
     val center: Float get() = (left + right) / 2f
+    val width: Float get() = right - left
 
     fun contains(x: Float): Boolean = x in left..right
 }
@@ -96,6 +97,24 @@ fun CollectionFilterRow(
         draggedPointerX = 0f
         draggedTouchOffsetX = 0f
         dragStartedOrder = emptyList()
+    }
+
+    fun settleDraggedItemOnRelease() {
+        val activeCollectionId = draggedCollectionId
+        if (activeCollectionId == -1L) return
+        val activeBounds = itemBounds[activeCollectionId] ?: return
+        val currentIndex = orderedCollections.indexOfFirst { it.id == activeCollectionId }
+        if (currentIndex == -1 || currentIndex == orderedCollections.lastIndex) return
+
+        val draggedItemRight = draggedPointerX - draggedTouchOffsetX + activeBounds.width
+        val nextCollection = orderedCollections[currentIndex + 1]
+        val nextCenter = itemBounds[nextCollection.id]?.center ?: return
+        if (draggedItemRight + activeBounds.width <= nextCenter) return
+
+        val updated = orderedCollections.toMutableList()
+        val draggedItem = updated.removeAt(currentIndex)
+        updated.add((currentIndex + 1).coerceIn(0, updated.size), draggedItem)
+        orderedCollections = updated
     }
 
     LazyRow(
@@ -147,6 +166,7 @@ fun CollectionFilterRow(
                                 val event = awaitPointerEvent(pass = PointerEventPass.Initial)
                                 val change = event.changes.firstOrNull { current -> current.id == down.id } ?: continue
                                 if (!change.pressed) {
+                                    settleDraggedItemOnRelease()
                                     val reorderedIds = orderedCollections.map { it.id }
                                     if (dragStartedOrder.isNotEmpty() && reorderedIds != dragStartedOrder) {
                                         onReorderCollections?.invoke(reorderedIds)
@@ -176,6 +196,8 @@ fun CollectionFilterRow(
                                     },
                                 )
                                 draggedOffsetPx = draggedPointerX - activeBounds.left - draggedTouchOffsetX
+                                val draggedItemLeft = draggedPointerX - draggedTouchOffsetX
+                                val draggedItemRight = draggedItemLeft + activeBounds.width
 
                                 val currentIndex = orderedCollections.indexOfFirst { it.id == activeCollectionId }
                                 if (currentIndex == -1) {
@@ -186,7 +208,7 @@ fun CollectionFilterRow(
                                 while (targetIndex < orderedCollections.lastIndex) {
                                     val nextCollection = orderedCollections[targetIndex + 1]
                                     val nextCenter = itemBounds[nextCollection.id]?.center ?: break
-                                    if (draggedPointerX > nextCenter) {
+                                    if (draggedItemRight > nextCenter) {
                                         targetIndex += 1
                                     } else {
                                         break
@@ -195,7 +217,7 @@ fun CollectionFilterRow(
                                 while (targetIndex > 0) {
                                     val previousCollection = orderedCollections[targetIndex - 1]
                                     val previousCenter = itemBounds[previousCollection.id]?.center ?: break
-                                    if (draggedPointerX < previousCenter) {
+                                    if (draggedItemLeft < previousCenter) {
                                         targetIndex -= 1
                                     } else {
                                         break
@@ -272,10 +294,10 @@ private fun maybeAutoScroll(
     val viewportEnd = listState.layoutInfo.viewportEndOffset.toFloat()
     val autoScrollDelta = when {
         draggedPointerX > viewportEnd - edgeThresholdPx -> {
-            ((draggedPointerX - (viewportEnd - edgeThresholdPx)) * 0.12f).coerceAtMost(8f)
+            ((draggedPointerX - (viewportEnd - edgeThresholdPx)) * 0.25f).coerceAtMost(16f)
         }
         draggedPointerX < viewportStart + edgeThresholdPx -> {
-            ((draggedPointerX - (viewportStart + edgeThresholdPx)) * 0.12f).coerceAtLeast(-8f)
+            ((draggedPointerX - (viewportStart + edgeThresholdPx)) * 0.25f).coerceAtLeast(-16f)
         }
         else -> 0f
     }

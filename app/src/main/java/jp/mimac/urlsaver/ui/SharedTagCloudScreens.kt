@@ -27,7 +27,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.LinkOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -58,12 +57,14 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import jp.mimac.urlsaver.R
 import jp.mimac.urlsaver.domain.SharedTagAccountDeletionResult
 import jp.mimac.urlsaver.domain.SharedTagAuthResult
 import jp.mimac.urlsaver.domain.FeatureEntitlements
@@ -973,6 +974,7 @@ private fun ContactSupportPage(
 }
 
 @Composable
+@Suppress("UNUSED_PARAMETER")
 private fun ProfileAvatar(
     avatarBitmap: ImageBitmap?,
     modifier: Modifier = Modifier,
@@ -982,27 +984,18 @@ private fun ProfileAvatar(
         shape = CircleShape,
         color = MaterialTheme.colorScheme.surfaceVariant,
     ) {
-        if (avatarBitmap != null) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center,
+        ) {
             Image(
-                bitmap = avatarBitmap,
+                painter = painterResource(id = R.drawable.default_profile_pig),
                 contentDescription = "プロフィール写真",
                 modifier = Modifier
                     .fillMaxSize()
-                    .clip(CircleShape),
-                contentScale = ContentScale.Crop,
+                    .padding(6.dp),
+                contentScale = ContentScale.Fit,
             )
-        } else {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.AccountCircle,
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize(0.78f),
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-            }
         }
     }
 }

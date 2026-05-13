@@ -130,6 +130,10 @@ class DefaultTagRepository(
     }
 
     override suspend fun createTagWithResult(name: String): CreateTagResult {
+        return createLocalTagWithResult(name)
+    }
+
+    override suspend fun createLocalTagWithResult(name: String): CreateTagResult {
         val normalized = normalizeSharedTagName(name)
         if (validateSharedTagName(normalized) != null) {
             return CreateTagResult.InvalidName
@@ -140,6 +144,21 @@ class DefaultTagRepository(
             return CreateTagResult.LimitReached(limitResult.message)
         }
         return createLocalTag(normalized)
+    }
+
+    override suspend fun createSyncedTagWithResult(name: String): CreateTagResult {
+        val normalized = normalizeSharedTagName(name)
+        if (validateSharedTagName(normalized) != null) {
+            return CreateTagResult.InvalidName
+        }
+        val session = currentSyncSessionOrNull() ?: return CreateTagResult.Failed
+        if (!remoteConfig.isConfigured) return CreateTagResult.Failed
+        val usage = usageSummaryDataSource.getUsageSummary()
+        val limitResult = usageSummaryDataSource.limitChecker.checkCanCreateSharedTag(usage)
+        if (limitResult is LimitResult.Blocked) {
+            return CreateTagResult.LimitReached(limitResult.message)
+        }
+        return createSyncedTag(normalized, session)
     }
 
     override suspend fun deleteTag(tagId: Long) {
@@ -182,8 +201,9 @@ class DefaultTagRepository(
 
     override suspend fun assignTagWithResult(tagId: Long, entryId: Long): AssignTagResult {
         val tag = tagDao.findTagById(tagId) ?: return AssignTagResult.Failed
+        val now = clock.nowEpochMillis()
         if (tag.scope == SharedTagScope.LOCAL_ONLY) {
-            val inserted = tagDao.insertCrossRef(TagUrlCrossRef(tagId = tagId, entryId = entryId))
+            val inserted = tagDao.insertCrossRef(TagUrlCrossRef(tagId = tagId, entryId = entryId, createdAt = now))
             return if (inserted == -1L) {
                 AssignTagResult.AlreadyAssigned
             } else {
@@ -203,13 +223,13 @@ class DefaultTagRepository(
             return AssignTagResult.LimitReached(limitResult.message)
         }
 
-        val now = clock.nowEpochMillis()
         val remoteUrlId = existingRef?.remoteUrlId ?: UUID.randomUUID().toString()
         val canSyncRemote = remoteConfig.isConfigured
         database.withTransaction {
             val upserted = TagUrlCrossRef(
                 tagId = tagId,
                 entryId = entryId,
+                createdAt = now,
                 scope = SharedTagScope.SYNCED,
                 authUserId = session.authUserId,
                 remoteUrlId = remoteUrlId,
@@ -368,7 +388,7 @@ class DefaultTagRepository(
 
                 val existing = findExistingEntry(parsed.normalizedUrl)
                 if (existing != null) {
-                    val inserted = tagDao.insertCrossRef(TagUrlCrossRef(tagId = tagId, entryId = existing.id))
+                    val inserted = tagDao.insertCrossRef(TagUrlCrossRef(tagId = tagId, entryId = existing.id, createdAt = now))
                     if (inserted == -1L) {
                         duplicateSkipped += 1
                     } else {
@@ -397,7 +417,7 @@ class DefaultTagRepository(
                 )
                 createdEntryIds += entryId
                 created += 1
-                tagDao.insertCrossRef(TagUrlCrossRef(tagId = tagId, entryId = entryId))
+                tagDao.insertCrossRef(TagUrlCrossRef(tagId = tagId, entryId = entryId, createdAt = now))
             }
 
             TagImportResult(
@@ -470,6 +490,7 @@ class DefaultTagRepository(
                         TagUrlCrossRef(
                             tagId = tagId,
                             entryId = entry.id,
+                            createdAt = now,
                             scope = SharedTagScope.SYNCED,
                             authUserId = session.authUserId,
                             remoteUrlId = remoteUrlId,
@@ -815,6 +836,71 @@ class DefaultTagRepository(
                 }
             }
         }
+    }
+
+    private suspend fun createSyncedTag(
+        name: String,
+        session: SharedTagAuthSession,
+    ): CreateTagResult {
+        val now = clock.nowEpochMillis()
+        val remoteTagId = UUID.randomUUID().toString()
+        val clientId = syncCoordinator.ensureClientId(session.authUserId)
+        var createdTagId: Long? = null
+        val result = database.withTransaction {
+            if (
+                tagDao.findLocalTagByName(name) != null ||
+                tagDao.findActiveSyncedTagByName(session.authUserId, name) != null
+            ) {
+                CreateTagResult.Duplicate
+            } else {
+                val insertedId = runCatching {
+                    tagDao.insertTag(
+                        TagEntity(
+                            name = name,
+                            createdAt = now,
+                            scope = SharedTagScope.SYNCED,
+                            authUserId = session.authUserId,
+                            remoteTagId = remoteTagId,
+                            syncStatus = SharedTagSyncStatus.PENDING_PUSH,
+                        ),
+                    )
+                }.getOrNull()
+                if (insertedId == null) {
+                    CreateTagResult.Failed
+                } else {
+                    createdTagId = insertedId
+                    syncDao.upsertMembers(
+                        listOf(
+                            SharedTagMemberEntity(
+                                tagId = insertedId,
+                                authUserId = session.authUserId,
+                                userId = session.authUserId,
+                                role = SharedTagMemberRole.OWNER,
+                                status = SharedTagMemberStatus.ACTIVE,
+                                createdAt = now,
+                                updatedAt = now,
+                            ),
+                        ),
+                    )
+                    enqueueOutbox(
+                        session = session,
+                        operation = SharedTagSyncOperation(
+                            opId = UUID.randomUUID().toString(),
+                            clientId = clientId,
+                            type = SharedTagSyncOperationType.CREATE_TAG,
+                            submittedAt = now,
+                            tagId = remoteTagId,
+                            name = name,
+                        ),
+                    )
+                    CreateTagResult.Success(insertedId)
+                }
+            }
+        }
+        if (createdTagId != null) {
+            scheduleSync(session.authUserId)
+        }
+        return result
     }
 
     private suspend fun findOrCreateLocalTagId(name: String, now: Long): Long {

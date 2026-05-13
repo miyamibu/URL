@@ -29,6 +29,12 @@ class MainListViewModel(
     private val selectedService = MutableStateFlow(ServiceType.ALL)
     private val selectedCollectionId = MutableStateFlow<Long?>(null)
 
+    init {
+        viewModelScope.launch {
+            repository.reconcileLocalTagCollectionAssignments()
+        }
+    }
+
     val collections: StateFlow<List<CollectionEntity>> = repository.observeCollections()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -49,11 +55,16 @@ class MainListViewModel(
         repository.observeActiveEntries(),
         selectedService,
         selectedCollectionId,
-    ) { entries, selectedService, selectedCollection ->
+        repository.observeLocalTagCollectionEntryRefs(),
+    ) { entries, selectedService, selectedCollection, localTagRefs ->
         buildListFilterUiState(
             entries = entries,
             selectedService = selectedService,
             selectedCollectionId = selectedCollection,
+            localTagCollectionEntryIds = localTagRefs.groupBy(
+                keySelector = { it.collectionId },
+                valueTransform = { it.entryId },
+            ).mapValues { (_, entryIds) -> entryIds.toSet() },
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ListFilterUiState())
 

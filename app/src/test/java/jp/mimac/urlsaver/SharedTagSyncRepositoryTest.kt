@@ -20,6 +20,7 @@ import jp.mimac.urlsaver.data.UrlEntryEntity
 import jp.mimac.urlsaver.domain.ApplySharedTagOpsResponse
 import jp.mimac.urlsaver.domain.AcceptSharedTagInviteResponse
 import jp.mimac.urlsaver.domain.ContentContext
+import jp.mimac.urlsaver.domain.CreateTagResult
 import jp.mimac.urlsaver.domain.CreateSharedTagInviteResponse
 import jp.mimac.urlsaver.domain.PreviewSharedTagInviteResponse
 import jp.mimac.urlsaver.domain.MetadataState
@@ -112,16 +113,16 @@ class SharedTagSyncRepositoryTest {
     fun syncedCreateAndReconcile_roundTripsThroughOutboxAndSnapshot() = runBlocking {
         authProvider.updateSession(SharedTagAuthSession(USER_A, "token-a"))
 
-        val localTagId = repository.createTag("Team Links")
-        assertNotNull(localTagId)
-        assertEquals(MigrateSharedTagResult.Success, repository.migrateLocalTagToCloud(requireNotNull(localTagId)))
+        val createResult = repository.createSyncedTagWithResult("Team Links")
+        assertTrue(createResult is CreateTagResult.Success)
+        val tagId = (createResult as CreateTagResult.Success).tagId
         val entryId = insertEntry("https://example.com/shared")
-        repository.assignTag(requireNotNull(localTagId), entryId)
+        repository.assignTag(tagId, entryId)
 
         val pendingBefore = db.sharedTagSyncDao().getPendingOutbox(USER_A)
         assertEquals(2, pendingBefore.size)
 
-        val createdTag = db.tagDao().findTagById(requireNotNull(localTagId))!!
+        val createdTag = db.tagDao().findTagById(tagId)!!
         val remoteTagId = requireNotNull(createdTag.remoteTagId)
         remote.snapshot = PullSharedTagSnapshotResponse(
             pulledAt = "2026-04-20T00:00:00Z",
@@ -226,9 +227,8 @@ class SharedTagSyncRepositoryTest {
         authProvider.updateSession(SharedTagAuthSession(USER_A, "token-a"))
         remote.failApply = true
 
-        val tagId = repository.createTag("needs-retry")
-        assertNotNull(tagId)
-        assertEquals(MigrateSharedTagResult.Success, repository.migrateLocalTagToCloud(requireNotNull(tagId)))
+        val createResult = repository.createSyncedTagWithResult("needs-retry")
+        assertTrue(createResult is CreateTagResult.Success)
 
         assertFalse(coordinator.syncCurrentSession())
 
@@ -241,9 +241,8 @@ class SharedTagSyncRepositoryTest {
     @Test
     fun syncForAuthUser_sessionMismatch_skipsRemoteAndDoesNotMutatePendingOps() = runBlocking {
         authProvider.updateSession(SharedTagAuthSession(USER_A, "token-a"))
-        val tagId = repository.createTag("queued-for-user-a")
-        assertNotNull(tagId)
-        assertEquals(MigrateSharedTagResult.Success, repository.migrateLocalTagToCloud(requireNotNull(tagId)))
+        val createResult = repository.createSyncedTagWithResult("queued-for-user-a")
+        assertTrue(createResult is CreateTagResult.Success)
         assertEquals(1, db.sharedTagSyncDao().getPendingOutbox(USER_A).size)
 
         authProvider.updateSession(SharedTagAuthSession(USER_B, "token-b"))
@@ -257,9 +256,8 @@ class SharedTagSyncRepositoryTest {
     fun syncForAuthUser_terminalApplyStatus_marksOutboxFailedAndDoesNotRetry() = runBlocking {
         authProvider.updateSession(SharedTagAuthSession(USER_A, "token-a"))
         remote.overrideApplyStatus = "rejected"
-        val tagId = repository.createTag("terminal-failure")
-        assertNotNull(tagId)
-        assertEquals(MigrateSharedTagResult.Success, repository.migrateLocalTagToCloud(requireNotNull(tagId)))
+        val createResult = repository.createSyncedTagWithResult("terminal-failure")
+        assertTrue(createResult is CreateTagResult.Success)
 
         assertTrue(coordinator.syncForAuthUser(USER_A))
 
@@ -276,9 +274,8 @@ class SharedTagSyncRepositoryTest {
     fun syncForAuthUser_unknownApplyStatus_failsSyncAndKeepsPendingForVisibility() = runBlocking {
         authProvider.updateSession(SharedTagAuthSession(USER_A, "token-a"))
         remote.overrideApplyStatus = "unexpected_status"
-        val tagId = repository.createTag("unknown-status")
-        assertNotNull(tagId)
-        assertEquals(MigrateSharedTagResult.Success, repository.migrateLocalTagToCloud(requireNotNull(tagId)))
+        val createResult = repository.createSyncedTagWithResult("unknown-status")
+        assertTrue(createResult is CreateTagResult.Success)
 
         assertFalse(coordinator.syncForAuthUser(USER_A))
 

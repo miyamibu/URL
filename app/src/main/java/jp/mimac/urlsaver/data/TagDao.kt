@@ -81,6 +81,27 @@ interface TagDao {
     @Query(
         """
         SELECT
+            c.id AS collectionId,
+            r.entryId AS entryId
+        FROM collections AS c
+        INNER JOIN tags AS t
+            ON t.name = c.name
+           AND t.scope = 'LOCAL_ONLY'
+           AND t.deletedAt IS NULL
+        INNER JOIN tag_url_cross_refs AS r
+            ON r.tagId = t.id
+           AND r.deletedAt IS NULL
+        WHERE c.id != :defaultCollectionId
+        ORDER BY c.sortOrder ASC, c.id ASC, r.entryId ASC
+        """
+    )
+    fun observeLocalTagCollectionEntryRefs(
+        defaultCollectionId: Long = DEFAULT_COLLECTION_ID,
+    ): Flow<List<LocalTagCollectionEntryRef>>
+
+    @Query(
+        """
+        SELECT
             t.id AS id,
             t.name AS name,
             t.scope AS scope,
@@ -207,7 +228,7 @@ interface TagDao {
             t.scope = 'LOCAL_ONLY'
             OR (:authUserId IS NOT NULL AND t.scope = 'SYNCED' AND t.authUserId = :authUserId)
           )
-        ORDER BY e.createdAt DESC
+        ORDER BY r.createdAt DESC, e.createdAt DESC
         """
     )
     fun observeEntriesForVisibleTag(tagId: Long, authUserId: String?): Flow<List<UrlEntryEntity>>
@@ -221,7 +242,7 @@ interface TagDao {
         INNER JOIN tag_url_cross_refs AS r ON r.entryId = e.id
         WHERE r.tagId = :tagId
           AND r.deletedAt IS NULL
-        ORDER BY e.createdAt DESC
+        ORDER BY r.createdAt DESC, e.createdAt DESC
         """
     )
     suspend fun getEntriesForTag(tagId: Long): List<UrlEntryEntity>
