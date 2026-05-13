@@ -83,6 +83,7 @@ import java.io.File
 fun ExportScreen(
     viewModel: ExportViewModel,
     onBack: () -> Unit,
+    showSharedTagExportPreset: Boolean,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val availableTags by viewModel.availableTags.collectAsStateWithLifecycle()
@@ -211,8 +212,10 @@ fun ExportScreen(
                         viewModel.selectScope(ExportScope.ALL)
                         viewModel.selectServiceType(null)
                     }
-                    ExportPresetTile("共有タグだけ", Icons.Outlined.IosShare, uiState.scope == ExportScope.SHARED_TAGS_ONLY) {
-                        viewModel.selectScope(ExportScope.SHARED_TAGS_ONLY)
+                    if (shouldShowSharedTagExportPreset(showSharedTagExportPreset)) {
+                        ExportPresetTile("共有タグだけ", Icons.Outlined.IosShare, uiState.scope == ExportScope.SHARED_TAGS_ONLY) {
+                            viewModel.selectScope(ExportScope.SHARED_TAGS_ONLY)
+                        }
                     }
                     ExportPresetTile("今日", Icons.Outlined.Today, false) {
                         viewModel.setDateFromInput("2026-04-30")
@@ -299,6 +302,9 @@ fun ExportScreen(
         }
     }
 }
+
+internal fun shouldShowSharedTagExportPreset(isSharedTagCloudEnabled: Boolean): Boolean =
+    isSharedTagCloudEnabled
 
 @Composable
 private fun ExportSectionLabel(text: String) {

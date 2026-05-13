@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import jp.mimac.urlsaver.BuildConfig
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -502,6 +503,7 @@ private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
         ExportScreen(
             viewModel = vm,
             onBack = { navController.popBackStack() },
+            showSharedTagExportPreset = BuildConfig.SHARED_TAG_CLOUD_ENABLED,
         )
     }
 
@@ -975,6 +977,7 @@ private fun MainScreen(
             ExportScreen(
                 viewModel = exportVm,
                 onBack = { showExportSheet = false },
+                showSharedTagExportPreset = BuildConfig.SHARED_TAG_CLOUD_ENABLED,
             )
         }
     }
