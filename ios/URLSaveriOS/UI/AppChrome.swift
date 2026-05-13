@@ -1,6 +1,12 @@
 import SwiftUI
 import UIKit
 
+enum LaunchAdVisibility {
+    // Trial launch switch. Set this back to true when banner ads should return.
+    static let showBannerAds = false
+    static let mainNotificationBottomPadding: CGFloat = showBannerAds ? 172 : 96
+}
+
 enum AppPalette {
     static let background = dynamic(light: 0xF4F7FB, dark: 0x07111F)
     static let surface = dynamic(light: 0xFFFFFF, dark: 0x101B2B)
@@ -266,17 +272,23 @@ struct EntryCardView: View {
     let timestampLabel: String
     let displayMode: EntryListDisplayMode
     let cardWidth: CGFloat?
+    let selected: Bool
+    let footerContent: (() -> AnyView)?
 
     init(
         entry: URLRecord,
         timestampLabel: String,
         displayMode: EntryListDisplayMode,
-        cardWidth: CGFloat? = nil
+        cardWidth: CGFloat? = nil,
+        selected: Bool = false,
+        footerContent: (() -> AnyView)? = nil
     ) {
         self.entry = entry
         self.timestampLabel = timestampLabel
         self.displayMode = displayMode
         self.cardWidth = cardWidth
+        self.selected = selected
+        self.footerContent = footerContent
     }
 
     var body: some View {
@@ -366,9 +378,30 @@ struct EntryCardView: View {
                 }
                 .padding(20)
                 .frame(maxWidth: .infinity, alignment: .leading)
+
+                if let footerContent {
+                    footerContent()
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 16)
+                }
             }
         }
         .frame(width: cardWidth)
+        .overlay(
+            RoundedRectangle(cornerRadius: 30, style: .continuous)
+                .stroke(selected ? AppPalette.primary : Color.clear, lineWidth: selected ? 3 : 0)
+        )
+        .overlay(alignment: .topTrailing) {
+            if selected {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 28, weight: .bold))
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(AppPalette.textPrimary, AppPalette.primary)
+                    .padding(14)
+                    .accessibilityHidden(true)
+            }
+        }
+        .accessibilityValue(selected ? "選択中" : "")
     }
 
     private var thumbnailHeight: CGFloat {
@@ -391,6 +424,7 @@ struct SwipeableEntryCard: View {
     let onTap: () -> Void
     let onArchive: () -> Void
     let onDelete: () -> Void
+    let onLongPress: () -> Void
 
     @State private var dragOffset: CGFloat = 0
 
@@ -429,6 +463,7 @@ struct SwipeableEntryCard: View {
             HorizontalCardSwipeRecognizer(
                 cardWidth: cardWidth,
                 onTap: onTap,
+                onLongPress: onLongPress,
                 onChanged: { offset in
                     dragOffset = offset
                 },
@@ -501,6 +536,7 @@ struct SwipeableSharedTagEntryCard: View {
             HorizontalCardSwipeRecognizer(
                 cardWidth: cardWidth,
                 onTap: onTap,
+                onLongPress: {},
                 onChanged: { offset in
                     dragOffset = canRemove ? offset : 0
                 },
@@ -565,11 +601,12 @@ func cardSwipeShouldBegin(horizontal: CGFloat, vertical: CGFloat, velocityX: CGF
 private struct HorizontalCardSwipeRecognizer: UIViewRepresentable {
     let cardWidth: CGFloat
     let onTap: () -> Void
+    let onLongPress: () -> Void
     let onChanged: (CGFloat) -> Void
     let onEnded: (CGFloat, CGFloat) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(cardWidth: cardWidth, onTap: onTap, onChanged: onChanged, onEnded: onEnded)
+        Coordinator(cardWidth: cardWidth, onTap: onTap, onLongPress: onLongPress, onChanged: onChanged, onEnded: onEnded)
     }
 
     func makeUIView(context: Context) -> UIView {
@@ -597,12 +634,23 @@ private struct HorizontalCardSwipeRecognizer: UIViewRepresentable {
         tapRecognizer.require(toFail: panRecognizer)
         view.addGestureRecognizer(tapRecognizer)
 
+        let longPressRecognizer = UILongPressGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleLongPress(_:))
+        )
+        longPressRecognizer.delegate = context.coordinator
+        longPressRecognizer.minimumPressDuration = 0.45
+        longPressRecognizer.cancelsTouchesInView = true
+        tapRecognizer.require(toFail: longPressRecognizer)
+        view.addGestureRecognizer(longPressRecognizer)
+
         return view
     }
 
     func updateUIView(_ uiView: UIView, context: Context) {
         context.coordinator.cardWidth = cardWidth
         context.coordinator.onTap = onTap
+        context.coordinator.onLongPress = onLongPress
         context.coordinator.onChanged = onChanged
         context.coordinator.onEnded = onEnded
     }
@@ -610,23 +658,31 @@ private struct HorizontalCardSwipeRecognizer: UIViewRepresentable {
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var cardWidth: CGFloat
         var onTap: () -> Void
+        var onLongPress: () -> Void
         var onChanged: (CGFloat) -> Void
         var onEnded: (CGFloat, CGFloat) -> Void
+        private var lastLongPressAt = Date.distantPast
 
         init(
             cardWidth: CGFloat,
             onTap: @escaping () -> Void,
+            onLongPress: @escaping () -> Void,
             onChanged: @escaping (CGFloat) -> Void,
             onEnded: @escaping (CGFloat, CGFloat) -> Void
         ) {
             self.cardWidth = cardWidth
             self.onTap = onTap
+            self.onLongPress = onLongPress
             self.onChanged = onChanged
             self.onEnded = onEnded
         }
 
         func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
             if gestureRecognizer is UITapGestureRecognizer {
+                return true
+            }
+
+            if gestureRecognizer is UILongPressGestureRecognizer {
                 return true
             }
 
@@ -673,7 +729,14 @@ private struct HorizontalCardSwipeRecognizer: UIViewRepresentable {
 
         @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
             guard recognizer.state == .ended else { return }
+            guard Date().timeIntervalSince(lastLongPressAt) > 0.6 else { return }
             onTap()
+        }
+
+        @objc func handleLongPress(_ recognizer: UILongPressGestureRecognizer) {
+            guard recognizer.state == .began else { return }
+            lastLongPressAt = Date()
+            onLongPress()
         }
     }
 }
@@ -725,7 +788,7 @@ struct ServiceBadgeView: View {
     }
 
     var body: some View {
-        if let badgeImageURL, let url = URL(string: badgeImageURL) {
+        if let badgeImageURL = displayBadgeImageURL, let url = URL(string: badgeImageURL) {
             RemoteURLImage(url: url) { image in
                 image
                     .resizable()
@@ -739,6 +802,16 @@ struct ServiceBadgeView: View {
         } else {
             fallbackBadge
         }
+    }
+
+    private var displayBadgeImageURL: String? {
+        guard let badgeImageURL else { return nil }
+        if serviceType == .youtube,
+           !badgeImageURL.contains("yt3.ggpht.com"),
+           !badgeImageURL.contains("yt3.googleusercontent.com") {
+            return nil
+        }
+        return badgeImageURL
     }
 
     private var fallbackBadge: some View {
@@ -1005,8 +1078,6 @@ struct BottomPrimaryBar: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            IOSBannerAdSlot()
-
             AppActionButton(tone: .primary, action: action) {
                 HStack(spacing: 8) {
                     Image(systemName: systemImage)
@@ -1023,7 +1094,14 @@ struct BottomPrimaryBar: View {
 }
 
 struct IOSBannerAdSlot: View {
+    @ViewBuilder
     var body: some View {
+        if LaunchAdVisibility.showBannerAds {
+            bannerContent
+        }
+    }
+
+    private var bannerContent: some View {
         ZStack(alignment: .top) {
             RoundedRectangle(cornerRadius: 0)
                 .fill(Color(UIColor { traits in

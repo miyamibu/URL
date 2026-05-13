@@ -208,7 +208,7 @@ struct ExportSheet: View {
 
             Spacer(minLength: 6)
 
-            Text("ChatGPTや\nCodexやClaudeに\n共有も可能だよ！")
+            Text("ChatGPT、\nCodex、Claudeにも\n共有できるよ！")
                 .font(.system(size: 11, weight: .semibold, design: .rounded))
                 .foregroundStyle(AppPalette.textSecondary.opacity(0.72))
                 .multilineTextAlignment(.trailing)

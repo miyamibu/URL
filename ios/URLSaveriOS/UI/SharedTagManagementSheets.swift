@@ -20,18 +20,22 @@ struct SharedTagDetailSheet: View {
     @State private var shareItems: [Any] = []
     @State private var inviteNotice: String?
     @State private var syncNotice: String?
+    @State private var pendingRemovedEntryIDs: Set<Int64> = []
+    @State private var pendingRemovalTasks: [Int64: Task<Void, Never>] = [:]
+    @State private var undoNotice: SharedTagUndoNotice?
     @State private var pendingOwnershipTransferMember: SharedTagMemberSummary?
 
     var body: some View {
         GeometryReader { proxy in
             let contentWidth = min(proxy.size.width, 680)
             let sidePadding = max((proxy.size.width - contentWidth) / 2, 0) + 16
+            let visibleEntries = entries.filter { !pendingRemovedEntryIDs.contains($0.id) }
 
             NavigationStack(path: $navigationPath) {
                 ScreenContainer {
                     VStack(spacing: 0) {
                         ScreenHeader(
-                            title: tag?.name ?? "共有タグ",
+                            title: "",
                             leadingButton: ScreenHeaderButton(
                                 icon: "chevron.left",
                                 accessibilityLabel: "戻る",
@@ -41,9 +45,10 @@ struct SharedTagDetailSheet: View {
                         )
 
                         if let tag {
-                            if entries.isEmpty {
+                            if visibleEntries.isEmpty {
                                 ScrollView {
                                     VStack(alignment: .leading, spacing: 16) {
+                                        SharedTagInlineTitle(title: tag.name, isSyncing: isSyncing, syncNotice: syncNotice)
                                         syncedTagInfo(for: tag)
                                         SharedTagMembersStrip(
                                             members: members,
@@ -51,11 +56,11 @@ struct SharedTagDetailSheet: View {
                                             onTransferOwnership: { pendingOwnershipTransferMember = $0 }
                                         )
 
-                                        SharedTagEmptyState(isSyncing: isSyncing, syncNotice: syncNotice)
+                                        sharedTagCountRow(count: visibleEntries.count, for: tag)
+
+                                        SharedTagEmptyState()
                                             .frame(maxWidth: .infinity, minHeight: 260)
                                             .padding(.vertical, 24)
-
-                                        sharedTagActions(for: tag)
                                     }
                                     .frame(width: contentWidth - 32, alignment: .leading)
                                     .padding(.horizontal, sidePadding)
@@ -65,6 +70,7 @@ struct SharedTagDetailSheet: View {
                             } else {
                                 ScrollView {
                                     VStack(alignment: .leading, spacing: 16) {
+                                        SharedTagInlineTitle(title: tag.name, isSyncing: isSyncing, syncNotice: syncNotice)
                                         syncedTagInfo(for: tag)
                                         SharedTagMembersStrip(
                                             members: members,
@@ -72,14 +78,9 @@ struct SharedTagDetailSheet: View {
                                             onTransferOwnership: { pendingOwnershipTransferMember = $0 }
                                         )
 
-                                        Text("\(entries.count)件")
-                                            .font(.system(size: 19, weight: .heavy, design: .rounded))
-                                            .foregroundStyle(AppPalette.textSecondary)
-                                            .padding(.top, 8)
+                                        sharedTagCountRow(count: visibleEntries.count, for: tag)
 
-                                        sharedTagActions(for: tag)
-
-                                        ForEach(entries) { entry in
+                                        ForEach(visibleEntries) { entry in
                                             SwipeableSharedTagEntryCard(
                                                 entry: entry,
                                                 displayMode: displayMode,
@@ -89,7 +90,7 @@ struct SharedTagDetailSheet: View {
                                                     navigationPath.append(entry.id)
                                                 },
                                                 onRemove: {
-                                                    removeEntryFromSharedTag(entry.id)
+                                                    scheduleRemoveEntryFromSharedTag(entry.id)
                                                 }
                                             )
                                         }
@@ -113,18 +114,33 @@ struct SharedTagDetailSheet: View {
                 .toolbar(.hidden, for: .navigationBar)
             }
         }
+        .overlay(alignment: .bottom) {
+            if let undoNotice {
+                SharedTagUndoBanner(notice: undoNotice) {
+                    undoPendingRemoval(undoNotice.entryID)
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 18)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
         .task { await syncAndReload(showSuccessNotice: false) }
+        .onDisappear {
+            pendingRemovalTasks.values.forEach { $0.cancel() }
+            pendingRemovalTasks = [:]
+        }
         .sheet(isPresented: $isShowingAddEntrySheet) {
             SharedTagEntryPickerSheet(
                 model: model,
                 remoteTagID: remoteTagID,
                 assignedEntryIDs: Set(entries.map(\.id)),
+                displayMode: displayMode,
                 onDidAssign: {
                     reload()
                 }
             )
             .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
+            .presentationDragIndicator(.hidden)
             .presentationCornerRadius(32)
         }
         .sheet(isPresented: Binding(
@@ -214,14 +230,37 @@ struct SharedTagDetailSheet: View {
         }
     }
 
-    private func removeEntryFromSharedTag(_ entryID: Int64) {
+    private func scheduleRemoveEntryFromSharedTag(_ entryID: Int64) {
         guard !isWorking else { return }
-        isWorking = true
-        Task {
-            if await model.removeEntry(entryID, fromSharedTag: remoteTagID) {
-                reload()
+        guard !pendingRemovedEntryIDs.contains(entryID) else { return }
+        pendingRemovedEntryIDs.insert(entryID)
+        undoNotice = SharedTagUndoNotice(entryID: entryID, message: "共有タグから外しました")
+        pendingRemovalTasks[entryID]?.cancel()
+        pendingRemovalTasks[entryID] = Task {
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard !Task.isCancelled else { return }
+            let removed = await model.removeEntry(entryID, fromSharedTag: remoteTagID)
+            await MainActor.run {
+                pendingRemovalTasks[entryID] = nil
+                pendingRemovedEntryIDs.remove(entryID)
+                if undoNotice?.entryID == entryID {
+                    undoNotice = nil
+                }
+                if removed {
+                    reload()
+                } else {
+                    syncNotice = "共有タグから外せませんでした"
+                }
             }
-            isWorking = false
+        }
+    }
+
+    private func undoPendingRemoval(_ entryID: Int64) {
+        pendingRemovalTasks[entryID]?.cancel()
+        pendingRemovalTasks[entryID] = nil
+        pendingRemovedEntryIDs.remove(entryID)
+        if undoNotice?.entryID == entryID {
+            undoNotice = nil
         }
     }
 
@@ -312,30 +351,25 @@ struct SharedTagDetailSheet: View {
             )
         }
 
+        if let tag, canDelete(tag) {
+            buttons.append(
+                ScreenHeaderButton(
+                    icon: "trash",
+                    accessibilityLabel: "共有タグを削除",
+                    action: { isShowingDeleteConfirmation = true }
+                )
+            )
+        }
+
         return buttons
     }
 
     @ViewBuilder
     private func syncedTagInfo(for _: SharedTagSummary) -> some View {
-        if isSyncing || !(inviteNotice?.isEmpty ?? true) || !(syncNotice?.isEmpty ?? true) {
+        if !(inviteNotice?.isEmpty ?? true) {
             VStack(alignment: .leading, spacing: 8) {
                 if let inviteNotice, !inviteNotice.isEmpty {
                     Text(inviteNotice)
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(AppPalette.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                if isSyncing {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                            .tint(AppPalette.textSecondary)
-                        Text("同期中")
-                            .font(.system(size: 15, weight: .bold, design: .rounded))
-                            .foregroundStyle(AppPalette.textSecondary)
-                    }
-                } else if let syncNotice, !syncNotice.isEmpty {
-                    Text(syncNotice)
                         .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(AppPalette.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -345,32 +379,30 @@ struct SharedTagDetailSheet: View {
     }
 
     @ViewBuilder
-    private func sharedTagActions(for tag: SharedTagSummary) -> some View {
-        if canDelete(tag) || canLeave(tag) {
-            VStack(alignment: .leading, spacing: 10) {
-                if canLeave(tag) {
-                    Button {
-                        isShowingLeaveConfirmation = true
-                    } label: {
-                        Text("この共有タグから抜ける")
-                            .font(.system(size: 20, weight: .heavy, design: .rounded))
-                            .foregroundStyle(AppPalette.primaryStrong)
-                    }
-                    .buttonStyle(.plain)
-                }
+    private func sharedTagCountRow(count: Int, for tag: SharedTagSummary) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Text("\(count)件")
+                .font(.system(size: 19, weight: .heavy, design: .rounded))
+                .foregroundStyle(AppPalette.textSecondary)
 
-                if canDelete(tag) {
-                    Button {
-                        isShowingDeleteConfirmation = true
-                    } label: {
-                        Text("この共有タグを削除")
-                            .font(.system(size: 20, weight: .heavy, design: .rounded))
-                            .foregroundStyle(AppPalette.primaryStrong)
-                    }
-                    .buttonStyle(.plain)
-                }
+            Spacer(minLength: 8)
+
+            sharedTagActions(for: tag)
+        }
+        .padding(.top, 8)
+    }
+
+    @ViewBuilder
+    private func sharedTagActions(for tag: SharedTagSummary) -> some View {
+        if canLeave(tag) {
+            Button {
+                isShowingLeaveConfirmation = true
+            } label: {
+                Text("この共有タグから抜ける")
+                    .font(.system(size: 20, weight: .heavy, design: .rounded))
+                    .foregroundStyle(AppPalette.primaryStrong)
             }
-            .padding(.top, 8)
+            .buttonStyle(.plain)
         }
     }
 
@@ -382,7 +414,7 @@ struct SharedTagDetailSheet: View {
             let result = await model.createInviteForSharedTag(remoteTagID: remoteTagID)
             switch result {
             case .success(let inviteURL, _):
-                shareItems = ["UrlSaver の共有タグに参加する\n\(inviteURL)"]
+                shareItems = [inviteShareText(inviteURL: inviteURL)]
             case .authRequired:
                 inviteNotice = "先に共有タグクラウドへサインインしてください"
             case .ownerOnly:
@@ -397,10 +429,20 @@ struct SharedTagDetailSheet: View {
     }
 }
 
-private struct SharedTagEmptyState: View {
-    let isSyncing: Bool
-    let syncNotice: String?
+private func inviteShareText(inviteURL: String) -> String {
+    guard let token = inviteURL.split(separator: "/").last, !token.isEmpty else {
+        return inviteURL
+    }
+    return """
+    URL Saverの共有タグに参加:
+    \(inviteURL)
 
+    開けない場合:
+    urlsaver://invite/\(token)
+    """
+}
+
+private struct SharedTagEmptyState: View {
     var body: some View {
         VStack(spacing: 12) {
             Image(systemName: "link.slash")
@@ -417,26 +459,93 @@ private struct SharedTagEmptyState: View {
                 .foregroundStyle(AppPalette.textSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
-
-            if isSyncing {
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .tint(AppPalette.textSecondary)
-                    Text("同期中")
-                        .font(.system(size: 15, weight: .bold, design: .rounded))
-                        .foregroundStyle(AppPalette.textSecondary)
-                }
-                .padding(.top, 6)
-            } else if let syncNotice, !syncNotice.isEmpty {
-                Text(syncNotice)
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(AppPalette.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 6)
-            }
         }
         .frame(maxWidth: 320)
+    }
+}
+
+private struct SharedTagInlineTitle: View {
+    let title: String
+    let isSyncing: Bool
+    let syncNotice: String?
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text(title)
+                .font(.system(size: 24, weight: .heavy, design: .rounded))
+                .foregroundStyle(AppPalette.textPrimary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            SharedTagTitleSyncStatus(isSyncing: isSyncing, syncNotice: syncNotice)
+        }
+    }
+}
+
+private struct SharedTagTitleSyncStatus: View {
+    let isSyncing: Bool
+    let syncNotice: String?
+
+    var body: some View {
+        if isSyncing {
+            HStack(spacing: 6) {
+                ProgressView()
+                    .tint(AppPalette.textSecondary)
+                Text("同期中")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(AppPalette.textSecondary)
+            }
+            .fixedSize()
+            .padding(.top, 4)
+        } else if let syncNotice, !syncNotice.isEmpty {
+            Text(displayText(for: syncNotice))
+                .font(.system(size: 15, weight: .bold, design: .rounded))
+                .foregroundStyle(syncNotice == "更新しました" ? AppPalette.textPrimary : AppPalette.warning)
+                .lineLimit(1)
+                .fixedSize()
+                .padding(.top, 4)
+        }
+    }
+
+    private func displayText(for notice: String) -> String {
+        notice == "更新しました" ? notice : "更新できませんでした"
+    }
+}
+
+private struct SharedTagUndoNotice: Identifiable, Equatable {
+    let id = UUID()
+    let entryID: Int64
+    let message: String
+}
+
+private struct SharedTagUndoBanner: View {
+    let notice: SharedTagUndoNotice
+    let onUndo: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(notice.message)
+                .font(.system(size: 15, weight: .bold, design: .rounded))
+                .foregroundStyle(AppPalette.textPrimary)
+                .lineLimit(2)
+
+            Spacer(minLength: 8)
+
+            Button(action: onUndo) {
+                Text("元に戻す")
+                    .font(.system(size: 15, weight: .heavy, design: .rounded))
+                    .foregroundStyle(AppPalette.primaryStrong)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(AppPalette.surface)
+                .shadow(color: .black.opacity(0.18), radius: 18, x: 0, y: 10)
+        )
     }
 }
 
@@ -604,6 +713,7 @@ struct SharedTagEntryPickerSheet: View {
     @ObservedObject var model: URLSaverAppModel
     let remoteTagID: String
     let assignedEntryIDs: Set<Int64>
+    let displayMode: EntryListDisplayMode
     let onDidAssign: () -> Void
 
     @State private var isWorking = false
@@ -630,10 +740,6 @@ struct SharedTagEntryPickerSheet: View {
                     Text("保存済みURLを追加")
                         .font(.system(size: 24, weight: .heavy, design: .rounded))
                         .foregroundStyle(AppPalette.textPrimary)
-                    Spacer()
-                    Button("閉じる") { dismiss() }
-                        .font(.system(size: 17, weight: .bold))
-                        .foregroundStyle(AppPalette.primaryStrong)
                 }
 
                 ScrollView(showsIndicators: false) {
@@ -646,33 +752,30 @@ struct SharedTagEntryPickerSheet: View {
                             }
                         } else {
                             ForEach(availableEntries) { entry in
-                                AppPanel {
-                                    HStack(alignment: .top, spacing: 12) {
-                                        VStack(alignment: .leading, spacing: 6) {
-                                            Text(preferredDisplayTitle(for: entry))
-                                                .font(.system(size: 18, weight: .heavy, design: .rounded))
-                                                .foregroundStyle(AppPalette.textPrimary)
-                                                .lineLimit(2)
-                                            Text(entry.displayURL)
-                                                .font(.system(size: 14, weight: .medium))
-                                                .foregroundStyle(AppPalette.textSecondary)
-                                                .lineLimit(1)
-                                        }
-                                        Spacer()
-                                        AppActionButton(tone: .primary, enabled: !isWorking) {
-                                            guard !isWorking else { return }
-                                            isWorking = true
-                                            Task {
-                                                if await model.addEntry(entry.id, toSharedTag: remoteTagID) {
-                                                    onDidAssign()
+                                EntryCardView(
+                                    entry: entry,
+                                    timestampLabel: "保存",
+                                    displayMode: displayMode,
+                                    footerContent: {
+                                        AnyView(
+                                            HStack {
+                                                Spacer()
+                                                AppActionButton(tone: .primary, enabled: !isWorking) {
+                                                    guard !isWorking else { return }
+                                                    isWorking = true
+                                                    Task {
+                                                        if await model.addEntry(entry.id, toSharedTag: remoteTagID) {
+                                                            onDidAssign()
+                                                        }
+                                                        isWorking = false
+                                                    }
+                                                } label: {
+                                                    Text("この共有タグに追加")
                                                 }
-                                                isWorking = false
                                             }
-                                        } label: {
-                                            Text("追加")
-                                        }
+                                        )
                                     }
-                                }
+                                )
                             }
                         }
                     }
@@ -697,6 +800,8 @@ struct EntrySharedTagAssignmentSheet: View {
     @State private var assignedTags: [SharedTagSummary] = []
     @State private var newTagName = ""
     @State private var isWorking = false
+    @State private var operationMessage: String?
+    @State private var isOperationMessageError = false
     @State private var selectedTagForDetail: String?
     @State private var sharedTagDisplayMode: EntryListDisplayMode = .rich
 
@@ -717,6 +822,14 @@ struct EntrySharedTagAssignmentSheet: View {
                     Button("閉じる") { dismiss() }
                         .font(.system(size: 17, weight: .bold))
                         .foregroundStyle(AppPalette.primaryStrong)
+                }
+
+                if let operationMessage {
+                    Text(operationMessage)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(isOperationMessageError ? AppPalette.danger : AppPalette.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("shared-tag-assignment-message")
                 }
 
                 AppPanel {
@@ -745,10 +858,16 @@ struct EntrySharedTagAssignmentSheet: View {
                     AppActionButton(tone: .primary, enabled: !newTagName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isWorking) {
                         guard !isWorking else { return }
                         isWorking = true
+                        operationMessage = nil
                         Task {
                             if await model.createSharedTag(name: newTagName) {
                                 newTagName = ""
+                                operationMessage = "共有タグを作成しました"
+                                isOperationMessageError = false
                                 reloadAssignedTags()
+                            } else {
+                                operationMessage = "共有タグを作成できませんでした"
+                                isOperationMessageError = true
                             }
                             isWorking = false
                         }
@@ -768,38 +887,30 @@ struct EntrySharedTagAssignmentSheet: View {
                             .foregroundStyle(AppPalette.textSecondary)
                     } else {
                         ForEach(assignedTags) { tag in
-                            HStack(spacing: 10) {
-                                Button {
+                            SharedTagAssignedPill(
+                                tag: tag,
+                                isWorking: isWorking,
+                                onOpen: {
                                     selectedTagForDetail = tag.remoteTagID
-                                } label: {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(tag.name)
-                                            .font(.system(size: 17, weight: .heavy, design: .rounded))
-                                            .foregroundStyle(AppPalette.textPrimary)
-                                        Text(tag.currentUserRole?.displayName ?? "メンバー")
-                                            .font(.system(size: 13, weight: .medium))
-                                            .foregroundStyle(AppPalette.textSecondary)
+                                },
+                                onRemove: {
+                                    guard !isWorking else { return }
+                                    isWorking = true
+                                    operationMessage = nil
+                                    Task {
+                                        if await model.removeEntry(entryID, fromSharedTag: tag.remoteTagID) {
+                                            operationMessage = "共有タグから外しました"
+                                            isOperationMessageError = false
+                                            onDidChange()
+                                            reloadAssignedTags()
+                                        } else {
+                                            operationMessage = "共有タグから外せませんでした"
+                                            isOperationMessageError = true
+                                        }
+                                        isWorking = false
                                     }
-                                    .frame(maxWidth: .infinity, alignment: .leading)
                                 }
-                                .buttonStyle(.plain)
-
-                                if tag.currentUserRole == .owner || tag.currentUserRole == .editor {
-                                    AppActionButton(enabled: !isWorking) {
-                                        guard !isWorking else { return }
-                                        isWorking = true
-                                        Task {
-                                            if await model.removeEntry(entryID, fromSharedTag: tag.remoteTagID) {
-                                                onDidChange()
-                                                reloadAssignedTags()
-                                            }
-                                            isWorking = false
-                                    }
-                                } label: {
-                                    Text("このURLから外す")
-                                }
-                            }
-                        }
+                            )
                         }
                     }
                 }
@@ -838,10 +949,20 @@ struct EntrySharedTagAssignmentSheet: View {
                                     Button {
                                         guard !isWorking else { return }
                                         isWorking = true
+                                        operationMessage = nil
                                         Task {
-                                            if await model.addEntry(entryID, toSharedTag: tag.remoteTagID) {
+                                            switch await model.addEntryToSharedTag(entryID, remoteTagID: tag.remoteTagID) {
+                                            case .success:
+                                                operationMessage = "共有タグに追加しました"
+                                                isOperationMessageError = false
                                                 onDidChange()
                                                 reloadAssignedTags()
+                                            case .authRequired:
+                                                operationMessage = "先に共有タグクラウドへサインインしてください"
+                                                isOperationMessageError = true
+                                            case .failure(let message):
+                                                operationMessage = message
+                                                isOperationMessageError = true
                                             }
                                             isWorking = false
                                         }
@@ -894,6 +1015,59 @@ struct EntrySharedTagAssignmentSheet: View {
 
     private func reloadAssignedTags() {
         assignedTags = model.loadSharedTagsForEntry(entryID: entryID)
+    }
+}
+
+private struct SharedTagAssignedPill: View {
+    let tag: SharedTagSummary
+    let isWorking: Bool
+    let onOpen: () -> Void
+    let onRemove: () -> Void
+
+    private var canRemove: Bool {
+        tag.currentUserRole == .owner || tag.currentUserRole == .editor
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button(action: onOpen) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(tag.name)
+                        .font(.system(size: 19, weight: .heavy, design: .rounded))
+                        .foregroundStyle(AppPalette.textPrimary)
+                        .lineLimit(1)
+                    Text(tag.currentUserRole?.displayName ?? "メンバー")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(AppPalette.textSecondary)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: 132, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+
+            if canRemove {
+                Button(action: onRemove) {
+                    Text("外す")
+                        .font(.system(size: 17, weight: .heavy, design: .rounded))
+                        .foregroundStyle(AppPalette.background)
+                        .lineLimit(1)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 9)
+                        .background(AppPalette.primary, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .disabled(isWorking)
+            }
+        }
+        .padding(.leading, 14)
+        .padding(.trailing, 10)
+        .padding(.vertical, 10)
+        .background(AppPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(AppPalette.outlineSoft, lineWidth: 1.5)
+        )
+        .fixedSize(horizontal: true, vertical: false)
     }
 }
 

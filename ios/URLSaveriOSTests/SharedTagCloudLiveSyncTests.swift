@@ -3,10 +3,10 @@ import XCTest
 
 final class SharedTagCloudLiveSyncTests: XCTestCase {
     func testOwnerCanSyncAndroidMigratedSharedTagFromLiveCloud() async throws {
-        let env = try XCTUnwrap(LiveSharedTagTestEnvironment.fromEnvironment())
-        let ownerEmail = try XCTUnwrap(env.ownerEmail)
-        let ownerPassword = try XCTUnwrap(env.ownerPassword)
-        let expectedTagName = try XCTUnwrap(env.expectedAndroidTagName)
+        let env = try LiveSharedTagTestEnvironment.requireConfigured()
+        let ownerEmail = try env.requireOwnerEmail()
+        let ownerPassword = try env.requireOwnerPassword()
+        let expectedTagName = try env.requireExpectedAndroidTagName()
 
         let harness = try TestSharedTagCloudHarness.make(baseURL: env.baseURL)
         let signInResult = await harness.service.signIn(email: ownerEmail, password: ownerPassword)
@@ -30,7 +30,7 @@ final class SharedTagCloudLiveSyncTests: XCTestCase {
     }
 
     func testInviteFlowLetsSecondIOSClientJoinAndReadSharedURL() async throws {
-        let env = try XCTUnwrap(LiveSharedTagTestEnvironment.fromEnvironment())
+        let env = try LiveSharedTagTestEnvironment.requireConfigured()
         let ownerHarness = try TestSharedTagCloudHarness.make(baseURL: env.baseURL)
         let collaboratorHarness = try TestSharedTagCloudHarness.make(baseURL: env.baseURL)
 
@@ -108,7 +108,7 @@ final class SharedTagCloudLiveSyncTests: XCTestCase {
     }
 
     func testCreateInviteForAndroidDeviceAcceptance() async throws {
-        let env = try XCTUnwrap(LiveSharedTagTestEnvironment.fromEnvironment())
+        let env = try LiveSharedTagTestEnvironment.requireConfigured()
         let ownerHarness = try TestSharedTagCloudHarness.make(baseURL: env.baseURL)
 
         let testID = UUID().uuidString.lowercased()
@@ -181,6 +181,34 @@ private struct LiveSharedTagTestEnvironment {
             expectedAndroidTagName: environment["URLSAVER_LIVE_SHARED_TAG_EXPECTED_NAME"]?.trimmingCharacters(in: .whitespacesAndNewlines)
                 ?? fileConfig?["expected_android_tag_name"]
         )
+    }
+
+    static func requireConfigured() throws -> LiveSharedTagTestEnvironment {
+        guard let environment = fromEnvironment() else {
+            throw XCTSkip("Live Supabase shared-tag test environment is not configured.")
+        }
+        return environment
+    }
+
+    func requireOwnerEmail() throws -> String {
+        guard let ownerEmail, !ownerEmail.isEmpty else {
+            throw XCTSkip("URLSAVER_LIVE_SHARED_TAG_OWNER_EMAIL is required for this live shared-tag test.")
+        }
+        return ownerEmail
+    }
+
+    func requireOwnerPassword() throws -> String {
+        guard let ownerPassword, !ownerPassword.isEmpty else {
+            throw XCTSkip("URLSAVER_LIVE_SHARED_TAG_OWNER_PASSWORD is required for this live shared-tag test.")
+        }
+        return ownerPassword
+    }
+
+    func requireExpectedAndroidTagName() throws -> String {
+        guard let expectedAndroidTagName, !expectedAndroidTagName.isEmpty else {
+            throw XCTSkip("URLSAVER_LIVE_SHARED_TAG_EXPECTED_NAME is required for this live shared-tag test.")
+        }
+        return expectedAndroidTagName
     }
 
     private static func loadFromRepositoryConfig() -> [String: String]? {
@@ -256,7 +284,7 @@ private extension SharedTagCloudConfig {
         enabled: Bool,
         supabaseURL: String,
         anonKey: String,
-        inviteLinkBaseURL: String = "https://invite-link-omega.vercel.app"
+        inviteLinkBaseURL: String = "https://miyamibu.xyz"
     ) {
         self.enabled = enabled
         self.supabaseURL = supabaseURL

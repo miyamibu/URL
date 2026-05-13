@@ -15,6 +15,9 @@ struct SharedTagCloudSheet: View {
     @State private var isWorking = false
     @State private var isShowingDeleteConfirmation = false
     @State private var isShowingContactSheet = false
+    @State private var inviteCode = ""
+    @State private var inviteMessage: String?
+    @State private var isApplyingInviteCode = false
 
     var body: some View {
         ScreenContainer {
@@ -54,19 +57,10 @@ struct SharedTagCloudSheet: View {
 
                     profileSection
                     usageSummarySection
+                    accountActionsSection
+                    inviteCodeSection
 
-                    if !model.sharedTagCloudState.isConfigured {
-                        AppPanel {
-                            Text("このビルドでは共有タグのクラウド同期が未設定です")
-                                .font(.system(size: 20, weight: .heavy, design: .rounded))
-                                .foregroundStyle(AppPalette.textPrimary)
-                            Text("Supabase の URL と anon key を設定すると、iPhone でも招待参加と同期が使えます。")
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundStyle(AppPalette.textSecondary)
-                        }
-                    } else if model.sharedTagCloudState.isSignedIn {
-                        signedInSection
-                    } else {
+                    if model.sharedTagCloudState.isConfigured && !model.sharedTagCloudState.isSignedIn {
                         signedOutSection
                     }
 
@@ -347,12 +341,15 @@ struct SharedTagCloudSheet: View {
         }
     }
 
-    private var signedInSection: some View {
+    private var accountActionsSection: some View {
         VStack(spacing: 16) {
             HStack(spacing: 10) {
                 AppActionButton(enabled: !isWorking) {
+                    guard !isWorking else { return }
+                    isWorking = true
                     Task {
                         await model.signOutFromSharedTagCloud()
+                        isWorking = false
                     }
                 } label: {
                     Text("サインアウト")
@@ -373,9 +370,59 @@ struct SharedTagCloudSheet: View {
         }
     }
 
+    private var inviteCodeSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("招待コード")
+                .font(.system(size: 18, weight: .heavy, design: .rounded))
+                .foregroundStyle(AppPalette.textPrimary)
+            Text("コードをお持ちの方は入力してください")
+                .font(.system(size: 17, weight: .bold, design: .rounded))
+                .foregroundStyle(AppPalette.textSecondary)
+            TextField("", text: $inviteCode)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(AppPalette.textPrimary)
+                .tint(AppPalette.primaryStrong)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 18)
+                .background(AppPalette.background, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(AppPalette.outlineSoft, lineWidth: 1.5)
+                )
+                .onChange(of: inviteCode) { _, _ in
+                    inviteMessage = nil
+                }
+
+            AppActionButton(
+                tone: .primary,
+                enabled: canApplyInviteCode && !isApplyingInviteCode
+            ) {
+                applyInviteCode()
+            } label: {
+                if isApplyingInviteCode {
+                    ProgressView().tint(AppPalette.textPrimary)
+                } else {
+                    Text("適用する")
+                }
+            }
+
+            if let inviteMessage {
+                Text(inviteMessage)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(AppPalette.textSecondary)
+            }
+        }
+    }
+
     private var canSubmitAuth: Bool {
         !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
             password.trimmingCharacters(in: .whitespacesAndNewlines).count >= 8
+    }
+
+    private var canApplyInviteCode: Bool {
+        !inviteCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var personalSavedURLCount: Int {
@@ -394,6 +441,29 @@ struct SharedTagCloudSheet: View {
     private func normalizeAvatarImageData(_ data: Data) -> Data {
         guard let image = UIImage(data: data) else { return data }
         return image.jpegData(compressionQuality: 0.82) ?? data
+    }
+
+    private func applyInviteCode() {
+        let code = inviteCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !code.isEmpty, !isApplyingInviteCode else { return }
+        isApplyingInviteCode = true
+        Task {
+            let result = await model.acceptInvite(inviteToken: code)
+            await MainActor.run {
+                switch result {
+                case .accepted(let tagName, _):
+                    inviteMessage = "参加しました。同期後に「\(tagName)」が表示されます。"
+                    inviteCode = ""
+                case .authRequired:
+                    inviteMessage = "参加するにはサインインが必要です"
+                case .invalidInvite:
+                    inviteMessage = "招待コードが無効か期限切れです"
+                case .failure(let message):
+                    inviteMessage = message
+                }
+                isApplyingInviteCode = false
+            }
+        }
     }
 }
 
@@ -616,28 +686,23 @@ private struct ProfileAvatarView: View {
     let imageData: Data?
 
     var body: some View {
-        Group {
-            if let imageData,
-               let uiImage = UIImage(data: imageData) {
+        ZStack {
+            AppPalette.surfaceSoft
+            if let url = Bundle.main.url(forResource: "DefaultProfilePig", withExtension: "png"),
+               let uiImage = UIImage(contentsOfFile: url.path) {
                 Image(uiImage: uiImage)
                     .resizable()
-                    .scaledToFill()
-            } else {
-                Image(systemName: "person.crop.circle.fill")
-                    .resizable()
                     .scaledToFit()
-                    .padding(22)
-                    .foregroundStyle(AppPalette.primaryStrong)
-                    .background(AppPalette.surfaceSoft)
+                    .padding(6)
             }
         }
-        .frame(width: 88, height: 88)
-        .clipShape(Circle())
-        .overlay(
-            Circle()
-                .stroke(AppPalette.outlineSoft, lineWidth: 1.5)
-        )
-        .background(AppPalette.background, in: Circle())
+            .frame(width: 88, height: 88)
+            .clipShape(Circle())
+            .overlay(
+                Circle()
+                    .stroke(AppPalette.outlineSoft, lineWidth: 1.5)
+            )
+            .background(AppPalette.background, in: Circle())
     }
 }
 

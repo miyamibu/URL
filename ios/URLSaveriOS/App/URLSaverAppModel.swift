@@ -11,7 +11,9 @@ struct AppNotification: Identifiable, Equatable {
         case openEntry(Int64)
         case openArchive
         case undoPendingDelete(Int64)
+        case undoPendingDeleteBatch([Int64])
         case undoArchive(Int64)
+        case undoArchiveBatch([Int64])
         case undoTitle(Int64, String?)
     }
 
@@ -53,7 +55,8 @@ final class URLSaverAppModel: ObservableObject {
         guard !hasBootstrapped else { return }
         hasBootstrapped = true
         profile = (try? services.profileStore.load()) ?? .empty
-        pendingInviteRecord = try? services.pendingInviteStore.load()
+        try? services.pendingInviteStore.clear()
+        pendingInviteRecord = nil
         try? services.repository.cleanupExpiredPendingDeletes()
         await reload()
         await refreshSharedTagCloudState()
@@ -66,10 +69,9 @@ final class URLSaverAppModel: ObservableObject {
     private func startPostBootstrapRefresh() {
         Task { [weak self] in
             guard let self else { return }
-            let syncSucceeded = await self.syncSharedTagCloud(showFailureNotification: false)
-            if !syncSucceeded {
-                await self.processMetadataBacklog()
-            }
+            _ = await self.syncSharedTagCloud(showFailureNotification: false)
+            await self.refreshEntitlements()
+            await self.processMetadataBacklog()
         }
     }
 
@@ -137,6 +139,30 @@ final class URLSaverAppModel: ObservableObject {
         )
     }
 
+    func archive(entryIDs: Set<Int64>) async {
+        let ids = entryIDs.sorted()
+        guard !ids.isEmpty else { return }
+        var archivedIDs: [Int64] = []
+        for entryID in ids where (try? services.repository.archive(entryID: entryID)) == true {
+            archivedIDs.append(entryID)
+        }
+
+        guard !archivedIDs.isEmpty else {
+            enqueueNotification(AppNotification(message: "アーカイブできませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
+            return
+        }
+
+        await reload()
+        enqueueNotification(
+            AppNotification(
+                message: "\(archivedIDs.count)件をアーカイブしました",
+                actionLabel: "元に戻す",
+                action: .undoArchiveBatch(archivedIDs),
+                autoDismissAfter: 5
+            )
+        )
+    }
+
     func markPendingDelete(entryID: Int64) async {
         guard let pendingUntil = try? services.repository.markPendingDelete(entryID: entryID) else {
             enqueueNotification(AppNotification(message: "削除できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
@@ -149,6 +175,35 @@ final class URLSaverAppModel: ObservableObject {
                 message: "削除しました",
                 actionLabel: "元に戻す",
                 action: .undoPendingDelete(entryID),
+                autoDismissAfter: 5
+            )
+        )
+    }
+
+    func markPendingDelete(entryIDs: Set<Int64>) async {
+        let ids = entryIDs.sorted()
+        guard !ids.isEmpty else { return }
+        var deletedIDs: [Int64] = []
+
+        for entryID in ids {
+            guard let pendingUntil = try? services.repository.markPendingDelete(entryID: entryID) else {
+                continue
+            }
+            scheduleDeleteTimer(entryID: entryID, due: pendingUntil)
+            deletedIDs.append(entryID)
+        }
+
+        guard !deletedIDs.isEmpty else {
+            enqueueNotification(AppNotification(message: "削除できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
+            return
+        }
+
+        await reload()
+        enqueueNotification(
+            AppNotification(
+                message: "\(deletedIDs.count)件を削除しました",
+                actionLabel: "元に戻す",
+                action: .undoPendingDeleteBatch(deletedIDs),
                 autoDismissAfter: 5
             )
         )
@@ -220,6 +275,16 @@ final class URLSaverAppModel: ObservableObject {
         }
         await reload()
         enqueueNotification(AppNotification(message: "タグから外しました", actionLabel: nil, action: nil, autoDismissAfter: 3))
+        return true
+    }
+
+    func deleteLocalTag(tagID: Int64) async -> Bool {
+        guard (try? services.repository.deleteLocalTag(id: tagID)) == true else {
+            enqueueNotification(AppNotification(message: "タグを削除できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
+            return false
+        }
+        await reload()
+        enqueueNotification(AppNotification(message: "タグを削除しました", actionLabel: nil, action: nil, autoDismissAfter: 3))
         return true
     }
 
@@ -609,18 +674,28 @@ final class URLSaverAppModel: ObservableObject {
     }
 
     func addEntry(_ entryID: Int64, toSharedTag remoteTagID: String) async -> Bool {
-        switch await services.sharedTagCloud.assignEntry(remoteTagID: remoteTagID, entryID: entryID) {
+        switch await addEntryToSharedTag(entryID, remoteTagID: remoteTagID) {
+        case .success:
+            return true
+        case .authRequired, .failure:
+            return false
+        }
+    }
+
+    func addEntryToSharedTag(_ entryID: Int64, remoteTagID: String) async -> SharedTagMutationResult {
+        let result = await services.sharedTagCloud.assignEntry(remoteTagID: remoteTagID, entryID: entryID)
+        switch result {
         case .success:
             await refreshSharedTagCloudState()
             await reload()
             enqueueNotification(AppNotification(message: "共有タグに追加しました", actionLabel: nil, action: nil, autoDismissAfter: 4))
-            return true
+            return result
         case .authRequired:
             enqueueNotification(AppNotification(message: "先に共有タグクラウドへサインインしてください", actionLabel: nil, action: nil, autoDismissAfter: 4))
-            return false
+            return result
         case .failure(let message):
             enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 4))
-            return false
+            return result
         }
     }
 
@@ -666,9 +741,24 @@ final class URLSaverAppModel: ObservableObject {
                 cancelDeleteTimer(entryID: entryID)
                 await reload()
             }
+        case .undoPendingDeleteBatch(let entryIDs):
+            Task {
+                for entryID in entryIDs {
+                    _ = try? services.repository.restore(entryID: entryID)
+                    cancelDeleteTimer(entryID: entryID)
+                }
+                await reload()
+            }
         case .undoArchive(let entryID):
             Task {
                 _ = try? services.repository.unarchive(entryID: entryID)
+                await reload()
+            }
+        case .undoArchiveBatch(let entryIDs):
+            Task {
+                for entryID in entryIDs {
+                    _ = try? services.repository.unarchive(entryID: entryID)
+                }
                 await reload()
             }
         case .undoTitle(let entryID, let oldTitle):

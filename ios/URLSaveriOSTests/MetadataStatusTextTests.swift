@@ -39,6 +39,41 @@ final class MetadataStatusTextTests: XCTestCase {
         XCTAssertEqual(MetadataStatusText.listText(for: record), "一時的に取得できません")
         XCTAssertEqual(MetadataStatusText.detailText(for: record), "一時的に情報を取得できませんでした")
         XCTAssertEqual(MetadataStatusText.technicalErrorText(for: .parseFailed), "ページ形式を解析できませんでした (PARSE_FAILED)")
+
+        let oversized = URLRecord(
+            id: 2,
+            originalURL: "https://example.com/large",
+            normalizedURL: "https://example.com/large",
+            displayURL: "example.com/large",
+            openURL: "https://example.com/large",
+            normalizedHost: "example.com",
+            rawSourceHost: "example.com",
+            serviceType: .web,
+            contentContext: .standard,
+            userTitle: nil,
+            fetchedTitle: nil,
+            fetchedBody: nil,
+            fetchedBodyKind: nil,
+            bodySummary: nil,
+            description: nil,
+            memo: "",
+            thumbnailURL: nil,
+            badgeImageURL: nil,
+            canonicalID: nil,
+            metadataState: .unavailable,
+            metadataError: .oversized,
+            metadataRequestedAt: nil,
+            metadataFetchedAt: nil,
+            recordState: .active,
+            localProvenanceCount: 1,
+            sharedReferenceCount: 0,
+            createdAt: .distantPast,
+            updatedAt: .distantPast,
+            archivedAt: nil,
+            pendingDeletionUntil: nil
+        )
+        XCTAssertEqual(MetadataStatusText.detailText(for: oversized), "URLを保存しました")
+        XCTAssertEqual(MetadataStatusText.technicalErrorText(for: .oversized), "ページが大きいため、内容の自動取得はできませんでした。")
     }
 
     func testBackgroundTaskCompletionWaitsForSuccessfulBacklog() async {

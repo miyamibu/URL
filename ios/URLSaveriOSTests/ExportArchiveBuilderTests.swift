@@ -4,7 +4,7 @@ import XCTest
 
 final class ExportArchiveBuilderTests: XCTestCase {
     func testZipOutputUsesZipExtensionAndContainsExpectedFiles() throws {
-        let archive = try URLExportArchiveBuilder.prepareExport(
+        let archive = try URLSaveriOS.URLExportArchiveBuilder.prepareExport(
             request: makeRequest(outputFormat: .zip),
             entries: [makeRecord(id: 42, host: "example.com", memo: "memo")],
             localTags: [],
@@ -24,7 +24,7 @@ final class ExportArchiveBuilderTests: XCTestCase {
     }
 
     func testJSONOutputUsesJsonExtensionAndContainsManifestAndEntries() throws {
-        let archive = try URLExportArchiveBuilder.prepareExport(
+        let archive = try URLSaveriOS.URLExportArchiveBuilder.prepareExport(
             request: makeRequest(outputFormat: .json),
             entries: [makeRecord(id: 7, host: "example.com")],
             localTags: [],

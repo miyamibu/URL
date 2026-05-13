@@ -19,8 +19,8 @@ final class ServiceFilterTests: XCTestCase {
 
     func testAllExportScopeIncludesSharedOnlyEntries() throws {
         let sharedOnly = makeRecord(id: 1, serviceType: .web, host: "example.com", localProvenanceCount: 0)
-        let archive = try URLExportArchiveBuilder.prepareExport(
-            request: URLExportRequest(
+        let archive = try URLSaveriOS.URLExportArchiveBuilder.prepareExport(
+            request: URLSaveriOS.URLExportRequest(
                 scope: .all,
                 selectedTagIDs: [],
                 recordStateFilter: .both,
@@ -53,8 +53,8 @@ final class ServiceFilterTests: XCTestCase {
 
     func testZipExportUsesZipFileNameAndMimeType() throws {
         let record = makeRecord(id: 10, serviceType: .web, host: "example.com")
-        let archive = try URLExportArchiveBuilder.prepareExport(
-            request: URLExportRequest(
+        let archive = try URLSaveriOS.URLExportArchiveBuilder.prepareExport(
+            request: URLSaveriOS.URLExportRequest(
                 scope: .all,
                 selectedTagIDs: [],
                 recordStateFilter: .both,
@@ -78,8 +78,8 @@ final class ServiceFilterTests: XCTestCase {
 
     func testJSONExportProducesManifestAndEntries() throws {
         let record = makeRecord(id: 11, serviceType: .web, host: "example.com")
-        let archive = try URLExportArchiveBuilder.prepareExport(
-            request: URLExportRequest(
+        let archive = try URLSaveriOS.URLExportArchiveBuilder.prepareExport(
+            request: URLSaveriOS.URLExportRequest(
                 scope: .all,
                 selectedTagIDs: [],
                 recordStateFilter: .both,

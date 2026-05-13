@@ -1,6 +1,14 @@
 import SwiftUI
 import UIKit
 
+func shouldShowSharedTagCloudEntryPoints(
+    isConfigured: Bool,
+    hasSharedTags: Bool,
+    hasPendingInvite: Bool
+) -> Bool {
+    isConfigured || hasSharedTags || hasPendingInvite
+}
+
 struct RootView: View {
     @ObservedObject var model: URLSaverAppModel
 
@@ -10,30 +18,39 @@ struct RootView: View {
     @State private var selectedMainLocalTagID: Int64?
     @State private var selectedArchiveLocalTagID: Int64?
     @State private var displayMode: EntryListDisplayMode = .compact
-    @State private var isShowingPrivacyInfo = false
     @State private var isShowingUnavailableNotice = false
     @State private var isShowingLocalTagCreateAlert = false
+    @State private var isShowingLocalTagManagementSheet = false
     @State private var localTagNameDraft = ""
     @State private var isShowingSharedTagCloudSheet = false
+    @State private var isShowingSharedTagCreateSheet = false
     @State private var isShowingExportSheet = false
     @State private var isShowingShareSheet = false
     @State private var shareItems: [Any] = []
     @State private var selectedSharedTagID: String?
+    @State private var localTagPendingDeletion: LocalTagSummary?
+    @State private var selectedMainEntryIDs: Set<Int64> = []
 
     var body: some View {
         GeometryReader { proxy in
+            let mainVisibleEntries = filteredEntries(
+                model.activeEntries,
+                selectedService: selectedMainService,
+                selectedLocalTagID: selectedMainLocalTagID,
+                localTagAssignments: model.localTagAssignments
+            )
+            let showsSharedTagCloud = shouldShowSharedTagCloudEntryPoints(
+                isConfigured: model.sharedTagCloudState.isConfigured,
+                hasSharedTags: !model.sharedTags.isEmpty,
+                hasPendingInvite: model.pendingInviteRecord != nil
+            )
             NavigationStack(path: $model.navigationPath) {
                 ScreenContainer {
                     Group {
                         switch model.selectedTab {
                         case .main:
                             MainScreen(
-                                entries: filteredEntries(
-                                    model.activeEntries,
-                                    selectedService: selectedMainService,
-                                    selectedLocalTagID: selectedMainLocalTagID,
-                                    localTagAssignments: model.localTagAssignments
-                                ),
+                                entries: mainVisibleEntries,
                                 totalEntries: model.activeEntries,
                                 pendingInviteRecord: model.pendingInviteRecord,
                                 localTags: model.localTags,
@@ -44,17 +61,42 @@ struct RootView: View {
                                 onOpenArchive: { model.selectedTab = .archive },
                                 onOpenDetail: model.openEntry(_:),
                                 onCreateLocalTag: { isShowingLocalTagCreateAlert = true },
+                                onManageLocalTags: { isShowingLocalTagManagementSheet = true },
                                 onArchive: { entryID in
                                     Task { await model.archive(entryID: entryID) }
                                 },
                                 onDelete: { entryID in
                                     Task { await model.markPendingDelete(entryID: entryID) }
                                 },
+                                selectedEntryIDs: selectedMainEntryIDs,
+                                onStartSelection: { entryID in
+                                    selectedMainEntryIDs = [entryID]
+                                },
+                                onToggleSelection: { entryID in
+                                    toggleMainSelection(entryID)
+                                },
+                                onSelectAll: {
+                                    selectedMainEntryIDs = Set(mainVisibleEntries.map(\.id))
+                                },
+                                onCancelSelection: {
+                                    selectedMainEntryIDs = []
+                                },
+                                onArchiveSelection: {
+                                    let ids = selectedMainEntryIDs
+                                    selectedMainEntryIDs = []
+                                    Task { await model.archive(entryIDs: ids) }
+                                },
+                                onDeleteSelection: {
+                                    let ids = selectedMainEntryIDs
+                                    selectedMainEntryIDs = []
+                                    Task { await model.markPendingDelete(entryIDs: ids) }
+                                },
                                 onOpenManualInput: { isShowingManualSheet = true },
-                                onShowPrivacyInfo: { isShowingPrivacyInfo = true },
                                 onOpenShare: { isShowingExportSheet = true },
                                 onOpenSharedTagCloud: { isShowingSharedTagCloudSheet = true },
-                                onOpenSharedTag: { selectedSharedTagID = $0 }
+                                onCreateSharedTag: { isShowingSharedTagCreateSheet = true },
+                                onOpenSharedTag: { selectedSharedTagID = $0 },
+                                showsSharedTagCloud: showsSharedTagCloud
                             )
                         case .archive:
                             ArchiveScreen(
@@ -71,12 +113,13 @@ struct RootView: View {
                                 displayMode: $displayMode,
                                 onBack: { model.selectedTab = .main },
                                 onCreateLocalTag: { isShowingLocalTagCreateAlert = true },
+                                onManageLocalTags: { isShowingLocalTagManagementSheet = true },
                                 onOpenDetail: model.openEntry(_:)
                             )
                         }
                     }
                     .safeAreaInset(edge: .bottom) {
-                        if model.selectedTab == .main {
+                        if model.selectedTab == .main && selectedMainEntryIDs.isEmpty {
                             BottomPrimaryBar(label: "URLを追加", systemImage: "plus") {
                                 isShowingManualSheet = true
                             }
@@ -89,6 +132,20 @@ struct RootView: View {
             }
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
             .toolbar(.hidden, for: .navigationBar)
+            .onChange(of: model.selectedTab) { _, tab in
+                if tab != .main {
+                    selectedMainEntryIDs = []
+                }
+            }
+            .onChange(of: model.activeEntries) { _, entries in
+                selectedMainEntryIDs = selectedMainEntryIDs.intersection(Set(entries.map(\.id)))
+            }
+            .onChange(of: selectedMainService) { _, _ in
+                selectedMainEntryIDs = []
+            }
+            .onChange(of: selectedMainLocalTagID) { _, _ in
+                selectedMainEntryIDs = []
+            }
             .overlay(alignment: .bottom) {
                 if let notification = model.currentNotification {
                     NotificationBanner(
@@ -97,7 +154,7 @@ struct RootView: View {
                     onClose: { model.dismissCurrentNotification() }
                 )
                 .padding(.horizontal, 16)
-                .padding(.bottom, model.selectedTab == .main ? 172 : 20)
+                .padding(.bottom, model.selectedTab == .main ? LaunchAdVisibility.mainNotificationBottomPadding : 20)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
             }
@@ -112,6 +169,31 @@ struct RootView: View {
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
                     .presentationCornerRadius(32)
+            }
+            .sheet(isPresented: $isShowingLocalTagManagementSheet) {
+                LocalTagManagementSheet(
+                    localTags: model.localTags,
+                    onDelete: { tag in
+                        isShowingLocalTagManagementSheet = false
+                        localTagPendingDeletion = tag
+                    },
+                    onClose: { isShowingLocalTagManagementSheet = false }
+                )
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationCornerRadius(32)
+            }
+            .sheet(isPresented: $isShowingSharedTagCreateSheet) {
+                SharedTagCreateSheet(
+                    model: model,
+                    onOpenProfile: {
+                        isShowingSharedTagCreateSheet = false
+                        isShowingSharedTagCloudSheet = true
+                    }
+                )
+                .presentationDetents([.height(420), .large])
+                .presentationDragIndicator(.visible)
+                .presentationCornerRadius(32)
             }
             .sheet(isPresented: $isShowingExportSheet) {
                 ExportSheet(model: model)
@@ -150,11 +232,6 @@ struct RootView: View {
                     )
                 }
             }
-            .alert("プライバシー情報", isPresented: $isShowingPrivacyInfo) {
-                Button("閉じる", role: .cancel) {}
-            } message: {
-                Text("保存データはこの端末内に保持され、共有 URL の重複判定は normalizedUrl を基準に行います。")
-            }
             .alert("未対応", isPresented: $isShowingUnavailableNotice) {
                 Button("閉じる", role: .cancel) {}
             } message: {
@@ -173,8 +250,55 @@ struct RootView: View {
             } message: {
                 Text("このiPhone内でURLを整理するタグを作成します。")
             }
+            .alert("タグを削除", isPresented: isShowingLocalTagDeleteAlert) {
+                Button("キャンセル", role: .cancel) {
+                    localTagPendingDeletion = nil
+                }
+                Button("削除する", role: .destructive) {
+                    guard let tag = localTagPendingDeletion else { return }
+                    localTagPendingDeletion = nil
+                    Task {
+                        if await model.deleteLocalTag(tagID: tag.id) {
+                            if selectedMainLocalTagID == tag.id {
+                                selectedMainLocalTagID = nil
+                            }
+                            if selectedArchiveLocalTagID == tag.id {
+                                selectedArchiveLocalTagID = nil
+                            }
+                        }
+                    }
+                }
+            } message: {
+                Text(localTagDeleteMessage(localTagPendingDeletion))
+            }
         }
         .background(AppPalette.background.ignoresSafeArea())
+    }
+
+    private var isShowingLocalTagDeleteAlert: Binding<Bool> {
+        Binding(
+            get: { localTagPendingDeletion != nil },
+            set: { isPresented in
+                if !isPresented {
+                    localTagPendingDeletion = nil
+                }
+            }
+        )
+    }
+
+    private func localTagDeleteMessage(_ tag: LocalTagSummary?) -> String {
+        guard let tag else {
+            return "このタグを削除します。URL自体は削除されません。"
+        }
+        return "「\(tag.name)」を削除します。URL自体は削除されません。"
+    }
+
+    private func toggleMainSelection(_ entryID: Int64) {
+        if selectedMainEntryIDs.contains(entryID) {
+            selectedMainEntryIDs.remove(entryID)
+        } else {
+            selectedMainEntryIDs.insert(entryID)
+        }
     }
 }
 
@@ -190,46 +314,30 @@ private struct MainScreen: View {
     let onOpenArchive: () -> Void
     let onOpenDetail: (Int64) -> Void
     let onCreateLocalTag: () -> Void
+    let onManageLocalTags: () -> Void
     let onArchive: (Int64) -> Void
     let onDelete: (Int64) -> Void
+    let selectedEntryIDs: Set<Int64>
+    let onStartSelection: (Int64) -> Void
+    let onToggleSelection: (Int64) -> Void
+    let onSelectAll: () -> Void
+    let onCancelSelection: () -> Void
+    let onArchiveSelection: () -> Void
+    let onDeleteSelection: () -> Void
     let onOpenManualInput: () -> Void
-    let onShowPrivacyInfo: () -> Void
     let onOpenShare: () -> Void
     let onOpenSharedTagCloud: () -> Void
+    let onCreateSharedTag: () -> Void
     let onOpenSharedTag: (String) -> Void
+    let showsSharedTagCloud: Bool
 
     var body: some View {
         VStack(spacing: 0) {
+            let trailingButtons = mainTrailingButtons
             ScreenHeader(
                 title: "保存したURL",
                 leadingButton: nil,
-                trailingButtons: [
-                    ScreenHeaderButton(
-                        icon: displayMode == .rich ? "list.bullet.rectangle" : "rectangle.grid.1x2",
-                        accessibilityLabel: displayMode == .rich ? "画像なし表示へ切り替える" : "画像つき表示へ切り替える",
-                        action: { displayMode = displayMode == .rich ? .compact : .rich }
-                    ),
-                    ScreenHeaderButton(
-                        icon: "person.crop.circle",
-                        accessibilityLabel: "プロフィール",
-                        action: onOpenSharedTagCloud
-                    ),
-                    ScreenHeaderButton(
-                        icon: "info.circle",
-                        accessibilityLabel: "プライバシー情報",
-                        action: onShowPrivacyInfo
-                    ),
-                    ScreenHeaderButton(
-                        icon: "tray.and.arrow.up",
-                        accessibilityLabel: "エクスポート",
-                        action: onOpenShare
-                    ),
-                    ScreenHeaderButton(
-                        icon: "archivebox",
-                        accessibilityLabel: "アーカイブ",
-                        action: onOpenArchive
-                    ),
-                ]
+                trailingButtons: trailingButtons
             )
 
             ServiceFilterRow(
@@ -240,19 +348,36 @@ private struct MainScreen: View {
                 localTags: localTags
             )
 
-            SharedTagSection(
-                tags: sharedTags,
-                onCreateTag: onOpenSharedTagCloud,
-                onOpenTag: onOpenSharedTag
-            )
-            .padding(.bottom, 6)
+            if showsSharedTagCloud {
+                SharedTagSection(
+                    tags: sharedTags,
+                    onCreateTag: onCreateSharedTag,
+                    onOpenTag: onOpenSharedTag
+                )
+                .padding(.bottom, 6)
+            }
+
+            if !selectedEntryIDs.isEmpty {
+                EntrySelectionBar(
+                    selectedCount: selectedEntryIDs.count,
+                    allSelected: !entries.isEmpty && selectedEntryIDs.count == entries.count,
+                    onSelectAll: onSelectAll,
+                    onArchive: onArchiveSelection,
+                    onDelete: onDeleteSelection,
+                    onCancel: onCancelSelection
+                )
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
 
             GeometryReader { proxy in
                 let cardWidth = max(proxy.size.width - 32, 0)
+                let selectionMode = !selectedEntryIDs.isEmpty
 
                 ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: 14) {
-                        if let pendingInviteRecord {
+                        if showsSharedTagCloud, let pendingInviteRecord {
                             PendingInviteBanner(
                                 pendingInviteRecord: pendingInviteRecord,
                                 onOpenCloud: onOpenSharedTagCloud
@@ -264,27 +389,44 @@ private struct MainScreen: View {
                         } else if entries.isEmpty {
                             AppPanel {
                                 Text("この条件に一致するURLはありません")
-                                    .font(.system(size: 24, weight: .heavy, design: .rounded))
+                                    .font(.system(size: 21, weight: .heavy, design: .rounded))
                                     .foregroundStyle(AppPalette.textSecondary)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.82)
                                     .multilineTextAlignment(.center)
-                                    .frame(maxWidth: .infinity)
-                                Text("フィルターを変更してください")
-                                    .font(.system(size: 17, weight: .medium))
-                                    .foregroundStyle(AppPalette.textSecondary)
                                     .frame(maxWidth: .infinity)
                             }
                             .frame(width: cardWidth)
                         } else {
                             ForEach(entries) { entry in
-                                SwipeableEntryCard(
-                                    entry: entry,
-                                    displayMode: displayMode,
-                                    cardWidth: cardWidth,
-                                    onTap: { onOpenDetail(entry.id) },
-                                    onArchive: { onArchive(entry.id) },
-                                    onDelete: { onDelete(entry.id) }
-                                )
-                                .frame(width: cardWidth)
+                                if selectionMode {
+                                    Button {
+                                        onToggleSelection(entry.id)
+                                    } label: {
+                                        EntryCardView(
+                                            entry: entry,
+                                            timestampLabel: "保存",
+                                            displayMode: displayMode,
+                                            cardWidth: cardWidth,
+                                            selected: selectedEntryIDs.contains(entry.id)
+                                        )
+                                        .frame(width: cardWidth)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel("\(preferredDisplayTitle(for: entry))")
+                                    .accessibilityValue(selectedEntryIDs.contains(entry.id) ? "選択中" : "未選択")
+                                } else {
+                                    SwipeableEntryCard(
+                                        entry: entry,
+                                        displayMode: displayMode,
+                                        cardWidth: cardWidth,
+                                        onTap: { onOpenDetail(entry.id) },
+                                        onArchive: { onArchive(entry.id) },
+                                        onDelete: { onDelete(entry.id) },
+                                        onLongPress: { onStartSelection(entry.id) }
+                                    )
+                                    .frame(width: cardWidth)
+                                }
                             }
                         }
                     }
@@ -295,6 +437,108 @@ private struct MainScreen: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .animation(.interactiveSpring(response: 0.28, dampingFraction: 0.9), value: selectedEntryIDs)
+    }
+
+    private var mainTrailingButtons: [ScreenHeaderButton] {
+        var buttons: [ScreenHeaderButton] = [
+            ScreenHeaderButton(
+                icon: displayMode == .rich ? "list.bullet.rectangle" : "rectangle.grid.1x2",
+                accessibilityLabel: displayMode == .rich ? "画像なし表示へ切り替える" : "画像つき表示へ切り替える",
+                action: { displayMode = displayMode == .rich ? .compact : .rich }
+            ),
+        ]
+        buttons.append(
+            ScreenHeaderButton(
+                icon: "person.crop.circle",
+                accessibilityLabel: "プロフィール",
+                action: onOpenSharedTagCloud
+            )
+        )
+        buttons.append(contentsOf: [
+            ScreenHeaderButton(
+                icon: "tray.and.arrow.up",
+                accessibilityLabel: "エクスポート",
+                action: onOpenShare
+            ),
+            ScreenHeaderButton(
+                icon: "archivebox",
+                accessibilityLabel: "アーカイブ",
+                action: onOpenArchive
+            ),
+            ScreenHeaderButton(
+                icon: "tag",
+                accessibilityLabel: "タグ管理",
+                action: onManageLocalTags
+            ),
+        ])
+        return buttons
+    }
+}
+
+private struct EntrySelectionBar: View {
+    let selectedCount: Int
+    let allSelected: Bool
+    let onSelectAll: () -> Void
+    let onArchive: () -> Void
+    let onDelete: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("\(selectedCount)件選択")
+                .font(.system(size: 15, weight: .heavy, design: .rounded))
+                .foregroundStyle(AppPalette.textSecondary)
+                .lineLimit(1)
+                .layoutPriority(1)
+
+            Spacer(minLength: 0)
+
+            selectAllButton
+            selectionIconButton("アーカイブ", systemImage: "archivebox", action: onArchive)
+            selectionIconButton("削除", systemImage: "trash", role: .destructive, action: onDelete)
+            selectionIconButton("キャンセル", systemImage: "xmark", action: onCancel)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(AppPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(AppPalette.outlineSoft, lineWidth: 1.2)
+        )
+        .accessibilityElement(children: .contain)
+    }
+
+    private var selectAllButton: some View {
+        Button(action: onSelectAll) {
+            Label("すべて選択", systemImage: "checklist")
+                .font(.system(size: 14, weight: .bold))
+                .lineLimit(1)
+                .padding(.horizontal, 10)
+                .frame(height: 36)
+                .background(AppPalette.panelStrong, in: Capsule())
+                .foregroundStyle(Color.white.opacity(0.95))
+        }
+        .buttonStyle(.plain)
+        .disabled(allSelected)
+        .opacity(allSelected ? 0.45 : 1)
+    }
+
+    private func selectionIconButton(
+        _ title: String,
+        systemImage: String,
+        role: ButtonRole? = nil,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(role: role, action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 17, weight: .heavy))
+                .frame(width: 38, height: 36)
+                .background(AppPalette.panelStrong, in: Capsule())
+                .foregroundStyle(role == .destructive ? AppPalette.warning : Color.white.opacity(0.95))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
     }
 }
 
@@ -323,7 +567,6 @@ private func buildMainShareSummary(
 
     return lines.joined(separator: "\n")
 }
-
 
 private struct SharedTagInviteConfirmationView: View {
     let inviteToken: String
@@ -487,6 +730,7 @@ private struct ArchiveScreen: View {
     @Binding var displayMode: EntryListDisplayMode
     let onBack: () -> Void
     let onCreateLocalTag: () -> Void
+    let onManageLocalTags: () -> Void
     let onOpenDetail: (Int64) -> Void
 
     var body: some View {
@@ -498,7 +742,13 @@ private struct ArchiveScreen: View {
                     accessibilityLabel: "戻る",
                     action: onBack
                 ),
-                trailingButtons: []
+                trailingButtons: [
+                    ScreenHeaderButton(
+                        icon: "tag",
+                        accessibilityLabel: "タグ管理",
+                        action: onManageLocalTags
+                    ),
+                ]
             )
 
             ServiceFilterRow(
@@ -558,6 +808,272 @@ private struct ArchiveScreen: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+}
+
+private struct SharedTagCreateSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    @ObservedObject var model: URLSaverAppModel
+    let onOpenProfile: () -> Void
+
+    @State private var tagName = ""
+    @State private var isWorking = false
+
+    var body: some View {
+        ScreenContainer {
+            VStack(alignment: .leading, spacing: 16) {
+                Capsule()
+                    .fill(AppPalette.outlineSoft)
+                    .frame(width: 72, height: 8)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 10)
+
+                HStack {
+                    Text("共有タグを作成")
+                        .font(.system(size: 26, weight: .heavy, design: .rounded))
+                        .foregroundStyle(AppPalette.textPrimary)
+                    Spacer()
+                    Button("閉じる") { dismiss() }
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(AppPalette.primaryStrong)
+                }
+
+                if model.sharedTagCloudState.isConfigured && model.sharedTagCloudState.isSignedIn {
+                    createForm
+                } else {
+                    authRequiredPanel
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 24)
+        }
+        .task {
+            await model.refreshSharedTagCloudState()
+        }
+    }
+
+    private var createForm: some View {
+        AppPanel {
+            Text("新しい共有タグ")
+                .font(.system(size: 18, weight: .heavy, design: .rounded))
+                .foregroundStyle(AppPalette.textPrimary)
+
+            TextField(
+                "",
+                text: $tagName,
+                prompt: Text("共有タグ名").foregroundStyle(AppPalette.textMuted)
+            )
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .font(.system(size: 18, weight: .medium))
+            .foregroundStyle(AppPalette.textPrimary)
+            .tint(AppPalette.primaryStrong)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 18)
+            .background(AppPalette.background, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(AppPalette.outlineSoft, lineWidth: 1.5)
+            )
+
+            AppActionButton(
+                tone: .primary,
+                enabled: !tagName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isWorking
+            ) {
+                guard !isWorking else { return }
+                isWorking = true
+                Task {
+                    if await model.createSharedTag(name: tagName) {
+                        dismiss()
+                    }
+                    isWorking = false
+                }
+            } label: {
+                if isWorking {
+                    ProgressView().tint(AppPalette.textPrimary)
+                } else {
+                    Text("作成")
+                }
+            }
+        }
+    }
+
+    private var authRequiredPanel: some View {
+        AppPanel {
+            Text("共有タグを作るにはサインインが必要です")
+                .font(.system(size: 20, weight: .heavy, design: .rounded))
+                .foregroundStyle(AppPalette.textPrimary)
+
+            Text("共有タグはクラウド同期を使うため、先にプロフィール画面でサインインしてください。")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(AppPalette.textSecondary)
+
+            AppActionButton(tone: .primary) {
+                onOpenProfile()
+            } label: {
+                Text("サインインへ")
+            }
+        }
+    }
+
+}
+
+private struct LocalTagManagementSheet: View {
+    let localTags: [LocalTagSummary]
+    let onDelete: (LocalTagSummary) -> Void
+    let onClose: () -> Void
+
+    var body: some View {
+        ZStack {
+            AppPalette.background.ignoresSafeArea()
+
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Text("タグ管理")
+                        .font(.system(size: 26, weight: .heavy, design: .rounded))
+                        .foregroundStyle(AppPalette.textPrimary)
+                    Spacer()
+                    Button("閉じる", action: onClose)
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(AppPalette.primaryStrong)
+                }
+
+                if localTags.isEmpty {
+                    AppPanel {
+                        Text("削除できるタグはまだありません")
+                            .font(.system(size: 17, weight: .heavy, design: .rounded))
+                            .foregroundStyle(AppPalette.textSecondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } else {
+                    ScrollView(showsIndicators: false) {
+                        LocalTagManagementFlowLayout(horizontalSpacing: 8, verticalSpacing: 8) {
+                            ForEach(localTags) { tag in
+                                LocalTagManagementPill(tag: tag, onDelete: onDelete)
+                            }
+                        }
+                        .padding(.bottom, 12)
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 22)
+            .padding(.bottom, 24)
+        }
+    }
+}
+
+private struct LocalTagManagementFlowLayout: Layout {
+    var horizontalSpacing: CGFloat
+    var verticalSpacing: CGFloat
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        let rows = rows(in: maxWidth, subviews: subviews)
+        let width = rows.map(\.width).max() ?? 0
+        let height = rows.reduce(CGFloat.zero) { total, row in
+            total + row.height
+        } + CGFloat(max(rows.count - 1, 0)) * verticalSpacing
+        return CGSize(width: width, height: height)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        var y = bounds.minY
+        for row in rows(in: bounds.width, subviews: subviews) {
+            var x = bounds.minX
+            for item in row.items {
+                subviews[item.index].place(
+                    at: CGPoint(x: x, y: y),
+                    proposal: ProposedViewSize(item.size)
+                )
+                x += item.size.width + horizontalSpacing
+            }
+            y += row.height + verticalSpacing
+        }
+    }
+
+    private func rows(in maxWidth: CGFloat, subviews: Subviews) -> [Row] {
+        var rows: [Row] = []
+        var current = Row()
+
+        for index in subviews.indices {
+            let measured = subviews[index].sizeThatFits(.unspecified)
+            let size = CGSize(width: min(measured.width, maxWidth), height: measured.height)
+            let nextWidth = current.items.isEmpty ? size.width : current.width + horizontalSpacing + size.width
+
+            if !current.items.isEmpty && nextWidth > maxWidth {
+                rows.append(current)
+                current = Row()
+            }
+
+            current.items.append(Item(index: index, size: size))
+            current.width = current.items.count == 1 ? size.width : current.width + horizontalSpacing + size.width
+            current.height = max(current.height, size.height)
+        }
+
+        if !current.items.isEmpty {
+            rows.append(current)
+        }
+        return rows
+    }
+
+    private struct Row {
+        var items: [Item] = []
+        var width: CGFloat = 0
+        var height: CGFloat = 0
+    }
+
+    private struct Item {
+        let index: Int
+        let size: CGSize
+    }
+}
+
+private struct LocalTagManagementPill: View {
+    let tag: LocalTagSummary
+    let onDelete: (LocalTagSummary) -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(tag.name)
+                .font(.system(size: 21, weight: .heavy, design: .rounded))
+                .foregroundStyle(AppPalette.textPrimary)
+                .lineLimit(1)
+                .frame(maxWidth: 104, alignment: .leading)
+
+            Button(role: .destructive) {
+                onDelete(tag)
+            } label: {
+                Label("削除", systemImage: "trash")
+                    .font(.system(size: 18, weight: .heavy))
+                    .lineLimit(1)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(AppPalette.danger)
+        }
+        .padding(.leading, 16)
+        .padding(.trailing, 12)
+        .padding(.vertical, 13)
+        .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(AppPalette.outline, lineWidth: 1.5)
+        )
+        .fixedSize(horizontal: true, vertical: false)
     }
 }
 

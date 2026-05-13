@@ -594,6 +594,9 @@ enum MetadataStatusText {
         case .failed:
             return "一時的に情報を取得できませんでした"
         case .unavailable:
+            if case .oversized? = record.metadataError {
+                return "URLを保存しました"
+            }
             if case .parseFailed? = record.metadataError {
                 return "このURLは自動取得できません"
             }
@@ -625,7 +628,7 @@ enum MetadataStatusText {
         case .nonHTML:
             return "HTMLページではないため自動取得できません (\(error.rawValue))"
         case .oversized:
-            return "ページサイズが大きすぎて取得できません (\(error.rawValue))"
+            return "ページが大きいため、内容の自動取得はできませんでした。"
         case .tooManyRedirects:
             return "リダイレクトが多すぎて取得できません (\(error.rawValue))"
         }

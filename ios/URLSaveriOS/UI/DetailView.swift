@@ -17,13 +17,15 @@ struct DetailView: View {
     @State private var isRetryingMetadata = false
     @State private var isShowingLocalTagEditor = false
     @State private var isShowingSharedTagEditor = false
+    @State private var isRemovingTag = false
 
     private var entry: URLRecord? {
         model.entry(for: entryID)
     }
 
     private var assignedSharedTags: [SharedTagSummary] {
-        model.loadSharedTagsForEntry(entryID: entryID)
+        guard model.sharedTagCloudState.isConfigured else { return [] }
+        return model.loadSharedTagsForEntry(entryID: entryID)
     }
 
     private var assignedLocalTags: [LocalTagSummary] {
@@ -64,7 +66,7 @@ struct DetailView: View {
                                         VStack(alignment: .leading, spacing: 12) {
                                             if isEditingTitle {
                                                 TextField("タイトル", text: $titleText, axis: .vertical)
-                                                    .font(.system(size: 26, weight: .heavy, design: .rounded))
+                                                    .font(.system(size: 23, weight: .heavy, design: .rounded))
                                                     .textFieldStyle(.plain)
                                                     .padding(.horizontal, 14)
                                                     .padding(.vertical, 16)
@@ -78,7 +80,7 @@ struct DetailView: View {
                                                     )
                                             } else {
                                                 Text(preferredDisplayTitle(for: entry))
-                                                    .font(.system(size: 27, weight: .heavy, design: .rounded))
+                                                    .font(.system(size: 23, weight: .heavy, design: .rounded))
                                                     .foregroundStyle(Color.white.opacity(0.94))
                                                     .multilineTextAlignment(.leading)
                                                     .lineLimit(3)
@@ -250,16 +252,46 @@ struct DetailView: View {
                                     DetailTagSummaryPanel(
                                         title: "タグ",
                                         emptyText: "まだタグは付いていません",
-                                        tagNames: assignedLocalTags.map(\.name),
+                                        tags: assignedLocalTags.map { tag in
+                                            DetailTagSummaryItem(
+                                                id: "local-\(tag.id)",
+                                                name: tag.name,
+                                                canRemove: !isRemovingTag,
+                                                onRemove: {
+                                                    guard !isRemovingTag else { return }
+                                                    isRemovingTag = true
+                                                    Task {
+                                                        _ = await model.removeEntry(entryID, fromLocalTag: tag.id)
+                                                        isRemovingTag = false
+                                                    }
+                                                }
+                                            )
+                                        },
                                         onEdit: { isShowingLocalTagEditor = true }
                                     )
 
-                                    DetailTagSummaryPanel(
-                                        title: "共有タグ",
-                                        emptyText: "まだ共有タグは付いていません",
-                                        tagNames: assignedSharedTags.map(\.name),
-                                        onEdit: { isShowingSharedTagEditor = true }
-                                    )
+                                    if model.sharedTagCloudState.isConfigured {
+                                        DetailTagSummaryPanel(
+                                            title: "共有タグ",
+                                            emptyText: "まだ共有タグは付いていません",
+                                            tags: assignedSharedTags.map { tag in
+                                                DetailTagSummaryItem(
+                                                    id: "shared-\(tag.remoteTagID)",
+                                                    name: tag.name,
+                                                    canRemove: !isRemovingTag && (tag.currentUserRole == .owner || tag.currentUserRole == .editor),
+                                                    onRemove: {
+                                                        guard !isRemovingTag else { return }
+                                                        isRemovingTag = true
+                                                        Task {
+                                                            _ = await model.removeEntry(entryID, fromSharedTag: tag.remoteTagID)
+                                                            isRemovingTag = false
+                                                        }
+                                                    }
+                                                )
+                                            },
+                                            onEdit: { isShowingSharedTagEditor = true }
+                                        )
+                                    }
                                 }
 
                                 AppPanel {
@@ -340,18 +372,20 @@ struct DetailView: View {
                 entryID: entryID
             )
             .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
+            .presentationDragIndicator(.hidden)
             .presentationCornerRadius(32)
         }
         .sheet(isPresented: $isShowingSharedTagEditor) {
-            EntrySharedTagAssignmentSheet(
-                model: model,
-                entryID: entryID,
-                onDidChange: {}
-            )
-            .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
-            .presentationCornerRadius(32)
+            if model.sharedTagCloudState.isConfigured {
+                EntrySharedTagAssignmentSheet(
+                    model: model,
+                    entryID: entryID,
+                    onDidChange: {}
+                )
+                .presentationDetents([.large])
+                .presentationDragIndicator(.hidden)
+                .presentationCornerRadius(32)
+            }
         }
         .confirmationDialog("削除しますか？", isPresented: $isShowingDeleteConfirm, titleVisibility: .visible) {
             Button("削除する", role: .destructive) {
@@ -666,25 +700,27 @@ private struct EntryLocalTagAssignmentSheet: View {
                             .font(.system(size: 18, weight: .heavy, design: .rounded))
                             .foregroundStyle(AppPalette.textPrimary)
 
-                        ForEach(assignedTags) { tag in
-                            HStack(spacing: 10) {
-                                Text(tag.name)
-                                    .font(.system(size: 17, weight: .heavy, design: .rounded))
-                                    .foregroundStyle(AppPalette.textPrimary)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                                AppActionButton(enabled: !isWorking) {
-                                    guard !isWorking else { return }
-                                    isWorking = true
-                                    Task {
-                                        if await model.removeEntry(entryID, fromLocalTag: tag.id) {
-                                            reloadAssignedTags()
+                        LazyVGrid(
+                            columns: [GridItem(.adaptive(minimum: 150), spacing: 10, alignment: .leading)],
+                            alignment: .leading,
+                            spacing: 10
+                        ) {
+                            ForEach(assignedTags) { tag in
+                                LocalTagAssignmentPill(
+                                    name: tag.name,
+                                    actionTitle: "外す",
+                                    isWorking: isWorking,
+                                    onAction: {
+                                        guard !isWorking else { return }
+                                        isWorking = true
+                                        Task {
+                                            if await model.removeEntry(entryID, fromLocalTag: tag.id) {
+                                                reloadAssignedTags()
+                                            }
+                                            isWorking = false
                                         }
-                                        isWorking = false
                                     }
-                                } label: {
-                                    Text("外す")
-                                }
+                                )
                             }
                         }
                     }
@@ -710,14 +746,11 @@ private struct EntryLocalTagAssignmentSheet: View {
                             spacing: 10
                         ) {
                             ForEach(unassignedTags) { tag in
-                                HStack(spacing: 8) {
-                                    Text(tag.name)
-                                        .font(.system(size: 20, weight: .heavy, design: .rounded))
-                                        .foregroundStyle(AppPalette.textPrimary)
-                                        .lineLimit(1)
-                                        .minimumScaleFactor(0.8)
-
-                                    Button {
+                                LocalTagAssignmentPill(
+                                    name: tag.name,
+                                    actionTitle: "追加",
+                                    isWorking: isWorking,
+                                    onAction: {
                                         guard !isWorking else { return }
                                         isWorking = true
                                         Task {
@@ -726,23 +759,8 @@ private struct EntryLocalTagAssignmentSheet: View {
                                             }
                                             isWorking = false
                                         }
-                                    } label: {
-                                        Text("追加")
-                                            .font(.system(size: 16, weight: .heavy, design: .rounded))
-                                            .foregroundStyle(AppPalette.background)
-                                            .lineLimit(1)
-                                            .fixedSize(horizontal: true, vertical: false)
-                                            .padding(.horizontal, 16)
-                                            .padding(.vertical, 9)
-                                            .frame(minWidth: 66)
-                                            .background(AppPalette.primary, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                                     }
-                                    .buttonStyle(.plain)
-                                    .disabled(isWorking)
-                                }
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 10)
-                                .background(AppPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                )
                             }
                         }
                     }
@@ -761,6 +779,46 @@ private struct EntryLocalTagAssignmentSheet: View {
     }
 }
 
+private struct LocalTagAssignmentPill: View {
+    let name: String
+    let actionTitle: String
+    let isWorking: Bool
+    let onAction: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(name)
+                .font(.system(size: 20, weight: .heavy, design: .rounded))
+                .foregroundStyle(AppPalette.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+                .frame(maxWidth: 148, alignment: .leading)
+
+            Button(action: onAction) {
+                Text(actionTitle)
+                    .font(.system(size: 16, weight: .heavy, design: .rounded))
+                    .foregroundStyle(AppPalette.background)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 9)
+                    .frame(minWidth: 66)
+                    .background(AppPalette.primary, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(isWorking)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(AppPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(AppPalette.outlineSoft, lineWidth: 1.5)
+        )
+        .fixedSize(horizontal: true, vertical: false)
+    }
+}
+
 private struct DetailSectionLabel: View {
     let text: String
 
@@ -772,10 +830,17 @@ private struct DetailSectionLabel: View {
     }
 }
 
+private struct DetailTagSummaryItem: Identifiable {
+    let id: String
+    let name: String
+    let canRemove: Bool
+    let onRemove: () -> Void
+}
+
 private struct DetailTagSummaryPanel: View {
     let title: String
     let emptyText: String
-    let tagNames: [String]
+    let tags: [DetailTagSummaryItem]
     let onEdit: () -> Void
 
     var body: some View {
@@ -788,13 +853,18 @@ private struct DetailTagSummaryPanel: View {
 
                 DetailTagEditButton(action: onEdit)
 
-                if tagNames.isEmpty {
-                    DetailTagValuePill(text: emptyText, isEmpty: true)
+                if tags.isEmpty {
+                    DetailTagValuePill(text: emptyText, isEmpty: true, canRemove: false, onRemove: nil)
                 } else {
                     ScrollView(.vertical, showsIndicators: false) {
                         VStack(alignment: .leading, spacing: 7) {
-                            ForEach(tagNames, id: \.self) { name in
-                                DetailTagValuePill(text: name, isEmpty: false)
+                            ForEach(tags) { tag in
+                                DetailTagValuePill(
+                                    text: tag.name,
+                                    isEmpty: false,
+                                    canRemove: tag.canRemove,
+                                    onRemove: tag.onRemove
+                                )
                             }
                         }
                         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -831,17 +901,35 @@ private struct DetailTagEditButton: View {
 private struct DetailTagValuePill: View {
     let text: String
     let isEmpty: Bool
+    let canRemove: Bool
+    let onRemove: (() -> Void)?
 
     var body: some View {
-        Text(text)
-            .font(.system(size: isEmpty ? 13 : 15, weight: isEmpty ? .medium : .bold))
-            .foregroundStyle(isEmpty ? AppPalette.textSecondary : AppPalette.textPrimary)
-            .lineLimit(2)
-            .minimumScaleFactor(0.78)
-            .multilineTextAlignment(.center)
-            .frame(maxWidth: .infinity, minHeight: 42, maxHeight: 42)
-            .padding(.horizontal, 8)
-            .background(AppPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        HStack(spacing: 5) {
+            Text(text)
+                .font(.system(size: isEmpty ? 13 : 15, weight: isEmpty ? .medium : .bold))
+                .foregroundStyle(isEmpty ? AppPalette.textSecondary : AppPalette.textPrimary)
+                .lineLimit(2)
+                .minimumScaleFactor(0.78)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity, minHeight: 42, maxHeight: 42)
+
+            if let onRemove {
+                Button(action: onRemove) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .heavy))
+                        .foregroundStyle(AppPalette.textSecondary)
+                        .frame(width: 30, height: 30)
+                        .background(AppPalette.background.opacity(0.7), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!canRemove)
+                .accessibilityLabel("\(text)を外す")
+            }
+        }
+        .padding(.leading, 8)
+        .padding(.trailing, onRemove == nil ? 8 : 4)
+        .background(AppPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
 
@@ -877,9 +965,17 @@ private func isSocialPostContentService(_ serviceType: ServiceType) -> Bool {
 }
 
 private func detailServiceLabel(for entry: URLRecord) -> String {
-    if entry.serviceType == .tiktok,
-       let authorName = detailNonBlank(entry.fetchedTitle) {
-        return authorName
+    switch entry.serviceType {
+    case .youtube, .x, .instagram, .tiktok:
+        if let authorName = detailNonBlank(entry.fetchedAuthorName) {
+            return authorName
+        }
+        if entry.serviceType != .youtube,
+           let authorName = detailNonBlank(entry.fetchedTitle) {
+            return authorName
+        }
+    case .all, .web:
+        break
     }
     return serviceLabel(for: entry)
 }
