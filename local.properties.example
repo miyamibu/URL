@@ -9,10 +9,11 @@
 # supabase.anon.key=<supabase publishable or legacy anon key>
 # shared.tag.cloud.enabled=true
 
-# Beta/release shared-tag cloud. Required for assembleRelease.
+# Beta/release shared-tag cloud. Required only when release.shared.tag.cloud.enabled=true.
+# Leave release.shared.tag.cloud.enabled unset or false for a pre-contract local-only release build.
 # release.supabase.url=https://<project-ref>.supabase.co
 # release.supabase.anon.key=<supabase publishable or legacy anon key>
 # release.shared.tag.cloud.enabled=true
 
 # Public invite links. Defaults to the beta Vercel URL until urlsaver.app is active.
-# invite.link.base.url=https://invite-link-omega.vercel.app
+# invite.link.base.url=https://miyamibu.xyz

@@ -32,7 +32,7 @@ fun buildConfigString(value: String): String {
 val publicInviteLinkBaseUrl = configString(
     propertyName = "invite.link.base.url",
     envName = "URLSAVER_INVITE_LINK_BASE_URL",
-    defaultValue = "https://invite-link-omega.vercel.app",
+    defaultValue = "https://miyamibu.xyz",
 ).trim().trimEnd('/')
 
 val releaseSharedTagCloudEnabled = configBoolean(
@@ -51,13 +51,15 @@ val releaseBuildRequested = gradle.startParameter.taskNames.any { taskName ->
     taskName.contains("Release", ignoreCase = true) || taskName == "build"
 }
 if (releaseBuildRequested &&
-    (!releaseSharedTagCloudEnabled || releaseSupabaseUrl.isBlank() || releaseSupabaseAnonKey.isBlank())
+    releaseSharedTagCloudEnabled &&
+    (releaseSupabaseUrl.isBlank() || releaseSupabaseAnonKey.isBlank())
 ) {
     throw GradleException(
-        "Release builds require beta/production Supabase config. Set " +
+        "Release builds with shared-tag cloud enabled require beta/production Supabase config. Set " +
             "release.shared.tag.cloud.enabled=true, release.supabase.url, release.supabase.anon.key " +
             "or URLSAVER_RELEASE_SHARED_TAG_CLOUD_ENABLED=true, URLSAVER_RELEASE_SUPABASE_URL, " +
-            "URLSAVER_RELEASE_SUPABASE_ANON_KEY. Use a publishable/anon key, never service_role/secret.",
+            "URLSAVER_RELEASE_SUPABASE_ANON_KEY. For a local-only pre-contract release build, leave " +
+            "release.shared.tag.cloud.enabled unset or false. Use a publishable/anon key, never service_role/secret.",
     )
 }
 
@@ -80,6 +82,7 @@ android {
 
     buildTypes {
         debug {
+            buildConfigField("boolean", "ADS_TRIAL_LAUNCH_ADS_ENABLED", "false")
             buildConfigField("boolean", "ADS_ENABLED", configBoolean("ads.enabled", "URLSAVER_ADS_ENABLED").toString())
             buildConfigField("String", "ADMOB_APP_ID", buildConfigString("ca-app-pub-3940256099942544~3347511713"))
             buildConfigField("String", "ADMOB_BANNER_AD_UNIT_ID", buildConfigString("ca-app-pub-3940256099942544/9214589741"))
@@ -92,6 +95,7 @@ android {
         }
         release {
             isMinifyEnabled = false
+            buildConfigField("boolean", "ADS_TRIAL_LAUNCH_ADS_ENABLED", "false")
             buildConfigField("boolean", "ADS_ENABLED", "false")
             buildConfigField("String", "ADMOB_APP_ID", buildConfigString(""))
             buildConfigField("String", "ADMOB_BANNER_AD_UNIT_ID", buildConfigString(""))

@@ -88,7 +88,7 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
                     android:scheme="https"
-                    android:host="invite-link-omega.vercel.app"
+                    android:host="miyamibu.xyz"
                     android:pathPrefix="/invite/" />
             </intent-filter>
         </activity>
