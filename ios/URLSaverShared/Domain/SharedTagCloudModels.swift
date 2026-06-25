@@ -39,6 +39,32 @@ struct SharedTagMemberSummary: Identifiable, Equatable, Sendable {
     var id: String { "\(tagID):\(userID)" }
 }
 
+struct SharedTagGroupSummary: Identifiable, Equatable, Sendable {
+    let remoteGroupID: String
+    let name: String
+    let currentUserRole: SharedTagMemberRole?
+
+    var id: String { remoteGroupID }
+}
+
+struct SharedTagGroupMemberSummary: Identifiable, Equatable, Sendable {
+    let groupID: String
+    let userID: String
+    let role: SharedTagMemberRole
+    let isCurrentUser: Bool
+
+    var id: String { "\(groupID):\(userID)" }
+}
+
+struct SharedTagGroupTagSummary: Identifiable, Equatable, Sendable {
+    let groupID: String
+    let remoteTagID: String
+    let tagName: String
+    let currentUserRole: SharedTagMemberRole?
+
+    var id: String { "\(groupID):\(remoteTagID)" }
+}
+
 enum SharedTagMutationResult: Equatable, Sendable {
     case success
     case authRequired
@@ -78,14 +104,19 @@ enum SharedTagAuthResult: Equatable, Sendable {
 }
 
 enum SharedTagInviteAcceptanceResult: Equatable, Sendable {
-    case accepted(tagName: String, role: SharedTagMemberRole?)
+    case accepted(displayName: String, inviteType: SharedInviteType, role: SharedTagMemberRole?)
     case authRequired
     case invalidInvite
     case failure(String)
 }
 
 enum SharedTagInvitePreviewResult: Equatable, Sendable {
-    case success(tagName: String)
+    case success(displayName: String, inviteType: SharedInviteType)
     case invalidInvite
     case failure(String)
+}
+
+enum SharedInviteType: String, Codable, Equatable, Sendable {
+    case tag
+    case group
 }

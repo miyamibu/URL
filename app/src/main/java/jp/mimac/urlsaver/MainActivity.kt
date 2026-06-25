@@ -1,15 +1,28 @@
 package jp.mimac.urlsaver
 
 import android.content.Intent
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.surfaceColorAtElevation
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.unit.dp
 import jp.mimac.urlsaver.ui.MainActivityViewModel
 import jp.mimac.urlsaver.ui.SimpleFactory
 import jp.mimac.urlsaver.ui.UrlSaverRoot
@@ -33,6 +46,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
+        )
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         consumeIncomingIntent(intent)
 
         setContent {
@@ -52,6 +70,26 @@ class MainActivity : ComponentActivity() {
             }
 
             UrlSaverTheme(darkTheme = darkTheme) {
+                val navigationBarColor = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp).toArgb()
+                SideEffect {
+                    val insetsController = WindowCompat.getInsetsController(window, window.decorView)
+                    enableEdgeToEdge(
+                        statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
+                        navigationBarStyle = if (darkTheme) {
+                            SystemBarStyle.dark(navigationBarColor)
+                        } else {
+                            SystemBarStyle.light(navigationBarColor, navigationBarColor)
+                        },
+                    )
+                    window.setBackgroundDrawable(ColorDrawable(navigationBarColor))
+                    window.navigationBarColor = navigationBarColor
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        window.isNavigationBarContrastEnforced = false
+                    }
+                    insetsController.systemBarsBehavior =
+                        WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                    insetsController.hide(WindowInsetsCompat.Type.navigationBars())
+                }
                 UrlSaverRoot(
                     activityViewModel = activityViewModel,
                     themeMode = themeMode,
@@ -85,5 +123,6 @@ class MainActivity : ComponentActivity() {
         activityViewModel.consumeShareResult(intent, currentRoute)
         activityViewModel.consumeTagImportResult(intent)
         activityViewModel.consumeDeepLinkIntent(intent)
+        activityViewModel.consumeAuthCallback(intent)
     }
 }

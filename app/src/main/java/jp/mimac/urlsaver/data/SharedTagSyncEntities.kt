@@ -35,6 +35,81 @@ data class SharedTagMemberEntity(
 )
 
 @Entity(
+    tableName = "shared_tag_groups",
+    indices = [
+        Index(value = ["authUserId"]),
+        Index(value = ["authUserId", "remoteGroupId"], unique = true),
+    ],
+)
+data class SharedTagGroupEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val authUserId: String,
+    val remoteGroupId: String,
+    val name: String,
+    val currentUserRole: SharedTagMemberRole?,
+    val deletedAt: Long?,
+    val lastSyncedAt: Long?,
+)
+
+@Entity(
+    tableName = "shared_tag_group_members",
+    primaryKeys = ["groupId", "userId"],
+    foreignKeys = [
+        ForeignKey(
+            entity = SharedTagGroupEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["groupId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [
+        Index(value = ["authUserId"]),
+        Index(value = ["userId"]),
+    ],
+)
+data class SharedTagGroupMemberEntity(
+    val groupId: Long,
+    val authUserId: String,
+    val userId: String,
+    val role: SharedTagMemberRole,
+    val status: SharedTagMemberStatus,
+    val createdAt: Long,
+    val updatedAt: Long,
+)
+
+@Entity(
+    tableName = "shared_tag_group_tags",
+    primaryKeys = ["groupId", "tagId"],
+    foreignKeys = [
+        ForeignKey(
+            entity = SharedTagGroupEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["groupId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+        ForeignKey(
+            entity = TagEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["tagId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [
+        Index(value = ["authUserId"]),
+        Index(value = ["tagId"]),
+    ],
+)
+data class SharedTagGroupTagEntity(
+    val groupId: Long,
+    val tagId: Long,
+    val authUserId: String,
+    val remoteGroupId: String,
+    val remoteTagId: String,
+    val addedBy: String,
+    val createdAt: Long,
+)
+
+@Entity(
     tableName = "shared_tag_sync_outbox",
     indices = [
         Index(value = ["authUserId", "createdAt"]),

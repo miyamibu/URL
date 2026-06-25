@@ -1,13 +1,22 @@
 package jp.mimac.urlsaver
 
+import jp.mimac.urlsaver.data.EntitlementGrantRemoteDataSource
+import jp.mimac.urlsaver.data.EntitlementGrantRepository
+import jp.mimac.urlsaver.data.EntitlementGrantStore
+import jp.mimac.urlsaver.data.SharedPreferencesSharedTagAuthSessionProvider
+import jp.mimac.urlsaver.data.SharedTagAuthSession
+import jp.mimac.urlsaver.data.SharedTagAuthSessionProvider
 import jp.mimac.urlsaver.data.TagRepository
 import jp.mimac.urlsaver.data.UrlEntryEntity
 import jp.mimac.urlsaver.data.UserProfileStore
 import jp.mimac.urlsaver.domain.AssignTagResult
 import jp.mimac.urlsaver.domain.CreateTagResult
+import jp.mimac.urlsaver.domain.EntitlementGrant
+import jp.mimac.urlsaver.domain.EntitlementSource
 import jp.mimac.urlsaver.domain.FeatureEntitlements
 import jp.mimac.urlsaver.domain.LaunchStandardPlan
 import jp.mimac.urlsaver.domain.MigrateSharedTagResult
+import jp.mimac.urlsaver.domain.PlanType
 import jp.mimac.urlsaver.domain.SharedTagAccountDeletionResult
 import jp.mimac.urlsaver.domain.SharedTagAuthResult
 import jp.mimac.urlsaver.domain.SharedTagCloudState
@@ -22,10 +31,12 @@ import jp.mimac.urlsaver.domain.TagSharePayload
 import jp.mimac.urlsaver.domain.TagWithCount
 import jp.mimac.urlsaver.domain.UsageSummary
 import jp.mimac.urlsaver.domain.UserProfile
-import jp.mimac.urlsaver.ui.InviteCodeApplyResult
+import jp.mimac.urlsaver.ui.PromoCodeApplyResult
 import jp.mimac.urlsaver.ui.SharedTagAuthViewModel
+import jp.mimac.urlsaver.util.AppClock
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertFalse
@@ -35,33 +46,52 @@ import org.junit.Test
 class SharedTagAuthViewModelTest {
 
     @Test
-    fun canApplyInviteCode_blankInputIsRejected() {
+    fun canApplyPromoCode_blankInputIsRejected() {
         val viewModel = SharedTagAuthViewModel(
             tagRepository = FakeTagRepository(),
             userProfileStore = FakeUserProfileStore(),
+            entitlementGrantRepository = fakeEntitlementGrantRepository(),
         )
 
-        assertFalse(viewModel.canApplyInviteCode("  "))
-        assertTrue(viewModel.canApplyInviteCode("MIBU100"))
+        assertFalse(viewModel.canApplyPromoCode("  "))
+        assertTrue(viewModel.canApplyPromoCode("MIBU100"))
     }
 
     @Test
-    fun applyInviteCode_acceptsInviteTokenThroughRepository() = runBlocking {
-        val repository = FakeTagRepository(
-            acceptInviteResult = SharedTagInviteAcceptanceResult.Success(
-                remoteTagId = "remote-tag",
-                tagName = "旅行",
+    fun redeemPromoCode_appliesPromoThroughEntitlementRepository() = runBlocking {
+        val viewModel = SharedTagAuthViewModel(
+            tagRepository = FakeTagRepository(),
+            userProfileStore = FakeUserProfileStore(),
+            entitlementGrantRepository = fakeEntitlementGrantRepository(
+                redeemResult = listOf(
+                    EntitlementGrant(
+                        planType = PlanType.PROMO_PRO,
+                        source = EntitlementSource.STORE_PROMO_CODE,
+                        startsAt = 0L,
+                    ),
+                ),
             ),
         )
-        val viewModel = SharedTagAuthViewModel(
-            tagRepository = repository,
-            userProfileStore = FakeUserProfileStore(),
+
+        val result = viewModel.redeemPromoCode("MIBU100")
+
+        assertTrue(result is PromoCodeApplyResult.Success)
+    }
+
+    private fun fakeEntitlementGrantRepository(
+        redeemResult: List<EntitlementGrant> = emptyList(),
+    ): EntitlementGrantRepository {
+        return EntitlementGrantRepository(
+            authSessionProvider = FakeSessionProvider(
+                SharedTagAuthSession(
+                    authUserId = "user-1",
+                    accessToken = "access-token",
+                ),
+            ),
+            remoteDataSource = FakeEntitlementGrantRemoteDataSource(redeemResult),
+            grantStore = FakeEntitlementGrantStore(),
+            clock = FakeClock,
         )
-
-        val result = viewModel.applyInviteCode("MIBU100")
-
-        assertTrue(result is InviteCodeApplyResult.Success)
-        assertTrue((result as InviteCodeApplyResult.Success).tagName == "旅行")
     }
 }
 
@@ -77,6 +107,50 @@ private class FakeUserProfileStore : UserProfileStore {
     override suspend fun saveAvatarBase64(avatarBase64: String?) {
         state.value = state.value.copy(avatarBase64 = avatarBase64)
     }
+}
+
+private class FakeEntitlementGrantRemoteDataSource(
+    private val redeemResult: List<EntitlementGrant>,
+) : EntitlementGrantRemoteDataSource {
+    override suspend fun fetchGrants(session: SharedTagAuthSession): List<EntitlementGrant> = emptyList()
+
+    override suspend fun redeemPromoCode(
+        session: SharedTagAuthSession,
+        code: String,
+    ): List<EntitlementGrant> = redeemResult
+}
+
+private class FakeEntitlementGrantStore : EntitlementGrantStore {
+    override suspend fun loadLastKnownGrants(
+        authUserId: String,
+        currentTimeMillis: Long,
+    ): List<EntitlementGrant> = emptyList()
+
+    override suspend fun saveLastKnownGrants(
+        authUserId: String,
+        grants: List<EntitlementGrant>,
+        fetchedAtMillis: Long,
+    ) = Unit
+
+    override fun cachedGrantsSnapshot(
+        authUserId: String?,
+        currentTimeMillis: Long,
+    ): List<EntitlementGrant> = emptyList()
+}
+
+private class FakeSessionProvider(
+    session: SharedTagAuthSession?,
+) : SharedTagAuthSessionProvider {
+    private val state = MutableStateFlow(session)
+    override val session: StateFlow<SharedTagAuthSession?> = state
+
+    override fun updateSession(newSession: SharedTagAuthSession?) {
+        state.value = newSession
+    }
+}
+
+private object FakeClock : AppClock {
+    override fun nowEpochMillis(): Long = 5_000L
 }
 
 private class FakeTagRepository(

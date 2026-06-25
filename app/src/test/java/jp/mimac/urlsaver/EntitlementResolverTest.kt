@@ -262,6 +262,11 @@ class EntitlementResolverTest {
                 override suspend fun fetchGrants(session: SharedTagAuthSession): List<EntitlementGrant> {
                     throw IOException("offline")
                 }
+
+                override suspend fun redeemPromoCode(
+                    session: SharedTagAuthSession,
+                    code: String,
+                ): List<EntitlementGrant> = emptyList()
             },
             grantStore = FakeGrantStore(listOf(grant)),
             clock = FixedClock(now = 5_000L),

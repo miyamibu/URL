@@ -12,6 +12,8 @@ data class PlanLimits(
     val normalTagLimit: Int,
     val sharedTagLimit: Int,
     val sharedTagUrlLimitPerTag: Int,
+    val sharedTagGroupLimit: Int = 0,
+    val sharedTagGroupMemberLimit: Int = 0,
 )
 
 data class FeatureEntitlements(
@@ -34,7 +36,8 @@ data class UsageSummary(
     val personalUrlCount: Int,
     val normalTagCount: Int,
     val sharedTagCount: Int,
-    val sharedTagUsages: List<SharedTagUsage>,
+    val sharedTagGroupCount: Int = 0,
+    val sharedTagUsages: List<SharedTagUsage> = emptyList(),
 ) {
     fun sharedTagUsageOrNull(tagId: Long): SharedTagUsage? = sharedTagUsages.firstOrNull { it.tagId == tagId }
 }
@@ -52,6 +55,7 @@ enum class LimitTarget {
     NORMAL_TAG,
     SHARED_TAG,
     SHARED_TAG_URL,
+    SHARED_TAG_GROUP,
 }
 
 class LimitChecker(
@@ -100,6 +104,16 @@ class LimitChecker(
         }
         return LimitResult.Allowed
     }
+
+    fun checkCanCreateSharedTagGroup(usage: UsageSummary): LimitResult {
+        if (usage.sharedTagGroupCount >= limits.sharedTagGroupLimit) {
+            return LimitResult.Blocked(
+                target = LimitTarget.SHARED_TAG_GROUP,
+                message = "グループは${planLabel}では${limits.sharedTagGroupLimit}個まで作成できます。",
+            )
+        }
+        return LimitResult.Allowed
+    }
 }
 
 object LaunchStandardPlan {
@@ -108,6 +122,8 @@ object LaunchStandardPlan {
         normalTagLimit = 10,
         sharedTagLimit = 2,
         sharedTagUrlLimitPerTag = 20,
+        sharedTagGroupLimit = 2,
+        sharedTagGroupMemberLimit = 10,
     )
 
     val entitlements: FeatureEntitlements = FeatureEntitlements(
@@ -126,6 +142,8 @@ object FreePlan {
         normalTagLimit = 5,
         sharedTagLimit = 1,
         sharedTagUrlLimitPerTag = 10,
+        sharedTagGroupLimit = 0,
+        sharedTagGroupMemberLimit = 0,
     )
 
     val entitlements: FeatureEntitlements = FeatureEntitlements(
@@ -144,6 +162,8 @@ object ProPlan {
         normalTagLimit = 200,
         sharedTagLimit = 50,
         sharedTagUrlLimitPerTag = 10_000,
+        sharedTagGroupLimit = 50,
+        sharedTagGroupMemberLimit = 100,
     )
 
     val entitlements: FeatureEntitlements = FeatureEntitlements(

@@ -17,6 +17,7 @@ data class SharedTagSyncOperation(
     @SerialName("normalization_version") val normalizationVersion: Int? = null,
     @SerialName("user_id") val userId: String? = null,
     val role: String? = null,
+    @SerialName("group_id") val groupId: String? = null,
 )
 
 @Serializable
@@ -68,6 +69,9 @@ data class PullSharedTagSnapshotResponse(
     val tags: List<RemoteSharedTag>,
     val members: List<RemoteSharedTagMember>,
     val urls: List<RemoteSharedTagUrl>,
+    val groups: List<RemoteSharedTagGroup> = emptyList(),
+    @SerialName("group_members") val groupMembers: List<RemoteSharedTagGroupMember> = emptyList(),
+    @SerialName("group_tags") val groupTags: List<RemoteSharedTagGroupTag> = emptyList(),
 )
 
 @Serializable
@@ -105,6 +109,34 @@ data class RemoteSharedTagUrl(
 )
 
 @Serializable
+data class RemoteSharedTagGroup(
+    val id: String,
+    val name: String,
+    @SerialName("created_by") val createdBy: String,
+    @SerialName("created_at") val createdAt: String,
+    @SerialName("updated_at") val updatedAt: String,
+    @SerialName("deleted_at") val deletedAt: String? = null,
+)
+
+@Serializable
+data class RemoteSharedTagGroupMember(
+    @SerialName("group_id") val groupId: String,
+    @SerialName("user_id") val userId: String,
+    val role: String,
+    val status: String,
+    @SerialName("created_at") val createdAt: String,
+    @SerialName("updated_at") val updatedAt: String,
+)
+
+@Serializable
+data class RemoteSharedTagGroupTag(
+    @SerialName("group_id") val groupId: String,
+    @SerialName("tag_id") val tagId: String,
+    @SerialName("added_by") val addedBy: String,
+    @SerialName("created_at") val createdAt: String,
+)
+
+@Serializable
 data class CreateSharedTagInviteResponse(
     @SerialName("tag_id") val tagId: String,
     @SerialName("invite_token") val inviteToken: String,
@@ -114,15 +146,43 @@ data class CreateSharedTagInviteResponse(
 
 @Serializable
 data class PreviewSharedTagInviteResponse(
+    @SerialName("invite_type") val inviteType: String = "tag",
     @SerialName("tag_name") val tagName: String,
+    @SerialName("group_name") val groupName: String? = null,
+    val role: String? = null,
 )
 
 @Serializable
 data class AcceptSharedTagInviteResponse(
-    @SerialName("tag_id") val tagId: String,
-    @SerialName("tag_name") val tagName: String,
+    @SerialName("invite_type") val inviteType: String = "tag",
+    @SerialName("tag_id") val tagId: String? = null,
+    @SerialName("tag_name") val tagName: String? = null,
+    @SerialName("group_id") val groupId: String? = null,
+    @SerialName("group_name") val groupName: String? = null,
     val role: String,
     val status: String,
+)
+
+@Serializable
+data class CreateSharedTagGroupResponse(
+    @SerialName("group_id") val groupId: String,
+    @SerialName("group_name") val groupName: String,
+    val role: String,
+)
+
+@Serializable
+data class SharedTagGroupMutationResponse(
+    @SerialName("group_id") val groupId: String,
+    val status: String? = null,
+)
+
+@Serializable
+data class CreateSharedTagGroupInviteResponse(
+    @SerialName("invite_type") val inviteType: String,
+    @SerialName("group_id") val groupId: String,
+    @SerialName("invite_token") val inviteToken: String,
+    @SerialName("expires_at") val expiresAt: String,
+    val role: String,
 )
 
 @Serializable

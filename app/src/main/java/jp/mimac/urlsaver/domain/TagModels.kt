@@ -34,6 +34,28 @@ data class SharedTagMemberRecord(
     val isCurrentUser: Boolean,
 )
 
+data class SharedTagGroupRecord(
+    val id: Long,
+    val remoteGroupId: String,
+    val name: String,
+    val currentUserRole: SharedTagMemberRole?,
+)
+
+data class SharedTagGroupMemberRecord(
+    val groupId: Long,
+    val userId: String,
+    val role: SharedTagMemberRole,
+    val status: SharedTagMemberStatus,
+    val isCurrentUser: Boolean,
+)
+
+data class SharedTagGroupTagRecord(
+    val groupId: Long,
+    val tagId: Long,
+    val tagName: String,
+    val currentUserRole: SharedTagMemberRole?,
+)
+
 @Serializable
 data class TagSharePayload(
     @SerialName("urlsaver_version") val urlsaverVersion: Int,
@@ -66,6 +88,14 @@ sealed interface CreateTagResult {
     data object Duplicate : CreateTagResult
     data class LimitReached(val message: String) : CreateTagResult
     data object Failed : CreateTagResult
+}
+
+sealed interface CreateSharedTagGroupResult {
+    data object Success : CreateSharedTagGroupResult
+    data object InvalidName : CreateSharedTagGroupResult
+    data object AuthRequired : CreateSharedTagGroupResult
+    data class LimitReached(val message: String) : CreateSharedTagGroupResult
+    data class Failed(val message: String? = null) : CreateSharedTagGroupResult
 }
 
 sealed interface AssignTagResult {
@@ -137,10 +167,31 @@ sealed interface SharedTagInviteCreationResult {
     data class Failure(val message: String) : SharedTagInviteCreationResult
 }
 
+sealed interface SharedTagGroupInviteCreationResult {
+    data class Success(
+        val inviteToken: String,
+        val inviteUrl: String,
+        val expiresAt: String,
+    ) : SharedTagGroupInviteCreationResult
+
+    data object AuthRequired : SharedTagGroupInviteCreationResult
+    data object OwnerOnly : SharedTagGroupInviteCreationResult
+    data class Failure(val message: String) : SharedTagGroupInviteCreationResult
+}
+
 sealed interface SharedTagInvitePreviewResult {
     data class Success(
-        val tagName: String,
-    ) : SharedTagInvitePreviewResult
+        val displayName: String,
+        val inviteType: SharedInviteType,
+    ) : SharedTagInvitePreviewResult {
+        constructor(tagName: String) : this(
+            displayName = tagName,
+            inviteType = SharedInviteType.TAG,
+        )
+
+        val tagName: String
+            get() = displayName
+    }
 
     data object InvalidInvite : SharedTagInvitePreviewResult
     data class Failure(val message: String) : SharedTagInvitePreviewResult
@@ -148,13 +199,31 @@ sealed interface SharedTagInvitePreviewResult {
 
 sealed interface SharedTagInviteAcceptanceResult {
     data class Success(
-        val remoteTagId: String,
-        val tagName: String,
-    ) : SharedTagInviteAcceptanceResult
+        val remoteId: String,
+        val displayName: String,
+        val inviteType: SharedInviteType,
+    ) : SharedTagInviteAcceptanceResult {
+        constructor(remoteTagId: String, tagName: String) : this(
+            remoteId = remoteTagId,
+            displayName = tagName,
+            inviteType = SharedInviteType.TAG,
+        )
+
+        val remoteTagId: String
+            get() = remoteId
+
+        val tagName: String
+            get() = displayName
+    }
 
     data object AuthRequired : SharedTagInviteAcceptanceResult
     data object InvalidInvite : SharedTagInviteAcceptanceResult
     data class Failure(val message: String) : SharedTagInviteAcceptanceResult
+}
+
+enum class SharedInviteType {
+    TAG,
+    GROUP,
 }
 
 sealed interface SharedTagOwnershipTransferResult {

@@ -22,7 +22,7 @@ returns text
 language sql
 immutable
 as $$
-    select encode(digest(btrim(raw_token), 'sha256'), 'hex')
+    select encode(extensions.digest(btrim(raw_token), 'sha256'), 'hex')
 $$;
 
 create or replace function public.create_shared_tag_invite(
@@ -59,7 +59,7 @@ begin
         raise exception 'tag_not_found';
     end if;
 
-    invite_token := encode(gen_random_bytes(24), 'hex');
+    invite_token := encode(extensions.gen_random_bytes(24), 'hex');
     invite_hash := private.hash_shared_tag_invite_token(invite_token);
 
     insert into public.shared_tag_invites (

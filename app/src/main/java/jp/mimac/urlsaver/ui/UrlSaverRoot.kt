@@ -7,6 +7,7 @@ import android.content.Intent
 import jp.mimac.urlsaver.BuildConfig
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -16,14 +17,18 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -36,12 +41,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ViewList
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.ChecklistRtl
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
@@ -50,7 +57,11 @@ import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.IosShare
 import androidx.compose.material.icons.outlined.LinkOff
+import androidx.compose.material.icons.outlined.Group
+import androidx.compose.material.icons.outlined.Groups
+import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Sell
 import androidx.compose.material.icons.outlined.ViewAgenda
 import androidx.compose.material3.AlertDialog
@@ -78,7 +89,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.rememberSwipeToDismissBoxState
+import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -87,15 +100,27 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -124,14 +149,21 @@ import jp.mimac.urlsaver.domain.MetadataState
 import jp.mimac.urlsaver.domain.RecordState
 import jp.mimac.urlsaver.domain.AssignTagResult
 import jp.mimac.urlsaver.domain.CreateTagResult
+import jp.mimac.urlsaver.domain.CreateSharedTagGroupResult
 import jp.mimac.urlsaver.domain.SharedTagNameValidationError
 import jp.mimac.urlsaver.domain.SharedTagMemberRole
+import jp.mimac.urlsaver.domain.SharedTagGroupInviteCreationResult
+import jp.mimac.urlsaver.domain.SharedTagGroupMemberRecord
+import jp.mimac.urlsaver.domain.SharedTagGroupRecord
+import jp.mimac.urlsaver.domain.SharedTagGroupTagRecord
 import jp.mimac.urlsaver.domain.SharedTagRecord
 import jp.mimac.urlsaver.domain.SharedTagScope
+import jp.mimac.urlsaver.domain.SharedTagSyncStatus
 import jp.mimac.urlsaver.domain.ServiceType
 import jp.mimac.urlsaver.domain.ShareSaveResult
 import jp.mimac.urlsaver.domain.SnackbarEvent
 import jp.mimac.urlsaver.domain.SnackbarEventKind
+import jp.mimac.urlsaver.domain.TagWithCount
 import jp.mimac.urlsaver.domain.UrlRules
 import jp.mimac.urlsaver.domain.normalizeSharedTagName
 import jp.mimac.urlsaver.domain.validateSharedTagName
@@ -150,6 +182,7 @@ import jp.mimac.urlsaver.ui.ads.BannerAdSlot
 import jp.mimac.urlsaver.ui.theme.OrbitTokens
 import jp.mimac.urlsaver.ui.theme.AppThemeMode
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import java.time.ZoneId
 import kotlin.math.abs
@@ -301,6 +334,7 @@ fun UrlSaverRoot(
                 context = context,
                 navController = navController,
                 activityViewModel = activityViewModel,
+                snackbarHostState = snackbarHostState,
                 themeMode = themeMode,
                 onThemeModeChange = onThemeModeChange,
                 resolvedRoute = resolvedRoute,
@@ -329,6 +363,7 @@ private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
     context: Context,
     navController: androidx.navigation.NavHostController,
     activityViewModel: MainActivityViewModel,
+    snackbarHostState: SnackbarHostState,
     themeMode: AppThemeMode,
     onThemeModeChange: (AppThemeMode) -> Unit,
     resolvedRoute: String?,
@@ -352,6 +387,7 @@ private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
         MainScreen(
             viewModel = vm,
             tagViewModel = tagVm,
+            snackbarHostState = snackbarHostState,
             themeMode = themeMode,
             onThemeModeChange = onThemeModeChange,
             onOpenArchive = { navController.navigate(Routes.ARCHIVE) },
@@ -482,6 +518,7 @@ private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
                 SharedTagAuthViewModel(
                     tagRepository = context.appContainer().tagRepository,
                     userProfileStore = context.appContainer().userProfileStore,
+                    entitlementGrantRepository = context.appContainer().entitlementGrantRepository,
                 )
             },
         )
@@ -490,7 +527,6 @@ private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
             themeMode = themeMode,
             onThemeModeChange = onThemeModeChange,
             onBack = { navController.popBackStack() },
-            showInviteCodeSection = false,
         )
     }
 
@@ -559,6 +595,7 @@ private fun ExportSheetDragHandle() {
 private fun MainScreen(
     viewModel: MainListViewModel,
     tagViewModel: TagListViewModel,
+    snackbarHostState: SnackbarHostState,
     themeMode: AppThemeMode,
     onThemeModeChange: (AppThemeMode) -> Unit,
     onOpenArchive: () -> Unit,
@@ -578,6 +615,7 @@ private fun MainScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val collections by viewModel.collections.collectAsStateWithLifecycle()
     val sharedTags by tagViewModel.tags.collectAsStateWithLifecycle()
+    val sharedTagGroups by tagViewModel.groups.collectAsStateWithLifecycle()
     val selectedService by viewModel.selectedServiceFlow.collectAsStateWithLifecycle()
     val selectedCollectionId by viewModel.selectedCollectionIdFlow.collectAsStateWithLifecycle()
     val serviceFilterOrder by viewModel.serviceFilterOrder.collectAsStateWithLifecycle()
@@ -592,12 +630,13 @@ private fun MainScreen(
     val profileVm: SharedTagAuthViewModel = viewModel(
         key = "main_profile_sheet",
         factory = SimpleFactory {
-            SharedTagAuthViewModel(
-                tagRepository = context.appContainer().tagRepository,
-                userProfileStore = context.appContainer().userProfileStore,
-            )
-        },
-    )
+                SharedTagAuthViewModel(
+                    tagRepository = context.appContainer().tagRepository,
+                    userProfileStore = context.appContainer().userProfileStore,
+                    entitlementGrantRepository = context.appContainer().entitlementGrantRepository,
+                )
+            },
+        )
     val sharedTagCloudState by profileVm.cloudState.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val mainListState = rememberLazyListState()
@@ -615,13 +654,35 @@ private fun MainScreen(
     }
     val showSharedTagCloudUi = shouldShowSharedTagCloudEntryPoints(
         isConfigured = sharedTagCloudState.isConfigured,
-        hasSharedTags = visibleSharedTags.isNotEmpty(),
+        hasSharedTags = visibleSharedTags.isNotEmpty() || sharedTagGroups.isNotEmpty(),
     )
+    var selectionModeActive by rememberSaveable { mutableStateOf(false) }
+    var searchBarVisible by rememberSaveable { mutableStateOf(false) }
+    var searchQueryLocal by rememberSaveable { mutableStateOf("") }
+    val searchFilteredEntries = remember(uiState.entries, searchQueryLocal, customCollections, sharedTags) {
+        filterEntriesBySearch(
+            entries = uiState.entries,
+            query = searchQueryLocal,
+            collections = customCollections,
+            tags = sharedTags,
+        )
+    }
+    val displayedUiState = remember(uiState, searchQueryLocal, searchFilteredEntries) {
+        if (searchQueryLocal.isBlank()) {
+            uiState
+        } else {
+            uiState.copy(entries = searchFilteredEntries, scopeCount = searchFilteredEntries.size)
+        }
+    }
 
     var manualInputState by remember { mutableStateOf(ManualInputUiState()) }
     var showPrivacyDialog by remember { mutableStateOf(false) }
+    var showUsageGuide by rememberSaveable { mutableStateOf(false) }
     var createCollectionState by remember { mutableStateOf(CreateCollectionDialogUiState()) }
     var sharedTagDialogState by remember { mutableStateOf(SharedTagDialogUiState()) }
+    var sharedTagGroupDialogState by remember { mutableStateOf(SharedTagDialogUiState()) }
+    var mainPane by rememberSaveable { mutableStateOf(MainPane.URLS) }
+    var selectedSharedTagGroupId by rememberSaveable { mutableStateOf<Long?>(null) }
     var showExportSheet by rememberSaveable { mutableStateOf(false) }
     val exportSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showProfileSheet by rememberSaveable { mutableStateOf(false) }
@@ -631,10 +692,46 @@ private fun MainScreen(
     var selectedEntryIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var previousTopEntryId by remember { mutableStateOf<Long?>(null) }
     var previousVisibleEntryCount by remember { mutableStateOf(0) }
+    val selectedSharedTagGroup = sharedTagGroups.firstOrNull { it.id == selectedSharedTagGroupId }
+    BackHandler(enabled = !selectionModeActive && searchBarVisible) {
+        searchQueryLocal = ""
+        searchBarVisible = false
+    }
+    BackHandler(enabled = showUsageGuide) {
+        showUsageGuide = false
+    }
+    BackHandler(enabled = selectionModeActive) {
+        selectedEntryIds = emptySet()
+        selectionModeActive = false
+    }
+    LaunchedEffect(sharedTagGroups, selectedSharedTagGroupId) {
+        if (selectedSharedTagGroupId != null && selectedSharedTagGroup == null) {
+            selectedSharedTagGroupId = null
+        }
+    }
+    val selectedGroupMembers by remember(selectedSharedTagGroupId) {
+        val groupId = selectedSharedTagGroupId
+        if (groupId == null) {
+            flowOf(emptyList())
+        } else {
+            tagViewModel.observeGroupMembers(groupId)
+        }
+    }.collectAsStateWithLifecycle(initialValue = emptyList())
+    val selectedGroupTags by remember(selectedSharedTagGroupId) {
+        val groupId = selectedSharedTagGroupId
+        if (groupId == null) {
+            flowOf(emptyList())
+        } else {
+            tagViewModel.observeGroupTags(groupId)
+        }
+    }.collectAsStateWithLifecycle(initialValue = emptyList())
 
     LaunchedEffect(uiState.entries) {
         val visibleIds = uiState.entries.map { it.id }.toSet()
         selectedEntryIds = selectedEntryIds.intersect(visibleIds)
+        if (selectedEntryIds.isEmpty()) {
+            selectionModeActive = false
+        }
     }
 
     LaunchedEffect(uiState.entries, selectedService, selectedCollectionId) {
@@ -666,6 +763,10 @@ private fun MainScreen(
 
     fun closeCreateSharedTagDialog() {
         sharedTagDialogState = SharedTagDialogUiState()
+    }
+
+    fun closeCreateSharedTagGroupDialog() {
+        sharedTagGroupDialogState = SharedTagDialogUiState()
     }
 
     fun submitManualSave() {
@@ -759,6 +860,93 @@ private fun MainScreen(
                 CreateTagResult.Failed -> {
                     sharedTagDialogState = sharedTagDialogState.copy(error = "共有タグを作成できませんでした")
                 }
+            }
+        }
+    }
+
+    fun confirmCreateSharedTagGroup() {
+        scope.launch {
+            val normalizedName = normalizeSharedTagName(sharedTagGroupDialogState.name)
+            val error = when (validateSharedTagName(sharedTagGroupDialogState.name)) {
+                SharedTagNameValidationError.BLANK -> "グループ名を入力してください"
+                SharedTagNameValidationError.TOO_LONG -> "グループ名は50文字以内で入力してください"
+                null -> null
+            }
+            sharedTagGroupDialogState = sharedTagGroupDialogState.copy(error = error)
+            if (error != null) return@launch
+            when (val created = tagViewModel.createGroup(normalizedName)) {
+                CreateSharedTagGroupResult.Success -> closeCreateSharedTagGroupDialog()
+                CreateSharedTagGroupResult.InvalidName -> {
+                    sharedTagGroupDialogState = sharedTagGroupDialogState.copy(error = "グループ名を入力してください")
+                }
+                CreateSharedTagGroupResult.AuthRequired -> {
+                    sharedTagGroupDialogState = sharedTagGroupDialogState.copy(error = "共有タグクラウドにログインしてください")
+                }
+                is CreateSharedTagGroupResult.LimitReached -> {
+                    sharedTagGroupDialogState = sharedTagGroupDialogState.copy(error = created.message)
+                }
+                is CreateSharedTagGroupResult.Failed -> {
+                    sharedTagGroupDialogState = sharedTagGroupDialogState.copy(
+                        error = created.message ?: "グループを作成できませんでした",
+                    )
+                }
+            }
+        }
+    }
+
+    fun addTagToSelectedGroup(tagId: Long) {
+        val group = selectedSharedTagGroup ?: return
+        scope.launch {
+            val added = tagViewModel.addTagToGroup(group.id, tagId)
+            snackbarHostState.showSnackbar(
+                if (added) "共有タグをグループに追加しました" else "共有タグをグループに追加できませんでした",
+                duration = SnackbarDuration.Short,
+            )
+        }
+    }
+
+    fun removeTagFromSelectedGroup(tagId: Long) {
+        val group = selectedSharedTagGroup ?: return
+        scope.launch {
+            val removed = tagViewModel.removeTagFromGroup(group.id, tagId)
+            snackbarHostState.showSnackbar(
+                if (removed) "共有タグをグループから外しました" else "共有タグをグループから外せませんでした",
+                duration = SnackbarDuration.Short,
+            )
+        }
+    }
+
+    fun createSelectedGroupInvite(role: SharedTagMemberRole) {
+        val group = selectedSharedTagGroup ?: return
+        scope.launch {
+            when (val result = tagViewModel.createGroupInviteLink(group.id, role.name.lowercase())) {
+                is SharedTagGroupInviteCreationResult.Success -> {
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText("URL Saver group invite", result.inviteUrl))
+                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, result.inviteUrl)
+                    }
+                    runCatching {
+                        context.startActivity(Intent.createChooser(shareIntent, "グループ招待リンクを共有"))
+                    }
+                    snackbarHostState.showSnackbar(
+                        "グループ招待リンクをコピーしました",
+                        duration = SnackbarDuration.Short,
+                    )
+                }
+                SharedTagGroupInviteCreationResult.AuthRequired -> snackbarHostState.showSnackbar(
+                    "招待リンクを作るにはサインインが必要です",
+                    duration = SnackbarDuration.Short,
+                )
+                SharedTagGroupInviteCreationResult.OwnerOnly -> snackbarHostState.showSnackbar(
+                    "グループ招待リンクを作れるのはオーナーだけです",
+                    duration = SnackbarDuration.Short,
+                )
+                is SharedTagGroupInviteCreationResult.Failure -> snackbarHostState.showSnackbar(
+                    result.message,
+                    duration = SnackbarDuration.Short,
+                )
             }
         }
     }
@@ -968,6 +1156,24 @@ private fun MainScreen(
         onConfirm = { confirmCreateSharedTag() },
     )
 
+    CreateSharedTagDialog(
+        visible = sharedTagGroupDialogState.visible && showSharedTagCloudUi,
+        newSharedTagName = sharedTagGroupDialogState.name,
+        createSharedTagError = sharedTagGroupDialogState.error,
+        title = "グループを作成",
+        body = "グループに招待すると、配下の共有タグをまとめて共有できます。",
+        nameLabel = "グループ名",
+        placeholder = "家族 / チーム / 旅行共有 など",
+        onDismiss = { closeCreateSharedTagGroupDialog() },
+        onNameChange = {
+            sharedTagGroupDialogState = sharedTagGroupDialogState.copy(
+                name = it,
+                error = null,
+            )
+        },
+        onConfirm = { confirmCreateSharedTagGroup() },
+    )
+
     if (showExportSheet) {
         ModalBottomSheet(
             onDismissRequest = { showExportSheet = false },
@@ -993,35 +1199,35 @@ private fun MainScreen(
                 themeMode = themeMode,
                 onThemeModeChange = onThemeModeChange,
                 onBack = { showProfileSheet = false },
-                showInviteCodeSection = true,
             )
         }
     }
 
-    Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
-        topBar = {
-            TopAppBar(
-                title = { Text("保存したURL") },
-                colors = orbitTopAppBarColors(),
-                windowInsets = compactTopAppBarInsets(),
-                actions = {
-                    IconButton(onClick = { viewModel.toggleEntryCardDisplayMode() }) {
-                        Icon(
-                            imageVector = if (entryCardDisplayMode == EntryCardDisplayMode.RICH) {
-                                Icons.AutoMirrored.Outlined.ViewList
-                            } else {
-                                Icons.Outlined.ViewAgenda
-                            },
-                            contentDescription = if (entryCardDisplayMode == EntryCardDisplayMode.RICH) {
-                                "画像なし表示へ切り替える"
-                            } else {
-                                "画像つき表示へ切り替える"
-                            },
-                            modifier = Modifier.size(MainTopBarActionIconSize),
-                        )
-                    }
-                    if (showSharedTagCloudUi) {
+    val showMainBottomBar = !selectionModeActive && selectedEntryIds.isEmpty() && !showUsageGuide
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
+            containerColor = MaterialTheme.colorScheme.background,
+            topBar = {
+                TopAppBar(
+                    title = { Text("りんばむ") },
+                    colors = orbitTopAppBarColors(),
+                    windowInsets = compactTopAppBarInsets(),
+                    actions = {
+                        IconButton(onClick = { viewModel.toggleEntryCardDisplayMode() }) {
+                            Icon(
+                                imageVector = if (entryCardDisplayMode == EntryCardDisplayMode.RICH) {
+                                    Icons.AutoMirrored.Outlined.ViewList
+                                } else {
+                                    Icons.Outlined.ViewAgenda
+                                },
+                                contentDescription = if (entryCardDisplayMode == EntryCardDisplayMode.RICH) {
+                                    "画像なし表示へ切り替える"
+                                } else {
+                                    "画像つき表示へ切り替える"
+                                },
+                                modifier = Modifier.size(MainTopBarActionIconSize),
+                            )
+                        }
                         IconButton(onClick = { showProfileSheet = true }) {
                             Icon(
                                 Icons.Outlined.AccountCircle,
@@ -1029,106 +1235,202 @@ private fun MainScreen(
                                 modifier = Modifier.size(MainTopBarActionIconSize),
                             )
                         }
-                    }
-                    IconButton(onClick = { showExportSheet = true }) {
-                        Icon(
-                            Icons.Outlined.IosShare,
-                            contentDescription = "エクスポート",
-                            modifier = Modifier.size(MainTopBarActionIconSize),
-                        )
-                    }
-                    IconButton(onClick = onOpenArchive) {
-                        Icon(
-                            Icons.Outlined.Archive,
-                            contentDescription = "アーカイブ",
-                            modifier = Modifier.size(MainTopBarActionIconSize),
-                        )
-                    }
-                    IconButton(onClick = { showLocalTagManagerSheet = true }) {
-                        Icon(
-                            Icons.Outlined.Sell,
-                            contentDescription = "タグ管理",
-                            modifier = Modifier.size(MainTopBarActionIconSize),
-                        )
-                    }
-                },
-            )
-        },
-        bottomBar = {
-            if (selectedEntryIds.isEmpty()) {
-                MainAddUrlBar(onClick = { openManualInput() })
-            }
-        },
-    ) { paddingValues ->
-        Box(
-            modifier = Modifier
-                .padding(paddingValues)
-                .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background),
-            contentAlignment = Alignment.TopCenter,
-        ) {
+                        IconButton(onClick = {
+                            if (!selectionModeActive) {
+                                selectionModeActive = true
+                                selectedEntryIds = emptySet()
+                            }
+                        }) {
+                            Icon(
+                                Icons.Outlined.ChecklistRtl,
+                                contentDescription = "選択",
+                                modifier = Modifier.size(MainTopBarActionIconSize),
+                            )
+                        }
+                        IconButton(onClick = {
+                            selectedEntryIds = emptySet()
+                            selectionModeActive = false
+                            searchQueryLocal = ""
+                            searchBarVisible = false
+                            mainPane = MainPane.URLS
+                            showUsageGuide = true
+                        }) {
+                            Icon(
+                                Icons.Outlined.MenuBook,
+                                contentDescription = "使い方",
+                                modifier = Modifier.size(MainTopBarActionIconSize),
+                            )
+                        }
+                        IconButton(onClick = {
+                            if (showUsageGuide) {
+                                showUsageGuide = false
+                                searchBarVisible = true
+                            } else if (searchBarVisible) {
+                                searchQueryLocal = ""
+                                searchBarVisible = false
+                            } else {
+                                searchBarVisible = true
+                            }
+                        }) {
+                            Icon(
+                                Icons.Outlined.Search,
+                                contentDescription = "検索",
+                                modifier = Modifier.size(MainTopBarActionIconSize),
+                            )
+                        }
+                    },
+                )
+            },
+            bottomBar = {},
+        ) { paddingValues ->
+            Box(
+                modifier = Modifier
+                    .padding(paddingValues)
+                .then(if (showMainBottomBar) Modifier.padding(bottom = 104.dp) else Modifier)
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background),
+                contentAlignment = Alignment.TopCenter,
+            ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .widthIn(max = OrbitTokens.contentMaxWidth)
             ) {
-                MainListContent(
-                    uiState = uiState,
-                    customCollections = customCollections,
-                    sharedTags = visibleSharedTags,
-                    showSharedTagCloudUi = showSharedTagCloudUi,
-                    selectedService = selectedService,
-                    selectedCollectionId = selectedCollectionId,
-                    serviceFilterOrder = serviceFilterOrder,
-                topFilterOrderTokens = topFilterOrderTokens,
-                selectedEntryIds = selectedEntryIds,
-                entryCardDisplayMode = entryCardDisplayMode,
-                mainListState = mainListState,
-                onSelectService = { viewModel.selectService(it) },
-                onReorderServices = { serviceOrder ->
-                    viewModel.reorderServices(serviceOrder)
-                    },
-                    onReorderTopFilters = { tokens ->
-                        viewModel.reorderTopFilters(tokens)
-                    },
-                    onSelectCollection = { targetId -> toggleSelectedCollection(targetId) },
-                    onRequestCreateCollection = {
-                        createCollectionState = createCollectionState.copy(
-                            visible = true,
-                            error = null,
+                AnimatedVisibility(visible = searchBarVisible && mainPane == MainPane.URLS) {
+                    OutlinedTextField(
+                        value = searchQueryLocal,
+                        onValueChange = { searchQueryLocal = it },
+                        trailingIcon = {
+                            if (searchQueryLocal.isNotEmpty()) {
+                                IconButton(onClick = {
+                                    searchQueryLocal = ""
+                                    searchBarVisible = false
+                                }) {
+                                    Icon(Icons.Outlined.Close, contentDescription = "クリア")
+                                }
+                            }
+                        },
+                        placeholder = { Text("検索") },
+                        modifier = Modifier
+                            .testTag("main_search_input")
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 4.dp),
+                        singleLine = true,
+                    )
+                }
+                if (showUsageGuide) {
+                    UsageGuideContent(
+                        onBack = {
+                            showUsageGuide = false
+                            mainPane = MainPane.URLS
+                        },
+                    )
+                } else if (mainPane == MainPane.GROUPS && showSharedTagCloudUi) {
+                    if (selectedSharedTagGroup == null) {
+                        SharedTagGroupListContent(
+                            groups = sharedTagGroups,
+                            onBack = { mainPane = MainPane.URLS },
+                            onCreateGroup = {
+                                sharedTagGroupDialogState = sharedTagGroupDialogState.copy(
+                                    visible = true,
+                                    error = null,
+                                )
+                            },
+                            onOpenGroup = { group ->
+                                selectedSharedTagGroupId = group.id
+                            },
                         )
-                    },
-                    onReorderCollections = { collectionIds ->
-                        reorderCollections(collectionIds)
-                    },
-                    onOpenTagDetail = onOpenTagDetail,
-                    onRequestCreateSharedTag = {
-                        sharedTagDialogState = sharedTagDialogState.copy(
-                            visible = true,
-                            error = null,
+                    } else {
+                        SharedTagGroupDetailContent(
+                            group = selectedSharedTagGroup,
+                            allTags = sharedTags,
+                            groupTags = selectedGroupTags,
+                            members = selectedGroupMembers,
+                            onBack = { selectedSharedTagGroupId = null },
+                            onAddTag = { addTagToSelectedGroup(it) },
+                            onRemoveTag = { removeTagFromSelectedGroup(it) },
+                            onCreateInvite = { createSelectedGroupInvite(it) },
                         )
-                    },
-                    onStartEntrySelection = { entryId ->
-                        selectedEntryIds = setOf(entryId)
-                    },
-                    onToggleEntrySelection = { entryId ->
-                        toggleEntrySelection(entryId)
-                    },
-                    onSelectAllEntries = {
-                        selectedEntryIds = uiState.entries.map { it.id }.toSet()
-                    },
-                    onClearEntrySelection = {
-                        selectedEntryIds = emptySet()
-                    },
-                    onArchiveSelectedEntries = { archiveSelectedEntries() },
-                    onDeleteSelectedEntries = { deleteSelectedEntries() },
-                    onOpenDetail = onOpenDetail,
-                    onArchiveActiveEntry = { entryId -> archiveActiveEntry(entryId) },
-                    onPendingDeleteActiveEntry = { entryId -> pendingDeleteActiveEntry(entryId) },
-                )
+                    }
+                } else {
+                    MainListContent(
+                        uiState = displayedUiState,
+                        customCollections = customCollections,
+                        sharedTags = visibleSharedTags,
+                        showSharedTagCloudUi = showSharedTagCloudUi,
+                        selectedService = selectedService,
+                        selectedCollectionId = selectedCollectionId,
+                        serviceFilterOrder = serviceFilterOrder,
+                        topFilterOrderTokens = topFilterOrderTokens,
+                        selectedEntryIds = selectedEntryIds,
+                        entryCardDisplayMode = entryCardDisplayMode,
+                        mainListState = mainListState,
+                        onSelectService = { viewModel.selectService(it) },
+                        onReorderServices = { serviceOrder ->
+                            viewModel.reorderServices(serviceOrder)
+                        },
+                        onReorderTopFilters = { tokens ->
+                            viewModel.reorderTopFilters(tokens)
+                        },
+                        onSelectCollection = { targetId -> toggleSelectedCollection(targetId) },
+                        onRequestCreateCollection = {
+                            createCollectionState = createCollectionState.copy(
+                                visible = true,
+                                error = null,
+                            )
+                        },
+                        onReorderCollections = { collectionIds ->
+                            reorderCollections(collectionIds)
+                        },
+                        onOpenTagDetail = onOpenTagDetail,
+                        onRequestCreateSharedTag = {
+                            sharedTagDialogState = sharedTagDialogState.copy(
+                                visible = true,
+                                error = null,
+                            )
+                        },
+                                    onOpenGroups = null,
+                        onStartEntrySelection = { entryId ->
+                            selectionModeActive = true
+                            selectedEntryIds = setOf(entryId)
+                        },
+                        onToggleEntrySelection = { entryId ->
+                            toggleEntrySelection(entryId)
+                        },
+                        onSelectAllEntries = {
+                            selectionModeActive = true
+                            selectedEntryIds = displayedUiState.entries.map { it.id }.toSet()
+                        },
+                        onClearEntrySelection = {
+                            selectedEntryIds = emptySet()
+                            selectionModeActive = false
+                        },
+                        onArchiveSelectedEntries = { archiveSelectedEntries() },
+                        onDeleteSelectedEntries = { deleteSelectedEntries() },
+                        onOpenDetail = onOpenDetail,
+                        onArchiveActiveEntry = { entryId -> archiveActiveEntry(entryId) },
+                        onPendingDeleteActiveEntry = { entryId -> pendingDeleteActiveEntry(entryId) },
+                    )
+                }
             }
         }
+        }
+        if (showMainBottomBar) {
+            MainBottomNavBar(
+                modifier = Modifier.align(Alignment.BottomCenter),
+                onOpenGroups = {
+                    showUsageGuide = false
+                    mainPane = MainPane.GROUPS
+                    selectedSharedTagGroupId = null
+                },
+                onExport = { showExportSheet = true },
+                onAdd = { openManualInput() },
+                onTagManage = { showLocalTagManagerSheet = true },
+                onOpenArchive = onOpenArchive,
+            )
+        }
     }
+
 }
 
 @Composable
@@ -1395,6 +1697,10 @@ private fun CreateSharedTagDialog(
     visible: Boolean,
     newSharedTagName: String,
     createSharedTagError: String?,
+    title: String = "共有タグを作成",
+    body: String = "サインイン中は作成後すぐクラウド共有できます。未サインインの場合はこの端末だけで使われます。",
+    nameLabel: String = "共有タグ名",
+    placeholder: String = "チーム共有 / 旅行 / 見返す など",
     onDismiss: () -> Unit,
     onNameChange: (String) -> Unit,
     onConfirm: () -> Unit,
@@ -1403,11 +1709,11 @@ private fun CreateSharedTagDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("共有タグを作成") },
+        title = { Text(title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    text = "サインイン中は作成後すぐクラウド共有できます。未サインインの場合はこの端末だけで使われます。",
+                    text = body,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1415,8 +1721,8 @@ private fun CreateSharedTagDialog(
                     value = newSharedTagName,
                     onValueChange = onNameChange,
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("共有タグ名") },
-                    placeholder = { Text("チーム共有 / 旅行 / 見返す など") },
+                    label = { Text(nameLabel) },
+                    placeholder = { Text(placeholder) },
                     supportingText = {
                         if (!createSharedTagError.isNullOrBlank()) {
                             Text(createSharedTagError)
@@ -1439,6 +1745,516 @@ private fun CreateSharedTagDialog(
                 Text("キャンセル")
             }
         },
+    )
+}
+
+@Composable
+private fun UsageGuideContent(
+    onBack: () -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+            start = 16.dp,
+            end = 16.dp,
+            top = 12.dp,
+            bottom = 28.dp,
+        ),
+    ) {
+        item {
+            TextButton(onClick = onBack) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                    contentDescription = null,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("戻る")
+            }
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = "使い方",
+                style = MaterialTheme.typography.headlineLarge,
+                fontWeight = FontWeight.ExtraBold,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "りんばむの基本から便利な使い方、AIとの連携までまとめました。\n最初だけ読んでも、あとで見返しても大丈夫です。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(22.dp))
+        }
+        item {
+            UsageGuideSectionHeader("まず覚える")
+            UsageGuideRow(
+                marker = "1",
+                markerColor = Color(0xFF16A34A),
+                icon = { Icon(Icons.Outlined.IosShare, contentDescription = null) },
+                iconColor = Color(0xFF128A2E),
+                iconBackground = Color(0xFFEAF7ED),
+                title = "Safariや他アプリから保存",
+                body = "Safariや他のアプリの共有から、りんばむを選ぶだけで保存できます。",
+            ) {
+                ShareToRinbamPreview()
+            }
+            UsageGuideRow(
+                marker = "2",
+                markerColor = Color(0xFF16A34A),
+                icon = { Icon(Icons.Outlined.Sell, contentDescription = null) },
+                iconColor = Color(0xFF128A2E),
+                iconBackground = Color(0xFFEAF7ED),
+                title = "タグで整理",
+                body = "自作タグを付けて、テーマごとに見つけやすく整理できます。",
+            ) {
+                GuideTagChipsPreview()
+            }
+            UsageGuideRow(
+                marker = "3",
+                markerColor = MaterialTheme.colorScheme.primary,
+                icon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                iconColor = MaterialTheme.colorScheme.primary,
+                iconBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                title = "検索で見つける",
+                body = "キーワードやタグで検索して、見たいURLをすぐに見つけられます。",
+            ) {
+                GuideSearchPreview()
+            }
+        }
+        item {
+            UsageGuideSectionHeader("便利な操作")
+            UsageGuideRow(
+                marker = "4",
+                markerColor = Color(0xFFF97316),
+                icon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
+                iconColor = Color(0xFFF97316),
+                iconBackground = Color(0xFFFFF2DF),
+                title = "自作タグ名を変更",
+                body = "自作タグをダブルタップすると、名前を変更できます。",
+            ) {
+                GuideRenameTagPreview()
+            }
+            UsageGuideRow(
+                marker = "5",
+                markerColor = Color(0xFFF97316),
+                icon = { Icon(Icons.Outlined.Archive, contentDescription = null) },
+                iconColor = Color(0xFFF97316),
+                iconBackground = Color(0xFFFFF2DF),
+                title = "カードをスライド",
+                body = "カードを横にスライドすると、アーカイブや削除ができます。",
+            ) {
+                GuideSwipePreview()
+            }
+        }
+        item {
+            UsageGuideSectionHeader("共有とAI")
+            UsageGuideRow(
+                marker = "6",
+                markerColor = Color(0xFF7C3AED),
+                icon = { Icon(Icons.Outlined.Group, contentDescription = null) },
+                iconColor = Color(0xFF7C3AED),
+                iconBackground = Color(0xFFF3E8FF),
+                title = "共有タグを使う",
+                body = "家族やチームとタグを共有して、いっしょに整理できます。",
+            ) {
+                GuideSharedTagsPreview()
+            }
+            UsageGuideRow(
+                marker = "7",
+                markerColor = MaterialTheme.colorScheme.primary,
+                icon = { Icon(Icons.Outlined.IosShare, contentDescription = null) },
+                iconColor = MaterialTheme.colorScheme.primary,
+                iconBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                title = "エクスポートでAIに渡す",
+                body = "エクスポートしたデータをClaudeやChatGPTに渡して活用できます。",
+            ) {
+                GuideAIExportPreview()
+            }
+            UsageGuideNote()
+        }
+    }
+}
+
+@Composable
+private fun UsageGuideSectionHeader(title: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 2.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.ExtraBold,
+            color = MaterialTheme.colorScheme.onBackground,
+        )
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(1.dp)
+                .background(OrbitTokens.outline.copy(alpha = 0.7f)),
+        )
+    }
+}
+
+@Composable
+private fun UsageGuideRow(
+    marker: String,
+    markerColor: Color,
+    icon: @Composable () -> Unit,
+    iconColor: Color,
+    iconBackground: Color,
+    title: String,
+    body: String,
+    preview: @Composable () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .background(markerColor, shape = RoundedCornerShape(50)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = marker,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color.White,
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .background(iconBackground, shape = RoundedCornerShape(14.dp)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides iconColor) {
+                        Box(modifier = Modifier.size(28.dp), contentAlignment = Alignment.Center) {
+                            icon()
+                        }
+                    }
+                }
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                    Text(
+                        text = body,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Box(modifier = Modifier.padding(start = 40.dp)) {
+                preview()
+            }
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 40.dp)
+                .height(1.dp)
+                .background(OrbitTokens.outline.copy(alpha = 0.45f)),
+        )
+    }
+}
+
+@Composable
+private fun GuidePreviewSurface(content: @Composable () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(12.dp))
+            .border(1.dp, OrbitTokens.outline.copy(alpha = 0.7f), RoundedCornerShape(12.dp))
+            .padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        content()
+    }
+}
+
+@Composable
+private fun ShareToRinbamPreview() {
+    GuidePreviewSurface {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            MiniAppIcon("Safari", "S")
+            MiniAppIcon("他アプリ", "…")
+            Text("→", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            MiniIconBox("共有") { Icon(Icons.Outlined.IosShare, contentDescription = null) }
+            Text("→", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            RinbamAppIcon()
+        }
+    }
+}
+
+@Composable
+private fun GuideTagChipsPreview() {
+    GuidePreviewSurface {
+        Text("タグ", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            MiniChip("旅行", Color(0xFFE5F6E7), Color(0xFF128A2E))
+            MiniChip("レシピ", Color(0xFFEAF2FF), MaterialTheme.colorScheme.primary)
+            MiniChip("仕事", MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant)
+            MiniChip("+", MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.onSurface)
+        }
+    }
+}
+
+@Composable
+private fun GuideSearchPreview() {
+    GuidePreviewSurface {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f), RoundedCornerShape(10.dp))
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(Icons.Outlined.Search, contentDescription = null, modifier = Modifier.size(16.dp))
+            Text("温泉", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.weight(1f))
+            Text("×", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            MiniChip("旅行", Color(0xFFE5F6E7), Color(0xFF128A2E))
+            MiniChip("温泉", Color(0xFFEAF2FF), MaterialTheme.colorScheme.primary)
+        }
+    }
+}
+
+@Composable
+private fun GuideRenameTagPreview() {
+    GuidePreviewSurface {
+        Text("ダブルタップ", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+        Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+            MiniChip("旅行", Color(0xFFE5F6E7), Color(0xFF128A2E))
+            MiniChip("レシピ", Color(0xFFEAF2FF), MaterialTheme.colorScheme.primary)
+            Text("→", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                text = "旅行",
+                modifier = Modifier
+                    .border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+    }
+}
+
+@Composable
+private fun GuideSwipePreview() {
+    GuidePreviewSurface {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("右へスワイプでアーカイブ", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.weight(1f))
+            Text("→", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.ExtraBold)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            ActionBlock("アーカイブ", Color(0xFF144339), Icons.Outlined.Archive)
+            DetailedMiniUrlCard(Modifier.weight(1f))
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            DetailedMiniUrlCard(Modifier.weight(1f))
+            ActionBlock("削除", MaterialTheme.colorScheme.error, Icons.Outlined.Delete)
+        }
+    }
+}
+
+@Composable
+private fun GuideSharedTagsPreview() {
+    GuidePreviewSurface {
+        Text("共有タグ", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            MiniChip("家族旅行", Color(0xFFE5F6E7), Color(0xFF128A2E))
+            MiniChip("読みたい本", Color(0xFFF3E8FF), Color(0xFF7C3AED))
+            MiniChip("勉強会", Color(0xFFEAF2FF), MaterialTheme.colorScheme.primary)
+        }
+    }
+}
+
+@Composable
+private fun GuideAIExportPreview() {
+    GuidePreviewSurface {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            MiniOutlinedPanel(Modifier.weight(1f)) {
+                Text("エクスポート形式", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ExportFileChip("CSV", Color(0xFF16A34A))
+                    ExportFileChip("JSON", MaterialTheme.colorScheme.primary)
+                }
+            }
+            Text("→", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            MiniOutlinedPanel(Modifier.weight(1f)) {
+                Text("AIに渡す", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                Text("Claude", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.ExtraBold)
+                Text("ChatGPT など", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.ExtraBold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun UsageGuideNote() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp, bottom = 24.dp)
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f), RoundedCornerShape(10.dp))
+            .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.22f), RoundedCornerShape(10.dp))
+            .padding(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("✦", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary)
+        Text(
+            text = "もっと詳しい使い方や、よくある質問は「使い方」を随時更新しています。\nブックマークからいつでも見返せます。",
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+        )
+    }
+}
+
+@Composable
+private fun MiniAppIcon(label: String, text: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(9.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(text, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary)
+        }
+        Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun MiniIconBox(label: String, icon: @Composable () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.75f), RoundedCornerShape(9.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(Modifier.size(17.dp), contentAlignment = Alignment.Center) { icon() }
+        }
+        Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun RinbamAppIcon() {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(11.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(Icons.Outlined.MenuBook, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+        }
+        Text("りんばむ", style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun MiniChip(text: String, background: Color, foreground: Color) {
+    Text(
+        text = text,
+        modifier = Modifier
+            .background(background, RoundedCornerShape(99.dp))
+            .padding(horizontal = 6.dp, vertical = 3.dp),
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.ExtraBold,
+        color = foreground,
+        maxLines = 1,
+    )
+}
+
+@Composable
+private fun ActionBlock(label: String, color: Color, imageVector: androidx.compose.ui.graphics.vector.ImageVector) {
+    Column(
+        modifier = Modifier
+            .width(60.dp)
+            .height(50.dp)
+            .background(color, RoundedCornerShape(8.dp)),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(imageVector, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
+        Text(label, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color.White)
+    }
+}
+
+@Composable
+private fun DetailedMiniUrlCard(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .height(50.dp)
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f), RoundedCornerShape(8.dp))
+            .padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(30.dp)
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), RoundedCornerShape(6.dp)),
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("週末に行きたい温泉まとめ10選", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("example.com/trip/10", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                MiniChip("旅行", Color(0xFFE5F6E7), Color(0xFF128A2E))
+                MiniChip("温泉", Color(0xFFEAF2FF), MaterialTheme.colorScheme.primary)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExportFileChip(label: String, color: Color) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Box(
+            modifier = Modifier
+                .size(24.dp)
+                .border(2.dp, color, RoundedCornerShape(5.dp)),
+        )
+        Text(label, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, maxLines = 1)
+    }
+}
+
+@Composable
+private fun MiniOutlinedPanel(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        modifier = modifier
+            .border(1.dp, OrbitTokens.outline.copy(alpha = 0.65f), RoundedCornerShape(10.dp))
+            .padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        content = content,
     )
 }
 
@@ -1516,6 +2332,7 @@ private fun MainListContent(
     onReorderCollections: (List<Long>) -> Unit,
     onOpenTagDetail: (Long) -> Unit,
     onRequestCreateSharedTag: () -> Unit,
+    onOpenGroups: (() -> Unit)?,
     onStartEntrySelection: (Long) -> Unit,
     onToggleEntrySelection: (Long) -> Unit,
     onSelectAllEntries: () -> Unit,
@@ -1546,6 +2363,24 @@ private fun MainListContent(
             onOpenTag = onOpenTagDetail,
             onCreateTag = onRequestCreateSharedTag,
         )
+        if (onOpenGroups != null) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(onClick = onOpenGroups) {
+                    Icon(
+                        imageVector = Icons.Outlined.Group,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("グループ管理")
+                }
+            }
+        }
         Spacer(modifier = Modifier.height(8.dp))
     }
     if (selectedEntryIds.isNotEmpty()) {
@@ -1609,6 +2444,331 @@ private data class SharedTagDialogUiState(
     val name: String = "",
     val error: String? = null,
 )
+
+private enum class MainPane {
+    URLS,
+    GROUPS,
+}
+
+@Composable
+private fun SharedTagGroupListContent(
+    groups: List<SharedTagGroupRecord>,
+    onBack: () -> Unit,
+    onCreateGroup: () -> Unit,
+    onOpenGroup: (SharedTagGroupRecord) -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "戻る")
+                }
+                Text(
+                    text = "グループ",
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.weight(1f),
+                )
+                Button(onClick = onCreateGroup) {
+                    Icon(
+                        imageVector = Icons.Outlined.Add,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("作成")
+                }
+            }
+        }
+        if (groups.isEmpty()) {
+            item {
+                EmptyState(title = "グループはまだありません")
+            }
+        } else {
+            items(groups, key = { it.id }) { group ->
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 1.dp,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            text = group.name,
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            text = when (group.currentUserRole) {
+                                SharedTagMemberRole.OWNER -> "あなたはオーナーです"
+                                SharedTagMemberRole.EDITOR -> "あなたは編集者です"
+                                SharedTagMemberRole.VIEWER -> "あなたは閲覧者です"
+                                null -> "権限を同期中です"
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                        ) {
+                            TextButton(onClick = { onOpenGroup(group) }) {
+                                Text("管理")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedTagGroupDetailContent(
+    group: SharedTagGroupRecord,
+    allTags: List<TagWithCount>,
+    groupTags: List<SharedTagGroupTagRecord>,
+    members: List<SharedTagGroupMemberRecord>,
+    onBack: () -> Unit,
+    onAddTag: (Long) -> Unit,
+    onRemoveTag: (Long) -> Unit,
+    onCreateInvite: (SharedTagMemberRole) -> Unit,
+) {
+    val groupTagIds = remember(groupTags) { groupTags.map { it.tagId }.toSet() }
+    val addableTags = remember(allTags, groupTagIds) {
+        allTags
+            .filter { tag ->
+                tag.scope == SharedTagScope.SYNCED &&
+                    tag.syncStatus == SharedTagSyncStatus.SYNCED &&
+                    tag.currentUserRole == SharedTagMemberRole.OWNER &&
+                    tag.id !in groupTagIds
+            }
+            .sortedBy { it.name }
+    }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "戻る")
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = group.name,
+                        style = MaterialTheme.typography.titleLarge,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = "権限: ${sharedTagRoleLabel(group.currentUserRole)}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        item {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.medium,
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text("招待", style = MaterialTheme.typography.titleMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            enabled = group.currentUserRole == SharedTagMemberRole.OWNER,
+                            onClick = { onCreateInvite(SharedTagMemberRole.EDITOR) },
+                        ) {
+                            Text("編集者を招待")
+                        }
+                        OutlinedButton(
+                            enabled = group.currentUserRole == SharedTagMemberRole.OWNER,
+                            onClick = { onCreateInvite(SharedTagMemberRole.VIEWER) },
+                        ) {
+                            Text("閲覧者を招待")
+                        }
+                    }
+                    if (group.currentUserRole != SharedTagMemberRole.OWNER) {
+                        Text(
+                            text = "招待リンクを作成できるのはグループオーナーだけです。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+        item {
+            Text("配下の共有タグ", style = MaterialTheme.typography.titleMedium)
+        }
+        if (groupTags.isEmpty()) {
+            item {
+                EmptyState(title = "このグループには共有タグがありません")
+            }
+        } else {
+            items(groupTags, key = { "${it.groupId}:${it.tagId}" }) { tag ->
+                SharedTagGroupTagRow(
+                    tag = tag,
+                    canRemove = group.currentUserRole == SharedTagMemberRole.OWNER ||
+                        tag.currentUserRole == SharedTagMemberRole.OWNER,
+                    onRemove = { onRemoveTag(tag.tagId) },
+                )
+            }
+        }
+        item {
+            Text("共有タグを追加", style = MaterialTheme.typography.titleMedium)
+        }
+        if (addableTags.isEmpty()) {
+            item {
+                Text(
+                    text = "追加できるオーナー権限の共有タグはありません。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 4.dp),
+                )
+            }
+        } else {
+            items(addableTags, key = { it.id }) { tag ->
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = tag.name,
+                                style = MaterialTheme.typography.titleSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = "${tag.urlCount}件",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        OutlinedButton(onClick = { onAddTag(tag.id) }) {
+                            Text("追加")
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            Text("メンバー", style = MaterialTheme.typography.titleMedium)
+        }
+        if (members.isEmpty()) {
+            item {
+                EmptyState(title = "メンバー情報を同期中です")
+            }
+        } else {
+            items(members, key = { "${it.groupId}:${it.userId}" }) { member ->
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text(
+                            text = if (member.isCurrentUser) "あなた" else member.userId,
+                            style = MaterialTheme.typography.titleSmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            text = sharedTagRoleLabel(member.role),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedTagGroupTagRow(
+    tag: SharedTagGroupTagRecord,
+    canRemove: Boolean,
+    onRemove: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = tag.tagName,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = "あなたのタグ権限: ${sharedTagRoleLabel(tag.currentUserRole)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            OutlinedButton(
+                enabled = canRemove,
+                onClick = onRemove,
+            ) {
+                Text("外す")
+            }
+        }
+    }
+}
+
+private fun sharedTagRoleLabel(role: SharedTagMemberRole?): String {
+    return when (role) {
+        SharedTagMemberRole.OWNER -> "オーナー"
+        SharedTagMemberRole.EDITOR -> "編集者"
+        SharedTagMemberRole.VIEWER -> "閲覧者"
+        null -> "同期中"
+    }
+}
 
 private enum class MainSwipeAction {
     ARCHIVE,
@@ -1790,6 +2950,7 @@ private fun SwipeableMainEntry(
             onClick = onClick,
         )
     }
+
 }
 
 @Composable
@@ -3537,28 +4698,368 @@ private fun EmptyState(
 }
 
 @Composable
-private fun MainAddUrlBar(onClick: () -> Unit) {
+private fun MainBottomNavBar(
+    modifier: Modifier = Modifier,
+    onOpenGroups: () -> Unit,
+    onExport: () -> Unit,
+    onAdd: () -> Unit,
+    onTagManage: () -> Unit,
+    onOpenArchive: () -> Unit,
+) {
+    val navigationBarHeight = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val bottomFillHeight = if (navigationBarHeight < 32.dp) 32.dp else navigationBarHeight
+    val bottomBarColor = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp)
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(104.dp + bottomFillHeight),
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(76.dp + bottomFillHeight)
+                .align(Alignment.BottomCenter),
+            color = bottomBarColor,
+            tonalElevation = 0.dp,
+            shadowElevation = 0.dp,
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(76.dp)
+                        .align(Alignment.TopCenter),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                        MainBottomNavItem(
+                            icon = Icons.Outlined.Groups,
+                            label = "グループ",
+                            onClick = onOpenGroups,
+                        )
+                    }
+                    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                        MainBottomNavItem(
+                            icon = Icons.Outlined.IosShare,
+                            label = "エクスポート",
+                            onClick = onExport,
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(76.dp))
+                    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                        MainBottomNavItem(
+                            icon = Icons.Outlined.Sell,
+                            label = "タグ",
+                            onClick = onTagManage,
+                        )
+                    }
+                    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                        MainBottomNavItem(
+                            icon = Icons.Outlined.Archive,
+                            label = "アーカイブ",
+                            onClick = onOpenArchive,
+                        )
+                    }
+                }
+            }
+        }
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .offset(y = 9.dp)
+                .size(76.dp)
+                .background(
+                    color = MaterialTheme.colorScheme.primary,
+                    shape = RoundedCornerShape(99.dp),
+                )
+                .clickable(onClick = onAdd),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Outlined.Add,
+                contentDescription = "追加",
+                tint = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.size(34.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun MainBottomNavItem(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    selected: Boolean = false,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    val tint = when {
+        !enabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+        selected -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val baseStyle = MaterialTheme.typography.labelSmall
+    var labelScale by remember(label) { mutableStateOf(1f) }
     Column(
         modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = OrbitTokens.screenHorizontalPadding, vertical = 12.dp),
+            .offset(y = (-2).dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(enabled = enabled, onClick = onClick, role = Role.Button)
+            .then(
+                if (selected) {
+                    Modifier.semantics(mergeDescendants = true) { this.selected = true }
+                } else {
+                    Modifier
+                },
+            )
+            .padding(horizontal = 4.dp, vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        BannerAdSlot(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 10.dp),
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(36.dp))
+        Text(
+            text = label,
+            style = baseStyle,
+            fontSize = baseStyle.fontSize * labelScale,
+            color = tint,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+            onTextLayout = { result ->
+                if (result.hasVisualOverflow && labelScale > 0.7f) {
+                    labelScale -= 0.05f
+                }
+            },
         )
-        OrbitActionButton(
-            onClick = onClick,
+    }
+}
+
+private fun filterEntriesBySearch(
+    entries: List<UrlEntryEntity>,
+    query: String,
+    collections: List<CollectionEntity>,
+    tags: List<TagWithCount>,
+): List<UrlEntryEntity> {
+    val normalizedQuery = query.trim().lowercase()
+    if (normalizedQuery.isBlank()) return entries
+    val collectionNamesById = collections.associate { it.id to it.name.lowercase() }
+    val tagNames = tags.map { it.name.lowercase() }
+    return entries.filter { entry ->
+        entry.normalizedUrl.lowercase().contains(normalizedQuery) ||
+            entry.originalUrl.lowercase().contains(normalizedQuery) ||
+            entry.displayUrl.lowercase().contains(normalizedQuery) ||
+            entry.userTitle.orEmpty().lowercase().contains(normalizedQuery) ||
+            entry.fetchedTitle.orEmpty().lowercase().contains(normalizedQuery) ||
+            entry.normalizedHost.lowercase().contains(normalizedQuery) ||
+            collectionNamesById[entry.collectionId]?.contains(normalizedQuery) == true ||
+            tagNames.any { it.contains(normalizedQuery) }
+    }
+}
+
+@Composable
+private fun OnboardingGuideOverlay(onFinish: () -> Unit) {
+    var pageIndex by rememberSaveable { mutableStateOf(0) }
+    val page = onboardingGuidePages[pageIndex]
+    val isLast = pageIndex == onboardingGuidePages.lastIndex
+
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            .semantics { contentDescription = "使い方ガイド" },
+    ) {
+        val density = LocalDensity.current
+        val widthPx = with(density) { maxWidth.toPx() }
+        val heightPx = with(density) { maxHeight.toPx() }
+        val canvasSize = Size(widthPx, heightPx)
+        val spotlight = page.spotlight(canvasSize)
+        val arrow = page.arrowOffset(canvasSize)
+        val panelTopPadding = with(density) {
+            guidePanelTopPaddingPx(
+                spotlight = spotlight,
+                canvasSize = canvasSize,
+                panelOnTop = page.panelOnTop,
+                pageIndex = pageIndex,
+            ).toDp()
+        }
+
+        Canvas(
             modifier = Modifier
-                .fillMaxWidth()
-                .semantics { contentDescription = "手動追加" },
-            style = OrbitActionStyle.PRIMARY,
+                .fillMaxSize()
+                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen },
         ) {
-            Icon(Icons.Outlined.Add, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            OrbitActionText(stringResource(R.string.main_add_url))
+            drawRect(Color.Black.copy(alpha = 0.72f))
+            drawRoundRect(
+                color = Color.Transparent,
+                topLeft = Offset(spotlight.left, spotlight.top),
+                size = Size(spotlight.width, spotlight.height),
+                cornerRadius = CornerRadius(22.dp.toPx(), 22.dp.toPx()),
+                blendMode = BlendMode.Clear,
+            )
+        }
+
+        Text(
+            text = page.arrowText,
+            modifier = Modifier
+                .padding(
+                    start = with(density) { arrow.x.toDp() },
+                    top = with(density) { arrow.y.toDp() },
+                ),
+            style = if (page.arrowLarge) {
+                MaterialTheme.typography.displayLarge
+            } else {
+                MaterialTheme.typography.displaySmall
+            },
+            color = Color.White,
+        )
+
+        OnboardingGuidePanel(
+            page = page,
+            pageIndex = pageIndex,
+            pageCount = onboardingGuidePages.size,
+            isLast = isLast,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(horizontal = 20.dp)
+                .padding(top = panelTopPadding),
+            onSkip = onFinish,
+            onNext = {
+                if (isLast) {
+                    onFinish()
+                } else {
+                    pageIndex += 1
+                }
+            },
+        )
+    }
+}
+
+private data class OnboardingGuidePage(
+    val title: String,
+    val body: String,
+    val spotlight: (Size) -> Rect,
+    val arrowOffset: (Size) -> Offset,
+    val arrowText: String = "↓",
+    val panelOnTop: Boolean = false,
+    val bodyStrong: Boolean = false,
+    val arrowLarge: Boolean = false,
+)
+
+private val onboardingGuidePages = listOf(
+    OnboardingGuidePage(
+        title = "自作タグを作成",
+        body = "＋を押すと、自分用のタグを作れます。保存するURLを用途ごとに整理できます。",
+        spotlight = { _ -> Rect(left = 42f, top = 320f, right = 231f, bottom = 441f) },
+        arrowOffset = { _ -> Offset(220f, 386f) },
+        arrowText = "↖",
+    ),
+    OnboardingGuidePage(
+        title = "タグを移動",
+        body = "タグを長押ししたまま左右へ動かすと、好きな順番に並び替えできます。",
+        spotlight = { size -> Rect(left = 252f, top = 329f, right = size.width - 28f, bottom = 450f) },
+        arrowOffset = { size -> Offset(size.width * 0.50f - 28f, 461f) },
+        arrowText = "↑",
+    ),
+    OnboardingGuidePage(
+        title = "共有タグ",
+        body = "共有タグはサインイン後に使えます。招待されたタグのURL一覧だけを端末間で同期します。",
+        spotlight = { _ -> Rect(left = 42f, top = 548f, right = 231f, bottom = 660f) },
+        arrowOffset = { _ -> Offset(220f, 610f) },
+        arrowText = "↖",
+    ),
+    OnboardingGuidePage(
+        title = "問い合わせ場所",
+        body = "プロフィールを開いた後、問い合わせから不具合や改善点を送れます。",
+        spotlight = { size -> Rect(left = 42f, top = size.height - 740f, right = size.width - 42f, bottom = size.height - 614f) },
+        arrowOffset = { size -> Offset(size.width * 0.50f - 47f, size.height - 970f) },
+        panelOnTop = true,
+        arrowLarge = true,
+    ),
+    OnboardingGuidePage(
+        title = "称賛のお気持ちも受け付けております！",
+        body = "あまり怒らないでね、、、",
+        spotlight = { size -> Rect(left = 42f, top = size.height - 740f, right = size.width - 42f, bottom = size.height - 614f) },
+        arrowOffset = { size -> Offset(size.width * 0.50f - 47f, size.height - 970f) },
+        panelOnTop = true,
+        bodyStrong = true,
+        arrowLarge = true,
+    ),
+)
+
+private fun guidePanelTopPaddingPx(
+    spotlight: Rect,
+    canvasSize: Size,
+    panelOnTop: Boolean,
+    pageIndex: Int,
+): Float {
+    val minimumTop = if (panelOnTop) 180f else 96f
+    val maxTop = (canvasSize.height * if (panelOnTop) 0.36f else 0.38f)
+        .coerceAtLeast(minimumTop)
+    val preferredTop = if (panelOnTop) {
+        spotlight.top - 760f
+    } else {
+        spotlight.bottom + 96f
+    }
+    val requestedOffset = when (pageIndex) {
+        0, 1, 2 -> 215f
+        3, 4 -> -248f
+        else -> 0f
+    }
+    return (preferredTop + requestedOffset).coerceIn(minimumTop, maxTop)
+}
+
+@Composable
+private fun OnboardingGuidePanel(
+    page: OnboardingGuidePage,
+    pageIndex: Int,
+    pageCount: Int,
+    isLast: Boolean,
+    modifier: Modifier,
+    onSkip: () -> Unit,
+    onNext: () -> Unit,
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        tonalElevation = 8.dp,
+        shadowElevation = 16.dp,
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Text(
+                text = "${pageIndex + 1}/$pageCount",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Text(
+                text = page.title,
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = page.body,
+                style = if (page.bodyStrong) {
+                    MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.ExtraBold)
+                } else {
+                    MaterialTheme.typography.bodyLarge
+                },
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = onSkip) {
+                    Text("スキップ")
+                }
+                Button(onClick = onNext) {
+                    Text(if (isLast) "はじめる" else "次へ")
+                }
+            }
         }
     }
 }

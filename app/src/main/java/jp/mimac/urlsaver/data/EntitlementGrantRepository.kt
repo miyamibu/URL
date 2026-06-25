@@ -35,4 +35,32 @@ class EntitlementGrantRepository(
             )
         }
     }
+
+    suspend fun redeemPromoCode(code: String): PromoCodeRedemptionResult {
+        val trimmedCode = code.trim()
+        if (trimmedCode.isEmpty()) {
+            return PromoCodeRedemptionResult.InvalidCode
+        }
+        val session = authSessionProvider.session.value
+            ?: return PromoCodeRedemptionResult.AuthRequired
+        val now = clock.nowEpochMillis()
+        return runCatching {
+            val remoteGrants = remoteDataSource.redeemPromoCode(session, trimmedCode)
+            grantStore.saveLastKnownGrants(
+                authUserId = session.authUserId,
+                grants = remoteGrants,
+                fetchedAtMillis = now,
+            )
+            PromoCodeRedemptionResult.Success(remoteGrants)
+        }.getOrElse { error ->
+            PromoCodeRedemptionResult.Failure(error.message ?: "優待コードを適用できませんでした")
+        }
+    }
+}
+
+sealed interface PromoCodeRedemptionResult {
+    data class Success(val grants: List<EntitlementGrant>) : PromoCodeRedemptionResult
+    data object InvalidCode : PromoCodeRedemptionResult
+    data object AuthRequired : PromoCodeRedemptionResult
+    data class Failure(val message: String) : PromoCodeRedemptionResult
 }

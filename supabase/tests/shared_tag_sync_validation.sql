@@ -33,6 +33,7 @@ grant execute on function auth.uid() to anon, authenticated;
 \i supabase/migrations/20260423150000_account_deletion.sql
 \i supabase/migrations/20260501090000_shared_tag_owner_transfer.sql
 \i supabase/migrations/20260501120000_entitlement_grants.sql
+\i supabase/migrations/20260624130000_shared_tag_groups.sql
 
 insert into auth.users (id)
 values
@@ -170,10 +171,17 @@ declare
     viewer_id uuid := '00000000-0000-0000-0000-000000000003';
     tag_uuid uuid := '10000000-0000-0000-0000-000000000001';
     url_uuid uuid := '20000000-0000-0000-0000-000000000001';
+    group_tag_uuid uuid := '10000000-0000-0000-0000-000000000101';
+    group_url_uuid uuid := '20000000-0000-0000-0000-000000000101';
+    group_uuid uuid;
     first_pull jsonb;
     second_apply jsonb;
     invite_payload jsonb;
     accepted_invite jsonb;
+    group_payload jsonb;
+    group_invite_payload jsonb;
+    group_invite_accept jsonb;
+    group_pull jsonb;
 begin
     insert into auth.users (id)
     values (owner_id), (editor_id), (viewer_id)
@@ -296,6 +304,93 @@ begin
     ) <> 'active' then
         raise exception 'accept invite did not create active membership';
     end if;
+
+    perform set_config('request.jwt.claim.sub', owner_id::text, true);
+    perform public.apply_shared_tag_ops(
+        jsonb_build_array(
+            jsonb_build_object(
+                'op_id', '30000000-0000-0000-0000-000000000101',
+                'client_id', '40000000-0000-0000-0000-000000000101',
+                'type', 'create_tag',
+                'tag_id', group_tag_uuid,
+                'name', 'Group Cloud'
+            ),
+            jsonb_build_object(
+                'op_id', '30000000-0000-0000-0000-000000000102',
+                'client_id', '40000000-0000-0000-0000-000000000101',
+                'type', 'add_url_to_tag',
+                'tag_id', group_tag_uuid,
+                'url_id', group_url_uuid,
+                'raw_url', 'https://example.com/group',
+                'normalized_url', 'https://example.com/group',
+                'normalization_version', 1
+            ),
+            jsonb_build_object(
+                'op_id', '30000000-0000-0000-0000-000000000103',
+                'client_id', '40000000-0000-0000-0000-000000000101',
+                'type', 'invite_member',
+                'tag_id', group_tag_uuid,
+                'user_id', editor_id,
+                'role', 'editor'
+            )
+        )
+    );
+
+    group_payload := public.create_shared_tag_group('Group Pack');
+    group_uuid := (group_payload ->> 'group_id')::uuid;
+    perform public.add_shared_tag_to_group(group_uuid, group_tag_uuid);
+
+    if (
+        select status
+        from public.shared_tag_members member
+        where member.tag_id = group_tag_uuid
+          and member.user_id = editor_id
+    ) <> 'removed' then
+        raise exception 'adding tag to group did not move non-owner direct member out of tag';
+    end if;
+
+    if (
+        select role
+        from public.shared_tag_group_members member
+        where member.group_id = group_uuid
+          and member.user_id = editor_id
+    ) <> 'editor' then
+        raise exception 'adding tag to group did not create editor group membership';
+    end if;
+
+    group_invite_payload := public.create_shared_tag_group_invite(group_uuid, 'viewer');
+    if public.preview_shared_invite(group_invite_payload ->> 'invite_token') ->> 'invite_type' <> 'group' then
+        raise exception 'generic invite preview did not identify group invite';
+    end if;
+
+    perform set_config('request.jwt.claim.sub', viewer_id::text, true);
+    group_invite_accept := public.accept_shared_invite(group_invite_payload ->> 'invite_token');
+    if group_invite_accept ->> 'group_name' <> 'Group Pack' then
+        raise exception 'group invite accept returned unexpected group name';
+    end if;
+
+    group_pull := public.pull_shared_tag_snapshot();
+    if jsonb_array_length(group_pull -> 'groups') <> 1 then
+        raise exception 'group member snapshot did not include group';
+    end if;
+    if jsonb_array_length(group_pull -> 'tags') = 0 then
+        raise exception 'group member snapshot did not include grouped tag';
+    end if;
+
+    perform set_config('request.jwt.claim.sub', owner_id::text, true);
+    perform public.remove_shared_tag_from_group(group_uuid, group_tag_uuid);
+    perform set_config('request.jwt.claim.sub', viewer_id::text, true);
+    group_pull := public.pull_shared_tag_snapshot();
+    if exists (
+        select 1
+        from jsonb_array_elements(group_pull -> 'tags') tag_row
+        where tag_row ->> 'id' = group_tag_uuid::text
+    ) then
+        raise exception 'removed group tag stayed visible to group-only member';
+    end if;
+
+    perform set_config('request.jwt.claim.sub', owner_id::text, true);
+    perform public.delete_shared_tag_group(group_uuid);
 
     begin
         perform set_config('request.jwt.claim.sub', owner_id::text, true);

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Security
 import SQLite3
@@ -157,6 +158,65 @@ private struct KeychainSharedTagAuthSecureStorage: SharedTagAuthSecureStorage {
     }
 }
 
+struct SharedTagOAuthPendingState: Codable, Equatable, Sendable {
+    let provider: String
+    let state: String
+    let codeVerifier: String
+    let redirectTo: String
+    let expiresAt: Date
+}
+
+final class SharedTagOAuthStateStore: @unchecked Sendable {
+    private let storage: any SharedTagAuthSecureStorage
+    private let nowProvider: @Sendable () -> Date
+
+    init(
+        service: String = "jp.mimac.urlsaver.shared-tag-auth",
+        account: String = "oauth-pending",
+        nowProvider: @Sendable @escaping () -> Date = Date.init
+    ) {
+        self.storage = KeychainSharedTagAuthSecureStorage(service: service, account: account)
+        self.nowProvider = nowProvider
+    }
+
+    init(
+        storage: any SharedTagAuthSecureStorage,
+        nowProvider: @Sendable @escaping () -> Date = Date.init
+    ) {
+        self.storage = storage
+        self.nowProvider = nowProvider
+    }
+
+    func save(_ pending: SharedTagOAuthPendingState) throws {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try storage.save(try encoder.encode(pending))
+    }
+
+    func consume(provider: String, state: String, redirectTo: String) throws -> SharedTagOAuthPendingState {
+        guard let data = try storage.load() else {
+            throw SharedTagCloudError.message("OAuth state is missing.")
+        }
+        try storage.clear()
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let pending = try decoder.decode(SharedTagOAuthPendingState.self, from: data)
+        guard pending.provider == provider,
+              pending.state == state,
+              pending.redirectTo == redirectTo else {
+            throw SharedTagCloudError.message("OAuth state is invalid.")
+        }
+        guard pending.expiresAt > nowProvider() else {
+            throw SharedTagCloudError.message("OAuth state expired.")
+        }
+        return pending
+    }
+
+    func clear() throws {
+        try storage.clear()
+    }
+}
+
 private enum SharedTagAuthRemoteResult {
     case signedIn(SharedTagAuthSession)
     case needsEmailConfirmation
@@ -164,9 +224,79 @@ private enum SharedTagAuthRemoteResult {
 
 private struct SharedTagAuthRemoteDataSource {
     private let config: SharedTagCloudConfig
+    private let oauthStateStore: SharedTagOAuthStateStore
+    private static let authCallbackURL = "urlsaver://auth/callback"
+    private static let oauthStateTTL: TimeInterval = 10 * 60
 
-    init(config: SharedTagCloudConfig) {
+    init(
+        config: SharedTagCloudConfig,
+        oauthStateStore: SharedTagOAuthStateStore = SharedTagOAuthStateStore()
+    ) {
         self.config = config
+        self.oauthStateStore = oauthStateStore
+    }
+
+    func oauthURL(provider: String, redirectTo: String) throws -> URL {
+        guard config.isConfigured else {
+            throw SharedTagCloudError.message("共有タグクラウドの設定がありません")
+        }
+        guard Self.isAllowedAuthCallback(URL(string: redirectTo)) else {
+            throw SharedTagCloudError.message("OAuth redirect URL is invalid.")
+        }
+        let codeVerifier = Self.randomURLSafeString(byteCount: 48)
+        let state = Self.randomURLSafeString(byteCount: 32)
+        let codeChallenge = Self.pkceCodeChallenge(for: codeVerifier)
+        try oauthStateStore.save(
+            SharedTagOAuthPendingState(
+                provider: provider,
+                state: state,
+                codeVerifier: codeVerifier,
+                redirectTo: redirectTo,
+                expiresAt: Date().addingTimeInterval(Self.oauthStateTTL)
+            )
+        )
+        let query = [
+            "provider=\(Self.percentEncodedQueryValue(provider))",
+            "redirect_to=\(Self.percentEncodedQueryValue(redirectTo))",
+            "code_challenge=\(Self.percentEncodedQueryValue(codeChallenge))",
+            "code_challenge_method=S256",
+            "state=\(Self.percentEncodedQueryValue(state))",
+        ].joined(separator: "&")
+        guard let url = URL(string: config.supabaseURL.trimmingTrailingSlashes() + "/auth/v1/authorize?\(query)") else {
+            throw SharedTagCloudError.message("GoogleサインインURLを作成できませんでした")
+        }
+        return url
+    }
+
+    func signInWithOAuthCallback(url: URL) async throws -> SharedTagAuthRemoteResult {
+        guard Self.isAllowedAuthCallback(url) else {
+            try? oauthStateStore.clear()
+            throw SharedTagCloudError.message("OAuth callback URL is invalid.")
+        }
+        let params = callbackParameters(from: url)
+        if let error = params["error_description"] ?? params["error"], !error.isEmpty {
+            try? oauthStateStore.clear()
+            throw SharedTagCloudError.message(error)
+        }
+        if params["access_token"]?.isEmpty == false || params["refresh_token"]?.isEmpty == false || url.fragment?.isEmpty == false {
+            try? oauthStateStore.clear()
+            throw SharedTagCloudError.message("OAuth token callback is not accepted.")
+        }
+        guard let code = params["code"], !code.isEmpty,
+              let state = params["state"], !state.isEmpty else {
+            try? oauthStateStore.clear()
+            throw SharedTagCloudError.message("OAuth code callback is missing.")
+        }
+        let pending = try oauthStateStore.consume(
+            provider: params["provider"] ?? "google",
+            state: state,
+            redirectTo: Self.authCallbackURL
+        )
+        let response = try await executeAuthRequest(
+            path: "/auth/v1/token?grant_type=pkce",
+            body: SupabasePKCEAuthRequest(authCode: code, codeVerifier: pending.codeVerifier)
+        )
+        return .signedIn(try requireSession(from: response))
     }
 
     func signUp(email: String, password: String) async throws -> SharedTagAuthRemoteResult {
@@ -191,6 +321,14 @@ private struct SharedTagAuthRemoteDataSource {
             body: SupabaseRefreshTokenRequest(refreshToken: refreshToken)
         )
         return try requireSession(from: response)
+    }
+
+    func signInWithAppleIDToken(idToken: String, nonce: String) async throws -> SharedTagAuthRemoteResult {
+        let response = try await executeAuthRequest(
+            path: "/auth/v1/token?grant_type=id_token",
+            body: SupabaseIDTokenAuthRequest(provider: "apple", idToken: idToken, nonce: nonce)
+        )
+        return try parseSessionResult(response)
     }
 
     private func parseSessionResult(_ data: Data) throws -> SharedTagAuthRemoteResult {
@@ -227,6 +365,45 @@ private struct SharedTagAuthRemoteDataSource {
             bearerToken: nil,
             body: body
         )
+    }
+
+    private static func percentEncodedQueryValue(_ value: String) -> String {
+        var allowed = CharacterSet.urlQueryAllowed
+        allowed.remove(charactersIn: ":#[]@!$&'()*+,;=/?")
+        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
+    }
+
+    static func isAllowedAuthCallback(_ url: URL?) -> Bool {
+        guard let url else { return false }
+        return url.scheme == "urlsaver" &&
+            url.host == "auth" &&
+            url.path == "/callback"
+    }
+
+    static func pkceCodeChallenge(for verifier: String) -> String {
+        let data = Data(SHA256.hash(data: Data(verifier.utf8)))
+        return data.base64URLEncodedString()
+    }
+
+    private static func randomURLSafeString(byteCount: Int) -> String {
+        var bytes = [UInt8](repeating: 0, count: byteCount)
+        let status = SecRandomCopyBytes(kSecRandomDefault, byteCount, &bytes)
+        if status == errSecSuccess {
+            return Data(bytes).base64URLEncodedString()
+        }
+        return UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+    }
+
+    private func callbackParameters(from url: URL) -> [String: String] {
+        let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        var params = Dictionary(uniqueKeysWithValues: queryItems.map { ($0.name, $0.value ?? "") })
+        if let fragment = url.fragment,
+           let fragmentComponents = URLComponents(string: "urlsaver://auth/callback?\(fragment)") {
+            for item in fragmentComponents.queryItems ?? [] {
+                params[item.name] = item.value ?? ""
+            }
+        }
+        return params
     }
 }
 
@@ -281,7 +458,7 @@ private struct SharedTagSyncRemoteDataSource {
 
     func previewInvite(inviteToken: String) async throws -> PreviewSharedTagInviteResponse {
         let data = try await executeUnauthenticatedRPC(
-            path: "/rest/v1/rpc/preview_shared_tag_invite",
+            path: "/rest/v1/rpc/preview_shared_invite",
             body: AcceptInvitePayload(token: inviteToken)
         )
         return try makeSharedTagCloudDecoder().decode(PreviewSharedTagInviteResponse.self, from: data)
@@ -289,11 +466,57 @@ private struct SharedTagSyncRemoteDataSource {
 
     func acceptInvite(session: SharedTagAuthSession, inviteToken: String) async throws -> AcceptSharedTagInviteResponse {
         let data = try await executeRPC(
-            path: "/rest/v1/rpc/accept_shared_tag_invite",
+            path: "/rest/v1/rpc/accept_shared_invite",
             session: session,
             body: AcceptInvitePayload(token: inviteToken)
         )
         return try makeSharedTagCloudDecoder().decode(AcceptSharedTagInviteResponse.self, from: data)
+    }
+
+    func createGroup(session: SharedTagAuthSession, name: String) async throws -> CreateSharedTagGroupResponse {
+        let data = try await executeRPC(
+            path: "/rest/v1/rpc/create_shared_tag_group",
+            session: session,
+            body: CreateGroupPayload(name: name)
+        )
+        return try makeSharedTagCloudDecoder().decode(CreateSharedTagGroupResponse.self, from: data)
+    }
+
+    func createGroupInvite(
+        session: SharedTagAuthSession,
+        remoteGroupID: String,
+        role: String
+    ) async throws -> CreateSharedTagGroupInviteResponse {
+        let data = try await executeRPC(
+            path: "/rest/v1/rpc/create_shared_tag_group_invite",
+            session: session,
+            body: CreateGroupInvitePayload(groupID: remoteGroupID, role: role)
+        )
+        return try makeSharedTagCloudDecoder().decode(CreateSharedTagGroupInviteResponse.self, from: data)
+    }
+
+    func addTagToGroup(
+        session: SharedTagAuthSession,
+        remoteGroupID: String,
+        remoteTagID: String
+    ) async throws {
+        _ = try await executeRPC(
+            path: "/rest/v1/rpc/add_shared_tag_to_group",
+            session: session,
+            body: GroupTagPayload(groupID: remoteGroupID, tagID: remoteTagID)
+        )
+    }
+
+    func removeTagFromGroup(
+        session: SharedTagAuthSession,
+        remoteGroupID: String,
+        remoteTagID: String
+    ) async throws {
+        _ = try await executeRPC(
+            path: "/rest/v1/rpc/remove_shared_tag_from_group",
+            session: session,
+            body: GroupTagPayload(groupID: remoteGroupID, tagID: remoteTagID)
+        )
     }
 
     func transferOwnership(
@@ -534,6 +757,17 @@ private struct EntitlementGrantRemoteDataSource {
             .compactMap { $0.toDomain() }
     }
 
+    func redeemPromoCode(session: SharedTagAuthSession, code: String) async throws -> [EntitlementGrant] {
+        let data = try await executeRPC(
+            path: "/rest/v1/rpc/redeem_promo_code",
+            session: session,
+            body: PromoCodeRequest(code: code)
+        )
+        return try makeSharedTagCloudDecoder()
+            .decode([RemoteEntitlementGrant].self, from: data)
+            .compactMap { $0.toDomain() }
+    }
+
     private func executeRPC<T: Encodable>(
         path: String,
         session: SharedTagAuthSession,
@@ -557,6 +791,14 @@ private struct EntitlementGrantRemoteDataSource {
                 body: body
             )
         }
+    }
+}
+
+private struct PromoCodeRequest: Encodable {
+    let code: String
+
+    enum CodingKeys: String, CodingKey {
+        case code = "p_code"
     }
 }
 
@@ -641,6 +883,22 @@ final class EntitlementService: @unchecked Sendable {
         ).resolve(at: now)
     }
 
+    @discardableResult
+    func redeemPromoCode(_ code: String, now: Date = Date()) async throws -> FeatureEntitlements {
+        let trimmedCode = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedCode.isEmpty else {
+            throw SharedTagCloudError.message("優待コードを入力してください")
+        }
+        guard let session = try? sessionStore.load() else {
+            throw SharedTagCloudError.authRequired
+        }
+        let remoteGrants = try await remoteDataSource.redeemPromoCode(session: session, code: trimmedCode)
+        cache.save(authUserID: session.authUserID, grants: remoteGrants, fetchedAt: now)
+        return EntitlementResolver(
+            grantsProvider: { remoteGrants + BuildVariantEntitlementOverrides.grants(at: now) }
+        ).resolve(at: now)
+    }
+
     private func fetchOrLoadCachedGrants(session: SharedTagAuthSession, now: Date) async -> [EntitlementGrant] {
         do {
             let remoteGrants = try await remoteDataSource.fetchGrants(session: session)
@@ -688,6 +946,78 @@ final class SharedTagStore: @unchecked Sendable {
                 currentUserRole: Self.textColumn(statement, index: 2).flatMap(SharedTagMemberRole.init(rawValue:)),
                 activeURLCount: Int(sqlite3_column_int(statement, 4)),
                 lastSyncedAt: Self.dateColumn(statement, index: 3)
+            )
+        }
+    }
+
+    func loadVisibleGroups(authUserID: String) throws -> [SharedTagGroupSummary] {
+        try database.fetchMany(
+            sql: """
+            SELECT remote_group_id, name, current_user_role
+            FROM shared_tag_groups
+            WHERE auth_user_id = ?
+              AND deleted_at IS NULL
+            ORDER BY name COLLATE NOCASE ASC;
+            """,
+            binds: [sql(authUserID)]
+        ) { statement in
+            SharedTagGroupSummary(
+                remoteGroupID: Self.textColumn(statement, index: 0) ?? "",
+                name: Self.textColumn(statement, index: 1) ?? "",
+                currentUserRole: Self.textColumn(statement, index: 2).flatMap(SharedTagMemberRole.init(rawValue:))
+            )
+        }
+    }
+
+    func loadGroupMembers(authUserID: String, remoteGroupID: String) throws -> [SharedTagGroupMemberSummary] {
+        try database.fetchMany(
+            sql: """
+            SELECT group_remote_id, user_id, role
+            FROM shared_tag_group_members
+            WHERE auth_user_id = ?
+              AND group_remote_id = ?
+              AND status = 'active'
+            ORDER BY
+              CASE role
+                WHEN 'owner' THEN 0
+                WHEN 'editor' THEN 1
+                ELSE 2
+              END ASC,
+              CASE WHEN user_id = ? THEN 0 ELSE 1 END ASC,
+              user_id ASC;
+            """,
+            binds: [sql(authUserID), sql(remoteGroupID), sql(authUserID)]
+        ) { statement in
+            let userID = Self.textColumn(statement, index: 1) ?? ""
+            return SharedTagGroupMemberSummary(
+                groupID: Self.textColumn(statement, index: 0) ?? "",
+                userID: userID,
+                role: Self.textColumn(statement, index: 2).flatMap(SharedTagMemberRole.init(rawValue:)) ?? .viewer,
+                isCurrentUser: userID == authUserID
+            )
+        }
+    }
+
+    func loadGroupTags(authUserID: String, remoteGroupID: String) throws -> [SharedTagGroupTagSummary] {
+        try database.fetchMany(
+            sql: """
+            SELECT group_tag.group_remote_id, group_tag.tag_remote_id, tag.name, tag.current_user_role
+            FROM shared_tag_group_tags AS group_tag
+            INNER JOIN shared_tags AS tag
+              ON tag.auth_user_id = group_tag.auth_user_id
+             AND tag.remote_tag_id = group_tag.tag_remote_id
+             AND tag.deleted_at IS NULL
+            WHERE group_tag.auth_user_id = ?
+              AND group_tag.group_remote_id = ?
+            ORDER BY tag.name COLLATE NOCASE ASC;
+            """,
+            binds: [sql(authUserID), sql(remoteGroupID)]
+        ) { statement in
+            SharedTagGroupTagSummary(
+                groupID: Self.textColumn(statement, index: 0) ?? "",
+                remoteTagID: Self.textColumn(statement, index: 1) ?? "",
+                tagName: Self.textColumn(statement, index: 2) ?? "",
+                currentUserRole: Self.textColumn(statement, index: 3).flatMap(SharedTagMemberRole.init(rawValue:))
             )
         }
     }
@@ -822,6 +1152,9 @@ final class SharedTagStore: @unchecked Sendable {
     func applySnapshot(authUserID: String, snapshot: PullSharedTagSnapshotResponse) throws {
         try database.transaction {
             try database.execute("DELETE FROM shared_tag_members WHERE auth_user_id = ?;", binds: [sql(authUserID)])
+            try database.execute("DELETE FROM shared_tag_group_members WHERE auth_user_id = ?;", binds: [sql(authUserID)])
+            try database.execute("DELETE FROM shared_tag_group_tags WHERE auth_user_id = ?;", binds: [sql(authUserID)])
+            try database.execute("DELETE FROM shared_tag_groups WHERE auth_user_id = ?;", binds: [sql(authUserID)])
             try database.execute("DELETE FROM shared_tag_urls WHERE auth_user_id = ?;", binds: [sql(authUserID)])
             try database.execute("DELETE FROM shared_tags WHERE auth_user_id = ?;", binds: [sql(authUserID)])
 
@@ -880,6 +1213,83 @@ final class SharedTagStore: @unchecked Sendable {
                         sql(member.status.lowercased()),
                         sql(Self.parseISO8601(member.createdAt)?.timeIntervalSince1970),
                         sql(Self.parseISO8601(member.updatedAt)?.timeIntervalSince1970),
+                    ]
+                )
+            }
+
+            let groupRolesByID = Dictionary(
+                uniqueKeysWithValues: snapshot.groupMembers
+                    .filter { $0.userID == authUserID && $0.status.lowercased() == "active" }
+                    .compactMap { member in
+                        SharedTagMemberRole(rawValue: member.role.lowercased()).map { (member.groupID, $0.rawValue) }
+                    }
+            )
+
+            for group in snapshot.groups {
+                try database.execute(
+                    """
+                    INSERT INTO shared_tag_groups (
+                        auth_user_id,
+                        remote_group_id,
+                        name,
+                        current_user_role,
+                        deleted_at,
+                        last_synced_at
+                    ) VALUES (?, ?, ?, ?, ?, ?);
+                    """,
+                    binds: [
+                        sql(authUserID),
+                        sql(group.id),
+                        sql(group.name),
+                        sql(groupRolesByID[group.id]),
+                        sql(Self.parseISO8601(group.deletedAt)?.timeIntervalSince1970),
+                        sql(Self.parseISO8601(snapshot.pulledAt)?.timeIntervalSince1970),
+                    ]
+                )
+            }
+
+            for member in snapshot.groupMembers {
+                try database.execute(
+                    """
+                    INSERT INTO shared_tag_group_members (
+                        auth_user_id,
+                        group_remote_id,
+                        user_id,
+                        role,
+                        status,
+                        created_at,
+                        updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?);
+                    """,
+                    binds: [
+                        sql(authUserID),
+                        sql(member.groupID),
+                        sql(member.userID),
+                        sql(member.role.lowercased()),
+                        sql(member.status.lowercased()),
+                        sql(Self.parseISO8601(member.createdAt)?.timeIntervalSince1970),
+                        sql(Self.parseISO8601(member.updatedAt)?.timeIntervalSince1970),
+                    ]
+                )
+            }
+
+            for groupTag in snapshot.groupTags {
+                try database.execute(
+                    """
+                    INSERT INTO shared_tag_group_tags (
+                        auth_user_id,
+                        group_remote_id,
+                        tag_remote_id,
+                        added_by,
+                        created_at
+                    ) VALUES (?, ?, ?, ?, ?);
+                    """,
+                    binds: [
+                        sql(authUserID),
+                        sql(groupTag.groupID),
+                        sql(groupTag.tagID),
+                        sql(groupTag.addedBy),
+                        sql(Self.parseISO8601(groupTag.createdAt)?.timeIntervalSince1970),
                     ]
                 )
             }
@@ -951,6 +1361,9 @@ final class SharedTagStore: @unchecked Sendable {
     func clearLocalSharedState() throws {
         try database.transaction {
             try database.execute("DELETE FROM shared_tag_members;", binds: [])
+            try database.execute("DELETE FROM shared_tag_group_members;", binds: [])
+            try database.execute("DELETE FROM shared_tag_group_tags;", binds: [])
+            try database.execute("DELETE FROM shared_tag_groups;", binds: [])
             try database.execute("DELETE FROM shared_tag_urls;", binds: [])
             try database.execute("DELETE FROM shared_tags;", binds: [])
             try database.execute("DELETE FROM shared_tag_sync_state;", binds: [])
@@ -1031,6 +1444,33 @@ final class SharedTagStore: @unchecked Sendable {
                 updated_at REAL NOT NULL,
                 PRIMARY KEY (auth_user_id, tag_remote_id, user_id)
             );
+            CREATE TABLE IF NOT EXISTS shared_tag_groups (
+                auth_user_id TEXT NOT NULL,
+                remote_group_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                current_user_role TEXT,
+                deleted_at REAL,
+                last_synced_at REAL,
+                PRIMARY KEY (auth_user_id, remote_group_id)
+            );
+            CREATE TABLE IF NOT EXISTS shared_tag_group_members (
+                auth_user_id TEXT NOT NULL,
+                group_remote_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                PRIMARY KEY (auth_user_id, group_remote_id, user_id)
+            );
+            CREATE TABLE IF NOT EXISTS shared_tag_group_tags (
+                auth_user_id TEXT NOT NULL,
+                group_remote_id TEXT NOT NULL,
+                tag_remote_id TEXT NOT NULL,
+                added_by TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                PRIMARY KEY (auth_user_id, group_remote_id, tag_remote_id)
+            );
             CREATE TABLE IF NOT EXISTS shared_tag_urls (
                 auth_user_id TEXT NOT NULL,
                 tag_remote_id TEXT NOT NULL,
@@ -1046,6 +1486,7 @@ final class SharedTagStore: @unchecked Sendable {
                 last_error_message TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_shared_tags_visible ON shared_tags(auth_user_id, deleted_at, name);
+            CREATE INDEX IF NOT EXISTS idx_shared_tag_groups_visible ON shared_tag_groups(auth_user_id, deleted_at, name);
             CREATE INDEX IF NOT EXISTS idx_shared_tag_urls_lookup ON shared_tag_urls(auth_user_id, normalized_url, deleted_at);
             """
         )
@@ -1116,9 +1557,28 @@ final class SharedTagCloudService: @unchecked Sendable {
         try? sessionStore.load()
     }
 
+    func googleOAuthURL() -> URL? {
+        try? authRemoteDataSource.oauthURL(provider: "google", redirectTo: "urlsaver://auth/callback")
+    }
+
     func loadVisibleTags() throws -> [SharedTagSummary] {
         guard let session = try sessionStore.load() else { return [] }
         return try store.loadVisibleTags(authUserID: session.authUserID)
+    }
+
+    func loadVisibleGroups() throws -> [SharedTagGroupSummary] {
+        guard let session = try sessionStore.load() else { return [] }
+        return try store.loadVisibleGroups(authUserID: session.authUserID)
+    }
+
+    func loadGroupMembers(remoteGroupID: String) throws -> [SharedTagGroupMemberSummary] {
+        guard let session = try sessionStore.load() else { return [] }
+        return try store.loadGroupMembers(authUserID: session.authUserID, remoteGroupID: remoteGroupID)
+    }
+
+    func loadGroupTags(remoteGroupID: String) throws -> [SharedTagGroupTagSummary] {
+        guard let session = try sessionStore.load() else { return [] }
+        return try store.loadGroupTags(authUserID: session.authUserID, remoteGroupID: remoteGroupID)
     }
 
     func loadTag(remoteTagID: String) throws -> SharedTagSummary? {
@@ -1146,6 +1606,44 @@ final class SharedTagCloudService: @unchecked Sendable {
     func loadMembersForTag(remoteTagID: String) throws -> [SharedTagMemberSummary] {
         guard let session = try sessionStore.load() else { return [] }
         return try store.loadActiveMembersForTag(authUserID: session.authUserID, remoteTagID: remoteTagID)
+    }
+
+    func handleOAuthCallback(url: URL) async -> SharedTagAuthResult {
+        guard config.isConfigured else {
+            return .failure("共有タグクラウドの設定がありません")
+        }
+        do {
+            switch try await authRemoteDataSource.signInWithOAuthCallback(url: url) {
+            case .signedIn(let session):
+                try sessionStore.save(session)
+                return .success(email: session.userEmail)
+            case .needsEmailConfirmation:
+                return .needsEmailConfirmation
+            }
+        } catch let error as SharedTagCloudError {
+            return .failure(error.userMessage)
+        } catch {
+            return .failure(error.localizedDescription)
+        }
+    }
+
+    func signInWithAppleIDToken(idToken: String, nonce: String) async -> SharedTagAuthResult {
+        guard config.isConfigured else {
+            return .failure("共有タグクラウドの設定がありません")
+        }
+        do {
+            switch try await authRemoteDataSource.signInWithAppleIDToken(idToken: idToken, nonce: nonce) {
+            case .signedIn(let session):
+                try sessionStore.save(session)
+                return .success(email: session.userEmail)
+            case .needsEmailConfirmation:
+                return .needsEmailConfirmation
+            }
+        } catch let error as SharedTagCloudError {
+            return .failure(error.userMessage)
+        } catch {
+            return .failure(error.localizedDescription)
+        }
     }
 
     func signIn(email: String, password: String) async -> SharedTagAuthResult {
@@ -1222,6 +1720,66 @@ final class SharedTagCloudService: @unchecked Sendable {
                 name: normalizedName
             )
             _ = try await syncRemoteDataSource.applyOperations(session: session, operations: [operation])
+            try await refreshLocalState(session: session)
+            return .success
+        } catch let error as SharedTagCloudError {
+            return .failure(error.userMessage)
+        } catch {
+            return .failure(error.localizedDescription)
+        }
+    }
+
+    func createGroup(name: String) async -> SharedTagMutationResult {
+        let normalizedName = Self.normalizeTagName(name)
+        guard !normalizedName.isEmpty else {
+            return .failure("グループ名を入力してください")
+        }
+        guard normalizedName.count <= maxSharedTagNameLength else {
+            return .failure("グループ名は\(maxSharedTagNameLength)文字以内で入力してください")
+        }
+        guard let session = try? sessionStore.load() else {
+            return .authRequired
+        }
+        do {
+            _ = try await syncRemoteDataSource.createGroup(session: session, name: normalizedName)
+            try await refreshLocalState(session: session)
+            return .success
+        } catch let error as SharedTagCloudError {
+            return .failure(error.userMessage)
+        } catch {
+            return .failure(error.localizedDescription)
+        }
+    }
+
+    func addTagToGroup(remoteGroupID: String, remoteTagID: String) async -> SharedTagMutationResult {
+        guard let session = try? sessionStore.load() else {
+            return .authRequired
+        }
+        do {
+            try await syncRemoteDataSource.addTagToGroup(
+                session: session,
+                remoteGroupID: remoteGroupID,
+                remoteTagID: remoteTagID
+            )
+            try await refreshLocalState(session: session)
+            return .success
+        } catch let error as SharedTagCloudError {
+            return .failure(error.userMessage)
+        } catch {
+            return .failure(error.localizedDescription)
+        }
+    }
+
+    func removeTagFromGroup(remoteGroupID: String, remoteTagID: String) async -> SharedTagMutationResult {
+        guard let session = try? sessionStore.load() else {
+            return .authRequired
+        }
+        do {
+            try await syncRemoteDataSource.removeTagFromGroup(
+                session: session,
+                remoteGroupID: remoteGroupID,
+                remoteTagID: remoteTagID
+            )
             try await refreshLocalState(session: session)
             return .success
         } catch let error as SharedTagCloudError {
@@ -1462,6 +2020,39 @@ final class SharedTagCloudService: @unchecked Sendable {
         }
     }
 
+    func createGroupInvite(remoteGroupID: String, role: SharedTagMemberRole) async -> SharedTagInviteCreationResult {
+        guard config.isConfigured else {
+            return .failure("共有タグクラウドの設定がありません")
+        }
+        guard let session = try? sessionStore.load() else {
+            return .authRequired
+        }
+        do {
+            guard let group = try store.loadVisibleGroups(authUserID: session.authUserID)
+                .first(where: { $0.remoteGroupID == remoteGroupID })
+            else {
+                return .failure("グループが見つかりませんでした")
+            }
+            guard group.currentUserRole == .owner else {
+                return .ownerOnly
+            }
+            let inviteRole = role == .viewer ? "viewer" : "editor"
+            let invite = try await syncRemoteDataSource.createGroupInvite(
+                session: session,
+                remoteGroupID: remoteGroupID,
+                role: inviteRole
+            )
+            return .success(
+                inviteURL: makeInviteURL(invite.inviteToken),
+                expiresAt: SharedTagStore.parseISO8601(invite.expiresAt)
+            )
+        } catch let error as SharedTagCloudError {
+            return .failure(error.userMessage)
+        } catch {
+            return .failure(error.localizedDescription)
+        }
+    }
+
     private func makeInviteURL(_ inviteToken: String) -> String {
         "\(config.inviteLinkBaseURL)/invite/\(inviteToken)"
     }
@@ -1476,7 +2067,11 @@ final class SharedTagCloudService: @unchecked Sendable {
         }
         do {
             let preview = try await syncRemoteDataSource.previewInvite(inviteToken: token)
-            return .success(tagName: preview.tagName)
+            let inviteType = SharedInviteType(rawValue: preview.inviteType) ?? .tag
+            return .success(
+                displayName: preview.groupName ?? preview.tagName ?? "共有招待",
+                inviteType: inviteType
+            )
         } catch let error as SharedTagCloudError {
             switch error {
             case .invalidInvite:
@@ -1503,7 +2098,12 @@ final class SharedTagCloudService: @unchecked Sendable {
         do {
             let response = try await syncRemoteDataSource.acceptInvite(session: session, inviteToken: inviteToken)
             _ = await syncCurrentSession()
-            return .accepted(tagName: response.tagName, role: SharedTagMemberRole(rawValue: response.role.lowercased()))
+            let inviteType = SharedInviteType(rawValue: response.inviteType) ?? .tag
+            return .accepted(
+                displayName: response.groupName ?? response.tagName ?? "共有招待",
+                inviteType: inviteType,
+                role: SharedTagMemberRole(rawValue: response.role.lowercased())
+            )
         } catch let error as SharedTagCloudError {
             switch error {
             case .authRequired:
@@ -1617,9 +2217,73 @@ private struct TransferOwnershipPayload: Encodable {
     }
 }
 
+private struct CreateGroupPayload: Encodable {
+    let pName: String
+
+    enum CodingKeys: String, CodingKey {
+        case pName = "p_name"
+    }
+
+    init(name: String) {
+        self.pName = name
+    }
+}
+
+private struct CreateGroupInvitePayload: Encodable {
+    let pGroupID: String
+    let pRole: String
+
+    enum CodingKeys: String, CodingKey {
+        case pGroupID = "p_group_id"
+        case pRole = "p_role"
+    }
+
+    init(groupID: String, role: String) {
+        self.pGroupID = groupID
+        self.pRole = role
+    }
+}
+
+private struct GroupTagPayload: Encodable {
+    let pGroupID: String
+    let pTagID: String
+
+    enum CodingKeys: String, CodingKey {
+        case pGroupID = "p_group_id"
+        case pTagID = "p_tag_id"
+    }
+
+    init(groupID: String, tagID: String) {
+        self.pGroupID = groupID
+        self.pTagID = tagID
+    }
+}
+
 private struct SupabasePasswordAuthRequest: Encodable {
     let email: String
     let password: String
+}
+
+private struct SupabasePKCEAuthRequest: Encodable {
+    let authCode: String
+    let codeVerifier: String
+
+    enum CodingKeys: String, CodingKey {
+        case authCode = "auth_code"
+        case codeVerifier = "code_verifier"
+    }
+}
+
+private struct SupabaseIDTokenAuthRequest: Encodable {
+    let provider: String
+    let idToken: String
+    let nonce: String
+
+    enum CodingKeys: String, CodingKey {
+        case provider
+        case idToken = "id_token"
+        case nonce
+    }
 }
 
 private struct SupabaseRefreshTokenRequest: Encodable {
@@ -1748,6 +2412,9 @@ struct PullSharedTagSnapshotResponse: Decodable, Sendable {
     let tags: [RemoteSharedTag]
     let members: [RemoteSharedTagMember]
     let urls: [RemoteSharedTagURL]
+    let groups: [RemoteSharedTagGroup]
+    let groupMembers: [RemoteSharedTagGroupMember]
+    let groupTags: [RemoteSharedTagGroupTag]
 
     enum CodingKeys: String, CodingKey {
         case pulledAt = "pulled_at"
@@ -1755,6 +2422,41 @@ struct PullSharedTagSnapshotResponse: Decodable, Sendable {
         case tags
         case members
         case urls
+        case groups
+        case groupMembers = "group_members"
+        case groupTags = "group_tags"
+    }
+
+    init(
+        pulledAt: String,
+        normalizationVersion: Int,
+        tags: [RemoteSharedTag],
+        members: [RemoteSharedTagMember],
+        urls: [RemoteSharedTagURL],
+        groups: [RemoteSharedTagGroup] = [],
+        groupMembers: [RemoteSharedTagGroupMember] = [],
+        groupTags: [RemoteSharedTagGroupTag] = []
+    ) {
+        self.pulledAt = pulledAt
+        self.normalizationVersion = normalizationVersion
+        self.tags = tags
+        self.members = members
+        self.urls = urls
+        self.groups = groups
+        self.groupMembers = groupMembers
+        self.groupTags = groupTags
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        pulledAt = try container.decode(String.self, forKey: .pulledAt)
+        normalizationVersion = try container.decode(Int.self, forKey: .normalizationVersion)
+        tags = try container.decode([RemoteSharedTag].self, forKey: .tags)
+        members = try container.decode([RemoteSharedTagMember].self, forKey: .members)
+        urls = try container.decode([RemoteSharedTagURL].self, forKey: .urls)
+        groups = try container.decodeIfPresent([RemoteSharedTagGroup].self, forKey: .groups) ?? []
+        groupMembers = try container.decodeIfPresent([RemoteSharedTagGroupMember].self, forKey: .groupMembers) ?? []
+        groupTags = try container.decodeIfPresent([RemoteSharedTagGroupTag].self, forKey: .groupTags) ?? []
     }
 }
 
@@ -1808,12 +2510,64 @@ struct RemoteSharedTagURL: Decodable, Sendable {
     }
 }
 
+struct RemoteSharedTagGroup: Decodable, Sendable {
+    let id: String
+    let name: String
+    let createdAt: String
+    let updatedAt: String
+    let deletedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+        case deletedAt = "deleted_at"
+    }
+}
+
+struct RemoteSharedTagGroupMember: Decodable, Sendable {
+    let groupID: String
+    let userID: String
+    let role: String
+    let status: String
+    let createdAt: String
+    let updatedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case groupID = "group_id"
+        case userID = "user_id"
+        case role
+        case status
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+}
+
+struct RemoteSharedTagGroupTag: Decodable, Sendable {
+    let groupID: String
+    let tagID: String
+    let addedBy: String
+    let createdAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case groupID = "group_id"
+        case tagID = "tag_id"
+        case addedBy = "added_by"
+        case createdAt = "created_at"
+    }
+}
+
 private struct AcceptSharedTagInviteResponse: Decodable {
-    let tagName: String
+    let inviteType: String
+    let tagName: String?
+    let groupName: String?
     let role: String
 
     enum CodingKeys: String, CodingKey {
+        case inviteType = "invite_type"
         case tagName = "tag_name"
+        case groupName = "group_name"
         case role
     }
 }
@@ -1831,14 +2585,42 @@ private struct TransferSharedTagOwnershipResponse: Decodable {
 }
 
 private struct PreviewSharedTagInviteResponse: Decodable {
-    let tagName: String
+    let inviteType: String
+    let tagName: String?
+    let groupName: String?
+    let role: String?
 
     enum CodingKeys: String, CodingKey {
+        case inviteType = "invite_type"
         case tagName = "tag_name"
+        case groupName = "group_name"
+        case role
     }
 }
 
 private struct CreateSharedTagInviteResponse: Decodable {
+    let inviteToken: String
+    let expiresAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case inviteToken = "invite_token"
+        case expiresAt = "expires_at"
+    }
+}
+
+private struct CreateSharedTagGroupResponse: Decodable {
+    let groupID: String
+    let groupName: String
+    let role: String
+
+    enum CodingKeys: String, CodingKey {
+        case groupID = "group_id"
+        case groupName = "group_name"
+        case role
+    }
+}
+
+private struct CreateSharedTagGroupInviteResponse: Decodable {
     let inviteToken: String
     let expiresAt: String
 
@@ -1872,5 +2654,14 @@ private extension String {
             value.removeLast()
         }
         return value
+    }
+}
+
+private extension Data {
+    func base64URLEncodedString() -> String {
+        base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
     }
 }

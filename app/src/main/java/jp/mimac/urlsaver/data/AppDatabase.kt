@@ -16,10 +16,13 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         TagUrlCrossRef::class,
         UserLabelEntity::class,
         SharedTagMemberEntity::class,
+        SharedTagGroupEntity::class,
+        SharedTagGroupMemberEntity::class,
+        SharedTagGroupTagEntity::class,
         SharedTagSyncOutboxEntity::class,
         SharedTagSyncStateEntity::class,
     ],
-    version = 13,
+    version = 16,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -46,6 +49,9 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_10_11,
                     MIGRATION_11_12,
                     MIGRATION_12_13,
+                    MIGRATION_13_14,
+                    MIGRATION_14_15,
+                    MIGRATION_15_16,
                 )
                 .addCallback(
                     object : Callback() {
@@ -356,6 +362,92 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS index_tag_url_cross_refs_tagId_createdAt ON tag_url_cross_refs(tagId, createdAt)",
                 )
+            }
+        }
+
+        val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                ensureSharedTagGroupTables(db)
+            }
+        }
+
+        val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) = Unit
+        }
+
+        val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                ensureSharedTagGroupTables(db)
+            }
+        }
+
+        private fun ensureSharedTagGroupTables(db: SupportSQLiteDatabase) {
+            dropTableIfColumnless(db, "shared_tag_groups")
+            dropTableIfColumnless(db, "shared_tag_group_members")
+            dropTableIfColumnless(db, "shared_tag_group_tags")
+
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS shared_tag_groups (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    authUserId TEXT NOT NULL,
+                    remoteGroupId TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    currentUserRole TEXT,
+                    deletedAt INTEGER,
+                    lastSyncedAt INTEGER
+                )
+                """.trimIndent(),
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_shared_tag_groups_authUserId ON shared_tag_groups(authUserId)")
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_shared_tag_groups_authUserId_remoteGroupId ON shared_tag_groups(authUserId, remoteGroupId)")
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS shared_tag_group_members (
+                    groupId INTEGER NOT NULL,
+                    authUserId TEXT NOT NULL,
+                    userId TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    createdAt INTEGER NOT NULL,
+                    updatedAt INTEGER NOT NULL,
+                    PRIMARY KEY(groupId, userId),
+                    FOREIGN KEY(groupId) REFERENCES shared_tag_groups(id) ON UPDATE NO ACTION ON DELETE CASCADE
+                )
+                """.trimIndent(),
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_shared_tag_group_members_authUserId ON shared_tag_group_members(authUserId)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_shared_tag_group_members_userId ON shared_tag_group_members(userId)")
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS shared_tag_group_tags (
+                    groupId INTEGER NOT NULL,
+                    tagId INTEGER NOT NULL,
+                    authUserId TEXT NOT NULL,
+                    remoteGroupId TEXT NOT NULL,
+                    remoteTagId TEXT NOT NULL,
+                    addedBy TEXT NOT NULL,
+                    createdAt INTEGER NOT NULL,
+                    PRIMARY KEY(groupId, tagId),
+                    FOREIGN KEY(groupId) REFERENCES shared_tag_groups(id) ON UPDATE NO ACTION ON DELETE CASCADE,
+                    FOREIGN KEY(tagId) REFERENCES tags(id) ON UPDATE NO ACTION ON DELETE CASCADE
+                )
+                """.trimIndent(),
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_shared_tag_group_tags_authUserId ON shared_tag_group_tags(authUserId)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_shared_tag_group_tags_tagId ON shared_tag_group_tags(tagId)")
+        }
+
+        private fun dropTableIfColumnless(db: SupportSQLiteDatabase, tableName: String) {
+            val hasTable = db.query(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+                arrayOf(tableName),
+            ).use { cursor -> cursor.moveToFirst() }
+            if (!hasTable) return
+
+            val columnCount = db.query("PRAGMA table_info(`$tableName`)").use { cursor -> cursor.count }
+            if (columnCount == 0) {
+                db.execSQL("DROP TABLE `$tableName`")
             }
         }
     }

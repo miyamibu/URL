@@ -9,6 +9,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -17,6 +18,7 @@ import java.time.Instant
 
 interface EntitlementGrantRemoteDataSource {
     suspend fun fetchGrants(session: SharedTagAuthSession): List<EntitlementGrant>
+    suspend fun redeemPromoCode(session: SharedTagAuthSession, code: String): List<EntitlementGrant>
 }
 
 class SupabaseEntitlementGrantRemoteDataSource(
@@ -34,6 +36,18 @@ class SupabaseEntitlementGrantRemoteDataSource(
                 path = "/rest/v1/rpc/get_my_entitlement_grants",
                 session = session,
                 requestBody = "{}",
+            )
+        }
+        return json.decodeFromString<List<RemoteEntitlementGrant>>(response)
+            .mapNotNull { it.toDomainOrNull() }
+    }
+
+    override suspend fun redeemPromoCode(session: SharedTagAuthSession, code: String): List<EntitlementGrant> {
+        val response = withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/redeem_promo_code",
+                session = session,
+                requestBody = json.encodeToString<PromoCodeRequest>(PromoCodeRequest(code)),
             )
         }
         return json.decodeFromString<List<RemoteEntitlementGrant>>(response)
@@ -82,6 +96,12 @@ class SupabaseEntitlementGrantRemoteDataSource(
         }
         return body
     }
+
+    @Serializable
+    private data class PromoCodeRequest(
+        @SerialName("p_code")
+        val code: String,
+    )
 
     @Serializable
     private data class RemoteEntitlementGrant(

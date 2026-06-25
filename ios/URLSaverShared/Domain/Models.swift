@@ -32,6 +32,24 @@ struct PlanLimits: Codable, Equatable, Sendable {
     let normalTagLimit: Int
     let sharedTagLimit: Int
     let sharedTagURLLimitPerTag: Int
+    let sharedTagGroupLimit: Int
+    let sharedTagGroupMemberLimit: Int
+
+    init(
+        personalURLLimit: Int,
+        normalTagLimit: Int,
+        sharedTagLimit: Int,
+        sharedTagURLLimitPerTag: Int,
+        sharedTagGroupLimit: Int = 0,
+        sharedTagGroupMemberLimit: Int = 0
+    ) {
+        self.personalURLLimit = personalURLLimit
+        self.normalTagLimit = normalTagLimit
+        self.sharedTagLimit = sharedTagLimit
+        self.sharedTagURLLimitPerTag = sharedTagURLLimitPerTag
+        self.sharedTagGroupLimit = sharedTagGroupLimit
+        self.sharedTagGroupMemberLimit = sharedTagGroupMemberLimit
+    }
 }
 
 struct FeatureEntitlements: Codable, Equatable, Sendable {
@@ -54,7 +72,22 @@ struct UsageSummary: Codable, Equatable, Sendable {
     let personalURLCount: Int
     let normalTagCount: Int
     let sharedTagCount: Int
+    let sharedTagGroupCount: Int
     let sharedTagUsages: [SharedTagUsage]
+
+    init(
+        personalURLCount: Int,
+        normalTagCount: Int,
+        sharedTagCount: Int,
+        sharedTagGroupCount: Int = 0,
+        sharedTagUsages: [SharedTagUsage]
+    ) {
+        self.personalURLCount = personalURLCount
+        self.normalTagCount = normalTagCount
+        self.sharedTagCount = sharedTagCount
+        self.sharedTagGroupCount = sharedTagGroupCount
+        self.sharedTagUsages = sharedTagUsages
+    }
 
     func sharedTagUsage(tagID: Int64) -> SharedTagUsage? {
         sharedTagUsages.first { $0.tagID == tagID }
@@ -66,6 +99,7 @@ enum LimitTarget: Equatable, Sendable {
     case normalTag
     case sharedTag
     case sharedTagURL
+    case sharedTagGroup
 }
 
 enum LimitResult: Equatable, Sendable {
@@ -119,6 +153,16 @@ struct LimitChecker: Sendable {
         }
         return .allowed
     }
+
+    func checkCanCreateSharedTagGroup(_ usage: UsageSummary) -> LimitResult {
+        if usage.sharedTagGroupCount >= limits.sharedTagGroupLimit {
+            return .blocked(
+                target: .sharedTagGroup,
+                message: "グループは\(planLabel)では\(limits.sharedTagGroupLimit)個まで作成できます。"
+            )
+        }
+        return .allowed
+    }
 }
 
 enum LaunchStandardPlan {
@@ -126,7 +170,9 @@ enum LaunchStandardPlan {
         personalURLLimit: 200,
         normalTagLimit: 10,
         sharedTagLimit: 2,
-        sharedTagURLLimitPerTag: 20
+        sharedTagURLLimitPerTag: 20,
+        sharedTagGroupLimit: 2,
+        sharedTagGroupMemberLimit: 10
     )
 
     static let entitlements = FeatureEntitlements(
@@ -144,7 +190,9 @@ enum FreePlan {
         personalURLLimit: 100,
         normalTagLimit: 5,
         sharedTagLimit: 1,
-        sharedTagURLLimitPerTag: 10
+        sharedTagURLLimitPerTag: 10,
+        sharedTagGroupLimit: 0,
+        sharedTagGroupMemberLimit: 0
     )
 
     static let entitlements = FeatureEntitlements(
@@ -162,7 +210,9 @@ enum ProPlan {
         personalURLLimit: 10_000,
         normalTagLimit: 200,
         sharedTagLimit: 50,
-        sharedTagURLLimitPerTag: 10_000
+        sharedTagURLLimitPerTag: 10_000,
+        sharedTagGroupLimit: 50,
+        sharedTagGroupMemberLimit: 100
     )
 
     static let entitlements = FeatureEntitlements(

@@ -27,7 +27,12 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.LinkOff
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -62,6 +67,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import jp.mimac.urlsaver.R
@@ -83,7 +89,6 @@ fun SharedTagCloudAuthScreen(
     themeMode: AppThemeMode,
     onThemeModeChange: (AppThemeMode) -> Unit,
     onBack: () -> Unit,
-    showInviteCodeSection: Boolean = false,
 ) {
     val context = LocalContext.current
     val cloudState by viewModel.cloudState.collectAsStateWithLifecycle()
@@ -103,10 +108,12 @@ fun SharedTagCloudAuthScreen(
     var contactName by remember { mutableStateOf("") }
     var contactBody by remember { mutableStateOf("") }
     var contactError by remember { mutableStateOf<String?>(null) }
-    var inviteCode by remember { mutableStateOf("") }
-    var inviteMessage by remember { mutableStateOf<String?>(null) }
-    var isApplyingInviteCode by remember { mutableStateOf(false) }
-    val avatarBitmap = remember(profile.avatarBase64) { profile.avatarBase64.toImageBitmapOrNull() }
+    var promoCode by remember { mutableStateOf("") }
+    var promoMessage by remember { mutableStateOf<String?>(null) }
+    var isRedeemingPromoCode by remember { mutableStateOf(false) }
+    var draftAvatarBase64 by remember { mutableStateOf<String?>(null) }
+    val avatarBitmap = remember(draftAvatarBase64) { draftAvatarBase64.toImageBitmapOrNull() }
+    val isAvatarChanged = draftAvatarBase64 != profile.avatarBase64
 
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -115,8 +122,8 @@ fun SharedTagCloudAuthScreen(
             if (bytes == null) {
                 message = "プロフィール写真を読み込めませんでした"
             } else {
-                viewModel.saveAvatarBytes(bytes)
-                message = "プロフィール写真を保存しました"
+                draftAvatarBase64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                message = "プロフィール写真を選択しました"
             }
         }
     }
@@ -124,6 +131,12 @@ fun SharedTagCloudAuthScreen(
     LaunchedEffect(profile.displayName) {
         if (displayName != profile.displayName) {
             displayName = profile.displayName
+        }
+    }
+
+    LaunchedEffect(profile.avatarBase64) {
+        if (draftAvatarBase64 != profile.avatarBase64) {
+            draftAvatarBase64 = profile.avatarBase64
         }
     }
 
@@ -168,17 +181,19 @@ fun SharedTagCloudAuthScreen(
         }
     }
 
-    fun applyInviteCode() {
+    fun redeemPromoCode() {
         scope.launch {
-            isApplyingInviteCode = true
-            inviteMessage = when (val result = viewModel.applyInviteCode(inviteCode)) {
-                is InviteCodeApplyResult.Success -> "参加しました。同期後に「${result.tagName}」が表示されます。"
-                InviteCodeApplyResult.InvalidCode -> "コードを入力してください"
-                InviteCodeApplyResult.AuthRequired -> "参加するにはサインインが必要です"
-                InviteCodeApplyResult.InvalidInvite -> "招待コードが無効か期限切れです"
-                is InviteCodeApplyResult.Failure -> result.message
+            isRedeemingPromoCode = true
+            promoMessage = when (val result = viewModel.redeemPromoCode(promoCode)) {
+                PromoCodeApplyResult.Success -> {
+                    promoCode = ""
+                    "優待Proを受け取りました。使用状況に反映されます。"
+                }
+                PromoCodeApplyResult.InvalidCode -> "優待コードを入力してください"
+                PromoCodeApplyResult.AuthRequired -> "優待を受け取るにはサインインが必要です"
+                is PromoCodeApplyResult.Failure -> result.message
             }
-            isApplyingInviteCode = false
+            isRedeemingPromoCode = false
         }
     }
 
@@ -234,34 +249,32 @@ fun SharedTagCloudAuthScreen(
 
                 ProfileCard(
                     displayName = profile.trimmedDisplayName.ifBlank {
-                        "プロフィール未設定"
+                        "プロフィール名"
                     },
                     signedInEmail = cloudState.signedInEmail,
                     draftDisplayName = displayName,
                     avatarBitmap = avatarBitmap,
+                    canSaveProfile = displayName.trim() != profile.trimmedDisplayName || isAvatarChanged,
                     onDisplayNameChange = {
                         displayName = it
                         message = null
                     },
                     onSaveProfile = {
                         scope.launch {
-                            viewModel.saveDisplayName(displayName)
+                            viewModel.saveProfile(displayName, draftAvatarBase64)
                             message = "プロフィールを保存しました"
                         }
                     },
                     onPickAvatar = { imagePicker.launch("image/*") },
                     onRemoveAvatar = {
-                        scope.launch {
-                            viewModel.saveAvatarBytes(null)
-                            message = "プロフィール写真を削除しました"
-                        }
+                        draftAvatarBase64 = null
+                        message = "プロフィール写真を削除対象にしました"
                     },
                     themeMode = themeMode,
                     onThemeModeChange = onThemeModeChange,
                 )
                 UsageSummaryCard(
                     usageSummary = usageSummary,
-                    entitlements = entitlements,
                 )
                 if (entitlements.subscriptionEnabled) {
                     OutlinedButton(
@@ -274,19 +287,17 @@ fun SharedTagCloudAuthScreen(
 
                 if (!cloudState.isConfigured) {
                     Text("このビルドでは共有タグのクラウド同期が設定されていません。")
-                    if (showInviteCodeSection) {
-                        InviteCodeSection(
-                            inviteCode = inviteCode,
-                            inviteMessage = inviteMessage,
-                            isApplyingInviteCode = isApplyingInviteCode,
-                            canApplyInviteCode = viewModel.canApplyInviteCode(inviteCode),
-                            onInviteCodeChange = {
-                                inviteCode = it
-                                inviteMessage = null
-                            },
-                            onApplyInviteCode = ::applyInviteCode,
-                        )
-                    }
+                    PromoCodeSection(
+                        promoCode = promoCode,
+                        promoMessage = promoMessage,
+                        isRedeemingPromoCode = isRedeemingPromoCode,
+                        canRedeemPromoCode = viewModel.canApplyPromoCode(promoCode),
+                        onPromoCodeChange = {
+                            promoCode = it
+                            promoMessage = null
+                        },
+                        onRedeemPromoCode = ::redeemPromoCode,
+                    )
                     return@Column
                 }
 
@@ -328,19 +339,17 @@ fun SharedTagCloudAuthScreen(
                     message?.let {
                         Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    if (showInviteCodeSection) {
-                        InviteCodeSection(
-                            inviteCode = inviteCode,
-                            inviteMessage = inviteMessage,
-                            isApplyingInviteCode = isApplyingInviteCode,
-                            canApplyInviteCode = viewModel.canApplyInviteCode(inviteCode),
-                            onInviteCodeChange = {
-                                inviteCode = it
-                                inviteMessage = null
-                            },
-                            onApplyInviteCode = ::applyInviteCode,
-                        )
-                    }
+                    PromoCodeSection(
+                        promoCode = promoCode,
+                        promoMessage = promoMessage,
+                        isRedeemingPromoCode = isRedeemingPromoCode,
+                        canRedeemPromoCode = viewModel.canApplyPromoCode(promoCode),
+                        onPromoCodeChange = {
+                            promoCode = it
+                            promoMessage = null
+                        },
+                        onRedeemPromoCode = ::redeemPromoCode,
+                    )
                     return@Column
                 }
 
@@ -351,14 +360,8 @@ fun SharedTagCloudAuthScreen(
                 Text(
                     text = "共有タグに参加するにはサインインが必要です",
                     style = MaterialTheme.typography.titleMedium,
-                )
-                Text(
-                    text = "未サインインのため共有タグは同期されません。アプリ削除後や機種変更後でも、同じメールアドレスでサインインし直すと共有タグを復元できます。",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    text = "通常のURL保存はサインインしなくても使えます。共有タグの同期、招待参加、複数端末での共有だけサインインが必要です。",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    softWrap = false,
                 )
                 SharedTagAuthForm(
                     email = email,
@@ -372,6 +375,18 @@ fun SharedTagCloudAuthScreen(
                     onPasswordChange = {
                         password = it
                         message = null
+                    },
+                    onGoogleSignIn = {
+                        val url = viewModel.googleOAuthUrl()
+                        if (url == null) {
+                            message = "Googleサインインを開始できませんでした。クラウド設定を確認してください。"
+                            return@SharedTagAuthForm
+                        }
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                        }.onFailure {
+                            message = "Googleサインイン画面を開けませんでした"
+                        }
                     },
                     onSignIn = {
                         scope.launch {
@@ -394,19 +409,17 @@ fun SharedTagCloudAuthScreen(
                         }
                     },
                 )
-                if (showInviteCodeSection) {
-                    InviteCodeSection(
-                        inviteCode = inviteCode,
-                        inviteMessage = inviteMessage,
-                        isApplyingInviteCode = isApplyingInviteCode,
-                        canApplyInviteCode = viewModel.canApplyInviteCode(inviteCode),
-                        onInviteCodeChange = {
-                            inviteCode = it
-                            inviteMessage = null
-                        },
-                        onApplyInviteCode = ::applyInviteCode,
-                    )
-                }
+                PromoCodeSection(
+                    promoCode = promoCode,
+                    promoMessage = promoMessage,
+                    isRedeemingPromoCode = isRedeemingPromoCode,
+                    canRedeemPromoCode = viewModel.canApplyPromoCode(promoCode),
+                    onPromoCodeChange = {
+                        promoCode = it
+                        promoMessage = null
+                    },
+                    onRedeemPromoCode = ::redeemPromoCode,
+                )
             }
         }
     }
@@ -448,42 +461,38 @@ fun SharedTagCloudAuthScreen(
 }
 
 @Composable
-private fun InviteCodeSection(
-    inviteCode: String,
-    inviteMessage: String?,
-    isApplyingInviteCode: Boolean,
-    canApplyInviteCode: Boolean,
-    onInviteCodeChange: (String) -> Unit,
-    onApplyInviteCode: () -> Unit,
+private fun PromoCodeSection(
+    promoCode: String,
+    promoMessage: String?,
+    isRedeemingPromoCode: Boolean,
+    canRedeemPromoCode: Boolean,
+    onPromoCodeChange: (String) -> Unit,
+    onRedeemPromoCode: () -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            text = "招待コード",
+            text = "優待コード",
             style = MaterialTheme.typography.titleMedium,
         )
-        Text(
-            text = "コードをお持ちの方は入力してください",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
         OutlinedTextField(
-            value = inviteCode,
-            onValueChange = onInviteCodeChange,
+            value = promoCode,
+            onValueChange = onPromoCodeChange,
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
         )
         Button(
-            onClick = onApplyInviteCode,
-            enabled = canApplyInviteCode && !isApplyingInviteCode,
+            onClick = onRedeemPromoCode,
+            enabled = canRedeemPromoCode && !isRedeemingPromoCode,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(56.dp),
         ) {
-            Text(if (isApplyingInviteCode) "適用中…" else "適用する")
+            Text(if (isRedeemingPromoCode) "受け取り中…" else "優待Proを受け取る")
         }
-        inviteMessage?.let {
+        promoMessage?.let {
             Text(
                 text = it,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -499,6 +508,7 @@ fun SharedTagInviteScreen(
     onBack: () -> Unit,
     onInviteJoined: (Long) -> Unit,
 ) {
+    val context = LocalContext.current
     val cloudState by viewModel.cloudState.collectAsStateWithLifecycle()
     val previewResult by viewModel.previewResult.collectAsStateWithLifecycle()
     val joinedTag by viewModel.joinedTag.collectAsStateWithLifecycle()
@@ -526,7 +536,11 @@ fun SharedTagInviteScreen(
             when (val result = viewModel.acceptInvite()) {
                 is SharedTagInviteAcceptanceResult.Success -> {
                     accepted = true
-                    message = "参加しました。同期が終わるとタグを開きます。"
+                    message = if (result.inviteType == jp.mimac.urlsaver.domain.SharedInviteType.GROUP) {
+                        "グループ「${result.displayName}」に参加しました。同期後にグループ一覧へ表示されます。"
+                    } else {
+                        "参加しました。同期が終わるとタグを開きます。"
+                    }
                 }
                 SharedTagInviteAcceptanceResult.AuthRequired -> {
                     message = "参加するにはサインインが必要です"
@@ -602,7 +616,8 @@ fun SharedTagInviteScreen(
                     }
                     is SharedTagInvitePreviewResult.Success -> {
                         SharedTagInviteConfirmContent(
-                            tagName = preview.tagName,
+                            displayName = preview.displayName,
+                            isGroup = preview.inviteType == jp.mimac.urlsaver.domain.SharedInviteType.GROUP,
                             isSubmitting = isSubmitting,
                             accepted = accepted,
                             message = message,
@@ -625,6 +640,18 @@ fun SharedTagInviteScreen(
                         onPasswordChange = {
                             password = it
                             message = null
+                        },
+                        onGoogleSignIn = {
+                            val url = viewModel.googleOAuthUrl()
+                            if (url == null) {
+                                message = "Googleサインインを開始できませんでした。クラウド設定を確認してください。"
+                                return@SharedTagAuthForm
+                            }
+                            runCatching {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                            }.onFailure {
+                                message = "Googleサインイン画面を開けませんでした"
+                            }
                         },
                         onSignIn = {
                             scope.launch {
@@ -672,7 +699,8 @@ fun SharedTagInviteScreen(
 
 @Composable
 private fun SharedTagInviteConfirmContent(
-    tagName: String,
+    displayName: String,
+    isGroup: Boolean,
     isSubmitting: Boolean,
     accepted: Boolean,
     message: String?,
@@ -685,19 +713,23 @@ private fun SharedTagInviteConfirmContent(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text(
-            text = "共有タグに参加しますか？",
+            text = if (isGroup) "グループに参加しますか？" else "共有タグに参加しますか？",
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
         )
         Text(
-            text = "「$tagName」",
+            text = "「$displayName」",
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
         )
         Text(
-            text = "参加すると、この共有タグのURL一覧が同期されます。",
+            text = if (isGroup) {
+                "参加すると、このグループ内の共有タグとURL一覧が同期されます。"
+            } else {
+                "参加すると、この共有タグのURL一覧が同期されます。"
+            },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -736,6 +768,7 @@ private fun ProfileCard(
     signedInEmail: String?,
     draftDisplayName: String,
     avatarBitmap: ImageBitmap?,
+    canSaveProfile: Boolean,
     onDisplayNameChange: (String) -> Unit,
     onSaveProfile: () -> Unit,
     onPickAvatar: () -> Unit,
@@ -743,6 +776,7 @@ private fun ProfileCard(
     themeMode: AppThemeMode,
     onThemeModeChange: (AppThemeMode) -> Unit,
 ) {
+    var isEditingDisplayName by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -753,57 +787,86 @@ private fun ProfileCard(
         ) {
             ProfileAvatar(
                 avatarBitmap = avatarBitmap,
-                modifier = Modifier.size(76.dp),
+                modifier = Modifier.size(88.dp),
             )
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Text(
-                    text = displayName,
-                    style = MaterialTheme.typography.titleMedium,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    if (isEditingDisplayName) {
+                        OutlinedTextField(
+                            value = draftDisplayName,
+                            onValueChange = onDisplayNameChange,
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            label = { Text("表示名") },
+                        )
+                        IconButton(
+                            onClick = {
+                                onSaveProfile()
+                                isEditingDisplayName = false
+                            },
+                            enabled = canSaveProfile,
+                        ) {
+                            Icon(Icons.Outlined.Check, contentDescription = "表示名を保存")
+                        }
+                        IconButton(
+                            onClick = {
+                                onDisplayNameChange(displayName)
+                                isEditingDisplayName = false
+                            },
+                        ) {
+                            Icon(Icons.Outlined.Close, contentDescription = "表示名の編集を取り消す")
+                        }
+                    } else {
+                        Text(
+                            text = displayName,
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.weight(1f),
+                        )
+                        IconButton(onClick = { isEditingDisplayName = true }) {
+                            Icon(Icons.Outlined.Edit, contentDescription = "表示名を編集")
+                        }
+                    }
+                }
                 if (!signedInEmail.isNullOrBlank()) {
                     Text(
                         text = signedInEmail,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-            }
-        }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            TextButton(onClick = onPickAvatar) {
-                Text(if (avatarBitmap == null) "写真を追加" else "写真を変更")
-            }
-            if (avatarBitmap != null) {
-                TextButton(onClick = onRemoveAvatar) {
-                    Text("削除")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = onPickAvatar) {
+                        Text(if (avatarBitmap == null) "写真を追加" else "写真を変更")
+                    }
+                    if (avatarBitmap != null) {
+                        TextButton(onClick = onRemoveAvatar) {
+                            Text("削除")
+                        }
+                    }
                 }
             }
         }
-
-        OutlinedTextField(
-            value = draftDisplayName,
-            onValueChange = onDisplayNameChange,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("表示名") },
-            singleLine = true,
-        )
 
         ThemeModeSelector(
             selectedMode = themeMode,
             onModeChange = onThemeModeChange,
         )
 
-        Button(
-            onClick = onSaveProfile,
-            enabled = draftDisplayName.trim() != displayName.trim(),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp),
-        ) {
-            Text("プロフィールを保存")
+        if (!isEditingDisplayName) {
+            Button(
+                onClick = onSaveProfile,
+                enabled = canSaveProfile,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+            ) {
+                Text("プロフィールを保存")
+            }
         }
     }
 }
@@ -811,9 +874,7 @@ private fun ProfileCard(
 @Composable
 private fun UsageSummaryCard(
     usageSummary: UsageSummary,
-    entitlements: FeatureEntitlements,
 ) {
-    val limits = entitlements.limits
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -827,18 +888,18 @@ private fun UsageSummaryCard(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             UsageMetricTile(
-                title = "通常タグで保存URL",
-                body = "${usageSummary.personalUrlCount} / ${limits.personalUrlLimit}",
+                title = "保存タグ",
+                body = usageSummary.personalUrlCount.toString(),
                 modifier = Modifier.weight(1f),
             )
             UsageMetricTile(
-                title = "共有タグURL",
-                body = usageSummary.sharedTagUsages
-                    .takeIf { it.isNotEmpty() }
-                    ?.joinToString(separator = "\n") { usage ->
-                        "${usage.tagName} ${usage.urlCount} / ${usage.limit}"
-                    }
-                    ?: "共有タグなし",
+                title = "共有タグ",
+                body = usageSummary.sharedTagCount.toString(),
+                modifier = Modifier.weight(1f),
+            )
+            UsageMetricTile(
+                title = "グループ",
+                body = usageSummary.sharedTagGroupCount.toString(),
                 modifier = Modifier.weight(1f),
             )
         }
@@ -857,18 +918,21 @@ private fun UsageMetricTile(
         color = MaterialTheme.colorScheme.surfaceVariant,
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
                 text = title,
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
             )
             Text(
                 text = body,
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
             )
         }
     }
@@ -988,14 +1052,23 @@ private fun ProfileAvatar(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center,
         ) {
-            Image(
-                painter = painterResource(id = R.drawable.default_profile_pig),
-                contentDescription = "プロフィール写真",
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(6.dp),
-                contentScale = ContentScale.Fit,
-            )
+            if (avatarBitmap != null) {
+                Image(
+                    bitmap = avatarBitmap,
+                    contentDescription = "プロフィール写真",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
+            } else {
+                Image(
+                    painter = painterResource(id = R.drawable.default_profile_pig),
+                    contentDescription = "プロフィール写真",
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(6.dp),
+                    contentScale = ContentScale.Fit,
+                )
+            }
         }
     }
 }
@@ -1008,9 +1081,26 @@ private fun SharedTagAuthForm(
     message: String?,
     onEmailChange: (String) -> Unit,
     onPasswordChange: (String) -> Unit,
+    onGoogleSignIn: () -> Unit,
     onSignIn: () -> Unit,
     onSignUp: () -> Unit,
 ) {
+    var passwordVisible by remember { mutableStateOf(false) }
+
+    OutlinedButton(
+        onClick = onGoogleSignIn,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(56.dp),
+        enabled = !isSubmitting,
+    ) {
+        Text("Googleで続ける")
+    }
+    Text(
+        text = "Googleで登録済みの場合は、メール/パスワードではなくGoogleでサインインしてください。",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
     OutlinedTextField(
         value = email,
         onValueChange = onEmailChange,
@@ -1032,23 +1122,48 @@ private fun SharedTagAuthForm(
             keyboardType = KeyboardType.Password,
             imeAction = ImeAction.Done,
         ),
-        visualTransformation = PasswordVisualTransformation(),
+        visualTransformation = if (passwordVisible) {
+            VisualTransformation.None
+        } else {
+            PasswordVisualTransformation()
+        },
+        trailingIcon = {
+            IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                Icon(
+                    imageVector = if (passwordVisible) {
+                        Icons.Outlined.VisibilityOff
+                    } else {
+                        Icons.Outlined.Visibility
+                    },
+                    contentDescription = if (passwordVisible) {
+                        "パスワードを隠す"
+                    } else {
+                        "パスワードを表示"
+                    },
+                )
+            }
+        },
         singleLine = true,
         enabled = !isSubmitting,
     )
-    Spacer(Modifier.height(4.dp))
-    Button(
-        onClick = onSignIn,
+    Row(
         modifier = Modifier.fillMaxWidth(),
-        enabled = !isSubmitting && email.isNotBlank() && password.length >= 6,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text("サインイン")
-    }
-    TextButton(
-        onClick = onSignUp,
-        enabled = !isSubmitting && email.isNotBlank() && password.length >= 6,
-    ) {
-        Text("新規登録")
+        Button(
+            onClick = onSignIn,
+            modifier = Modifier.weight(1f),
+            enabled = !isSubmitting && email.isNotBlank() && password.length >= 6,
+        ) {
+            Text("サインイン")
+        }
+        OutlinedButton(
+            onClick = onSignUp,
+            modifier = Modifier.weight(1f),
+            enabled = !isSubmitting && email.isNotBlank() && password.length >= 6,
+        ) {
+            Text("新規登録")
+        }
     }
     if (isSubmitting) {
         CircularProgressIndicator()

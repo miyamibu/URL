@@ -7,6 +7,7 @@ import jp.mimac.urlsaver.domain.SharedTagAuthResult
 import jp.mimac.urlsaver.domain.SharedTagCloudState
 import jp.mimac.urlsaver.domain.SharedTagInviteAcceptanceResult
 import jp.mimac.urlsaver.domain.SharedTagInvitePreviewResult
+import jp.mimac.urlsaver.domain.SharedInviteType
 import jp.mimac.urlsaver.domain.SharedTagRecord
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -62,10 +63,14 @@ class SharedTagInviteViewModel(
         return tagRepository.signUp(email, password)
     }
 
+    fun googleOAuthUrl(): String? {
+        return tagRepository.googleOAuthUrl()
+    }
+
     suspend fun acceptInvite(): SharedTagInviteAcceptanceResult {
         val result = tagRepository.acceptInvite(inviteToken)
-        if (result is SharedTagInviteAcceptanceResult.Success) {
-            acceptedRemoteTagId.value = result.remoteTagId
+        if (result is SharedTagInviteAcceptanceResult.Success && result.inviteType == SharedInviteType.TAG) {
+            acceptedRemoteTagId.value = result.remoteId
         }
         return result
     }

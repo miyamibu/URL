@@ -1,10 +1,6 @@
 require "fileutils"
 require "xcodeproj"
 
-shared_tag_cloud_enabled = ENV.fetch("URLSAVER_SHARED_TAG_CLOUD_ENABLED", "false")
-shared_tag_supabase_url = ENV.fetch("URLSAVER_SUPABASE_URL", "")
-shared_tag_supabase_anon_key = ENV.fetch("URLSAVER_SUPABASE_ANON_KEY", "")
-invite_link_base_url = ENV.fetch("URLSAVER_INVITE_LINK_BASE_URL", "https://miyamibu.xyz")
 ios_development_team = ENV.fetch("URLSAVER_IOS_DEVELOPMENT_TEAM", "")
 ios_code_sign_identity = ENV.fetch("URLSAVER_IOS_CODE_SIGN_IDENTITY", "")
 ios_app_profile_specifier = ENV.fetch("URLSAVER_IOS_APP_PROFILE_SPECIFIER", "")
@@ -38,6 +34,8 @@ shared_group = project.main_group.new_group("URLSaverShared", "URLSaverShared")
 app_group = project.main_group.new_group("URLSaveriOS", "URLSaveriOS")
 extension_group = project.main_group.new_group("URLSaverShareExtension", "URLSaverShareExtension")
 tests_group = project.main_group.new_group("URLSaveriOSTests", "URLSaveriOSTests")
+config_group = project.main_group.new_group("Config", "Config")
+secrets_config = config_group.new_file("URLSaverSecrets.xcconfig")
 
 app_target = project.new_target(:application, "URLSaveriOS", :ios, "17.0")
 extension_target = project.new_target(:app_extension, "URLSaverShareExtension", :ios, "17.0")
@@ -75,7 +73,8 @@ project.root_object.attributes["TargetAttributes"] = {
 end
 
 app_target.build_configurations.each do |config|
-  config.build_settings["PRODUCT_BUNDLE_IDENTIFIER"] = "jp.mimac.urlsaver.ios"
+  config.base_configuration_reference = secrets_config
+  config.build_settings["PRODUCT_BUNDLE_IDENTIFIER"] = "com.mibu.codebridge.ios"
   config.build_settings["INFOPLIST_FILE"] = "URLSaveriOS/Info.plist"
   unless ios_disable_app_group_entitlements
     config.build_settings["CODE_SIGN_ENTITLEMENTS"] = "URLSaveriOS/URLSaveriOS.entitlements"
@@ -83,10 +82,6 @@ app_target.build_configurations.each do |config|
   config.build_settings["LD_RUNPATH_SEARCH_PATHS"] = "$(inherited) @executable_path/Frameworks"
   config.build_settings["PRODUCT_NAME"] = "URLSaveriOS"
   config.build_settings["DEFINES_MODULE"] = "YES"
-  config.build_settings["URLSAVER_SHARED_TAG_CLOUD_ENABLED"] = shared_tag_cloud_enabled
-  config.build_settings["URLSAVER_SUPABASE_URL"] = shared_tag_supabase_url
-  config.build_settings["URLSAVER_SUPABASE_ANON_KEY"] = shared_tag_supabase_anon_key
-  config.build_settings["URLSAVER_INVITE_LINK_BASE_URL"] = invite_link_base_url
   if manual_signing_enabled
     config.build_settings["DEVELOPMENT_TEAM"] = ios_development_team
     config.build_settings["CODE_SIGN_IDENTITY"] = ios_code_sign_identity
@@ -95,7 +90,7 @@ app_target.build_configurations.each do |config|
 end
 
 extension_target.build_configurations.each do |config|
-  config.build_settings["PRODUCT_BUNDLE_IDENTIFIER"] = "jp.mimac.urlsaver.ios.share"
+  config.build_settings["PRODUCT_BUNDLE_IDENTIFIER"] = "com.mibu.codebridge.ios.share"
   config.build_settings["INFOPLIST_FILE"] = "URLSaverShareExtension/Info.plist"
   unless ios_disable_app_group_entitlements
     config.build_settings["CODE_SIGN_ENTITLEMENTS"] = "URLSaverShareExtension/URLSaverShareExtension.entitlements"
@@ -113,7 +108,7 @@ extension_target.build_configurations.each do |config|
 end
 
 test_target.build_configurations.each do |config|
-  config.build_settings["PRODUCT_BUNDLE_IDENTIFIER"] = "jp.mimac.urlsaver.ios.tests"
+  config.build_settings["PRODUCT_BUNDLE_IDENTIFIER"] = "com.mibu.codebridge.ios.tests"
   config.build_settings["INFOPLIST_FILE"] = "URLSaveriOSTests/Info.plist"
   config.build_settings["PRODUCT_NAME"] = "URLSaveriOSTests"
   config.build_settings["TEST_TARGET_NAME"] = "URLSaveriOS"

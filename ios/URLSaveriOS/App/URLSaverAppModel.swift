@@ -4,6 +4,7 @@ import SwiftUI
 enum RootTab: Hashable {
     case main
     case archive
+    case groups
 }
 
 struct AppNotification: Identifiable, Equatable {
@@ -24,6 +25,13 @@ struct AppNotification: Identifiable, Equatable {
     let autoDismissAfter: TimeInterval?
 }
 
+enum PromoCodeApplyResult: Equatable {
+    case success
+    case authRequired
+    case invalidCode
+    case failure(String)
+}
+
 @MainActor
 final class URLSaverAppModel: ObservableObject {
     @Published private(set) var activeEntries: [URLRecord] = []
@@ -34,6 +42,7 @@ final class URLSaverAppModel: ObservableObject {
     @Published private(set) var sharedTagCloudState = SharedTagCloudState(isConfigured: false, isSignedIn: false, signedInEmail: nil)
     @Published private(set) var entitlements: FeatureEntitlements = LaunchStandardPlan.entitlements
     @Published private(set) var sharedTags: [SharedTagSummary] = []
+    @Published private(set) var sharedTagGroups: [SharedTagGroupSummary] = []
     @Published private(set) var localTags: [LocalTagSummary] = []
     @Published private(set) var localTagAssignments: [Int64: Set<Int64>] = [:]
     @Published private(set) var profileStatusMessage: String?
@@ -90,6 +99,23 @@ final class URLSaverAppModel: ObservableObject {
 
     func refreshEntitlements() async {
         entitlements = await services.entitlementService.refreshForCurrentSession()
+    }
+
+    func redeemPromoCode(_ code: String) async -> PromoCodeApplyResult {
+        let trimmedCode = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedCode.isEmpty else {
+            return .invalidCode
+        }
+        do {
+            entitlements = try await services.entitlementService.redeemPromoCode(trimmedCode)
+            return .success
+        } catch SharedTagCloudError.authRequired {
+            return .authRequired
+        } catch let error as SharedTagCloudError {
+            return .failure(error.userMessage)
+        } catch {
+            return .failure("優待コードを適用できませんでした")
+        }
     }
 
     func consumeShareHandoffReport() async {
@@ -316,6 +342,8 @@ final class URLSaverAppModel: ObservableObject {
 
     func handleIncomingURL(_ url: URL) async {
         switch IncomingURLRoute(url: url) {
+        case .authCallback:
+            await handleSharedTagAuthCallback(url)
         case .invite(let token):
             guard !token.isEmpty else {
                 enqueueNotification(AppNotification(message: "共有招待リンクを開けませんでした", actionLabel: nil, action: nil, autoDismissAfter: 4))
@@ -330,6 +358,62 @@ final class URLSaverAppModel: ObservableObject {
             await handleSaveResult(saveResult, degradationNotice: degradationNotice)
         case .tag, .unknown:
             break
+        }
+    }
+
+    func googleOAuthURLForSharedTagCloud() -> URL? {
+        services.sharedTagCloud.googleOAuthURL()
+    }
+
+    func signInWithAppleForSharedTagCloud(idToken: String, nonce: String) async {
+        switch await services.sharedTagCloud.signInWithAppleIDToken(idToken: idToken, nonce: nonce) {
+        case .success(let email):
+            await refreshSharedTagCloudState()
+            await refreshEntitlements()
+            profileStatusMessage = "Appleでサインインしました。プロフィールと共有タグを使えます。"
+            enqueueNotification(
+                AppNotification(
+                    message: email.map { "\($0) でAppleサインインしました" } ?? "Appleでサインインしました",
+                    actionLabel: nil,
+                    action: nil,
+                    autoDismissAfter: 4
+                )
+            )
+            _ = await services.sharedTagCloud.syncCurrentSession()
+            await refreshSharedTagCloudState()
+            await refreshEntitlements()
+        case .needsEmailConfirmation:
+            profileStatusMessage = "Appleサインインの確認後に再度サインインしてください。"
+            enqueueNotification(AppNotification(message: "Appleサインイン確認後に共有タグクラウドへサインインしてください", actionLabel: nil, action: nil, autoDismissAfter: 5))
+        case .failure(let message):
+            profileStatusMessage = message
+            enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 4))
+        }
+    }
+
+    private func handleSharedTagAuthCallback(_ url: URL) async {
+        switch await services.sharedTagCloud.handleOAuthCallback(url: url) {
+        case .success(let email):
+            await refreshSharedTagCloudState()
+            await refreshEntitlements()
+            profileStatusMessage = "Googleでサインインしました。プロフィールと共有タグを使えます。"
+            enqueueNotification(
+                AppNotification(
+                    message: email.map { "\($0) でGoogleサインインしました" } ?? "Googleでサインインしました",
+                    actionLabel: nil,
+                    action: nil,
+                    autoDismissAfter: 4
+                )
+            )
+            _ = await services.sharedTagCloud.syncCurrentSession()
+            await refreshSharedTagCloudState()
+            await refreshEntitlements()
+        case .needsEmailConfirmation:
+            profileStatusMessage = "メール確認後に再度サインインしてください。"
+            enqueueNotification(AppNotification(message: "メール確認後に共有タグクラウドへサインインしてください", actionLabel: nil, action: nil, autoDismissAfter: 5))
+        case .failure(let message):
+            profileStatusMessage = message
+            enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 4))
         }
     }
 
@@ -349,10 +433,15 @@ final class URLSaverAppModel: ObservableObject {
     func refreshSharedTagCloudState() async {
         sharedTagCloudState = services.sharedTagCloud.state
         sharedTags = (try? services.sharedTagCloud.loadVisibleTags()) ?? []
+        sharedTagGroups = (try? services.sharedTagCloud.loadVisibleGroups()) ?? []
     }
 
     func clearProfileStatusMessage() {
         profileStatusMessage = nil
+    }
+
+    func showProfileStatusMessage(_ message: String) {
+        profileStatusMessage = message
     }
 
     func saveProfile(displayName: String) {
@@ -367,6 +456,27 @@ final class URLSaverAppModel: ObservableObject {
         } catch {
             profileStatusMessage = "プロフィールを保存できませんでした"
             enqueueNotification(AppNotification(message: "プロフィールを保存できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 4))
+        }
+    }
+
+    @discardableResult
+    func saveProfile(displayName: String, avatarImageData: Data?, updatesAvatar: Bool) -> Bool {
+        do {
+            var updated = profile
+            updated.displayName = String(displayName.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
+            if updatesAvatar {
+                updated.avatarImageData = avatarImageData
+            }
+            updated.updatedAt = Date()
+            try services.profileStore.save(updated)
+            profile = updated
+            profileStatusMessage = "プロフィールを保存しました"
+            enqueueNotification(AppNotification(message: "プロフィールを保存しました", actionLabel: nil, action: nil, autoDismissAfter: 3))
+            return true
+        } catch {
+            profileStatusMessage = "プロフィールを保存できませんでした"
+            enqueueNotification(AppNotification(message: "プロフィールを保存できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return false
         }
     }
 
@@ -401,7 +511,7 @@ final class URLSaverAppModel: ObservableObject {
            !localPart.isEmpty {
             return String(localPart)
         }
-        return "プロフィール未設定"
+        return "プロフィール名"
     }
 
     func signInToSharedTagCloud(email: String, password: String) async {
@@ -504,14 +614,15 @@ final class URLSaverAppModel: ObservableObject {
             return
         }
         switch await services.sharedTagCloud.acceptInvite(inviteToken: pendingInviteRecord.inviteToken) {
-        case .accepted(let tagName, let role):
+        case .accepted(let displayName, let inviteType, let role):
             try? services.pendingInviteStore.clear()
             self.pendingInviteRecord = nil
             await refreshSharedTagCloudState()
             let roleText = role?.displayName ?? "メンバー"
+            let targetText = inviteType == .group ? "グループ" : "共有タグ"
             enqueueNotification(
                 AppNotification(
-                    message: "共有タグ「\(tagName)」に \(roleText) として参加しました",
+                    message: "\(targetText)「\(displayName)」に \(roleText) として参加しました",
                     actionLabel: nil,
                     action: nil,
                     autoDismissAfter: 5
@@ -611,6 +722,63 @@ final class URLSaverAppModel: ObservableObject {
             enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 4))
             return false
         }
+    }
+
+    func createSharedTagGroup(name: String) async -> Bool {
+        switch await services.sharedTagCloud.createGroup(name: name) {
+        case .success:
+            await refreshSharedTagCloudState()
+            enqueueNotification(AppNotification(message: "グループを作成しました", actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return true
+        case .authRequired:
+            enqueueNotification(AppNotification(message: "先に共有タグクラウドへサインインしてください", actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return false
+        case .failure(let message):
+            enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return false
+        }
+    }
+
+    func loadGroupMembers(remoteGroupID: String) -> [SharedTagGroupMemberSummary] {
+        (try? services.sharedTagCloud.loadGroupMembers(remoteGroupID: remoteGroupID)) ?? []
+    }
+
+    func loadGroupTags(remoteGroupID: String) -> [SharedTagGroupTagSummary] {
+        (try? services.sharedTagCloud.loadGroupTags(remoteGroupID: remoteGroupID)) ?? []
+    }
+
+    func addSharedTag(remoteTagID: String, toGroup remoteGroupID: String) async -> Bool {
+        switch await services.sharedTagCloud.addTagToGroup(remoteGroupID: remoteGroupID, remoteTagID: remoteTagID) {
+        case .success:
+            await refreshSharedTagCloudState()
+            enqueueNotification(AppNotification(message: "共有タグをグループに追加しました", actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return true
+        case .authRequired:
+            enqueueNotification(AppNotification(message: "先に共有タグクラウドへサインインしてください", actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return false
+        case .failure(let message):
+            enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return false
+        }
+    }
+
+    func removeSharedTag(remoteTagID: String, fromGroup remoteGroupID: String) async -> Bool {
+        switch await services.sharedTagCloud.removeTagFromGroup(remoteGroupID: remoteGroupID, remoteTagID: remoteTagID) {
+        case .success:
+            await refreshSharedTagCloudState()
+            enqueueNotification(AppNotification(message: "共有タグをグループから外しました", actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return true
+        case .authRequired:
+            enqueueNotification(AppNotification(message: "先に共有タグクラウドへサインインしてください", actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return false
+        case .failure(let message):
+            enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return false
+        }
+    }
+
+    func createInviteForSharedTagGroup(remoteGroupID: String, role: SharedTagMemberRole) async -> SharedTagInviteCreationResult {
+        await services.sharedTagCloud.createGroupInvite(remoteGroupID: remoteGroupID, role: role)
     }
 
     func renameSharedTag(remoteTagID: String, name: String) async -> Bool {
@@ -978,6 +1146,7 @@ final class URLSaverAppModel: ObservableObject {
 }
 
 private enum IncomingURLRoute {
+    case authCallback
     case invite(String)
     case tag(String)
     case save(String, ShareDegradationNotice?)
@@ -1003,6 +1172,8 @@ private enum IncomingURLRoute {
         }
 
         switch host {
+        case "auth" where url.path == "/callback":
+            self = .authCallback
         case "invite":
             self = .invite(token)
         case "tag":

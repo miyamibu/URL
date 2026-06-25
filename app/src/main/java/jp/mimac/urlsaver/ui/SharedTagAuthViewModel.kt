@@ -2,13 +2,14 @@ package jp.mimac.urlsaver.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import jp.mimac.urlsaver.data.EntitlementGrantRepository
+import jp.mimac.urlsaver.data.PromoCodeRedemptionResult
 import jp.mimac.urlsaver.data.TagRepository
 import jp.mimac.urlsaver.data.UserProfileStore
 import jp.mimac.urlsaver.domain.FeatureEntitlements
 import jp.mimac.urlsaver.domain.SharedTagAccountDeletionResult
 import jp.mimac.urlsaver.domain.SharedTagAuthResult
 import jp.mimac.urlsaver.domain.SharedTagCloudState
-import jp.mimac.urlsaver.domain.SharedTagInviteAcceptanceResult
 import jp.mimac.urlsaver.domain.UsageSummary
 import jp.mimac.urlsaver.domain.UserProfile
 import kotlinx.coroutines.flow.SharingStarted
@@ -19,6 +20,7 @@ import java.util.Base64
 class SharedTagAuthViewModel(
     private val tagRepository: TagRepository,
     private val userProfileStore: UserProfileStore,
+    private val entitlementGrantRepository: EntitlementGrantRepository,
 ) : ViewModel() {
 
     val cloudState: StateFlow<SharedTagCloudState> = tagRepository.cloudState
@@ -54,6 +56,10 @@ class SharedTagAuthViewModel(
         return tagRepository.signUp(email, password)
     }
 
+    fun googleOAuthUrl(): String? {
+        return tagRepository.googleOAuthUrl()
+    }
+
     suspend fun signOut() {
         tagRepository.signOut()
     }
@@ -66,34 +72,32 @@ class SharedTagAuthViewModel(
         userProfileStore.saveDisplayName(displayName)
     }
 
+    suspend fun saveProfile(displayName: String, avatarBase64: String?) {
+        userProfileStore.saveDisplayName(displayName)
+        userProfileStore.saveAvatarBase64(avatarBase64)
+    }
+
     suspend fun saveAvatarBytes(bytes: ByteArray?) {
         userProfileStore.saveAvatarBase64(
             bytes?.let { Base64.getEncoder().encodeToString(it) },
         )
     }
 
-    fun canApplyInviteCode(code: String): Boolean = code.trim().isNotEmpty()
+    fun canApplyPromoCode(code: String): Boolean = code.trim().isNotEmpty()
 
-    suspend fun applyInviteCode(code: String): InviteCodeApplyResult {
-        val trimmedCode = code.trim()
-        if (trimmedCode.isEmpty()) {
-            return InviteCodeApplyResult.InvalidCode
-        }
-        return when (val result = tagRepository.acceptInvite(trimmedCode)) {
-            is SharedTagInviteAcceptanceResult.Success -> InviteCodeApplyResult.Success(
-                tagName = result.tagName,
-            )
-            SharedTagInviteAcceptanceResult.AuthRequired -> InviteCodeApplyResult.AuthRequired
-            SharedTagInviteAcceptanceResult.InvalidInvite -> InviteCodeApplyResult.InvalidInvite
-            is SharedTagInviteAcceptanceResult.Failure -> InviteCodeApplyResult.Failure(result.message)
+    suspend fun redeemPromoCode(code: String): PromoCodeApplyResult {
+        return when (val result = entitlementGrantRepository.redeemPromoCode(code)) {
+            is PromoCodeRedemptionResult.Success -> PromoCodeApplyResult.Success
+            PromoCodeRedemptionResult.InvalidCode -> PromoCodeApplyResult.InvalidCode
+            PromoCodeRedemptionResult.AuthRequired -> PromoCodeApplyResult.AuthRequired
+            is PromoCodeRedemptionResult.Failure -> PromoCodeApplyResult.Failure(result.message)
         }
     }
 }
 
-sealed interface InviteCodeApplyResult {
-    data class Success(val tagName: String) : InviteCodeApplyResult
-    data object InvalidCode : InviteCodeApplyResult
-    data object AuthRequired : InviteCodeApplyResult
-    data object InvalidInvite : InviteCodeApplyResult
-    data class Failure(val message: String) : InviteCodeApplyResult
+sealed interface PromoCodeApplyResult {
+    data object Success : PromoCodeApplyResult
+    data object InvalidCode : PromoCodeApplyResult
+    data object AuthRequired : PromoCodeApplyResult
+    data class Failure(val message: String) : PromoCodeApplyResult
 }

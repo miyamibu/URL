@@ -6,6 +6,10 @@ import jp.mimac.urlsaver.domain.SharedTagCloudState
 import jp.mimac.urlsaver.domain.SharedTagInviteAcceptanceResult
 import jp.mimac.urlsaver.domain.SharedTagInviteCreationResult
 import jp.mimac.urlsaver.domain.SharedTagInvitePreviewResult
+import jp.mimac.urlsaver.domain.SharedTagGroupInviteCreationResult
+import jp.mimac.urlsaver.domain.SharedTagGroupMemberRecord
+import jp.mimac.urlsaver.domain.SharedTagGroupRecord
+import jp.mimac.urlsaver.domain.SharedTagGroupTagRecord
 import jp.mimac.urlsaver.domain.TagImportResult
 import jp.mimac.urlsaver.domain.TagSharePayload
 import jp.mimac.urlsaver.domain.SharedTagMemberRecord
@@ -14,10 +18,12 @@ import jp.mimac.urlsaver.domain.SharedTagRecord
 import jp.mimac.urlsaver.domain.TagWithCount
 import jp.mimac.urlsaver.domain.AssignTagResult
 import jp.mimac.urlsaver.domain.CreateTagResult
+import jp.mimac.urlsaver.domain.CreateSharedTagGroupResult
 import jp.mimac.urlsaver.domain.FeatureEntitlements
 import jp.mimac.urlsaver.domain.MigrateSharedTagResult
 import jp.mimac.urlsaver.domain.UsageSummary
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 
 interface TagRepository {
     fun observeAllTagsWithCount(): Flow<List<TagWithCount>>
@@ -26,6 +32,9 @@ interface TagRepository {
     fun observeTag(tagId: Long): Flow<SharedTagRecord?>
     fun observeTagByRemoteId(remoteTagId: String): Flow<SharedTagRecord?>
     fun observeMembersForTag(tagId: Long): Flow<List<SharedTagMemberRecord>>
+    fun observeGroups(): Flow<List<SharedTagGroupRecord>> = flowOf(emptyList())
+    fun observeGroupMembers(groupId: Long): Flow<List<SharedTagGroupMemberRecord>> = flowOf(emptyList())
+    fun observeGroupTags(groupId: Long): Flow<List<SharedTagGroupTagRecord>> = flowOf(emptyList())
     val isSyncAvailable: Flow<Boolean>
     val cloudState: Flow<SharedTagCloudState>
     fun observeUsageSummary(): Flow<UsageSummary>
@@ -44,11 +53,21 @@ interface TagRepository {
     suspend fun migrateLocalTagToCloud(tagId: Long): MigrateSharedTagResult
     suspend fun triggerSync(): Boolean
     suspend fun triggerSyncIfStale(minIntervalMillis: Long = 60_000L): Boolean
+    fun googleOAuthUrl(): String? = null
+    suspend fun handleOAuthCallback(callbackUrl: String): SharedTagAuthResult =
+        SharedTagAuthResult.Failure("Googleサインインを開始できませんでした")
     suspend fun signIn(email: String, password: String): SharedTagAuthResult
     suspend fun signUp(email: String, password: String): SharedTagAuthResult
     suspend fun signOut()
     suspend fun deleteAccount(): SharedTagAccountDeletionResult
     suspend fun createInviteLink(tagId: Long): SharedTagInviteCreationResult
+    suspend fun createGroup(name: String): Boolean = false
+    suspend fun createGroupWithResult(name: String): CreateSharedTagGroupResult =
+        if (createGroup(name)) CreateSharedTagGroupResult.Success else CreateSharedTagGroupResult.Failed()
+    suspend fun addTagToGroup(groupId: Long, tagId: Long): Boolean = false
+    suspend fun removeTagFromGroup(groupId: Long, tagId: Long): Boolean = false
+    suspend fun createGroupInviteLink(groupId: Long, role: String): SharedTagGroupInviteCreationResult =
+        SharedTagGroupInviteCreationResult.Failure("グループ招待リンクを作成できませんでした")
     suspend fun previewInvite(inviteToken: String): SharedTagInvitePreviewResult
     suspend fun acceptInvite(inviteToken: String): SharedTagInviteAcceptanceResult
     suspend fun transferOwnership(tagId: Long, newOwnerUserId: String): SharedTagOwnershipTransferResult

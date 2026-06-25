@@ -25,7 +25,7 @@
     const appUrl = token ? `urlsaver://invite/${encodeURIComponent(token)}` : 'urlsaver://invite';
     const link = document.getElementById('open-app');
     link.href = appUrl;
-    document.getElementById('token').textContent = token ? `招待コード: ${token}` : '招待コードが見つかりませんでした。';
+    document.getElementById('token').textContent = token ? '参加リンクを開いています。アプリが開かない場合は、このページを開き直してください。' : '参加リンクを確認できませんでした。';
     if (token) {
       setTimeout(() => { window.location.href = appUrl; }, 250);
     }

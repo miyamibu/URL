@@ -24,6 +24,7 @@ interface UsageSummaryDataSource {
 class DefaultUsageSummaryDataSource(
     private val urlEntryDao: UrlEntryDao,
     private val tagDao: TagDao,
+    private val syncDao: SharedTagSyncDao? = null,
     private val authSessionProvider: SharedTagAuthSessionProvider,
     private val entitlementResolver: EntitlementResolver = DefaultEntitlementResolver(),
 ) : UsageSummaryDataSource {
@@ -41,6 +42,7 @@ class DefaultUsageSummaryDataSource(
             personalUrlCount = urlEntryDao.countPersonalSavedEntries(),
             normalTagCount = tagDao.countLocalOnlyTags(),
             sharedTagCount = tagDao.countVisibleSyncedTags(authUserId),
+            sharedTagGroupCount = authUserId?.let { syncDao?.countGroups(it) } ?: 0,
             sharedTagUsages = tagDao.getVisibleSyncedTagUrlCounts(authUserId).map { usage ->
                 SharedTagUsage(
                     tagId = usage.tagId,
@@ -65,17 +67,24 @@ class DefaultUsageSummaryDataSource(
             } else {
                 tagDao.observeVisibleSyncedTagUrlCounts(authUserId)
             }
+            val sharedTagGroupCountFlow = if (authUserId == null || syncDao == null) {
+                flowOf(0)
+            } else {
+                syncDao.observeGroupCount(authUserId)
+            }
             combine(
                 urlEntryDao.observePersonalSavedEntriesCount(),
                 tagDao.observeLocalOnlyTagCount(),
                 sharedTagCountFlow,
                 sharedTagUsageFlow,
-            ) { personalUrlCount, normalTagCount, sharedTagCount, sharedTagUsages ->
+                sharedTagGroupCountFlow,
+            ) { personalUrlCount, normalTagCount, sharedTagCount, sharedTagUsages, sharedTagGroupCount ->
                 val currentEntitlements = entitlements
                 UsageSummary(
                     personalUrlCount = personalUrlCount,
                     normalTagCount = normalTagCount,
                     sharedTagCount = sharedTagCount,
+                    sharedTagGroupCount = sharedTagGroupCount,
                     sharedTagUsages = sharedTagUsages.map { usage ->
                         SharedTagUsage(
                             tagId = usage.tagId,

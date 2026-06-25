@@ -187,6 +187,9 @@ class SharedTagSyncCoordinator(
             }
 
             syncDao.deleteMembersForUser(authUserId)
+            syncDao.deleteGroupMembersForUser(authUserId)
+            syncDao.deleteGroupTagsForUser(authUserId)
+            syncDao.deleteGroupsForUser(authUserId)
             tagDao.deleteSyncedCrossRefsForUser(authUserId)
             urlEntryDao.resetSharedReferenceCounts()
 
@@ -204,6 +207,64 @@ class SharedTagSyncCoordinator(
                     )
                 }
                 syncDao.upsertMembers(members)
+            }
+
+            if (snapshot.groups.isNotEmpty()) {
+                val groupCurrentRoles = snapshot.groupMembers
+                    .filter { it.userId == authUserId && it.status.equals("active", ignoreCase = true) }
+                    .associate { it.groupId to SharedTagMemberRole.valueOf(it.role.uppercase()) }
+                val groups = snapshot.groups.map { group ->
+                    SharedTagGroupEntity(
+                        authUserId = authUserId,
+                        remoteGroupId = group.id,
+                        name = group.name,
+                        currentUserRole = groupCurrentRoles[group.id],
+                        deletedAt = group.deletedAt?.let { Instant.parse(it).toEpochMilli() },
+                        lastSyncedAt = now,
+                    )
+                }
+                syncDao.upsertGroups(groups)
+            }
+
+            val remoteToLocalGroupId = linkedMapOf<String, Long>()
+            snapshot.groups.forEach { group ->
+                val localGroup = syncDao.findGroupByRemoteId(authUserId, group.id)
+                if (localGroup != null) {
+                    remoteToLocalGroupId[group.id] = localGroup.id
+                }
+            }
+
+            if (snapshot.groupMembers.isNotEmpty()) {
+                val groupMembers = snapshot.groupMembers.mapNotNull { member ->
+                    val localGroupId = remoteToLocalGroupId[member.groupId] ?: return@mapNotNull null
+                    SharedTagGroupMemberEntity(
+                        groupId = localGroupId,
+                        authUserId = authUserId,
+                        userId = member.userId,
+                        role = SharedTagMemberRole.valueOf(member.role.uppercase()),
+                        status = SharedTagMemberStatus.valueOf(member.status.uppercase()),
+                        createdAt = Instant.parse(member.createdAt).toEpochMilli(),
+                        updatedAt = Instant.parse(member.updatedAt).toEpochMilli(),
+                    )
+                }
+                syncDao.upsertGroupMembers(groupMembers)
+            }
+
+            if (snapshot.groupTags.isNotEmpty()) {
+                val groupTags = snapshot.groupTags.mapNotNull { groupTag ->
+                    val localGroupId = remoteToLocalGroupId[groupTag.groupId] ?: return@mapNotNull null
+                    val localTagId = remoteToLocalTagId[groupTag.tagId] ?: return@mapNotNull null
+                    SharedTagGroupTagEntity(
+                        groupId = localGroupId,
+                        tagId = localTagId,
+                        authUserId = authUserId,
+                        remoteGroupId = groupTag.groupId,
+                        remoteTagId = groupTag.tagId,
+                        addedBy = groupTag.addedBy,
+                        createdAt = Instant.parse(groupTag.createdAt).toEpochMilli(),
+                    )
+                }
+                syncDao.upsertGroupTags(groupTags)
             }
 
             if (snapshot.urls.isNotEmpty()) {

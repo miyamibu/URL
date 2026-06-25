@@ -19,6 +19,7 @@ import jp.mimac.urlsaver.data.SHARE_DEGRADATION_TRUNCATED_TO_MAX_URLS
 import jp.mimac.urlsaver.data.UrlRepository
 import jp.mimac.urlsaver.domain.DetailEffect
 import jp.mimac.urlsaver.domain.MainNavigationEvent
+import jp.mimac.urlsaver.domain.SharedTagAuthResult
 import jp.mimac.urlsaver.domain.ShareSaveResult
 import jp.mimac.urlsaver.domain.SnackbarEvent
 import jp.mimac.urlsaver.domain.SnackbarEventKind
@@ -200,6 +201,34 @@ class MainActivityViewModel(
 
     fun consumeDeepLinkIntent(intent: Intent) {
         secondaryIntentHandler.consumeDeepLinkIntent(intent)
+    }
+
+    fun consumeAuthCallback(intent: Intent) {
+        val callbackUrl = intent.dataString?.takeIf { it.startsWith("urlsaver://auth/callback") } ?: return
+        val repository = tagRepository ?: return
+        if (!consumedShareSignatures.add("auth:$callbackUrl")) return
+        viewModelScope.launch {
+            when (val result = repository.handleOAuthCallback(callbackUrl)) {
+                is SharedTagAuthResult.Success -> enqueueSnackbar(
+                    SnackbarEvent(
+                        kind = SnackbarEventKind.INFO,
+                        message = "Googleでサインインしました",
+                    ),
+                )
+                SharedTagAuthResult.NeedsEmailConfirmation -> enqueueSnackbar(
+                    SnackbarEvent(
+                        kind = SnackbarEventKind.INFO,
+                        message = "確認メールの手続きが必要です",
+                    ),
+                )
+                is SharedTagAuthResult.Failure -> enqueueSnackbar(
+                    SnackbarEvent(
+                        kind = SnackbarEventKind.INFO,
+                        message = result.message,
+                    ),
+                )
+            }
+        }
     }
 
     fun onDetailEffect(effect: DetailEffect) {

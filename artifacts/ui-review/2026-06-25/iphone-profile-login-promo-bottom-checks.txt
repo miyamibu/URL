@@ -1,0 +1,2 @@
+{'このiPhoneで使うプロフィール': False, '共有タグに参加するにはサインインが必要です': True, '未サインインのため共有タグは同期されません': False, '通常のURL保存はサインインしなくても使えます': False, 'Googleで続ける': True, 'Continue with Apple': True, '優待コード': True, '優待Proを受け取る': True}
+['共有タグに参加するにはサインインが必要です', 'Googleで続ける', 'Continue with Apple', 'メールアドレス', 'パスワード', 'サインイン', '新規登録', '優待コード', '優待Proを受け取る']

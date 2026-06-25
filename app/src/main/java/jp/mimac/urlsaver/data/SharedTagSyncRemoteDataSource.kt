@@ -2,9 +2,12 @@ package jp.mimac.urlsaver.data
 
 import jp.mimac.urlsaver.domain.ApplySharedTagOpsResponse
 import jp.mimac.urlsaver.domain.AcceptSharedTagInviteResponse
+import jp.mimac.urlsaver.domain.CreateSharedTagGroupInviteResponse
+import jp.mimac.urlsaver.domain.CreateSharedTagGroupResponse
 import jp.mimac.urlsaver.domain.CreateSharedTagInviteResponse
 import jp.mimac.urlsaver.domain.PreviewSharedTagInviteResponse
 import jp.mimac.urlsaver.domain.PullSharedTagSnapshotResponse
+import jp.mimac.urlsaver.domain.SharedTagGroupMutationResponse
 import jp.mimac.urlsaver.domain.SharedTagSyncOperation
 import jp.mimac.urlsaver.domain.TransferSharedTagOwnershipResponse
 import kotlinx.serialization.decodeFromString
@@ -36,6 +39,29 @@ interface SharedTagSyncRemoteDataSource {
         session: SharedTagAuthSession,
         inviteToken: String,
     ): AcceptSharedTagInviteResponse
+
+    suspend fun createGroup(
+        session: SharedTagAuthSession,
+        name: String,
+    ): CreateSharedTagGroupResponse = throw UnsupportedOperationException("Shared tag groups are not supported by this data source.")
+
+    suspend fun addTagToGroup(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+        remoteTagId: String,
+    ): SharedTagGroupMutationResponse = throw UnsupportedOperationException("Shared tag groups are not supported by this data source.")
+
+    suspend fun removeTagFromGroup(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+        remoteTagId: String,
+    ): SharedTagGroupMutationResponse = throw UnsupportedOperationException("Shared tag groups are not supported by this data source.")
+
+    suspend fun createGroupInvite(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+        role: String,
+    ): CreateSharedTagGroupInviteResponse = throw UnsupportedOperationException("Shared tag groups are not supported by this data source.")
 
     suspend fun transferOwnership(
         session: SharedTagAuthSession,
@@ -123,7 +149,7 @@ class SupabaseSharedTagSyncRemoteDataSource(
     override suspend fun previewInvite(inviteToken: String): PreviewSharedTagInviteResponse {
         val response = withContext(Dispatchers.IO) {
             executeRpc(
-                path = "/rest/v1/rpc/preview_shared_tag_invite",
+                path = "/rest/v1/rpc/preview_shared_invite",
                 session = null,
                 requestBody = json.encodeToString(
                     mapOf("p_token" to inviteToken),
@@ -139,10 +165,84 @@ class SupabaseSharedTagSyncRemoteDataSource(
     ): AcceptSharedTagInviteResponse {
         val response = withContext(Dispatchers.IO) {
             executeRpc(
-                path = "/rest/v1/rpc/accept_shared_tag_invite",
+                path = "/rest/v1/rpc/accept_shared_invite",
                 session = session,
                 requestBody = json.encodeToString(
                     mapOf("p_token" to inviteToken),
+                ),
+            )
+        }
+        return json.decodeFromString(response)
+    }
+
+    override suspend fun createGroup(
+        session: SharedTagAuthSession,
+        name: String,
+    ): CreateSharedTagGroupResponse {
+        val response = withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/create_shared_tag_group",
+                session = session,
+                requestBody = json.encodeToString(mapOf("p_name" to name)),
+            )
+        }
+        return json.decodeFromString(response)
+    }
+
+    override suspend fun addTagToGroup(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+        remoteTagId: String,
+    ): SharedTagGroupMutationResponse {
+        val response = withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/add_shared_tag_to_group",
+                session = session,
+                requestBody = json.encodeToString(
+                    mapOf(
+                        "p_group_id" to remoteGroupId,
+                        "p_tag_id" to remoteTagId,
+                    ),
+                ),
+            )
+        }
+        return json.decodeFromString(response)
+    }
+
+    override suspend fun removeTagFromGroup(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+        remoteTagId: String,
+    ): SharedTagGroupMutationResponse {
+        val response = withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/remove_shared_tag_from_group",
+                session = session,
+                requestBody = json.encodeToString(
+                    mapOf(
+                        "p_group_id" to remoteGroupId,
+                        "p_tag_id" to remoteTagId,
+                    ),
+                ),
+            )
+        }
+        return json.decodeFromString(response)
+    }
+
+    override suspend fun createGroupInvite(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+        role: String,
+    ): CreateSharedTagGroupInviteResponse {
+        val response = withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/create_shared_tag_group_invite",
+                session = session,
+                requestBody = json.encodeToString(
+                    mapOf(
+                        "p_group_id" to remoteGroupId,
+                        "p_role" to role,
+                    ),
                 ),
             )
         }

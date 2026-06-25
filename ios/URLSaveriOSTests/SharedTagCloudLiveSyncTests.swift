@@ -89,8 +89,9 @@ final class SharedTagCloudLiveSyncTests: XCTestCase {
         print("URLSAVER_LIVE_INVITE_TOKEN=\(inviteToken)")
         let acceptResult = await collaboratorHarness.service.acceptInvite(inviteToken: inviteToken)
         switch acceptResult {
-        case .accepted(let acceptedTagName, let role):
+        case .accepted(let acceptedTagName, let inviteType, let role):
             XCTAssertEqual(acceptedTagName, tagName)
+            XCTAssertEqual(inviteType, .tag)
             XCTAssertEqual(role, .editor)
         default:
             XCTFail("Invite acceptance failed: \(acceptResult)")

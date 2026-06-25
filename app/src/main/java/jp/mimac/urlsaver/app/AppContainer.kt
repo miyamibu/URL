@@ -22,6 +22,7 @@ import jp.mimac.urlsaver.data.ServiceFilterOrderStore
 import jp.mimac.urlsaver.data.DefaultExportRepository
 import jp.mimac.urlsaver.data.SharedTagAuthRemoteDataSource
 import jp.mimac.urlsaver.data.SharedPreferencesSharedTagAuthSessionProvider
+import jp.mimac.urlsaver.data.SharedPreferencesSharedTagOAuthStateStore
 import jp.mimac.urlsaver.data.SharedTagAuthSessionProvider
 import jp.mimac.urlsaver.data.SharedTagSyncCoordinator
 import jp.mimac.urlsaver.data.SharedTagSyncRemoteConfig
@@ -118,7 +119,10 @@ class AppContainer(context: Context) {
         )
     }
     private val sharedTagAuthRemoteDataSource: SharedTagAuthRemoteDataSource by lazy {
-        SupabaseSharedTagAuthRemoteDataSource(sharedTagSyncRemoteConfig)
+        SupabaseSharedTagAuthRemoteDataSource(
+            config = sharedTagSyncRemoteConfig,
+            oauthStateStore = SharedPreferencesSharedTagOAuthStateStore(appContext),
+        )
     }
     private val sharedTagSyncRemoteDataSource: SharedTagSyncRemoteDataSource by lazy {
         SupabaseSharedTagSyncRemoteDataSource(
@@ -130,7 +134,7 @@ class AppContainer(context: Context) {
     private val entitlementGrantStore: EntitlementGrantStore by lazy {
         DataStoreEntitlementGrantStore(appContext)
     }
-    private val entitlementGrantRepository: EntitlementGrantRepository by lazy {
+    val entitlementGrantRepository: EntitlementGrantRepository by lazy {
         EntitlementGrantRepository(
             authSessionProvider = sharedTagAuthSessionProvider,
             remoteDataSource = SupabaseEntitlementGrantRemoteDataSource(
@@ -161,6 +165,7 @@ class AppContainer(context: Context) {
         DefaultUsageSummaryDataSource(
             urlEntryDao = database.urlEntryDao(),
             tagDao = database.tagDao(),
+            syncDao = database.sharedTagSyncDao(),
             authSessionProvider = sharedTagAuthSessionProvider,
             entitlementResolver = DefaultEntitlementResolver(
                 grantsProvider = {

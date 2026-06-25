@@ -6,12 +6,17 @@ import jp.mimac.urlsaver.domain.SHARED_TAG_INVITE_ROLE
 import jp.mimac.urlsaver.domain.SharedTagAuthResult
 import jp.mimac.urlsaver.domain.SharedTagAccountDeletionResult
 import jp.mimac.urlsaver.domain.SharedTagCloudState
+import jp.mimac.urlsaver.domain.SharedTagGroupInviteCreationResult
+import jp.mimac.urlsaver.domain.SharedTagGroupMemberRecord
+import jp.mimac.urlsaver.domain.SharedTagGroupRecord
+import jp.mimac.urlsaver.domain.SharedTagGroupTagRecord
 import jp.mimac.urlsaver.domain.SharedTagInviteAcceptanceResult
 import jp.mimac.urlsaver.domain.SharedTagInviteCreationResult
 import jp.mimac.urlsaver.domain.SharedTagInvitePreviewResult
 import jp.mimac.urlsaver.domain.SharedTagOwnershipTransferResult
 import jp.mimac.urlsaver.domain.AssignTagResult
 import jp.mimac.urlsaver.domain.CreateTagResult
+import jp.mimac.urlsaver.domain.CreateSharedTagGroupResult
 import jp.mimac.urlsaver.domain.FeatureEntitlements
 import jp.mimac.urlsaver.domain.LimitResult
 import jp.mimac.urlsaver.domain.MigrateSharedTagResult
@@ -114,6 +119,36 @@ class DefaultTagRepository(
                 flowOf(emptyList())
             } else {
                 tagDao.observeActiveMembersForTag(tagId, session.authUserId)
+            }
+        }
+    }
+
+    override fun observeGroups(): Flow<List<SharedTagGroupRecord>> {
+        return authSessionProvider.session.flatMapLatest { session ->
+            if (session == null) {
+                flowOf(emptyList())
+            } else {
+                syncDao.observeGroups(session.authUserId)
+            }
+        }
+    }
+
+    override fun observeGroupMembers(groupId: Long): Flow<List<SharedTagGroupMemberRecord>> {
+        return authSessionProvider.session.flatMapLatest { session ->
+            if (session == null) {
+                flowOf(emptyList())
+            } else {
+                syncDao.observeGroupMembers(session.authUserId, groupId)
+            }
+        }
+    }
+
+    override fun observeGroupTags(groupId: Long): Flow<List<SharedTagGroupTagRecord>> {
+        return authSessionProvider.session.flatMapLatest { session ->
+            if (session == null) {
+                flowOf(emptyList())
+            } else {
+                syncDao.observeGroupTags(session.authUserId, groupId)
             }
         }
     }
@@ -558,6 +593,34 @@ class DefaultTagRepository(
         }
     }
 
+    override fun googleOAuthUrl(): String? {
+        if (!remoteConfig.isConfigured) return null
+        return runCatching {
+            authRemoteDataSource.oauthUrl(
+                provider = "google",
+                redirectTo = "urlsaver://auth/callback",
+            )
+        }.getOrNull()
+    }
+
+    override suspend fun handleOAuthCallback(callbackUrl: String): SharedTagAuthResult {
+        if (!remoteConfig.isConfigured) {
+            return SharedTagAuthResult.Failure("クラウド共有はまだ設定されていません")
+        }
+        return runCatching {
+            when (val result = authRemoteDataSource.signInWithOAuthCallback(callbackUrl)) {
+                SharedTagAuthRemoteResult.NeedsEmailConfirmation -> SharedTagAuthResult.NeedsEmailConfirmation
+                is SharedTagAuthRemoteResult.SignedIn -> {
+                    authSessionProvider.updateSession(result.session)
+                    scheduleSync(result.session.authUserId)
+                    SharedTagAuthResult.Success(result.session.userEmail)
+                }
+            }
+        }.getOrElse { error ->
+            SharedTagAuthResult.Failure(error.message ?: "Googleでサインインできませんでした")
+        }
+    }
+
     override suspend fun signUp(email: String, password: String): SharedTagAuthResult {
         if (!remoteConfig.isConfigured) {
             return SharedTagAuthResult.Failure("クラウド共有はまだ設定されていません")
@@ -627,13 +690,89 @@ class DefaultTagRepository(
         }
     }
 
+    override suspend fun createGroup(name: String): Boolean {
+        return createGroupWithResult(name) == CreateSharedTagGroupResult.Success
+    }
+
+    override suspend fun createGroupWithResult(name: String): CreateSharedTagGroupResult {
+        val normalized = normalizeSharedTagName(name)
+        if (validateSharedTagName(normalized) != null) return CreateSharedTagGroupResult.InvalidName
+        val session = currentSyncSessionOrNull() ?: return CreateSharedTagGroupResult.AuthRequired
+        val usage = usageSummaryDataSource.getUsageSummary()
+        val limit = usageSummaryDataSource.limitChecker.checkCanCreateSharedTagGroup(usage)
+        if (limit is LimitResult.Blocked) {
+            return CreateSharedTagGroupResult.LimitReached(limit.message)
+        }
+        return runCatching {
+            remoteDataSource.createGroup(session, normalized)
+            syncNowOrSchedule(session.authUserId)
+            CreateSharedTagGroupResult.Success
+        }.getOrElse { error ->
+            CreateSharedTagGroupResult.Failed(error.message)
+        }
+    }
+
+    override suspend fun addTagToGroup(groupId: Long, tagId: Long): Boolean {
+        val session = currentSyncSessionOrNull() ?: return false
+        val tag = tagDao.findTagById(tagId) ?: return false
+        val remoteTagId = tag.remoteTagId ?: return false
+        val remoteGroupId = syncDao.findLocalGroupById(session.authUserId, groupId)?.remoteGroupId ?: return false
+        return runCatching {
+            remoteDataSource.addTagToGroup(session, remoteGroupId, remoteTagId)
+            syncNowOrSchedule(session.authUserId)
+            true
+        }.getOrDefault(false)
+    }
+
+    override suspend fun removeTagFromGroup(groupId: Long, tagId: Long): Boolean {
+        val session = currentSyncSessionOrNull() ?: return false
+        val tag = tagDao.findTagById(tagId) ?: return false
+        val remoteTagId = tag.remoteTagId ?: return false
+        val remoteGroupId = syncDao.findLocalGroupById(session.authUserId, groupId)?.remoteGroupId ?: return false
+        return runCatching {
+            remoteDataSource.removeTagFromGroup(session, remoteGroupId, remoteTagId)
+            syncNowOrSchedule(session.authUserId)
+            true
+        }.getOrDefault(false)
+    }
+
+    override suspend fun createGroupInviteLink(
+        groupId: Long,
+        role: String,
+    ): SharedTagGroupInviteCreationResult {
+        val session = currentSyncSessionOrNull() ?: return SharedTagGroupInviteCreationResult.AuthRequired
+        val remoteGroupId = syncDao.findLocalGroupById(session.authUserId, groupId)?.remoteGroupId
+            ?: return SharedTagGroupInviteCreationResult.Failure("グループが見つかりませんでした")
+        val inviteRole = role.lowercase().takeIf { it == "editor" || it == "viewer" } ?: "editor"
+        return runCatching {
+            val invite = remoteDataSource.createGroupInvite(session, remoteGroupId, inviteRole)
+            SharedTagGroupInviteCreationResult.Success(
+                inviteToken = invite.inviteToken,
+                inviteUrl = buildInviteUrl(invite.inviteToken),
+                expiresAt = invite.expiresAt,
+            )
+        }.getOrElse { error ->
+            val message = error.message.orEmpty()
+            if (message.contains("forbidden", ignoreCase = true)) {
+                SharedTagGroupInviteCreationResult.OwnerOnly
+            } else {
+                SharedTagGroupInviteCreationResult.Failure(message.ifBlank { "グループ招待リンクを作成できませんでした" })
+            }
+        }
+    }
+
     override suspend fun previewInvite(inviteToken: String): SharedTagInvitePreviewResult {
         val token = inviteToken.trim()
         if (token.isBlank()) return SharedTagInvitePreviewResult.InvalidInvite
         return runCatching {
             val preview = remoteDataSource.previewInvite(token)
             SharedTagInvitePreviewResult.Success(
-                tagName = preview.tagName,
+                displayName = preview.groupName ?: preview.tagName,
+                inviteType = if (preview.inviteType.equals("group", ignoreCase = true)) {
+                    jp.mimac.urlsaver.domain.SharedInviteType.GROUP
+                } else {
+                    jp.mimac.urlsaver.domain.SharedInviteType.TAG
+                },
             )
         }.getOrElse { error ->
             val message = error.message.orEmpty()
@@ -655,8 +794,13 @@ class DefaultTagRepository(
             val accepted = remoteDataSource.acceptInvite(session, token)
             syncNowOrSchedule(session.authUserId)
             SharedTagInviteAcceptanceResult.Success(
-                remoteTagId = accepted.tagId,
-                tagName = accepted.tagName,
+                remoteId = accepted.groupId ?: accepted.tagId.orEmpty(),
+                displayName = accepted.groupName ?: accepted.tagName.orEmpty(),
+                inviteType = if (accepted.inviteType.equals("group", ignoreCase = true)) {
+                    jp.mimac.urlsaver.domain.SharedInviteType.GROUP
+                } else {
+                    jp.mimac.urlsaver.domain.SharedInviteType.TAG
+                },
             )
         }.getOrElse { error ->
             val message = error.message.orEmpty()

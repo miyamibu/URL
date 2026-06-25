@@ -1,4 +1,7 @@
+import AuthenticationServices
+import CryptoKit
 import PhotosUI
+import SafariServices
 import SwiftUI
 import UIKit
 
@@ -10,14 +13,22 @@ struct SharedTagCloudSheet: View {
     @ObservedObject var model: URLSaverAppModel
     @State private var email = ""
     @State private var password = ""
+    @State private var isPasswordVisible = false
     @State private var displayNameDraft = ""
+    @State private var isEditingDisplayName = false
     @State private var selectedAvatarItem: PhotosPickerItem?
+    @State private var avatarDraftData: Data?
+    @State private var isAvatarDraftActive = false
     @State private var isWorking = false
     @State private var isShowingDeleteConfirmation = false
     @State private var isShowingContactSheet = false
-    @State private var inviteCode = ""
-    @State private var inviteMessage: String?
-    @State private var isApplyingInviteCode = false
+    @State private var promoCode = ""
+    @State private var promoMessage: String?
+    @State private var isRedeemingPromoCode = false
+    @State private var googleOAuthURL: URL?
+    @State private var pendingAppleNonce: String?
+    @State private var pendingAppleState: String?
+    @StateObject private var appleSignInCoordinator = AppleSignInCoordinator()
 
     var body: some View {
         ScreenContainer {
@@ -58,21 +69,21 @@ struct SharedTagCloudSheet: View {
                     profileSection
                     usageSummarySection
                     accountActionsSection
-                    inviteCodeSection
 
                     if model.sharedTagCloudState.isConfigured && !model.sharedTagCloudState.isSignedIn {
                         signedOutSection
                     }
+
+                    promoCodeSection
 
                     if let pendingInvite = model.pendingInviteRecord {
                         AppPanel {
                             Text("保留中の招待")
                                 .font(.system(size: 20, weight: .heavy, design: .rounded))
                                 .foregroundStyle(AppPalette.textPrimary)
-                            Text("招待トークン: \(pendingInvite.inviteToken)")
-                                .font(.system(size: 14, weight: .semibold))
+                            Text("参加リンクを受信済みです。サインイン後に参加できます。")
+                                .font(.system(size: 15, weight: .medium))
                                 .foregroundStyle(AppPalette.textSecondary)
-                                .textSelection(.enabled)
                             Text("受信時刻: \(DateFormatters.detailTimestamp.string(from: pendingInvite.savedAt))")
                                 .font(.system(size: 15, weight: .medium))
                                 .foregroundStyle(AppPalette.textSecondary)
@@ -129,12 +140,14 @@ struct SharedTagCloudSheet: View {
                 if let imageData = try? await newItem.loadTransferable(type: Data.self) {
                     let normalizedData = normalizeAvatarImageData(imageData)
                     await MainActor.run {
-                        model.saveProfileAvatar(imageData: normalizedData)
+                        avatarDraftData = normalizedData
+                        isAvatarDraftActive = true
+                        model.showProfileStatusMessage("プロフィール写真を選択しました")
                         selectedAvatarItem = nil
                     }
                 } else {
                     await MainActor.run {
-                        model.clearProfileStatusMessage()
+                        model.showProfileStatusMessage("プロフィール写真を読み込めませんでした")
                         selectedAvatarItem = nil
                     }
                 }
@@ -163,29 +176,107 @@ struct SharedTagCloudSheet: View {
             .presentationDragIndicator(.visible)
             .presentationCornerRadius(32)
         }
+        .sheet(
+            isPresented: Binding(
+                get: { googleOAuthURL != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        googleOAuthURL = nil
+                    }
+                }
+            )
+        ) {
+            if let googleOAuthURL {
+                SafariAuthView(url: googleOAuthURL)
+                    .ignoresSafeArea()
+            }
+        }
     }
 
     private var profileSection: some View {
-        AppPanel {
+        let currentAvatarImageData = activeAvatarImageData
+        let hasAvatarImage = currentAvatarImageData != nil
+
+        return AppPanel {
             HStack(alignment: .center, spacing: 16) {
-                ProfileAvatarView(imageData: model.profile.avatarImageData)
+                ProfileAvatarView(imageData: currentAvatarImageData)
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(model.profileDisplayName)
-                        .font(.system(size: 21, weight: .heavy, design: .rounded))
-                        .foregroundStyle(AppPalette.textPrimary)
-                    Text(model.sharedTagCloudState.signedInEmail ?? "このiPhoneで使うプロフィール")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(AppPalette.textSecondary)
+                    HStack(alignment: .top, spacing: 8) {
+                        if isEditingDisplayName {
+                            TextField("", text: $displayNameDraft, prompt: Text("表示名を入力").foregroundStyle(AppPalette.textMuted))
+                                .textInputAutocapitalization(.words)
+                                .autocorrectionDisabled()
+                                .font(.system(size: 21, weight: .heavy, design: .rounded))
+                                .foregroundStyle(AppPalette.textPrimary)
+                                .tint(AppPalette.primaryStrong)
+                                .textFieldStyle(.plain)
+                            Button {
+                                let saved = model.saveProfile(
+                                    displayName: displayNameDraft,
+                                    avatarImageData: activeAvatarImageData,
+                                    updatesAvatar: isAvatarDraftActive
+                                )
+                                if saved {
+                                    avatarDraftData = nil
+                                    isAvatarDraftActive = false
+                                    isEditingDisplayName = false
+                                }
+                            } label: {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 17, weight: .bold))
+                            }
+                            .accessibilityLabel("表示名を保存")
+                            .foregroundStyle(AppPalette.primaryStrong)
+                            .padding(.top, 5)
+                            Button {
+                                displayNameDraft = model.profile.trimmedDisplayName
+                                isEditingDisplayName = false
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 17, weight: .bold))
+                            }
+                            .accessibilityLabel("表示名の編集をキャンセル")
+                            .foregroundStyle(AppPalette.primaryStrong)
+                            .padding(.top, 5)
+                        } else {
+                            Text(model.profileDisplayName)
+                                .font(.system(size: 21, weight: .heavy, design: .rounded))
+                                .foregroundStyle(AppPalette.textPrimary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.72)
+                                .onTapGesture {
+                                    displayNameDraft = model.profile.trimmedDisplayName
+                                    isEditingDisplayName = true
+                                }
+                            Button {
+                                displayNameDraft = model.profile.trimmedDisplayName
+                                isEditingDisplayName = true
+                            } label: {
+                                Image(systemName: "pencil")
+                                    .font(.system(size: 17, weight: .bold))
+                            }
+                            .accessibilityLabel("表示名を編集")
+                            .foregroundStyle(AppPalette.primaryStrong)
+                            .padding(.top, 5)
+                        }
+                    }
+                    if let signedInEmail = model.sharedTagCloudState.signedInEmail, !signedInEmail.isEmpty {
+                        Text(signedInEmail)
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(AppPalette.textSecondary)
+                    }
                     HStack(spacing: 8) {
                         PhotosPicker(selection: $selectedAvatarItem, matching: .images) {
-                            Text(model.profile.avatarImageData == nil ? "写真を追加" : "写真を変更")
+                            Text(hasAvatarImage ? "写真を変更" : "写真を追加")
                                 .font(.system(size: 15, weight: .bold))
                                 .foregroundStyle(AppPalette.primaryStrong)
                         }
-                        if model.profile.avatarImageData != nil {
+                        if hasAvatarImage {
                             Button("削除") {
-                                model.saveProfileAvatar(imageData: nil)
+                                avatarDraftData = nil
+                                isAvatarDraftActive = true
+                                model.showProfileStatusMessage("プロフィール写真を削除対象にしました")
                             }
                             .font(.system(size: 15, weight: .bold))
                             .foregroundStyle(AppPalette.textSecondary)
@@ -195,25 +286,6 @@ struct SharedTagCloudSheet: View {
                 Spacer(minLength: 0)
             }
 
-            VStack(alignment: .leading, spacing: 10) {
-                Text("表示名")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(AppPalette.textSecondary)
-                TextField("", text: $displayNameDraft, prompt: Text("表示名を入力").foregroundStyle(AppPalette.textMuted))
-                    .textInputAutocapitalization(.words)
-                    .autocorrectionDisabled()
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(AppPalette.textPrimary)
-                    .tint(AppPalette.primaryStrong)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 18)
-                    .background(AppPalette.background, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(AppPalette.outlineSoft, lineWidth: 1.5)
-                    )
-            }
-
             ThemeModePicker(
                 selectedMode: AppThemeMode(rawValue: themeModeRaw) ?? .system,
                 onSelect: { themeModeRaw = $0.rawValue }
@@ -221,9 +293,17 @@ struct SharedTagCloudSheet: View {
 
             AppActionButton(
                 tone: .primary,
-                enabled: displayNameDraft.trimmingCharacters(in: .whitespacesAndNewlines) != model.profile.trimmedDisplayName
+                enabled: hasProfileChanges && !isEditingDisplayName
             ) {
-                model.saveProfile(displayName: displayNameDraft)
+                let saved = model.saveProfile(
+                    displayName: displayNameDraft,
+                    avatarImageData: activeAvatarImageData,
+                    updatesAvatar: isAvatarDraftActive
+                )
+                if saved {
+                    avatarDraftData = nil
+                    isAvatarDraftActive = false
+                }
             } label: {
                 Text("プロフィールを保存")
             }
@@ -233,16 +313,45 @@ struct SharedTagCloudSheet: View {
     private var signedOutSection: some View {
         AppPanel {
             Text("共有タグに参加するにはサインインが必要です")
-                .font(.system(size: 20, weight: .heavy, design: .rounded))
+                .font(.system(size: 18, weight: .heavy, design: .rounded))
                 .foregroundStyle(AppPalette.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.68)
 
-            Text("未サインインのため共有タグは同期されません。アプリ削除後や機種変更後でも、同じメールアドレスでサインインし直すと共有タグを復元できます。")
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(AppPalette.textSecondary)
+            HStack(spacing: 10) {
+                AppActionButton(
+                    enabled: !isWorking
+                ) {
+                    guard !isWorking else { return }
+                    if let url = model.googleOAuthURLForSharedTagCloud() {
+                        googleOAuthURL = url
+                    } else {
+                        model.showProfileStatusMessage("Googleサインインを開始できませんでした。クラウド設定を確認してください。")
+                    }
+                } label: {
+                    Text("Googleで続ける")
+                }
 
-            Text("通常のURL保存はサインインしなくても使えます。共有タグの同期、招待参加、複数端末での共有だけサインインが必要です。")
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(AppPalette.textSecondary)
+                Button {
+                    startAppleSignIn()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "apple.logo")
+                            .font(.system(size: 17, weight: .semibold))
+                        Text("Appleで続ける")
+                            .font(.system(size: 15, weight: .semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 56)
+                    .foregroundStyle(Color.white)
+                    .background(Color.black, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Appleで続ける")
+                .disabled(isWorking)
+            }
 
             VStack(alignment: .leading, spacing: 10) {
                 Text("メールアドレス")
@@ -268,12 +377,30 @@ struct SharedTagCloudSheet: View {
                 Text("パスワード")
                     .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(AppPalette.textSecondary)
-                SecureField("", text: $password, prompt: Text("8文字以上").foregroundStyle(AppPalette.textMuted))
+                HStack(spacing: 10) {
+                    Group {
+                        if isPasswordVisible {
+                            TextField("", text: $password, prompt: Text("8文字以上").foregroundStyle(AppPalette.textMuted))
+                        } else {
+                            SecureField("", text: $password, prompt: Text("8文字以上").foregroundStyle(AppPalette.textMuted))
+                        }
+                    }
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .font(.system(size: 18, weight: .medium))
                     .foregroundStyle(AppPalette.textPrimary)
                     .tint(AppPalette.primaryStrong)
+
+                    Button {
+                        isPasswordVisible.toggle()
+                    } label: {
+                        Image(systemName: isPasswordVisible ? "eye.slash" : "eye")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(AppPalette.textSecondary)
+                            .frame(width: 32, height: 32)
+                    }
+                    .accessibilityLabel(isPasswordVisible ? "パスワードを隠す" : "パスワードを表示")
+                }
                     .padding(.horizontal, 18)
                     .padding(.vertical, 18)
                     .background(AppPalette.background, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -315,10 +442,6 @@ struct SharedTagCloudSheet: View {
                     Text("新規登録")
                 }
             }
-
-            Text("新規登録が完了すると、この画面のままサインイン済み表示へ切り替わります。")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(AppPalette.textSecondary)
         }
     }
 
@@ -330,12 +453,16 @@ struct SharedTagCloudSheet: View {
 
             HStack(alignment: .top, spacing: 10) {
                 UsageMetricTile(
-                    title: "通常タグで保存URL",
-                    valueText: "\(personalSavedURLCount) / 200"
+                    title: "保存タグ",
+                    valueText: "\(personalSavedURLCount)"
                 )
                 UsageMetricTile(
-                    title: "共有タグURL",
-                    valueText: sharedTagUsageText
+                    title: "共有タグ",
+                    valueText: "\(model.sharedTags.count)"
+                )
+                UsageMetricTile(
+                    title: "グループ",
+                    valueText: "\(model.sharedTagGroups.count)"
                 )
             }
         }
@@ -343,22 +470,24 @@ struct SharedTagCloudSheet: View {
 
     private var accountActionsSection: some View {
         VStack(spacing: 16) {
-            HStack(spacing: 10) {
-                AppActionButton(enabled: !isWorking) {
-                    guard !isWorking else { return }
-                    isWorking = true
-                    Task {
-                        await model.signOutFromSharedTagCloud()
-                        isWorking = false
+            if model.sharedTagCloudState.isSignedIn {
+                HStack(spacing: 10) {
+                    AppActionButton(enabled: !isWorking) {
+                        guard !isWorking else { return }
+                        isWorking = true
+                        Task {
+                            await model.signOutFromSharedTagCloud()
+                            isWorking = false
+                        }
+                    } label: {
+                        Text("サインアウト")
                     }
-                } label: {
-                    Text("サインアウト")
-                }
 
-                AppActionButton(tone: .danger, enabled: !isWorking) {
-                    isShowingDeleteConfirmation = true
-                } label: {
-                    Text("アカウント削除")
+                    AppActionButton(tone: .danger, enabled: !isWorking) {
+                        isShowingDeleteConfirmation = true
+                    } label: {
+                        Text("アカウント削除")
+                    }
                 }
             }
 
@@ -370,15 +499,12 @@ struct SharedTagCloudSheet: View {
         }
     }
 
-    private var inviteCodeSection: some View {
+    private var promoCodeSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("招待コード")
+            Text("優待コード")
                 .font(.system(size: 18, weight: .heavy, design: .rounded))
                 .foregroundStyle(AppPalette.textPrimary)
-            Text("コードをお持ちの方は入力してください")
-                .font(.system(size: 17, weight: .bold, design: .rounded))
-                .foregroundStyle(AppPalette.textSecondary)
-            TextField("", text: $inviteCode)
+            TextField("", text: $promoCode)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .font(.system(size: 18, weight: .medium))
@@ -388,28 +514,28 @@ struct SharedTagCloudSheet: View {
                 .padding(.vertical, 18)
                 .background(AppPalette.background, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(AppPalette.outlineSoft, lineWidth: 1.5)
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(AppPalette.outlineSoft, lineWidth: 1.5)
                 )
-                .onChange(of: inviteCode) { _, _ in
-                    inviteMessage = nil
+                .onChange(of: promoCode) { _, _ in
+                    promoMessage = nil
                 }
 
             AppActionButton(
                 tone: .primary,
-                enabled: canApplyInviteCode && !isApplyingInviteCode
+                enabled: canRedeemPromoCode && !isRedeemingPromoCode
             ) {
-                applyInviteCode()
+                redeemPromoCode()
             } label: {
-                if isApplyingInviteCode {
+                if isRedeemingPromoCode {
                     ProgressView().tint(AppPalette.textPrimary)
                 } else {
-                    Text("適用する")
+                    Text("優待Proを受け取る")
                 }
             }
 
-            if let inviteMessage {
-                Text(inviteMessage)
+            if let promoMessage {
+                Text(promoMessage)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(AppPalette.textSecondary)
             }
@@ -421,21 +547,21 @@ struct SharedTagCloudSheet: View {
             password.trimmingCharacters(in: .whitespacesAndNewlines).count >= 8
     }
 
-    private var canApplyInviteCode: Bool {
-        !inviteCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    private var canRedeemPromoCode: Bool {
+        !promoCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var personalSavedURLCount: Int {
         model.activeEntries.count + model.archivedEntries.count
     }
 
-    private var sharedTagUsageText: String {
-        guard !model.sharedTags.isEmpty else {
-            return "共有タグなし"
-        }
-        return model.sharedTags
-            .map { "\($0.name) \($0.activeURLCount) / 20" }
-            .joined(separator: "\n")
+    private var activeAvatarImageData: Data? {
+        isAvatarDraftActive ? avatarDraftData : model.profile.avatarImageData
+    }
+
+    private var hasProfileChanges: Bool {
+        displayNameDraft.trimmingCharacters(in: .whitespacesAndNewlines) != model.profile.trimmedDisplayName ||
+            isAvatarDraftActive
     }
 
     private func normalizeAvatarImageData(_ data: Data) -> Data {
@@ -443,27 +569,120 @@ struct SharedTagCloudSheet: View {
         return image.jpegData(compressionQuality: 0.82) ?? data
     }
 
-    private func applyInviteCode() {
-        let code = inviteCode.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !code.isEmpty, !isApplyingInviteCode else { return }
-        isApplyingInviteCode = true
+    private func redeemPromoCode() {
+        let code = promoCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !code.isEmpty, !isRedeemingPromoCode else { return }
+        isRedeemingPromoCode = true
         Task {
-            let result = await model.acceptInvite(inviteToken: code)
+            let result = await model.redeemPromoCode(code)
             await MainActor.run {
                 switch result {
-                case .accepted(let tagName, _):
-                    inviteMessage = "参加しました。同期後に「\(tagName)」が表示されます。"
-                    inviteCode = ""
+                case .success:
+                    promoMessage = "優待Proを受け取りました。使用状況に反映されます。"
+                    promoCode = ""
                 case .authRequired:
-                    inviteMessage = "参加するにはサインインが必要です"
-                case .invalidInvite:
-                    inviteMessage = "招待コードが無効か期限切れです"
+                    promoMessage = "優待を受け取るにはサインインが必要です"
+                case .invalidCode:
+                    promoMessage = "優待コードを入力してください"
                 case .failure(let message):
-                    inviteMessage = message
+                    promoMessage = message
                 }
-                isApplyingInviteCode = false
+                isRedeemingPromoCode = false
             }
         }
+    }
+
+    private func handleAppleSignInCompletion(_ result: Result<ASAuthorization, Error>) {
+        guard !isWorking else { return }
+        switch result {
+        case .failure(let error):
+            if (error as? ASAuthorizationError)?.code == .canceled { return }
+            model.showProfileStatusMessage("Appleサインインを完了できませんでした。")
+        case .success(let authorization):
+            guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
+                  let identityToken = credential.identityToken,
+                  let token = String(data: identityToken, encoding: .utf8),
+                  !token.isEmpty,
+                  let nonce = pendingAppleNonce,
+                  let expectedState = pendingAppleState,
+                  credential.state == expectedState else {
+                pendingAppleNonce = nil
+                pendingAppleState = nil
+                model.showProfileStatusMessage("Appleサインインの認証情報を検証できませんでした。")
+                return
+            }
+            pendingAppleNonce = nil
+            pendingAppleState = nil
+            isWorking = true
+            Task {
+                await model.signInWithAppleForSharedTagCloud(idToken: token, nonce: nonce)
+                isWorking = false
+            }
+        }
+    }
+
+    private func startAppleSignIn() {
+        guard !isWorking else { return }
+        let nonce = randomAppleNonce()
+        let state = randomAppleNonce(byteCount: 24)
+        pendingAppleNonce = nonce
+        pendingAppleState = state
+
+        let request = ASAuthorizationAppleIDProvider().createRequest()
+        request.requestedScopes = [.email]
+        request.nonce = sha256Hex(nonce)
+        request.state = state
+
+        appleSignInCoordinator.start(
+            request: request,
+            presentationWindow: activePresentationWindow(),
+            completion: handleAppleSignInCompletion
+        )
+    }
+
+    private func activePresentationWindow() -> UIWindow? {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first { $0.isKeyWindow }
+    }
+}
+
+private final class AppleSignInCoordinator: NSObject, ObservableObject, ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
+    private var completion: ((Result<ASAuthorization, Error>) -> Void)?
+    private weak var presentationWindow: UIWindow?
+
+    func start(
+        request: ASAuthorizationAppleIDRequest,
+        presentationWindow: UIWindow?,
+        completion: @escaping (Result<ASAuthorization, Error>) -> Void
+    ) {
+        self.completion = completion
+        self.presentationWindow = presentationWindow
+        let controller = ASAuthorizationController(authorizationRequests: [request])
+        controller.delegate = self
+        controller.presentationContextProvider = self
+        controller.performRequests()
+    }
+
+    func authorizationController(
+        controller: ASAuthorizationController,
+        didCompleteWithAuthorization authorization: ASAuthorization
+    ) {
+        completion?(.success(authorization))
+        completion = nil
+    }
+
+    func authorizationController(
+        controller: ASAuthorizationController,
+        didCompleteWithError error: Error
+    ) {
+        completion?(.failure(error))
+        completion = nil
+    }
+
+    func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+        presentationWindow ?? ASPresentationAnchor()
     }
 }
 
@@ -476,16 +695,16 @@ private struct UsageMetricTile: View {
             Text(title)
                 .font(.system(size: 13, weight: .bold, design: .rounded))
                 .foregroundStyle(AppPalette.textSecondary)
-                .lineLimit(2)
+                .lineLimit(1)
                 .minimumScaleFactor(0.82)
             Text(valueText)
-                .font(.system(size: 16, weight: .medium, design: .rounded))
+                .font(.system(size: 18, weight: .heavy, design: .rounded))
                 .foregroundStyle(AppPalette.textPrimary)
-                .lineLimit(3)
+                .lineLimit(1)
                 .minimumScaleFactor(0.82)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.horizontal, 8)
         .padding(.vertical, 10)
         .background(AppPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
@@ -688,7 +907,12 @@ private struct ProfileAvatarView: View {
     var body: some View {
         ZStack {
             AppPalette.surfaceSoft
-            if let url = Bundle.main.url(forResource: "DefaultProfilePig", withExtension: "png"),
+            if let imageData,
+               let uiImage = UIImage(data: imageData) {
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFill()
+            } else if let url = Bundle.main.url(forResource: "DefaultProfilePig", withExtension: "png"),
                let uiImage = UIImage(contentsOfFile: url.path) {
                 Image(uiImage: uiImage)
                     .resizable()
@@ -704,6 +928,34 @@ private struct ProfileAvatarView: View {
             )
             .background(AppPalette.background, in: Circle())
     }
+}
+
+private struct SafariAuthView: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeUIViewController(context: Context) -> SFSafariViewController {
+        SFSafariViewController(url: url)
+    }
+
+    func updateUIViewController(_ uiViewController: SFSafariViewController, context: Context) {}
+}
+
+private func randomAppleNonce(byteCount: Int = 32) -> String {
+    var bytes = [UInt8](repeating: 0, count: byteCount)
+    let status = SecRandomCopyBytes(kSecRandomDefault, byteCount, &bytes)
+    if status == errSecSuccess {
+        return Data(bytes).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+    return UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+}
+
+private func sha256Hex(_ value: String) -> String {
+    SHA256.hash(data: Data(value.utf8))
+        .map { String(format: "%02x", $0) }
+        .joined()
 }
 
 struct PendingInviteBanner: View {

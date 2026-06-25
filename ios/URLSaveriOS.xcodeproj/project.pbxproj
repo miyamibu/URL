@@ -162,6 +162,7 @@
 		90C2FB77205B0539B8EBE1CD /* URLSaveriOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = URLSaveriOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		98BBC418465DD23BCB079F62 /* URLRepositoryTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = URLRepositoryTests.swift; sourceTree = "<group>"; };
 		9DA57CDA903288DA3849E3E7 /* URLSaveriOS.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; name = URLSaveriOS.entitlements; path = URLSaveriOS/URLSaveriOS.entitlements; sourceTree = "<group>"; };
+		A4F9B771AA4E4F5DA03E9F21 /* URLSaverSecrets.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = URLSaverSecrets.xcconfig; path = Config/URLSaverSecrets.xcconfig; sourceTree = "<group>"; };
 		ADCB68925A841E19B2422933 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		B080D7A224280E9931C3AB3A /* ActivityShareSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ActivityShareSheet.swift; path = UI/ActivityShareSheet.swift; sourceTree = "<group>"; };
 		B7E0EB10D508602CBAD63D06 /* SharedContainer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SharedContainer.swift; path = Support/SharedContainer.swift; sourceTree = "<group>"; };
@@ -227,6 +228,7 @@
 				757E16D61935FC0F928A7C7D /* URLSaveriOSTests */,
 				3786C2F58B31036CAE6DCEF8 /* Info.plist */,
 				9DA57CDA903288DA3849E3E7 /* URLSaveriOS.entitlements */,
+				A4F9B771AA4E4F5DA03E9F21 /* URLSaverSecrets.xcconfig */,
 				825E9B9ABEA0D8915532620B /* Info.plist */,
 				25ABB7D65E5330FBB1162BC8 /* URLSaverShareExtension.entitlements */,
 				FCF41438F8D492B460975787 /* Info.plist */,
@@ -710,12 +712,13 @@
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = NO;
 				"CODE_SIGNING_REQUIRED[sdk=iphonesimulator*]" = NO;
+				CODE_SIGN_ENTITLEMENTS = URLSaveriOS/URLSaveriOS.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				DEFINES_MODULE = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = URLSaveriOSTests/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				PRODUCT_BUNDLE_IDENTIFIER = jp.mimac.urlsaver.ios.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mibu.codebridge.ios.tests;
 				PRODUCT_NAME = URLSaveriOSTests;
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -729,6 +732,7 @@
 		};
 		7A89510BAAB3C0AE436C5C2B /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A4F9B771AA4E4F5DA03E9F21 /* URLSaverSecrets.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -736,6 +740,7 @@
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = NO;
 				"CODE_SIGNING_REQUIRED[sdk=iphonesimulator*]" = NO;
+				CODE_SIGN_ENTITLEMENTS = URLSaveriOS/URLSaveriOS.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				DEFINES_MODULE = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -745,17 +750,13 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = jp.mimac.urlsaver.ios;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mibu.codebridge.ios;
 				PRODUCT_NAME = URLSaveriOS;
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = 1;
-				URLSAVER_INVITE_LINK_BASE_URL = "https://miyamibu.xyz";
-				URLSAVER_SHARED_TAG_CLOUD_ENABLED = false;
-				URLSAVER_SUPABASE_ANON_KEY = "";
-				URLSAVER_SUPABASE_URL = "";
 			};
 			name = Debug;
 		};
@@ -777,7 +778,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = jp.mimac.urlsaver.ios.share;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mibu.codebridge.ios.share;
 				PRODUCT_NAME = URLSaverShareExtension;
 				SDKROOT = auto;
 				SKIP_INSTALL = YES;
@@ -791,6 +792,7 @@
 		};
 		E116CEB2B4649D3ADFD1732F /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A4F9B771AA4E4F5DA03E9F21 /* URLSaverSecrets.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -807,17 +809,13 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = jp.mimac.urlsaver.ios;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mibu.codebridge.ios;
 				PRODUCT_NAME = URLSaveriOS;
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = 1;
-				URLSAVER_INVITE_LINK_BASE_URL = "https://miyamibu.xyz";
-				URLSAVER_SHARED_TAG_CLOUD_ENABLED = false;
-				URLSAVER_SUPABASE_ANON_KEY = "";
-				URLSAVER_SUPABASE_URL = "";
 				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;
@@ -835,7 +833,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = URLSaveriOSTests/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				PRODUCT_BUNDLE_IDENTIFIER = jp.mimac.urlsaver.ios.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mibu.codebridge.ios.tests;
 				PRODUCT_NAME = URLSaveriOSTests;
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -866,7 +864,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = jp.mimac.urlsaver.ios.share;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mibu.codebridge.ios.share;
 				PRODUCT_NAME = URLSaverShareExtension;
 				SDKROOT = auto;
 				SKIP_INSTALL = YES;
