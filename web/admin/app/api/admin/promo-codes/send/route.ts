@@ -25,6 +25,13 @@ async function insertEvent(
   if (error) throw error;
 }
 
+function rpcMessage(error: unknown): string {
+  if (error && typeof error === "object" && "message" in error && typeof error.message === "string") {
+    return error.message;
+  }
+  return error instanceof Error ? error.message : "優待コードを送信できませんでした";
+}
+
 export async function POST(request: NextRequest) {
   let codeId: string | null = null;
   try {
@@ -84,60 +91,55 @@ export async function POST(request: NextRequest) {
       detail: { target_email: targetEmail, expires_at: expiresAt },
     });
 
+    let delivery: { id?: string };
     try {
-      const delivery = await sendPromoEmail({ to: targetEmail, code, expiresAt, note });
-      const { error: updateError } = await supabase
-        .from("promo_invite_codes")
-        .update({
-          delivery_status: "sent",
-          sent_at: new Date().toISOString(),
-          delivery_provider: "resend",
-          delivery_message_id: delivery.id ?? null,
-          delivery_event_type: "email.sent",
-          delivery_event_at: new Date().toISOString(),
-          delivery_error: null,
-        })
-        .eq("id", codeId);
-
-      if (updateError) throw updateError;
-
-      await insertEvent(supabase, {
-        code_id: codeId,
-        event: "email_sent",
-        actor_user_id: admin.userId,
-        detail: { provider: "resend", message_id: delivery.id ?? null },
-      });
-
-      return NextResponse.json({
-        id: codeId,
-        targetEmail,
-        code,
-        redeemLink: promoLinkForCode(code),
-        expiresAt,
-      });
+      delivery = await sendPromoEmail({ to: targetEmail, code, expiresAt, note });
     } catch (sendError) {
       const message = sendError instanceof Error ? sendError.message : "メール送信に失敗しました";
-      await supabase
-        .from("promo_invite_codes")
-        .update({
-          delivery_status: "failed",
-          revoked_at: new Date().toISOString(),
-          revoked_by: admin.id,
-          revoked_reason: "email_failed",
-          delivery_provider: "resend",
-          delivery_error: message,
-        })
-        .eq("id", codeId);
-
-      await insertEvent(supabase, {
-        code_id: codeId,
-        event: "email_failed",
-        actor_user_id: admin.userId,
-        detail: { provider: "resend", error: message },
+      const { error: recordFailureError } = await supabase.rpc("admin_record_promo_email_failed", {
+        p_code_id: codeId,
+        p_admin_id: admin.id,
+        p_actor_user_id: admin.userId,
+        p_error: message,
+        p_event_at: new Date().toISOString(),
       });
+      if (recordFailureError) throw recordFailureError;
 
       return NextResponse.json({ error: message }, { status: 502 });
     }
+
+    try {
+      const { error: recordError } = await supabase.rpc("admin_record_promo_email_sent", {
+        p_code_id: codeId,
+        p_actor_user_id: admin.userId,
+        p_message_id: delivery.id ?? null,
+        p_event_at: new Date().toISOString(),
+      });
+
+      if (recordError) {
+        throw recordError;
+      }
+    } catch (recordError) {
+      return NextResponse.json(
+        {
+          id: codeId,
+          targetEmail,
+          expiresAt,
+          deliveryMessageId: delivery.id ?? null,
+          needsReconcile: true,
+          error: `メールは送信済みですが、配送状態の保存に失敗しました: ${rpcMessage(recordError)}`,
+        },
+        { status: 503 },
+      );
+    }
+
+    return NextResponse.json({
+      id: codeId,
+      targetEmail,
+      code,
+      redeemLink: promoLinkForCode(code),
+      expiresAt,
+    });
   } catch (error) {
     return asErrorResponse(error);
   }

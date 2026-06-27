@@ -48,6 +48,11 @@ function svixHeaders(request: NextRequest): Record<string, string> {
   };
 }
 
+function svixId(request: NextRequest): string | null {
+  const value = request.headers.get("svix-id")?.trim();
+  return value || null;
+}
+
 function deliveryErrorFor(event: ResendWebhookEvent): string | null {
   if (event.type === "email.bounced" || event.type === "email.failed" || event.type === "email.suppressed") {
     const reason = event.data?.bounce?.message ?? event.data?.reason ?? event.data?.error ?? event.data?.message;
@@ -79,38 +84,15 @@ export async function POST(request: NextRequest) {
     ? new Date(event.created_at).toISOString()
     : new Date().toISOString();
   const supabase = createServiceSupabaseClient();
-  const { data: code, error: selectError } = await supabase
-    .from("promo_invite_codes")
-    .select("id,revoked_at,claimed_at")
-    .eq("delivery_provider", "resend")
-    .eq("delivery_message_id", emailId)
-    .maybeSingle();
-
-  if (selectError) {
-    return NextResponse.json({ error: selectError.message }, { status: 500 });
-  }
-  if (!code) {
-    return NextResponse.json({ accepted: true, matched: false }, { status: 202 });
-  }
-
-  const { error: updateError } = await supabase
-    .from("promo_invite_codes")
-    .update({
-      delivery_status: code.revoked_at ? "revoked" : mapping.status,
-      delivery_event_type: event.type,
-      delivery_event_at: eventAt,
-      delivery_error: deliveryErrorFor(event),
-    })
-    .eq("id", code.id);
-
-  if (updateError) {
-    return NextResponse.json({ error: updateError.message }, { status: 500 });
-  }
-
-  const { error: eventError } = await supabase.from("promo_invite_code_events").insert({
-    code_id: code.id,
-    event: mapping.event,
-    detail: {
+  const { data: result, error } = await supabase.rpc("record_resend_promo_delivery_event", {
+    p_delivery_message_id: emailId,
+    p_provider_event_id: svixId(request),
+    p_event_type: event.type,
+    p_delivery_status: mapping.status,
+    p_event_name: mapping.event,
+    p_event_at: eventAt,
+    p_delivery_error: deliveryErrorFor(event),
+    p_detail: {
       provider: "resend",
       email_id: emailId,
       message_id: event.data?.message_id ?? null,
@@ -123,9 +105,9 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  if (eventError) {
-    return NextResponse.json({ error: eventError.message }, { status: 500 });
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ accepted: true, matched: true, status: mapping.status });
+  return NextResponse.json(result ?? { accepted: true, matched: true, status: mapping.status });
 }
