@@ -535,6 +535,8 @@ private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
                     tagRepository = context.appContainer().tagRepository,
                     userProfileStore = context.appContainer().userProfileStore,
                     entitlementGrantRepository = context.appContainer().entitlementGrantRepository,
+                    contactSupportClient = context.appContainer().contactSupportClient,
+                    authSessionProvider = context.appContainer().sharedTagAuthSessionProvider,
                 )
             },
         )
@@ -651,6 +653,8 @@ private fun MainScreen(
                     tagRepository = context.appContainer().tagRepository,
                     userProfileStore = context.appContainer().userProfileStore,
                     entitlementGrantRepository = context.appContainer().entitlementGrantRepository,
+                    contactSupportClient = context.appContainer().contactSupportClient,
+                    authSessionProvider = context.appContainer().sharedTagAuthSessionProvider,
                 )
             },
         )

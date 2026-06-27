@@ -7,7 +7,6 @@ import UIKit
 
 struct SharedTagCloudSheet: View {
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.openURL) private var openURL
     @AppStorage("appThemeMode") private var themeModeRaw = AppThemeMode.system.rawValue
 
     @ObservedObject var model: URLSaverAppModel
@@ -174,7 +173,9 @@ struct SharedTagCloudSheet: View {
             ContactSupportSheet(
                 initialEmail: model.sharedTagCloudState.signedInEmail ?? email,
                 initialName: model.profile.trimmedDisplayName,
-                onOpenURL: { openURL($0) }
+                onSend: { email, name, message in
+                    await model.sendContactSupport(email: email, name: name, message: message)
+                }
             )
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
@@ -729,21 +730,23 @@ private struct ContactSupportSheet: View {
 
     let initialEmail: String
     let initialName: String
-    let onOpenURL: (URL) -> Void
+    let onSend: (String, String, String) async -> ContactSupportSendResult
 
     @State private var email: String
     @State private var name: String
     @State private var message = ""
     @State private var didAttemptSubmit = false
+    @State private var isSending = false
+    @State private var sendError: String?
 
     init(
         initialEmail: String,
         initialName: String,
-        onOpenURL: @escaping (URL) -> Void
+        onSend: @escaping (String, String, String) async -> ContactSupportSendResult
     ) {
         self.initialEmail = initialEmail
         self.initialName = initialName
-        self.onOpenURL = onOpenURL
+        self.onSend = onSend
         _email = State(initialValue: initialEmail)
         _name = State(initialValue: initialName)
     }
@@ -800,22 +803,35 @@ private struct ContactSupportSheet: View {
                                 )
                         }
 
-                        if didAttemptSubmit && !canSubmit {
-                            Text("メールアドレス、氏名、問い合わせ内容を入力してください。")
+                        if let sendError {
+                            Text(sendError)
                                 .font(.system(size: 14, weight: .semibold))
                                 .foregroundStyle(AppPalette.danger)
                         }
 
-                        AppActionButton(tone: .primary) {
+                        AppActionButton(tone: .primary, enabled: !isSending) {
                             guard canSubmit else {
                                 didAttemptSubmit = true
+                                sendError = "メールアドレス、氏名、問い合わせ内容を入力してください。"
                                 return
                             }
-                            if let url = mailURL {
-                                onOpenURL(url)
+                            guard !isSending else { return }
+                            isSending = true
+                            sendError = nil
+                            Task {
+                                let result = await onSend(email, name, message)
+                                await MainActor.run {
+                                    switch result {
+                                    case .success:
+                                        dismiss()
+                                    case .failure(let message):
+                                        sendError = message
+                                    }
+                                    isSending = false
+                                }
                             }
                         } label: {
-                            Text("メールアプリで送信")
+                            Text(isSending ? "送信中..." : "送信")
                         }
                     }
                 }
@@ -829,26 +845,6 @@ private struct ContactSupportSheet: View {
         !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
             !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
             !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private var mailURL: URL? {
-        var components = URLComponents()
-        components.scheme = "mailto"
-        components.path = ""
-        components.queryItems = [
-            URLQueryItem(name: "subject", value: "URL Saver 問い合わせ"),
-            URLQueryItem(name: "body", value: """
-            メールアドレス:
-            \(email.trimmingCharacters(in: .whitespacesAndNewlines))
-
-            氏名:
-            \(name.trimmingCharacters(in: .whitespacesAndNewlines))
-
-            問い合わせ内容:
-            \(message.trimmingCharacters(in: .whitespacesAndNewlines))
-            """),
-        ]
-        return components.url
     }
 
     @ViewBuilder

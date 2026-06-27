@@ -6,6 +6,8 @@ import androidx.work.WorkerFactory
 import androidx.work.WorkManager
 import jp.mimac.urlsaver.BuildConfig
 import jp.mimac.urlsaver.data.AppDatabase
+import jp.mimac.urlsaver.data.ConfiguredContactSupportClient
+import jp.mimac.urlsaver.data.ContactSupportClient
 import jp.mimac.urlsaver.data.DataStoreEntryCardDisplayModeStore
 import jp.mimac.urlsaver.data.DataStoreEntitlementGrantStore
 import jp.mimac.urlsaver.data.DefaultTagRepository
@@ -175,6 +177,9 @@ class AppContainer(context: Context) {
                 },
             ),
         )
+    }
+    val contactSupportClient: ContactSupportClient by lazy {
+        ConfiguredContactSupportClient(BuildConfig.CONTACT_SUPPORT_ENDPOINT_URL)
     }
 
     init {

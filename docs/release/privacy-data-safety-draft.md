@@ -19,6 +19,7 @@
 ## Network Access
 - Metadata fetch may access user-provided pages and public oEmbed endpoints.
 - Saved URL data is not synced to Supabase in the initial v1.0 release.
+- If in-app contact support is enabled, the app sends the user's contact email, name, and inquiry body to the configured support endpoint for email delivery. The support log stores only minimal audit metadata such as request ID, hashed email/IP/user identifiers, platform, app version, build type, delivery provider/message ID, and delivery status; it does not store the raw inquiry body, raw email, or name in the database.
 
 ## Account Data
 Not applicable for local-only v1.0 because account creation/login is not exposed.
@@ -37,6 +38,7 @@ For initial local-only release:
 
 For shared-tag cloud release:
 - Contact info: email address, used for account authentication.
+- Contact support: email address, name, and inquiry body are processed to send the support request; only minimal hashed delivery/audit metadata is retained in Supabase logs.
 - User content: URLs inside shared tags and shared-tag names, used for cloud sync and collaboration.
 - Identifiers: Supabase user ID/session, used for authentication and access control.
 - Account deletion: available in app and by public web request.
@@ -50,6 +52,7 @@ For initial local-only release:
 
 For shared-tag cloud release:
 - Data collected: email address, user-provided shared-tag URLs, shared-tag metadata.
+- Contact support data: email address, name, and inquiry body are transmitted for support email delivery when the user submits the contact form. Raw inquiry content is not retained in the support log table.
 - Purpose: app functionality, account management, sync.
 - Sharing: shared-tag URLs are visible to participants of the same shared tag.
 - Delete account URL: use the public account deletion route from the deployed `docs/account-deletion-request.html`.

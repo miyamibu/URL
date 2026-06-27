@@ -32,6 +32,11 @@ enum PromoCodeApplyResult: Equatable {
     case failure(String)
 }
 
+enum ContactSupportSendResult: Equatable {
+    case success
+    case failure(String)
+}
+
 @MainActor
 final class URLSaverAppModel: ObservableObject {
     @Published private(set) var activeEntries: [URLRecord] = []
@@ -454,6 +459,28 @@ final class URLSaverAppModel: ObservableObject {
 
     func showProfileStatusMessage(_ message: String) {
         profileStatusMessage = message
+    }
+
+    func sendContactSupport(email: String, name: String, message: String) async -> ContactSupportSendResult {
+        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedEmail.isEmpty, !trimmedName.isEmpty, !trimmedMessage.isEmpty else {
+            return .failure("メールアドレス、氏名、問い合わせ内容を入力してください。")
+        }
+        let result = await services.contactSupportService.send(
+            email: trimmedEmail,
+            name: trimmedName,
+            message: trimmedMessage,
+            isSignedIn: sharedTagCloudState.isSignedIn
+        )
+        switch result {
+        case .success:
+            profileStatusMessage = "問い合わせを送信完了しました"
+            return .success
+        case .failure(let message):
+            return .failure(message)
+        }
     }
 
     func saveProfile(displayName: String) {

@@ -82,6 +82,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+private const val CONTACT_SUPPORT_SUCCESS_MESSAGE = "問い合わせを送信完了しました"
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SharedTagCloudAuthScreen(
@@ -109,6 +111,7 @@ fun SharedTagCloudAuthScreen(
     var contactName by remember { mutableStateOf("") }
     var contactBody by remember { mutableStateOf("") }
     var contactError by remember { mutableStateOf<String?>(null) }
+    var isSendingContact by remember { mutableStateOf(false) }
     var promoCode by remember { mutableStateOf(initialPromoCode.orEmpty()) }
     var promoMessage by remember { mutableStateOf<String?>(null) }
     var isRedeemingPromoCode by remember { mutableStateOf(false) }
@@ -157,35 +160,24 @@ fun SharedTagCloudAuthScreen(
     }
 
     fun sendContact() {
-        val trimmedEmail = contactEmail.trim()
-        val trimmedName = contactName.trim()
-        val trimmedBody = contactBody.trim()
-        if (trimmedEmail.isBlank() || trimmedName.isBlank() || trimmedBody.isBlank()) {
-            contactError = "メールアドレス、氏名、問い合わせ内容を入力してください。"
-            return
-        }
-        contactError = null
-        val intent = Intent(Intent.ACTION_SENDTO).apply {
-            data = Uri.parse("mailto:")
-            putExtra(Intent.EXTRA_SUBJECT, "URL Saver 問い合わせ")
-            putExtra(
-                Intent.EXTRA_TEXT,
-                """
-                メールアドレス:
-                $trimmedEmail
-
-                氏名:
-                $trimmedName
-
-                問い合わせ内容:
-                $trimmedBody
-                """.trimIndent(),
-            )
-        }
-        runCatching {
-            context.startActivity(Intent.createChooser(intent, "問い合わせを送信"))
-        }.onFailure {
-            contactError = "メールアプリを開けませんでした"
+        if (isSendingContact) return
+        scope.launch {
+            isSendingContact = true
+            contactError = null
+            try {
+                when (val result = viewModel.sendContactSupport(contactEmail, contactName, contactBody)) {
+                    ContactSupportUiResult.Success -> {
+                        contactBody = ""
+                        showContactPage = false
+                        message = CONTACT_SUPPORT_SUCCESS_MESSAGE
+                    }
+                    is ContactSupportUiResult.Failure -> {
+                        contactError = result.message
+                    }
+                }
+            } finally {
+                isSendingContact = false
+            }
         }
     }
 
@@ -250,6 +242,7 @@ fun SharedTagCloudAuthScreen(
                             contactBody = it
                             contactError = null
                         },
+                        isSending = isSendingContact,
                         onSend = ::sendContact,
                     )
                     return@Column
@@ -291,6 +284,18 @@ fun SharedTagCloudAuthScreen(
                     ) {
                         Text("Plus プラン")
                     }
+                }
+
+                Button(
+                    onClick = ::openContactPage,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                ) {
+                    Text("問い合わせ")
+                }
+                message?.let {
+                    ProfileStatusMessage(message = it)
                 }
 
                 if (!cloudState.isConfigured) {
@@ -336,17 +341,6 @@ fun SharedTagCloudAuthScreen(
                             Text("アカウント削除")
                         }
                     }
-                    Button(
-                        onClick = ::openContactPage,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp),
-                    ) {
-                        Text("問い合わせ")
-                    }
-                    message?.let {
-                        Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
                     PromoCodeSection(
                         promoCode = promoCode,
                         promoMessage = promoMessage,
@@ -359,10 +353,6 @@ fun SharedTagCloudAuthScreen(
                         onRedeemPromoCode = ::redeemPromoCode,
                     )
                     return@Column
-                }
-
-                message?.let {
-                    Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
 
                 Text(
@@ -771,6 +761,49 @@ private fun SharedTagInviteConfirmContent(
 }
 
 @Composable
+private fun ProfileStatusMessage(message: String) {
+    val isContactSupportSuccess = message == CONTACT_SUPPORT_SUCCESS_MESSAGE
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        color = if (isContactSupportSuccess) {
+            MaterialTheme.colorScheme.primaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant
+        },
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            if (isContactSupportSuccess) {
+                Icon(
+                    imageVector = Icons.Outlined.Check,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+            Text(
+                text = message,
+                style = if (isContactSupportSuccess) {
+                    MaterialTheme.typography.titleSmall
+                } else {
+                    MaterialTheme.typography.bodyMedium
+                },
+                fontWeight = if (isContactSupportSuccess) FontWeight.Bold else FontWeight.Normal,
+                color = if (isContactSupportSuccess) {
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+        }
+    }
+}
+
+@Composable
 private fun ProfileCard(
     displayName: String,
     signedInEmail: String?,
@@ -996,6 +1029,7 @@ private fun ContactSupportPage(
     onEmailChange: (String) -> Unit,
     onNameChange: (String) -> Unit,
     onBodyChange: (String) -> Unit,
+    isSending: Boolean,
     onSend: () -> Unit,
 ) {
     OutlinedTextField(
@@ -1039,9 +1073,10 @@ private fun ContactSupportPage(
     }
     Button(
         onClick = onSend,
+        enabled = !isSending,
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Text("メールアプリで送信")
+        Text(if (isSending) "送信中..." else "送信")
     }
 }
 

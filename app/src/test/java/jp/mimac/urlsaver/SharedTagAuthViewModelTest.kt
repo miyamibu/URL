@@ -3,6 +3,9 @@ package jp.mimac.urlsaver
 import jp.mimac.urlsaver.data.EntitlementGrantRemoteDataSource
 import jp.mimac.urlsaver.data.EntitlementGrantRepository
 import jp.mimac.urlsaver.data.EntitlementGrantStore
+import jp.mimac.urlsaver.data.ContactSupportClient
+import jp.mimac.urlsaver.data.ContactSupportRequest
+import jp.mimac.urlsaver.data.ContactSupportResult
 import jp.mimac.urlsaver.data.SharedPreferencesSharedTagAuthSessionProvider
 import jp.mimac.urlsaver.data.SharedTagAuthSession
 import jp.mimac.urlsaver.data.SharedTagAuthSessionProvider
@@ -32,6 +35,7 @@ import jp.mimac.urlsaver.domain.TagWithCount
 import jp.mimac.urlsaver.domain.UsageSummary
 import jp.mimac.urlsaver.domain.UserProfile
 import jp.mimac.urlsaver.ui.PromoCodeApplyResult
+import jp.mimac.urlsaver.ui.ContactSupportUiResult
 import jp.mimac.urlsaver.ui.SharedTagAuthViewModel
 import jp.mimac.urlsaver.util.AppClock
 import kotlinx.coroutines.flow.Flow
@@ -39,6 +43,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -78,6 +83,48 @@ class SharedTagAuthViewModelTest {
         assertTrue(result is PromoCodeApplyResult.Success)
     }
 
+    @Test
+    fun sendContactSupport_blankInputIsRejected() = runBlocking {
+        val viewModel = SharedTagAuthViewModel(
+            tagRepository = FakeTagRepository(),
+            userProfileStore = FakeUserProfileStore(),
+            entitlementGrantRepository = fakeEntitlementGrantRepository(),
+            contactSupportClient = FakeContactSupportClient(ContactSupportResult.Success("req-1")),
+        )
+
+        val result = viewModel.sendContactSupport("user@example.com", "", "body")
+
+        assertTrue(result is ContactSupportUiResult.Failure)
+    }
+
+    @Test
+    fun sendContactSupport_successReturnsSuccess() = runBlocking {
+        val viewModel = SharedTagAuthViewModel(
+            tagRepository = FakeTagRepository(),
+            userProfileStore = FakeUserProfileStore(),
+            entitlementGrantRepository = fakeEntitlementGrantRepository(),
+            contactSupportClient = FakeContactSupportClient(ContactSupportResult.Success("req-1")),
+        )
+
+        val result = viewModel.sendContactSupport("user@example.com", "User", "body")
+
+        assertTrue(result is ContactSupportUiResult.Success)
+    }
+
+    @Test
+    fun sendContactSupport_failureReturnsMessage() = runBlocking {
+        val viewModel = SharedTagAuthViewModel(
+            tagRepository = FakeTagRepository(),
+            userProfileStore = FakeUserProfileStore(),
+            entitlementGrantRepository = fakeEntitlementGrantRepository(),
+            contactSupportClient = FakeContactSupportClient(ContactSupportResult.Failure("failed")),
+        )
+
+        val result = viewModel.sendContactSupport("user@example.com", "User", "body")
+
+        assertEquals("failed", (result as ContactSupportUiResult.Failure).message)
+    }
+
     private fun fakeEntitlementGrantRepository(
         redeemResult: List<EntitlementGrant> = emptyList(),
     ): EntitlementGrantRepository {
@@ -93,6 +140,12 @@ class SharedTagAuthViewModelTest {
             clock = FakeClock,
         )
     }
+}
+
+private class FakeContactSupportClient(
+    private val result: ContactSupportResult,
+) : ContactSupportClient {
+    override suspend fun send(request: ContactSupportRequest): ContactSupportResult = result
 }
 
 private class FakeUserProfileStore : UserProfileStore {

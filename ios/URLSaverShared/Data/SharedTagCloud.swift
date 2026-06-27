@@ -52,6 +52,161 @@ struct SharedTagCloudConfig: Sendable {
     }
 }
 
+struct ContactSupportConfig: Sendable {
+    let endpointURL: String
+
+    init(
+        bundle: Bundle = .main,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) {
+        let envURL = environment["URLSAVER_CONTACT_SUPPORT_ENDPOINT_URL"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let bundleURL = bundle.object(forInfoDictionaryKey: "ContactSupportEndpointURL") as? String
+        endpointURL = envURL ?? bundleURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    var isConfigured: Bool {
+        !endpointURL.isEmpty
+    }
+}
+
+struct ContactSupportRequest: Codable, Equatable {
+    let email: String
+    let name: String
+    let message: String
+    let platform: String
+    let appVersion: String
+    let buildType: String
+    let isSignedIn: Bool
+    let authUserId: String?
+}
+
+enum ContactSupportResult: Equatable {
+    case success(String)
+    case failure(String)
+}
+
+final class ContactSupportClient: @unchecked Sendable {
+    private let config: ContactSupportConfig
+    private let session: URLSession
+
+    init(
+        config: ContactSupportConfig,
+        session: URLSession = .shared
+    ) {
+        self.config = config
+        self.session = session
+    }
+
+    func send(_ payload: ContactSupportRequest) async -> ContactSupportResult {
+        guard config.isConfigured,
+              let url = URL(string: config.endpointURL) else {
+            return .failure("問い合わせ送信先が設定されていません")
+        }
+
+        do {
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.timeoutInterval = 30
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONEncoder().encode(payload)
+
+            let (data, response) = try await session.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                return .failure("問い合わせを送信できませんでした")
+            }
+            if 200..<300 ~= httpResponse.statusCode {
+                let accepted = try? JSONDecoder().decode(ContactSupportAcceptedResponse.self, from: data)
+                return .success(accepted?.requestId ?? "")
+            }
+            let serverError = (try? JSONDecoder().decode(ContactSupportErrorResponse.self, from: data))?.error
+            return .failure(Self.normalizeErrorMessage(statusCode: httpResponse.statusCode, serverError: serverError))
+        } catch {
+            return .failure("通信に失敗しました。接続を確認して再度お試しください。")
+        }
+    }
+
+    private static func normalizeErrorMessage(statusCode: Int, serverError: String?) -> String {
+        let normalized = serverError?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if statusCode == 429 || normalized.caseInsensitiveCompare("rate_limited") == .orderedSame {
+            return "短時間に問い合わせが多すぎます。少し時間をおいて再度お試しください。"
+        }
+        if normalized.caseInsensitiveCompare("missing_required_fields") == .orderedSame {
+            return "メールアドレス、氏名、問い合わせ内容を入力してください。"
+        }
+        if normalized.caseInsensitiveCompare("invalid_email") == .orderedSame {
+            return "メールアドレスの形式を確認してください。"
+        }
+        if normalized.caseInsensitiveCompare("message_too_long") == .orderedSame {
+            return "問い合わせ内容が長すぎます。短くして再度お試しください。"
+        }
+        if normalized.range(of: "resend", options: .caseInsensitive) != nil {
+            return "問い合わせを送信できませんでした。時間をおいて再度お試しください。"
+        }
+        if !normalized.isEmpty && normalized.contains(where: { !$0.isASCII }) {
+            return normalized
+        }
+        switch statusCode {
+        case 400:
+            return "入力内容を確認してください。"
+        case 502:
+            return "問い合わせを送信できませんでした。時間をおいて再度お試しください。"
+        default:
+            return "問い合わせを送信できませんでした。時間をおいて再度お試しください。"
+        }
+    }
+}
+
+private extension Character {
+    var isASCII: Bool {
+        unicodeScalars.allSatisfy(\.isASCII)
+    }
+}
+
+final class ContactSupportService: @unchecked Sendable {
+    private let client: ContactSupportClient
+    private let sessionStore: SharedTagAuthSessionStore
+
+    init(
+        config: ContactSupportConfig,
+        sessionStore: SharedTagAuthSessionStore,
+        client: ContactSupportClient? = nil
+    ) {
+        self.sessionStore = sessionStore
+        self.client = client ?? ContactSupportClient(config: config)
+    }
+
+    func send(email: String, name: String, message: String, isSignedIn: Bool) async -> ContactSupportResult {
+        let session = try? sessionStore.load()
+        let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+        #if DEBUG
+        let buildType = "debug"
+        #else
+        let buildType = "release"
+        #endif
+        return await client.send(
+            ContactSupportRequest(
+                email: email.trimmingCharacters(in: .whitespacesAndNewlines),
+                name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                message: message.trimmingCharacters(in: .whitespacesAndNewlines),
+                platform: "ios",
+                appVersion: appVersion,
+                buildType: buildType,
+                isSignedIn: isSignedIn,
+                authUserId: session?.authUserID
+            )
+        )
+    }
+}
+
+private struct ContactSupportAcceptedResponse: Decodable {
+    let requestId: String
+    let status: String?
+}
+
+private struct ContactSupportErrorResponse: Decodable {
+    let error: String
+}
+
 protocol SharedTagAuthSecureStorage: Sendable {
     func load() throws -> Data?
     func save(_ data: Data) throws

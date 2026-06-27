@@ -34,6 +34,10 @@ val publicInviteLinkBaseUrl = configString(
     envName = "URLSAVER_INVITE_LINK_BASE_URL",
     defaultValue = "https://miyamibu.xyz",
 ).trim().trimEnd('/')
+val contactSupportEndpointUrl = configString(
+    propertyName = "contact.support.endpoint.url",
+    envName = "URLSAVER_CONTACT_SUPPORT_ENDPOINT_URL",
+).trim()
 
 val releaseSharedTagCloudEnabled = configBoolean(
     propertyName = "release.shared.tag.cloud.enabled",
@@ -92,6 +96,7 @@ android {
             buildConfigField("String", "SUPABASE_URL", buildConfigString(configString("supabase.url", "URLSAVER_SUPABASE_URL")))
             buildConfigField("String", "SUPABASE_ANON_KEY", buildConfigString(configString("supabase.anon.key", "URLSAVER_SUPABASE_ANON_KEY")))
             buildConfigField("String", "INVITE_LINK_BASE_URL", buildConfigString(publicInviteLinkBaseUrl))
+            buildConfigField("String", "CONTACT_SUPPORT_ENDPOINT_URL", buildConfigString(contactSupportEndpointUrl))
         }
         release {
             isMinifyEnabled = false
@@ -105,6 +110,7 @@ android {
             buildConfigField("String", "SUPABASE_URL", buildConfigString(releaseSupabaseUrl))
             buildConfigField("String", "SUPABASE_ANON_KEY", buildConfigString(releaseSupabaseAnonKey))
             buildConfigField("String", "INVITE_LINK_BASE_URL", buildConfigString(publicInviteLinkBaseUrl))
+            buildConfigField("String", "CONTACT_SUPPORT_ENDPOINT_URL", buildConfigString(contactSupportEndpointUrl))
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

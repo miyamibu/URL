@@ -28,6 +28,8 @@
 	<string>$(URLSAVER_SUPABASE_ANON_KEY)</string>
 	<key>InviteLinkBaseURL</key>
 	<string>$(URLSAVER_INVITE_LINK_BASE_URL)</string>
+	<key>ContactSupportEndpointURL</key>
+	<string>$(URLSAVER_CONTACT_SUPPORT_ENDPOINT_URL)</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

@@ -9,6 +9,7 @@ final class AppServices: @unchecked Sendable {
     let pendingInviteStore: PendingInviteStore
     let profileStore: UserProfileStore
     let entitlementService: EntitlementService
+    let contactSupportService: ContactSupportService
     let sharedTagCloud: SharedTagCloudService
     let sharedTagSyncExecutor: SharedTagSyncExecutor
 
@@ -21,8 +22,13 @@ final class AppServices: @unchecked Sendable {
         let sharedTagStore = try! SharedTagStore(database: repository.database)
         let sharedTagSessionStore = SharedTagAuthSessionStore()
         let sharedTagConfig = SharedTagCloudConfig()
+        let contactSupportConfig = ContactSupportConfig()
         entitlementService = EntitlementService(
             config: sharedTagConfig,
+            sessionStore: sharedTagSessionStore
+        )
+        contactSupportService = ContactSupportService(
+            config: contactSupportConfig,
             sessionStore: sharedTagSessionStore
         )
         sharedTagCloud = SharedTagCloudService(

@@ -2,8 +2,13 @@ package jp.mimac.urlsaver.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import jp.mimac.urlsaver.BuildConfig
+import jp.mimac.urlsaver.data.ContactSupportClient
+import jp.mimac.urlsaver.data.ContactSupportRequest
+import jp.mimac.urlsaver.data.ContactSupportResult
 import jp.mimac.urlsaver.data.EntitlementGrantRepository
 import jp.mimac.urlsaver.data.PromoCodeRedemptionResult
+import jp.mimac.urlsaver.data.SharedTagAuthSessionProvider
 import jp.mimac.urlsaver.data.TagRepository
 import jp.mimac.urlsaver.data.UserProfileStore
 import jp.mimac.urlsaver.domain.FeatureEntitlements
@@ -21,6 +26,12 @@ class SharedTagAuthViewModel(
     private val tagRepository: TagRepository,
     private val userProfileStore: UserProfileStore,
     private val entitlementGrantRepository: EntitlementGrantRepository,
+    private val contactSupportClient: ContactSupportClient = object : ContactSupportClient {
+        override suspend fun send(request: ContactSupportRequest): ContactSupportResult {
+            return ContactSupportResult.Failure("問い合わせ送信先が設定されていません")
+        }
+    },
+    private val authSessionProvider: SharedTagAuthSessionProvider? = null,
 ) : ViewModel() {
 
     val cloudState: StateFlow<SharedTagCloudState> = tagRepository.cloudState
@@ -95,6 +106,36 @@ class SharedTagAuthViewModel(
             is PromoCodeRedemptionResult.Failure -> PromoCodeApplyResult.Failure(result.message)
         }
     }
+
+    suspend fun sendContactSupport(
+        email: String,
+        name: String,
+        body: String,
+    ): ContactSupportUiResult {
+        val trimmedEmail = email.trim()
+        val trimmedName = name.trim()
+        val trimmedBody = body.trim()
+        if (trimmedEmail.isBlank() || trimmedName.isBlank() || trimmedBody.isBlank()) {
+            return ContactSupportUiResult.Failure("メールアドレス、氏名、問い合わせ内容を入力してください。")
+        }
+        val state = cloudState.value
+        val result = contactSupportClient.send(
+            ContactSupportRequest(
+                email = trimmedEmail,
+                name = trimmedName,
+                message = trimmedBody,
+                platform = "android",
+                appVersion = BuildConfig.VERSION_NAME,
+                buildType = if (BuildConfig.DEBUG) "debug" else "release",
+                isSignedIn = state.isSignedIn,
+                authUserId = authSessionProvider?.session?.value?.authUserId,
+            ),
+        )
+        return when (result) {
+            is ContactSupportResult.Success -> ContactSupportUiResult.Success
+            is ContactSupportResult.Failure -> ContactSupportUiResult.Failure(result.message)
+        }
+    }
 }
 
 sealed interface PromoCodeApplyResult {
@@ -102,4 +143,9 @@ sealed interface PromoCodeApplyResult {
     data object InvalidCode : PromoCodeApplyResult
     data object AuthRequired : PromoCodeApplyResult
     data class Failure(val message: String) : PromoCodeApplyResult
+}
+
+sealed interface ContactSupportUiResult {
+    data object Success : ContactSupportUiResult
+    data class Failure(val message: String) : ContactSupportUiResult
 }
