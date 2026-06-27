@@ -123,10 +123,14 @@ struct SharedTagCloudSheet: View {
         }
         .task {
             displayNameDraft = model.profile.trimmedDisplayName
+            applyPendingPromoCodeIfNeeded()
             await model.refreshSharedTagCloudState()
         }
         .onChange(of: model.profile.displayName) { _, newValue in
             displayNameDraft = newValue
+        }
+        .onChange(of: model.pendingPromoCode) { _, _ in
+            applyPendingPromoCodeIfNeeded()
         }
         .onChange(of: model.sharedTagCloudState.isSignedIn) { _, isSignedIn in
             if isSignedIn {
@@ -590,6 +594,16 @@ struct SharedTagCloudSheet: View {
                 isRedeemingPromoCode = false
             }
         }
+    }
+
+    private func applyPendingPromoCodeIfNeeded() {
+        guard let pendingCode = model.pendingPromoCode?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !pendingCode.isEmpty else {
+            return
+        }
+        promoCode = pendingCode
+        promoMessage = "メールの優待コードを読み込みました"
+        model.clearPendingPromoCode()
     }
 
     private func handleAppleSignInCompletion(_ result: Result<ASAuthorization, Error>) {

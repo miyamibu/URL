@@ -42,6 +42,7 @@ final class SharedTagStoreTests: XCTestCase {
                     RemoteSharedTagMember(
                         tagID: "tag-1",
                         userID: "user-1",
+                        displayName: nil,
                         role: "owner",
                         status: "active",
                         createdAt: "2026-04-23T09:00:00Z",
@@ -93,6 +94,7 @@ final class SharedTagStoreTests: XCTestCase {
                     RemoteSharedTagMember(
                         tagID: "tag-1",
                         userID: "user-1",
+                        displayName: nil,
                         role: "owner",
                         status: "active",
                         createdAt: "2026-04-23T09:00:00Z",
@@ -139,6 +141,7 @@ final class SharedTagStoreTests: XCTestCase {
                     RemoteSharedTagMember(
                         tagID: "tag-1",
                         userID: "user-1",
+                        displayName: nil,
                         role: "editor",
                         status: "active",
                         createdAt: "2026-04-23T09:00:00Z",

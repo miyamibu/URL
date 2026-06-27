@@ -8,6 +8,7 @@ import jp.mimac.urlsaver.domain.SharedTagAccountDeletionResult
 import jp.mimac.urlsaver.domain.SharedTagCloudState
 import jp.mimac.urlsaver.domain.SharedTagGroupInviteCreationResult
 import jp.mimac.urlsaver.domain.SharedTagGroupMemberRecord
+import jp.mimac.urlsaver.domain.SharedTagGroupMutationResult
 import jp.mimac.urlsaver.domain.SharedTagGroupRecord
 import jp.mimac.urlsaver.domain.SharedTagGroupTagRecord
 import jp.mimac.urlsaver.domain.SharedTagInviteAcceptanceResult
@@ -757,6 +758,93 @@ class DefaultTagRepository(
                 SharedTagGroupInviteCreationResult.OwnerOnly
             } else {
                 SharedTagGroupInviteCreationResult.Failure(message.ifBlank { "グループ招待リンクを作成できませんでした" })
+            }
+        }
+    }
+
+    override suspend fun renameGroup(groupId: Long, name: String): SharedTagGroupMutationResult {
+        val normalized = normalizeSharedTagName(name)
+        if (validateSharedTagName(normalized) != null) return SharedTagGroupMutationResult.InvalidTarget
+        return mutateGroup(groupId) { session, remoteGroupId ->
+            remoteDataSource.renameGroup(session, remoteGroupId, normalized)
+        }
+    }
+
+    override suspend fun deleteGroup(groupId: Long): SharedTagGroupMutationResult {
+        return mutateGroup(groupId) { session, remoteGroupId ->
+            remoteDataSource.deleteGroup(session, remoteGroupId)
+        }
+    }
+
+    override suspend fun changeGroupMemberRole(
+        groupId: Long,
+        userId: String,
+        role: SharedTagMemberRole,
+    ): SharedTagGroupMutationResult {
+        val targetUserId = userId.trim()
+        if (targetUserId.isBlank()) return SharedTagGroupMutationResult.InvalidTarget
+        return mutateGroup(groupId) { session, remoteGroupId ->
+            remoteDataSource.changeGroupMemberRole(
+                session = session,
+                remoteGroupId = remoteGroupId,
+                userId = targetUserId,
+                role = role.name.lowercase(),
+            )
+        }
+    }
+
+    override suspend fun transferGroupOwnership(
+        groupId: Long,
+        newOwnerUserId: String,
+    ): SharedTagGroupMutationResult {
+        val targetUserId = newOwnerUserId.trim()
+        if (targetUserId.isBlank()) return SharedTagGroupMutationResult.InvalidTarget
+        return mutateGroup(groupId) { session, remoteGroupId ->
+            remoteDataSource.transferGroupOwnership(session, remoteGroupId, targetUserId)
+        }
+    }
+
+    override suspend fun removeGroupMember(groupId: Long, userId: String): SharedTagGroupMutationResult {
+        val targetUserId = userId.trim()
+        if (targetUserId.isBlank()) return SharedTagGroupMutationResult.InvalidTarget
+        return mutateGroup(groupId) { session, remoteGroupId ->
+            remoteDataSource.removeGroupMember(session, remoteGroupId, targetUserId)
+        }
+    }
+
+    override suspend fun syncSharedProfileDisplayName(displayName: String): Boolean {
+        val session = currentSyncSessionOrNull() ?: return false
+        return runCatching {
+            remoteDataSource.upsertSharedProfile(session, displayName.trim().take(40))
+            syncNowOrSchedule(session.authUserId)
+            true
+        }.getOrDefault(false)
+    }
+
+    private suspend fun mutateGroup(
+        groupId: Long,
+        block: suspend (SharedTagAuthSession, String) -> Any?,
+    ): SharedTagGroupMutationResult {
+        val session = currentSyncSessionOrNull() ?: return SharedTagGroupMutationResult.AuthRequired
+        val remoteGroupId = syncDao.findLocalGroupById(session.authUserId, groupId)?.remoteGroupId
+            ?: return SharedTagGroupMutationResult.InvalidTarget
+        return runCatching {
+            block(session, remoteGroupId)
+            syncNowOrSchedule(session.authUserId)
+            SharedTagGroupMutationResult.Success
+        }.getOrElse { error ->
+            val message = error.message.orEmpty()
+            when {
+                message.contains("auth_required", ignoreCase = true) ->
+                    SharedTagGroupMutationResult.AuthRequired
+                message.contains("forbidden", ignoreCase = true) ->
+                    SharedTagGroupMutationResult.OwnerOnly
+                message.contains("invalid", ignoreCase = true) ||
+                    message.contains("not_found", ignoreCase = true) ||
+                    message.contains("transfer_required", ignoreCase = true) ||
+                    message.contains("owns_group_tag", ignoreCase = true) ->
+                    SharedTagGroupMutationResult.InvalidTarget
+                else -> SharedTagGroupMutationResult.Failure(message.ifBlank { "グループを更新できませんでした" })
             }
         }
     }

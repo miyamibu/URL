@@ -8,8 +8,10 @@ import jp.mimac.urlsaver.domain.SharedTagInviteCreationResult
 import jp.mimac.urlsaver.domain.SharedTagInvitePreviewResult
 import jp.mimac.urlsaver.domain.SharedTagGroupInviteCreationResult
 import jp.mimac.urlsaver.domain.SharedTagGroupMemberRecord
+import jp.mimac.urlsaver.domain.SharedTagGroupMutationResult
 import jp.mimac.urlsaver.domain.SharedTagGroupRecord
 import jp.mimac.urlsaver.domain.SharedTagGroupTagRecord
+import jp.mimac.urlsaver.domain.SharedTagMemberRole
 import jp.mimac.urlsaver.domain.TagImportResult
 import jp.mimac.urlsaver.domain.TagSharePayload
 import jp.mimac.urlsaver.domain.SharedTagMemberRecord
@@ -68,6 +70,20 @@ interface TagRepository {
     suspend fun removeTagFromGroup(groupId: Long, tagId: Long): Boolean = false
     suspend fun createGroupInviteLink(groupId: Long, role: String): SharedTagGroupInviteCreationResult =
         SharedTagGroupInviteCreationResult.Failure("グループ招待リンクを作成できませんでした")
+    suspend fun renameGroup(groupId: Long, name: String): SharedTagGroupMutationResult =
+        SharedTagGroupMutationResult.Failure("グループ名を変更できませんでした")
+    suspend fun deleteGroup(groupId: Long): SharedTagGroupMutationResult =
+        SharedTagGroupMutationResult.Failure("グループを削除できませんでした")
+    suspend fun changeGroupMemberRole(
+        groupId: Long,
+        userId: String,
+        role: SharedTagMemberRole,
+    ): SharedTagGroupMutationResult = SharedTagGroupMutationResult.Failure("メンバー権限を変更できませんでした")
+    suspend fun transferGroupOwnership(groupId: Long, newOwnerUserId: String): SharedTagGroupMutationResult =
+        SharedTagGroupMutationResult.Failure("グループオーナーを移譲できませんでした")
+    suspend fun removeGroupMember(groupId: Long, userId: String): SharedTagGroupMutationResult =
+        SharedTagGroupMutationResult.Failure("メンバーを削除できませんでした")
+    suspend fun syncSharedProfileDisplayName(displayName: String): Boolean = false
     suspend fun previewInvite(inviteToken: String): SharedTagInvitePreviewResult
     suspend fun acceptInvite(inviteToken: String): SharedTagInviteAcceptanceResult
     suspend fun transferOwnership(tagId: Long, newOwnerUserId: String): SharedTagOwnershipTransferResult

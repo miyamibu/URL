@@ -5,6 +5,8 @@ import androidx.activity.ComponentActivity
 import jp.mimac.urlsaver.data.EXTRA_DEEP_LINK_INVALID
 import jp.mimac.urlsaver.data.EXTRA_DEEP_LINK_TAG_ID
 import jp.mimac.urlsaver.data.EXTRA_MAIN_INTENT_EVENT_TOKEN
+import jp.mimac.urlsaver.data.EXTRA_PROMO_CODE
+import jp.mimac.urlsaver.data.EXTRA_PROMO_CODE_INVALID
 import jp.mimac.urlsaver.data.EXTRA_SHARED_TAG_INVITE_INVALID
 import jp.mimac.urlsaver.data.EXTRA_SHARED_TAG_INVITE_TOKEN
 import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_CREATED
@@ -52,13 +54,18 @@ internal object ShareReceiverEntrypointRouter {
         val uri = sourceIntent.data
         val tagId = parseSharedTagDeepLinkTagId(uri)
         val inviteToken = parseSharedTagInviteToken(uri)
+        val promoCode = parsePromoCode(uri)
         return buildMainRedirectIntent(activity).apply {
             if (tagId != null) {
                 putExtra(EXTRA_DEEP_LINK_TAG_ID, tagId)
+            } else if (promoCode != null) {
+                putExtra(EXTRA_PROMO_CODE, promoCode)
             } else if (inviteToken != null) {
                 putExtra(EXTRA_SHARED_TAG_INVITE_TOKEN, inviteToken)
             } else if (isInviteUri(uri)) {
                 putExtra(EXTRA_SHARED_TAG_INVITE_INVALID, true)
+            } else if (isPromoUri(uri)) {
+                putExtra(EXTRA_PROMO_CODE_INVALID, true)
             } else {
                 putExtra(EXTRA_DEEP_LINK_INVALID, true)
             }
@@ -95,5 +102,23 @@ internal object ShareReceiverEntrypointRouter {
         uri ?: return false
         return (uri.scheme == "urlsaver" && uri.host == "invite") ||
             ((uri.scheme == "http" || uri.scheme == "https") && uri.pathSegments.firstOrNull() == "invite")
+    }
+
+    private fun parsePromoCode(uri: android.net.Uri?): String? {
+        uri ?: return null
+        if (!isPromoUri(uri)) return null
+        val codeFromQuery = uri.getQueryParameter("code")
+        val codeFromFragment = uri.fragment
+            ?.substringAfter("code=", missingDelimiterValue = "")
+            ?.substringBefore("&")
+        return (codeFromQuery ?: codeFromFragment)
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+    }
+
+    private fun isPromoUri(uri: android.net.Uri?): Boolean {
+        uri ?: return false
+        return (uri.scheme == "urlsaver" && uri.host == "promo") ||
+            ((uri.scheme == "http" || uri.scheme == "https") && uri.pathSegments.firstOrNull() == "promo")
     }
 }

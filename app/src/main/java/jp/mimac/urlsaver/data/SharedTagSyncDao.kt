@@ -81,7 +81,21 @@ interface SharedTagSyncDao {
             id AS id,
             remoteGroupId AS remoteGroupId,
             name AS name,
-            currentUserRole AS currentUserRole
+            currentUserRole AS currentUserRole,
+            (
+                SELECT COUNT(*)
+                FROM shared_tag_group_tags
+                WHERE shared_tag_group_tags.groupId = shared_tag_groups.id
+                  AND shared_tag_group_tags.authUserId = :authUserId
+            ) AS tagCount,
+            (
+                SELECT COUNT(*)
+                FROM shared_tag_group_members
+                WHERE shared_tag_group_members.groupId = shared_tag_groups.id
+                  AND shared_tag_group_members.authUserId = :authUserId
+                  AND shared_tag_group_members.status = 'ACTIVE'
+            ) AS memberCount,
+            lastSyncedAt AS lastSyncedAt
         FROM shared_tag_groups
         WHERE authUserId = :authUserId
           AND deletedAt IS NULL
@@ -95,6 +109,7 @@ interface SharedTagSyncDao {
         SELECT
             groupId AS groupId,
             userId AS userId,
+            displayName AS displayName,
             role AS role,
             status AS status,
             CASE WHEN userId = :authUserId THEN 1 ELSE 0 END AS isCurrentUser

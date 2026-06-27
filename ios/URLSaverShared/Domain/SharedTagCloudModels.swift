@@ -43,6 +43,9 @@ struct SharedTagGroupSummary: Identifiable, Equatable, Sendable {
     let remoteGroupID: String
     let name: String
     let currentUserRole: SharedTagMemberRole?
+    let tagCount: Int
+    let memberCount: Int
+    let lastSyncedAt: Date?
 
     var id: String { remoteGroupID }
 }
@@ -50,6 +53,7 @@ struct SharedTagGroupSummary: Identifiable, Equatable, Sendable {
 struct SharedTagGroupMemberSummary: Identifiable, Equatable, Sendable {
     let groupID: String
     let userID: String
+    let displayName: String?
     let role: SharedTagMemberRole
     let isCurrentUser: Bool
 

@@ -70,11 +70,13 @@ class SharedTagAuthViewModel(
 
     suspend fun saveDisplayName(displayName: String) {
         userProfileStore.saveDisplayName(displayName)
+        tagRepository.syncSharedProfileDisplayName(displayName)
     }
 
     suspend fun saveProfile(displayName: String, avatarBase64: String?) {
         userProfileStore.saveDisplayName(displayName)
         userProfileStore.saveAvatarBase64(avatarBase64)
+        tagRepository.syncSharedProfileDisplayName(displayName)
     }
 
     suspend fun saveAvatarBytes(bytes: ByteArray?) {

@@ -11,6 +11,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
@@ -38,8 +40,7 @@ class SupabaseEntitlementGrantRemoteDataSource(
                 requestBody = "{}",
             )
         }
-        return json.decodeFromString<List<RemoteEntitlementGrant>>(response)
-            .mapNotNull { it.toDomainOrNull() }
+        return decodeEntitlementGrantResponse(response)
     }
 
     override suspend fun redeemPromoCode(session: SharedTagAuthSession, code: String): List<EntitlementGrant> {
@@ -50,8 +51,15 @@ class SupabaseEntitlementGrantRemoteDataSource(
                 requestBody = json.encodeToString<PromoCodeRequest>(PromoCodeRequest(code)),
             )
         }
-        return json.decodeFromString<List<RemoteEntitlementGrant>>(response)
-            .mapNotNull { it.toDomainOrNull() }
+        return decodeEntitlementGrantResponse(response)
+    }
+
+    private fun decodeEntitlementGrantResponse(response: String): List<EntitlementGrant> {
+        return when (json.parseToJsonElement(response)) {
+            is JsonArray -> json.decodeFromString<List<RemoteEntitlementGrant>>(response)
+            is JsonObject -> listOf(json.decodeFromString<RemoteEntitlementGrant>(response))
+            else -> emptyList()
+        }.mapNotNull { it.toDomainOrNull() }
     }
 
     private suspend fun executeRpc(
@@ -105,27 +113,33 @@ class SupabaseEntitlementGrantRemoteDataSource(
 
     @Serializable
     private data class RemoteEntitlementGrant(
-        val id: String,
+        val id: String? = null,
+        @SerialName("grant_id")
+        val grantId: String? = null,
         val plan: String,
-        val source: String,
+        val source: String = "admin_grant",
         @SerialName("store_platform")
         val storePlatform: String? = null,
         @SerialName("store_transaction_id")
         val storeTransactionId: String? = null,
         @SerialName("starts_at")
-        val startsAt: String,
+        val startsAt: String? = null,
+        @SerialName("claimed_at")
+        val claimedAt: String? = null,
         @SerialName("expires_at")
         val expiresAt: String? = null,
-        val status: String,
+        val status: String = "active",
     ) {
         fun toDomainOrNull(): EntitlementGrant? {
+            val sourceId = storeTransactionId ?: id ?: grantId ?: return null
+            val startsAtValue = startsAt ?: claimedAt ?: Instant.now().toString()
             return EntitlementGrant(
                 planType = plan.toPlanTypeOrNull() ?: return null,
                 source = source.toEntitlementSourceOrNull() ?: return null,
                 status = status.toEntitlementGrantStatusOrNull() ?: return null,
-                startsAt = runCatching { Instant.parse(startsAt).toEpochMilli() }.getOrNull() ?: return null,
+                startsAt = runCatching { Instant.parse(startsAtValue).toEpochMilli() }.getOrNull() ?: return null,
                 endsAt = expiresAt?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() },
-                sourceId = storeTransactionId ?: id,
+                sourceId = sourceId,
                 note = storePlatform,
             )
         }

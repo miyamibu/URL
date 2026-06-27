@@ -38,6 +38,7 @@ final class URLSaverAppModel: ObservableObject {
     @Published private(set) var archivedEntries: [URLRecord] = []
     @Published private(set) var profile: UserProfile = .empty
     @Published private(set) var pendingInviteRecord: PendingInviteRecord?
+    @Published var pendingPromoCode: String?
     @Published var inviteConfirmationToken: String?
     @Published private(set) var sharedTagCloudState = SharedTagCloudState(isConfigured: false, isSignedIn: false, signedInEmail: nil)
     @Published private(set) var entitlements: FeatureEntitlements = LaunchStandardPlan.entitlements
@@ -116,6 +117,10 @@ final class URLSaverAppModel: ObservableObject {
         } catch {
             return .failure("優待コードを適用できませんでした")
         }
+    }
+
+    func clearPendingPromoCode() {
+        pendingPromoCode = nil
     }
 
     func consumeShareHandoffReport() async {
@@ -350,6 +355,13 @@ final class URLSaverAppModel: ObservableObject {
                 return
             }
             inviteConfirmationToken = token
+        case .promo(let code):
+            guard !code.isEmpty else {
+                enqueueNotification(AppNotification(message: "優待コードリンクを開けませんでした", actionLabel: nil, action: nil, autoDismissAfter: 4))
+                return
+            }
+            pendingPromoCode = code
+            enqueueNotification(AppNotification(message: "優待コードを読み込みました", actionLabel: nil, action: nil, autoDismissAfter: 3))
         case .save(let rawURL, let degradationNotice):
             guard let saveResult = try? services.repository.saveFromResolvedURL(rawURL) else {
                 enqueueNotification(AppNotification(message: "保存できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
@@ -452,6 +464,7 @@ final class URLSaverAppModel: ObservableObject {
             try services.profileStore.save(updated)
             profile = updated
             profileStatusMessage = "プロフィールを保存しました"
+            Task { await services.sharedTagCloud.upsertSharedProfile(displayName: updated.trimmedDisplayName) }
             enqueueNotification(AppNotification(message: "プロフィールを保存しました", actionLabel: nil, action: nil, autoDismissAfter: 3))
         } catch {
             profileStatusMessage = "プロフィールを保存できませんでした"
@@ -471,6 +484,7 @@ final class URLSaverAppModel: ObservableObject {
             try services.profileStore.save(updated)
             profile = updated
             profileStatusMessage = "プロフィールを保存しました"
+            Task { await services.sharedTagCloud.upsertSharedProfile(displayName: updated.trimmedDisplayName) }
             enqueueNotification(AppNotification(message: "プロフィールを保存しました", actionLabel: nil, action: nil, autoDismissAfter: 3))
             return true
         } catch {
@@ -779,6 +793,81 @@ final class URLSaverAppModel: ObservableObject {
 
     func createInviteForSharedTagGroup(remoteGroupID: String, role: SharedTagMemberRole) async -> SharedTagInviteCreationResult {
         await services.sharedTagCloud.createGroupInvite(remoteGroupID: remoteGroupID, role: role)
+    }
+
+    func renameSharedTagGroup(remoteGroupID: String, name: String) async -> Bool {
+        switch await services.sharedTagCloud.renameGroup(remoteGroupID: remoteGroupID, name: name) {
+        case .success:
+            await refreshSharedTagCloudState()
+            enqueueNotification(AppNotification(message: "グループ名を更新しました", actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return true
+        case .authRequired:
+            enqueueNotification(AppNotification(message: "先に共有タグクラウドへサインインしてください", actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return false
+        case .failure(let message):
+            enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return false
+        }
+    }
+
+    func deleteSharedTagGroup(remoteGroupID: String) async -> Bool {
+        switch await services.sharedTagCloud.deleteGroup(remoteGroupID: remoteGroupID) {
+        case .success:
+            await refreshSharedTagCloudState()
+            enqueueNotification(AppNotification(message: "グループを削除しました", actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return true
+        case .authRequired:
+            enqueueNotification(AppNotification(message: "先に共有タグクラウドへサインインしてください", actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return false
+        case .failure(let message):
+            enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return false
+        }
+    }
+
+    func changeSharedTagGroupMemberRole(remoteGroupID: String, userID: String, role: SharedTagMemberRole) async -> Bool {
+        switch await services.sharedTagCloud.changeGroupMemberRole(remoteGroupID: remoteGroupID, userID: userID, role: role) {
+        case .success:
+            await refreshSharedTagCloudState()
+            enqueueNotification(AppNotification(message: "メンバー権限を変更しました", actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return true
+        case .authRequired:
+            enqueueNotification(AppNotification(message: "先に共有タグクラウドへサインインしてください", actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return false
+        case .failure(let message):
+            enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return false
+        }
+    }
+
+    func transferSharedTagGroupOwnership(remoteGroupID: String, userID: String) async -> Bool {
+        switch await services.sharedTagCloud.transferGroupOwnership(remoteGroupID: remoteGroupID, newOwnerUserID: userID) {
+        case .success:
+            await refreshSharedTagCloudState()
+            enqueueNotification(AppNotification(message: "グループオーナーを移譲しました", actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return true
+        case .authRequired:
+            enqueueNotification(AppNotification(message: "先に共有タグクラウドへサインインしてください", actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return false
+        case .failure(let message):
+            enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return false
+        }
+    }
+
+    func removeSharedTagGroupMember(remoteGroupID: String, userID: String) async -> Bool {
+        switch await services.sharedTagCloud.removeGroupMember(remoteGroupID: remoteGroupID, userID: userID) {
+        case .success:
+            await refreshSharedTagCloudState()
+            enqueueNotification(AppNotification(message: "メンバーを削除しました", actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return true
+        case .authRequired:
+            enqueueNotification(AppNotification(message: "先に共有タグクラウドへサインインしてください", actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return false
+        case .failure(let message):
+            enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return false
+        }
     }
 
     func renameSharedTag(remoteTagID: String, name: String) async -> Bool {
@@ -1148,6 +1237,7 @@ final class URLSaverAppModel: ObservableObject {
 private enum IncomingURLRoute {
     case authCallback
     case invite(String)
+    case promo(String)
     case tag(String)
     case save(String, ShareDegradationNotice?)
     case unknown
@@ -1160,6 +1250,8 @@ private enum IncomingURLRoute {
             let pathComponents = url.pathComponents.filter { $0 != "/" }
             if pathComponents.count == 2, pathComponents.first?.lowercased() == "invite" {
                 self = .invite(pathComponents[1])
+            } else if pathComponents.count == 1, pathComponents.first?.lowercased() == "promo" {
+                self = .promo(Self.promoCode(from: url))
             } else {
                 self = .unknown
             }
@@ -1176,6 +1268,8 @@ private enum IncomingURLRoute {
             self = .authCallback
         case "invite":
             self = .invite(token)
+        case "promo":
+            self = .promo(Self.promoCode(from: url))
         case "tag":
             self = .tag(token)
         case "save":
@@ -1193,5 +1287,19 @@ private enum IncomingURLRoute {
         default:
             self = .unknown
         }
+    }
+
+    private static func promoCode(from url: URL) -> String {
+        if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+           let code = components.queryItems?.first(where: { $0.name == "code" })?.value,
+           !code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return code.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard let fragment = url.fragment else { return "" }
+        let fragmentComponents = URLComponents(string: "urlsaver://promo?\(fragment)")
+        return fragmentComponents?.queryItems?
+            .first(where: { $0.name == "code" })?
+            .value?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 }

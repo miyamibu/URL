@@ -140,5 +140,6 @@ sealed interface MainNavigationEvent {
     data class NavigateToDetail(val entryId: Long) : MainNavigationEvent
     data class NavigateToTagDetail(val tagId: Long) : MainNavigationEvent
     data class NavigateToInvite(val inviteToken: String) : MainNavigationEvent
+    data class NavigateToPromoCode(val code: String) : MainNavigationEvent
     data object NavigateToCloudAuth : MainNavigationEvent
 }

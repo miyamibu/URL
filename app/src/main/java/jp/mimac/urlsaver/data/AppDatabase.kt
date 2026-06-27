@@ -22,7 +22,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         SharedTagSyncOutboxEntity::class,
         SharedTagSyncStateEntity::class,
     ],
-    version = 16,
+    version = 17,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -52,6 +52,7 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_13_14,
                     MIGRATION_14_15,
                     MIGRATION_15_16,
+                    MIGRATION_16_17,
                 )
                 .addCallback(
                     object : Callback() {
@@ -381,6 +382,13 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                addColumnIfMissing(db, "shared_tag_members", "displayName", "TEXT")
+                addColumnIfMissing(db, "shared_tag_group_members", "displayName", "TEXT")
+            }
+        }
+
         private fun ensureSharedTagGroupTables(db: SupportSQLiteDatabase) {
             dropTableIfColumnless(db, "shared_tag_groups")
             dropTableIfColumnless(db, "shared_tag_group_members")
@@ -407,6 +415,7 @@ abstract class AppDatabase : RoomDatabase() {
                     groupId INTEGER NOT NULL,
                     authUserId TEXT NOT NULL,
                     userId TEXT NOT NULL,
+                    displayName TEXT,
                     role TEXT NOT NULL,
                     status TEXT NOT NULL,
                     createdAt INTEGER NOT NULL,
@@ -448,6 +457,28 @@ abstract class AppDatabase : RoomDatabase() {
             val columnCount = db.query("PRAGMA table_info(`$tableName`)").use { cursor -> cursor.count }
             if (columnCount == 0) {
                 db.execSQL("DROP TABLE `$tableName`")
+            }
+        }
+
+        private fun addColumnIfMissing(
+            db: SupportSQLiteDatabase,
+            tableName: String,
+            columnName: String,
+            columnDefinition: String,
+        ) {
+            val hasColumn = db.query("PRAGMA table_info(`$tableName`)").use { cursor ->
+                val nameIndex = cursor.getColumnIndex("name")
+                var found = false
+                while (cursor.moveToNext()) {
+                    if (cursor.getString(nameIndex) == columnName) {
+                        found = true
+                        break
+                    }
+                }
+                found
+            }
+            if (!hasColumn) {
+                db.execSQL("ALTER TABLE `$tableName` ADD COLUMN `$columnName` $columnDefinition")
             }
         }
     }

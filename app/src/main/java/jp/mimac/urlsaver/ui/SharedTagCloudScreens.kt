@@ -89,6 +89,7 @@ fun SharedTagCloudAuthScreen(
     themeMode: AppThemeMode,
     onThemeModeChange: (AppThemeMode) -> Unit,
     onBack: () -> Unit,
+    initialPromoCode: String? = null,
 ) {
     val context = LocalContext.current
     val cloudState by viewModel.cloudState.collectAsStateWithLifecycle()
@@ -108,7 +109,7 @@ fun SharedTagCloudAuthScreen(
     var contactName by remember { mutableStateOf("") }
     var contactBody by remember { mutableStateOf("") }
     var contactError by remember { mutableStateOf<String?>(null) }
-    var promoCode by remember { mutableStateOf("") }
+    var promoCode by remember { mutableStateOf(initialPromoCode.orEmpty()) }
     var promoMessage by remember { mutableStateOf<String?>(null) }
     var isRedeemingPromoCode by remember { mutableStateOf(false) }
     var draftAvatarBase64 by remember { mutableStateOf<String?>(null) }
@@ -137,6 +138,13 @@ fun SharedTagCloudAuthScreen(
     LaunchedEffect(profile.avatarBase64) {
         if (draftAvatarBase64 != profile.avatarBase64) {
             draftAvatarBase64 = profile.avatarBase64
+        }
+    }
+
+    LaunchedEffect(initialPromoCode) {
+        if (!initialPromoCode.isNullOrBlank()) {
+            promoCode = initialPromoCode
+            promoMessage = "メールの優待コードを読み込みました"
         }
     }
 

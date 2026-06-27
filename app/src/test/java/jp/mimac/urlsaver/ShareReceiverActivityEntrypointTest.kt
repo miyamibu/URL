@@ -8,6 +8,8 @@ import jp.mimac.urlsaver.app.AppContainer
 import jp.mimac.urlsaver.data.AppDatabase
 import jp.mimac.urlsaver.data.EXTRA_DEEP_LINK_INVALID
 import jp.mimac.urlsaver.data.EXTRA_DEEP_LINK_TAG_ID
+import jp.mimac.urlsaver.data.EXTRA_PROMO_CODE
+import jp.mimac.urlsaver.data.EXTRA_PROMO_CODE_INVALID
 import jp.mimac.urlsaver.data.EXTRA_SHARE_ENTRY_ID
 import jp.mimac.urlsaver.data.EXTRA_SHARE_NORMALIZED_URL
 import jp.mimac.urlsaver.data.EXTRA_SHARE_SAVE_RESULT
@@ -167,6 +169,54 @@ class ShareReceiverActivityEntrypointTest {
         val started = shadowOf(controller.get()).nextStartedActivity
         assertFalse(started.hasExtra(EXTRA_SHARED_TAG_INVITE_TOKEN))
         assertTrue(started.getBooleanExtra(EXTRA_SHARED_TAG_INVITE_INVALID, false))
+    }
+
+    @Test
+    fun actionView_promoLink_routesToMainWithPromoCodeExtra() {
+        val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
+        val intent = Intent(context, ShareReceiverActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = Uri.parse("urlsaver://promo?code=RNBM%20TEST%20CODE%201234")
+        }
+
+        val controller = Robolectric.buildActivity(ShareReceiverActivity::class.java, intent).setup()
+        ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+
+        val started = shadowOf(controller.get()).nextStartedActivity
+        assertEquals("RNBM TEST CODE 1234", started.getStringExtra(EXTRA_PROMO_CODE))
+        assertFalse(started.getBooleanExtra(EXTRA_PROMO_CODE_INVALID, false))
+    }
+
+    @Test
+    fun actionView_httpsPromoFragment_routesToMainWithPromoCodeExtra() {
+        val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
+        val intent = Intent(context, ShareReceiverActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = Uri.parse("https://miyamibu.xyz/promo#code=RNBM%20TEST%20CODE%205678")
+        }
+
+        val controller = Robolectric.buildActivity(ShareReceiverActivity::class.java, intent).setup()
+        ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+
+        val started = shadowOf(controller.get()).nextStartedActivity
+        assertEquals("RNBM TEST CODE 5678", started.getStringExtra(EXTRA_PROMO_CODE))
+        assertFalse(started.getBooleanExtra(EXTRA_PROMO_CODE_INVALID, false))
+    }
+
+    @Test
+    fun actionView_missingPromoCode_routesToMainSafelyWithPromoInvalidFlag() {
+        val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
+        val intent = Intent(context, ShareReceiverActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = Uri.parse("urlsaver://promo")
+        }
+
+        val controller = Robolectric.buildActivity(ShareReceiverActivity::class.java, intent).setup()
+        ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+
+        val started = shadowOf(controller.get()).nextStartedActivity
+        assertFalse(started.hasExtra(EXTRA_PROMO_CODE))
+        assertTrue(started.getBooleanExtra(EXTRA_PROMO_CODE_INVALID, false))
     }
 
     @Test

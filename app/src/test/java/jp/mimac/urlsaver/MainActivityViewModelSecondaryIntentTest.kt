@@ -4,6 +4,8 @@ import android.content.Intent
 import jp.mimac.urlsaver.data.EXTRA_DEEP_LINK_INVALID
 import jp.mimac.urlsaver.data.EXTRA_DEEP_LINK_TAG_ID
 import jp.mimac.urlsaver.data.EXTRA_MAIN_INTENT_EVENT_TOKEN
+import jp.mimac.urlsaver.data.EXTRA_PROMO_CODE
+import jp.mimac.urlsaver.data.EXTRA_PROMO_CODE_INVALID
 import jp.mimac.urlsaver.data.EXTRA_SHARED_TAG_INVITE_INVALID
 import jp.mimac.urlsaver.data.EXTRA_SHARED_TAG_INVITE_TOKEN
 import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_CREATED
@@ -142,6 +144,35 @@ class MainActivityViewModelSecondaryIntentTest {
         val event = viewModel.snackbarEvents.first()
         assertEquals(SnackbarEventKind.INFO, event.kind)
         assertEquals("共有招待リンクを開けませんでした", event.message)
+    }
+
+    @Test
+    fun consumeDeepLinkIntent_promoCodeNavigatesToCloudAuthWithCode() = runTest {
+        val repository = FakeRepository()
+        val viewModel = MainActivityViewModel(repository)
+        val intent = Intent().apply {
+            putExtra(EXTRA_PROMO_CODE, "RNBM TEST CODE 1234")
+        }
+
+        viewModel.consumeDeepLinkIntent(intent)
+
+        val event = viewModel.navigationEvents.first()
+        assertEquals(MainNavigationEvent.NavigateToPromoCode("RNBM TEST CODE 1234"), event)
+    }
+
+    @Test
+    fun consumeDeepLinkIntent_invalidPromoShowsInfoSnackbar() = runTest {
+        val repository = FakeRepository()
+        val viewModel = MainActivityViewModel(repository)
+        val intent = Intent().apply {
+            putExtra(EXTRA_PROMO_CODE_INVALID, true)
+        }
+
+        viewModel.consumeDeepLinkIntent(intent)
+
+        val event = viewModel.snackbarEvents.first()
+        assertEquals(SnackbarEventKind.INFO, event.kind)
+        assertEquals("優待コードリンクを開けませんでした", event.message)
     }
 
     @Test

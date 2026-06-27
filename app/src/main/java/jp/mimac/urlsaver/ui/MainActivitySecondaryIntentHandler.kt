@@ -4,6 +4,8 @@ import android.content.Intent
 import jp.mimac.urlsaver.data.EXTRA_DEEP_LINK_INVALID
 import jp.mimac.urlsaver.data.EXTRA_DEEP_LINK_TAG_ID
 import jp.mimac.urlsaver.data.EXTRA_MAIN_INTENT_EVENT_TOKEN
+import jp.mimac.urlsaver.data.EXTRA_PROMO_CODE
+import jp.mimac.urlsaver.data.EXTRA_PROMO_CODE_INVALID
 import jp.mimac.urlsaver.data.EXTRA_SHARED_TAG_INVITE_INVALID
 import jp.mimac.urlsaver.data.EXTRA_SHARED_TAG_INVITE_TOKEN
 import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_CREATED
@@ -79,7 +81,9 @@ internal class MainActivitySecondaryIntentHandler(
         val isInvalid = intent.getBooleanExtra(EXTRA_DEEP_LINK_INVALID, false)
         val inviteToken = intent.getStringExtra(EXTRA_SHARED_TAG_INVITE_TOKEN)?.takeIf { it.isNotBlank() }
         val isInviteInvalid = intent.getBooleanExtra(EXTRA_SHARED_TAG_INVITE_INVALID, false)
-        if (!hasTagId && !isInvalid && inviteToken == null && !isInviteInvalid) return
+        val promoCode = intent.getStringExtra(EXTRA_PROMO_CODE)?.takeIf { it.isNotBlank() }
+        val isPromoInvalid = intent.getBooleanExtra(EXTRA_PROMO_CODE_INVALID, false)
+        if (!hasTagId && !isInvalid && inviteToken == null && !isInviteInvalid && promoCode == null && !isPromoInvalid) return
 
         val tagId = if (hasTagId) intent.getLongExtra(EXTRA_DEEP_LINK_TAG_ID, 0L) else null
         val signature = buildDeepLinkSignature(
@@ -88,8 +92,15 @@ internal class MainActivitySecondaryIntentHandler(
             isInvalid = isInvalid,
             inviteToken = inviteToken,
             isInviteInvalid = isInviteInvalid,
+            promoCode = promoCode,
+            isPromoInvalid = isPromoInvalid,
         )
         if (!consumedDeepLinkSignatures.add(signature)) return
+
+        if (promoCode != null) {
+            navigate(MainNavigationEvent.NavigateToPromoCode(promoCode))
+            return
+        }
 
         if (inviteToken != null) {
             navigate(MainNavigationEvent.NavigateToInvite(inviteToken))
@@ -104,7 +115,11 @@ internal class MainActivitySecondaryIntentHandler(
         enqueueSnackbar(
             SnackbarEvent(
                 kind = SnackbarEventKind.INFO,
-                message = if (isInviteInvalid) "共有招待リンクを開けませんでした" else "共有フォルダリンクを開けませんでした",
+                message = when {
+                    isInviteInvalid -> "共有招待リンクを開けませんでした"
+                    isPromoInvalid -> "優待コードリンクを開けませんでした"
+                    else -> "共有フォルダリンクを開けませんでした"
+                },
             ),
         )
     }
@@ -133,11 +148,13 @@ internal class MainActivitySecondaryIntentHandler(
         isInvalid: Boolean,
         inviteToken: String?,
         isInviteInvalid: Boolean,
+        promoCode: String?,
+        isPromoInvalid: Boolean,
     ): String {
         val eventToken = intent.getStringExtra(EXTRA_MAIN_INTENT_EVENT_TOKEN)?.takeIf { it.isNotBlank() }
         if (eventToken != null) {
             return "event:$eventToken"
         }
-        return "legacy:${tagId ?: "none"}:${inviteToken ?: "none"}:$isInvalid:$isInviteInvalid"
+        return "legacy:${tagId ?: "none"}:${inviteToken ?: "none"}:${promoCode ?: "none"}:$isInvalid:$isInviteInvalid:$isPromoInvalid"
     }
 }

@@ -1,6 +1,8 @@
 {
   "rewrites": [
-    { "source": "/invite/:token*", "destination": "/invite/index.html" }
+    { "source": "/invite/:token*", "destination": "/invite/index.html" },
+    { "source": "/promo", "destination": "/promo/index.html" },
+    { "source": "/auth/reset-password", "destination": "/auth/reset-password/index.html" }
   ],
   "headers": [
     {

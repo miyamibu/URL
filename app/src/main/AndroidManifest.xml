@@ -82,6 +82,14 @@
                     android:host="invite"
                     android:pathPrefix="/" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="urlsaver"
+                    android:host="promo" />
+            </intent-filter>
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -90,6 +98,15 @@
                     android:scheme="https"
                     android:host="miyamibu.xyz"
                     android:pathPrefix="/invite/" />
+            </intent-filter>
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="miyamibu.xyz"
+                    android:path="/promo" />
             </intent-filter>
         </activity>
 
@@ -100,6 +117,15 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="urlsaver"
+                    android:host="auth"
+                    android:path="/callback" />
             </intent-filter>
         </activity>
     </application>

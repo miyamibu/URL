@@ -20,6 +20,15 @@ artifacts/device-backups/
 artifacts/tiktok-live/
 tmp_main.png
 
+# Web app generated/local outputs
+web/admin/node_modules/
+web/admin/.next/
+web/admin/tsconfig.tsbuildinfo
+
+# Supabase CLI local state
+supabase/.temp/
+supabase/.branches/
+
 # Xcode local/build outputs
 ios/build-*/
 ios/**/xcuserdata/

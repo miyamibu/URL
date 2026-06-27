@@ -52,13 +52,11 @@ class SupabaseSharedTagAuthRemoteDataSource(
         val encodedProvider = URLEncoder.encode(provider, Charsets.UTF_8.name())
         val encodedRedirect = URLEncoder.encode(redirectTo, Charsets.UTF_8.name())
         val encodedChallenge = URLEncoder.encode(pending.codeChallenge, Charsets.UTF_8.name())
-        val encodedState = URLEncoder.encode(pending.state, Charsets.UTF_8.name())
         return "${config.supabaseUrl.trimEnd('/')}/auth/v1/authorize" +
             "?provider=$encodedProvider" +
             "&redirect_to=$encodedRedirect" +
             "&code_challenge=$encodedChallenge" +
-            "&code_challenge_method=S256" +
-            "&state=$encodedState"
+            "&code_challenge_method=S256"
     }
 
     override suspend fun signInWithOAuthCallback(callbackUrl: String): SharedTagAuthRemoteResult {
@@ -72,15 +70,13 @@ class SupabaseSharedTagAuthRemoteDataSource(
         }
         val code = params["code"]?.takeIf { it.isNotBlank() }
             ?: throw IOException("Googleサインインの認可コードを受け取れませんでした。")
-        val returnedState = params["state"]?.takeIf { it.isNotBlank() }
-            ?: throw IOException("Googleサインインのstateを受け取れませんでした。")
         val pending = oauthStateStore.load()
             ?: throw IOException("Googleサインインの開始情報が見つかりません。もう一度やり直してください。")
         if (pending.isExpired()) {
             oauthStateStore.clear()
             throw IOException("Googleサインインの有効期限が切れました。もう一度やり直してください。")
         }
-        if (pending.redirectTo != AUTH_CALLBACK_URL || returnedState != pending.state) {
+        if (pending.redirectTo != AUTH_CALLBACK_URL) {
             oauthStateStore.clear()
             throw IOException("Googleサインインのstate検証に失敗しました。")
         }
@@ -233,7 +229,6 @@ class SharedPreferencesSharedTagOAuthStateStore(context: Context) : SharedTagOAu
         prefs.edit()
             .putString(KEY_VERIFIER, state.codeVerifier)
             .putString(KEY_CHALLENGE, state.codeChallenge)
-            .putString(KEY_STATE, state.state)
             .putString(KEY_REDIRECT_TO, state.redirectTo)
             .putLong(KEY_CREATED_AT, state.createdAtMillis)
             .apply()
@@ -242,10 +237,9 @@ class SharedPreferencesSharedTagOAuthStateStore(context: Context) : SharedTagOAu
     override fun load(): SharedTagOAuthPendingState? {
         val verifier = prefs.getString(KEY_VERIFIER, null)?.takeIf { it.isNotBlank() } ?: return null
         val challenge = prefs.getString(KEY_CHALLENGE, null)?.takeIf { it.isNotBlank() } ?: return null
-        val state = prefs.getString(KEY_STATE, null)?.takeIf { it.isNotBlank() } ?: return null
         val redirectTo = prefs.getString(KEY_REDIRECT_TO, null)?.takeIf { it.isNotBlank() } ?: return null
         val createdAt = prefs.getLong(KEY_CREATED_AT, 0L).takeIf { it > 0L } ?: return null
-        return SharedTagOAuthPendingState(verifier, challenge, state, redirectTo, createdAt)
+        return SharedTagOAuthPendingState(verifier, challenge, redirectTo, createdAt)
     }
 
     override fun clear() {
@@ -255,7 +249,6 @@ class SharedPreferencesSharedTagOAuthStateStore(context: Context) : SharedTagOAu
     private companion object {
         const val KEY_VERIFIER = "code_verifier"
         const val KEY_CHALLENGE = "code_challenge"
-        const val KEY_STATE = "state"
         const val KEY_REDIRECT_TO = "redirect_to"
         const val KEY_CREATED_AT = "created_at"
     }
@@ -275,7 +268,6 @@ private class InMemorySharedTagOAuthStateStore : SharedTagOAuthStateStore {
 data class SharedTagOAuthPendingState(
     val codeVerifier: String,
     val codeChallenge: String,
-    val state: String,
     val redirectTo: String,
     val createdAtMillis: Long,
 ) {
@@ -290,7 +282,6 @@ data class SharedTagOAuthPendingState(
             return SharedTagOAuthPendingState(
                 codeVerifier = verifier,
                 codeChallenge = sha256Base64UrlNoPadding(verifier),
-                state = randomUrlSafe(lengthBytes = 32),
                 redirectTo = redirectTo,
                 createdAtMillis = System.currentTimeMillis(),
             )

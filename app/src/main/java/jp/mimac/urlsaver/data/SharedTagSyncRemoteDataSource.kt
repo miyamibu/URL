@@ -63,6 +63,41 @@ interface SharedTagSyncRemoteDataSource {
         role: String,
     ): CreateSharedTagGroupInviteResponse = throw UnsupportedOperationException("Shared tag groups are not supported by this data source.")
 
+    suspend fun renameGroup(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+        name: String,
+    ): SharedTagGroupMutationResponse = throw UnsupportedOperationException("Shared tag groups are not supported by this data source.")
+
+    suspend fun deleteGroup(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+    ): SharedTagGroupMutationResponse = throw UnsupportedOperationException("Shared tag groups are not supported by this data source.")
+
+    suspend fun changeGroupMemberRole(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+        userId: String,
+        role: String,
+    ): SharedTagGroupMutationResponse = throw UnsupportedOperationException("Shared tag groups are not supported by this data source.")
+
+    suspend fun transferGroupOwnership(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+        newOwnerUserId: String,
+    ): SharedTagGroupMutationResponse = throw UnsupportedOperationException("Shared tag groups are not supported by this data source.")
+
+    suspend fun removeGroupMember(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+        userId: String,
+    ): SharedTagGroupMutationResponse = throw UnsupportedOperationException("Shared tag groups are not supported by this data source.")
+
+    suspend fun upsertSharedProfile(
+        session: SharedTagAuthSession,
+        displayName: String,
+    ): Unit = Unit
+
     suspend fun transferOwnership(
         session: SharedTagAuthSession,
         remoteTagId: String,
@@ -247,6 +282,95 @@ class SupabaseSharedTagSyncRemoteDataSource(
             )
         }
         return json.decodeFromString(response)
+    }
+
+    override suspend fun renameGroup(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+        name: String,
+    ): SharedTagGroupMutationResponse {
+        val response = withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/rename_shared_tag_group",
+                session = session,
+                requestBody = json.encodeToString(mapOf("p_group_id" to remoteGroupId, "p_name" to name)),
+            )
+        }
+        return json.decodeFromString(response)
+    }
+
+    override suspend fun deleteGroup(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+    ): SharedTagGroupMutationResponse {
+        val response = withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/delete_shared_tag_group",
+                session = session,
+                requestBody = json.encodeToString(mapOf("p_group_id" to remoteGroupId)),
+            )
+        }
+        return json.decodeFromString(response)
+    }
+
+    override suspend fun changeGroupMemberRole(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+        userId: String,
+        role: String,
+    ): SharedTagGroupMutationResponse {
+        val response = withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/change_shared_tag_group_member_role",
+                session = session,
+                requestBody = json.encodeToString(
+                    mapOf("p_group_id" to remoteGroupId, "p_user_id" to userId, "p_role" to role),
+                ),
+            )
+        }
+        return json.decodeFromString(response)
+    }
+
+    override suspend fun transferGroupOwnership(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+        newOwnerUserId: String,
+    ): SharedTagGroupMutationResponse {
+        val response = withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/transfer_shared_tag_group_ownership",
+                session = session,
+                requestBody = json.encodeToString(
+                    mapOf("p_group_id" to remoteGroupId, "p_new_owner_user_id" to newOwnerUserId),
+                ),
+            )
+        }
+        return json.decodeFromString(response)
+    }
+
+    override suspend fun removeGroupMember(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+        userId: String,
+    ): SharedTagGroupMutationResponse {
+        val response = withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/remove_shared_tag_group_member",
+                session = session,
+                requestBody = json.encodeToString(mapOf("p_group_id" to remoteGroupId, "p_user_id" to userId)),
+            )
+        }
+        return json.decodeFromString(response)
+    }
+
+    override suspend fun upsertSharedProfile(session: SharedTagAuthSession, displayName: String) {
+        withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/upsert_my_shared_profile",
+                session = session,
+                requestBody = json.encodeToString(mapOf("p_display_name" to displayName)),
+            )
+        }
     }
 
     override suspend fun transferOwnership(

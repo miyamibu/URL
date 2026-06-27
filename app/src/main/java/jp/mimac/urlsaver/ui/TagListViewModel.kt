@@ -7,8 +7,10 @@ import jp.mimac.urlsaver.domain.CreateSharedTagGroupResult
 import jp.mimac.urlsaver.domain.CreateTagResult
 import jp.mimac.urlsaver.domain.SharedTagGroupInviteCreationResult
 import jp.mimac.urlsaver.domain.SharedTagGroupMemberRecord
+import jp.mimac.urlsaver.domain.SharedTagGroupMutationResult
 import jp.mimac.urlsaver.domain.SharedTagGroupRecord
 import jp.mimac.urlsaver.domain.SharedTagGroupTagRecord
+import jp.mimac.urlsaver.domain.SharedTagMemberRole
 import jp.mimac.urlsaver.domain.TagWithCount
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
@@ -58,5 +60,29 @@ class TagListViewModel(
         role: String,
     ): SharedTagGroupInviteCreationResult {
         return tagRepository.createGroupInviteLink(groupId, role)
+    }
+
+    suspend fun renameGroup(groupId: Long, name: String): SharedTagGroupMutationResult {
+        return tagRepository.renameGroup(groupId, name)
+    }
+
+    suspend fun deleteGroup(groupId: Long): SharedTagGroupMutationResult {
+        return tagRepository.deleteGroup(groupId)
+    }
+
+    suspend fun changeGroupMemberRole(
+        groupId: Long,
+        userId: String,
+        role: SharedTagMemberRole,
+    ): SharedTagGroupMutationResult {
+        return tagRepository.changeGroupMemberRole(groupId, userId, role)
+    }
+
+    suspend fun transferGroupOwnership(groupId: Long, userId: String): SharedTagGroupMutationResult {
+        return tagRepository.transferGroupOwnership(groupId, userId)
+    }
+
+    suspend fun removeGroupMember(groupId: Long, userId: String): SharedTagGroupMutationResult {
+        return tagRepository.removeGroupMember(groupId, userId)
     }
 }

@@ -182,6 +182,11 @@ struct RootView: View {
             .onChange(of: model.activeEntries) { _, entries in
                 selectedMainEntryIDs = selectedMainEntryIDs.intersection(Set(entries.map(\.id)))
             }
+            .onChange(of: model.pendingPromoCode) { _, code in
+                if code?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                    isShowingSharedTagCloudSheet = true
+                }
+            }
             .onChange(of: selectedMainService) { _, _ in
                 selectedMainEntryIDs = []
             }
@@ -1776,6 +1781,10 @@ private struct SharedTagGroupScreen: View {
 
     @State private var selectedGroupID: String?
     @State private var isWorking = false
+    @State private var selectedTab: SharedTagGroupDetailTab = .overview
+    @State private var pendingAction: SharedTagGroupPendingAction?
+    @State private var renameDraft = ""
+    @State private var isShowingRename = false
 
     private var selectedGroup: SharedTagGroupSummary? {
         groups.first { $0.remoteGroupID == selectedGroupID }
@@ -1848,6 +1857,29 @@ private struct SharedTagGroupScreen: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .alert(pendingAction?.title ?? "", isPresented: Binding(
+            get: { pendingAction != nil },
+            set: { if !$0 { pendingAction = nil } }
+        )) {
+            Button("キャンセル", role: .cancel) { pendingAction = nil }
+            Button(pendingAction?.confirmLabel ?? "実行", role: pendingAction?.isDangerous == true ? .destructive : nil) {
+                if let action = pendingAction {
+                    run(action)
+                }
+            }
+        } message: {
+            Text(pendingAction?.message ?? "")
+        }
+        .alert("グループ名を変更", isPresented: $isShowingRename) {
+            TextField("グループ名", text: $renameDraft)
+            Button("キャンセル", role: .cancel) {}
+            Button("変更する") {
+                guard let selectedGroup else { return }
+                Task { _ = await model.renameSharedTagGroup(remoteGroupID: selectedGroup.remoteGroupID, name: renameDraft) }
+            }
+        } message: {
+            Text("参加者に表示されるグループ名を変更します。")
+        }
     }
 
     @ViewBuilder
@@ -1859,6 +1891,41 @@ private struct SharedTagGroupScreen: View {
             .filter { $0.currentUserRole == .owner && !groupedTagIDs.contains($0.remoteTagID) }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
+        AppPanel {
+            Text("このグループに参加すると、配下の共有タグがまとめて見えます")
+                .font(.system(size: 18, weight: .heavy, design: .rounded))
+                .foregroundStyle(AppPalette.textPrimary)
+            Text("グループ → 共有タグ → URL")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(AppPalette.textPrimary)
+            Text("参加者 → グループ内の共有タグをまとめて利用")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(AppPalette.textSecondary)
+        }
+        .frame(width: cardWidth)
+
+        Picker("", selection: $selectedTab) {
+            ForEach(SharedTagGroupDetailTab.allCases) { tab in
+                Text(tab.title).tag(tab)
+            }
+        }
+        .pickerStyle(.segmented)
+        .frame(width: cardWidth)
+
+        switch selectedTab {
+        case .overview:
+            overview(group: group, cardWidth: cardWidth)
+        case .tags:
+            tagManagement(group: group, groupTags: groupTags, addableTags: addableTags, cardWidth: cardWidth)
+        case .members:
+            memberManagement(group: group, members: members, cardWidth: cardWidth)
+        case .manage:
+            management(group: group, cardWidth: cardWidth)
+        }
+    }
+
+    @ViewBuilder
+    private func overview(group: SharedTagGroupSummary, cardWidth: CGFloat) -> some View {
         AppPanel {
             Text("招待")
                 .font(.system(size: 18, weight: .heavy, design: .rounded))
@@ -1878,11 +1945,36 @@ private struct SharedTagGroupScreen: View {
             if group.currentUserRole != .owner {
                 Text("招待リンクを作成できるのはグループオーナーだけです。")
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(AppPalette.textSecondary)
+                .foregroundStyle(AppPalette.textSecondary)
+            }
+            AppActionButton(tone: .secondary) {
+                selectedTab = .tags
+            } label: {
+                Text("共有タグを追加・確認")
             }
         }
         .frame(width: cardWidth)
 
+        AppPanel {
+            Text("権限の違い")
+                .font(.system(size: 18, weight: .heavy, design: .rounded))
+                .foregroundStyle(AppPalette.textPrimary)
+            Text("オーナー: グループ設定、招待、メンバー管理、配下共有タグの管理ができます。")
+            Text("編集者: 配下共有タグにURLを追加・削除できます。")
+            Text("閲覧者: 配下共有タグとURLを見られます。編集はできません。")
+        }
+        .font(.system(size: 15, weight: .medium))
+        .foregroundStyle(AppPalette.textSecondary)
+        .frame(width: cardWidth)
+    }
+
+    @ViewBuilder
+    private func tagManagement(
+        group: SharedTagGroupSummary,
+        groupTags: [SharedTagGroupTagSummary],
+        addableTags: [SharedTagSummary],
+        cardWidth: CGFloat
+    ) -> some View {
         AppPanel {
             Text("配下の共有タグ")
                 .font(.system(size: 18, weight: .heavy, design: .rounded))
@@ -1905,7 +1997,7 @@ private struct SharedTagGroupScreen: View {
                         }
                         Spacer(minLength: 0)
                         Button("外す") {
-                            Task { await removeTag(tag, from: group) }
+                            pendingAction = .removeTag(group: group, tag: tag)
                         }
                         .font(.system(size: 14, weight: .bold))
                         .disabled(isWorking || !(group.currentUserRole == .owner || tag.currentUserRole == .owner))
@@ -1948,7 +2040,14 @@ private struct SharedTagGroupScreen: View {
             }
         }
         .frame(width: cardWidth)
+    }
 
+    @ViewBuilder
+    private func memberManagement(
+        group: SharedTagGroupSummary,
+        members: [SharedTagGroupMemberSummary],
+        cardWidth: CGFloat
+    ) -> some View {
         AppPanel {
             Text("メンバー")
                 .font(.system(size: 18, weight: .heavy, design: .rounded))
@@ -1960,18 +2059,60 @@ private struct SharedTagGroupScreen: View {
             } else {
                 ForEach(members) { member in
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(member.isCurrentUser ? "あなた" : member.userID)
+                        Text(memberLabel(member))
                             .font(.system(size: 16, weight: .bold))
                             .foregroundStyle(AppPalette.textPrimary)
                             .lineLimit(1)
                         Text(member.role.displayName)
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(AppPalette.textSecondary)
+                        if group.currentUserRole == .owner && !member.isCurrentUser {
+                            HStack {
+                                if member.role != .editor {
+                                    Button("編集者にする") { pendingAction = .changeRole(group: group, member: member, role: .editor) }
+                                }
+                                if member.role != .viewer {
+                                    Button("閲覧者にする") { pendingAction = .changeRole(group: group, member: member, role: .viewer) }
+                                }
+                            }
+                            HStack {
+                                Button("オーナー移譲") { pendingAction = .transferOwnership(group: group, member: member) }
+                                Button("削除", role: .destructive) { pendingAction = .removeMember(group: group, member: member) }
+                            }
+                            .font(.system(size: 14, weight: .bold))
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 6)
                 }
             }
+        }
+        .frame(width: cardWidth)
+    }
+
+    @ViewBuilder
+    private func management(group: SharedTagGroupSummary, cardWidth: CGFloat) -> some View {
+        AppPanel {
+            Text("管理")
+                .font(.system(size: 18, weight: .heavy, design: .rounded))
+                .foregroundStyle(AppPalette.textPrimary)
+            AppActionButton(tone: .secondary, enabled: group.currentUserRole == .owner) {
+                renameDraft = group.name
+                isShowingRename = true
+            } label: {
+                Text("グループ名を変更")
+            }
+            Text("同期エラーがある場合は、再同期後にこの画面へ反映されます。")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(AppPalette.textSecondary)
+            Divider()
+            Text("危険な操作")
+                .font(.system(size: 16, weight: .heavy))
+                .foregroundStyle(AppPalette.danger)
+            Button("グループを削除", role: .destructive) {
+                pendingAction = .deleteGroup(group: group)
+            }
+            .disabled(group.currentUserRole != .owner)
         }
         .frame(width: cardWidth)
     }
@@ -1990,6 +2131,32 @@ private struct SharedTagGroupScreen: View {
         isWorking = false
     }
 
+    private func memberLabel(_ member: SharedTagGroupMemberSummary) -> String {
+        if member.isCurrentUser { return "あなた" }
+        if let displayName = member.displayName, !displayName.isEmpty { return displayName }
+        return "メンバー \(member.userID.prefix(8))"
+    }
+
+    private func run(_ action: SharedTagGroupPendingAction) {
+        pendingAction = nil
+        Task {
+            switch action {
+            case .removeTag(let group, let tag):
+                await removeTag(tag, from: group)
+            case .changeRole(let group, let member, let role):
+                _ = await model.changeSharedTagGroupMemberRole(remoteGroupID: group.remoteGroupID, userID: member.userID, role: role)
+            case .transferOwnership(let group, let member):
+                _ = await model.transferSharedTagGroupOwnership(remoteGroupID: group.remoteGroupID, userID: member.userID)
+            case .removeMember(let group, let member):
+                _ = await model.removeSharedTagGroupMember(remoteGroupID: group.remoteGroupID, userID: member.userID)
+            case .deleteGroup(let group):
+                if await model.deleteSharedTagGroup(remoteGroupID: group.remoteGroupID) {
+                    selectedGroupID = nil
+                }
+            }
+        }
+    }
+
     private func createInvite(group: SharedTagGroupSummary, role: SharedTagMemberRole) {
         guard !isWorking else { return }
         isWorking = true
@@ -2001,6 +2168,81 @@ private struct SharedTagGroupScreen: View {
             }
             isWorking = false
         }
+    }
+}
+
+private enum SharedTagGroupDetailTab: String, CaseIterable, Identifiable {
+    case overview
+    case tags
+    case members
+    case manage
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .overview: return "概要"
+        case .tags: return "共有タグ"
+        case .members: return "メンバー"
+        case .manage: return "管理"
+        }
+    }
+}
+
+private enum SharedTagGroupPendingAction: Identifiable {
+    case removeTag(group: SharedTagGroupSummary, tag: SharedTagGroupTagSummary)
+    case changeRole(group: SharedTagGroupSummary, member: SharedTagGroupMemberSummary, role: SharedTagMemberRole)
+    case transferOwnership(group: SharedTagGroupSummary, member: SharedTagGroupMemberSummary)
+    case removeMember(group: SharedTagGroupSummary, member: SharedTagGroupMemberSummary)
+    case deleteGroup(group: SharedTagGroupSummary)
+
+    var id: String { title + message }
+
+    var title: String {
+        switch self {
+        case .removeTag: return "共有タグを外す"
+        case .changeRole: return "権限を変更"
+        case .transferOwnership: return "オーナー権限を移譲"
+        case .removeMember: return "メンバーを削除"
+        case .deleteGroup: return "グループを削除"
+        }
+    }
+
+    var message: String {
+        switch self {
+        case .removeTag(_, let tag):
+            return "「\(tag.tagName)」をこのグループから外します。タグ自体やURLは削除されません。"
+        case .changeRole(_, let member, let role):
+            return "「\(memberDisplayName(member))」を\(role.displayName)に変更します。"
+        case .transferOwnership(_, let member):
+            return "「\(memberDisplayName(member))」をグループオーナーにします。移譲後、あなたは編集者になります。"
+        case .removeMember(_, let member):
+            return "「\(memberDisplayName(member))」をこのグループから削除します。"
+        case .deleteGroup:
+            return "このグループを削除します。配下タグのまとめ共有とグループ招待は無効になります。"
+        }
+    }
+
+    var confirmLabel: String {
+        switch self {
+        case .removeTag: return "外す"
+        case .changeRole: return "変更する"
+        case .transferOwnership: return "移譲する"
+        case .removeMember, .deleteGroup: return "削除する"
+        }
+    }
+
+    var isDangerous: Bool {
+        switch self {
+        case .changeRole: return false
+        case .removeTag, .transferOwnership, .removeMember, .deleteGroup: return true
+        }
+    }
+
+    private func memberDisplayName(_ member: SharedTagGroupMemberSummary) -> String {
+        if member.isCurrentUser { return "あなた" }
+        if let displayName = member.displayName, !displayName.isEmpty { return displayName }
+        return "メンバー \(member.userID.prefix(8))"
     }
 }
 
@@ -2023,6 +2265,12 @@ private struct SharedTagGroupCard: View {
                         .lineLimit(2)
                     Text(group.currentUserRole?.displayName ?? "メンバー")
                         .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(AppPalette.textSecondary)
+                    Text("共有タグ \(group.tagCount)件 / メンバー \(group.memberCount)人")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(AppPalette.textSecondary)
+                    Text(group.lastSyncedAt == nil ? "同期状態を確認中" : "同期済み")
+                        .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(AppPalette.textSecondary)
                 }
                 Spacer(minLength: 0)

@@ -39,11 +39,15 @@ data class SharedTagGroupRecord(
     val remoteGroupId: String,
     val name: String,
     val currentUserRole: SharedTagMemberRole?,
+    val tagCount: Int = 0,
+    val memberCount: Int = 0,
+    val lastSyncedAt: Long? = null,
 )
 
 data class SharedTagGroupMemberRecord(
     val groupId: Long,
     val userId: String,
+    val displayName: String?,
     val role: SharedTagMemberRole,
     val status: SharedTagMemberStatus,
     val isCurrentUser: Boolean,
@@ -96,6 +100,14 @@ sealed interface CreateSharedTagGroupResult {
     data object AuthRequired : CreateSharedTagGroupResult
     data class LimitReached(val message: String) : CreateSharedTagGroupResult
     data class Failed(val message: String? = null) : CreateSharedTagGroupResult
+}
+
+sealed interface SharedTagGroupMutationResult {
+    data object Success : SharedTagGroupMutationResult
+    data object AuthRequired : SharedTagGroupMutationResult
+    data object OwnerOnly : SharedTagGroupMutationResult
+    data object InvalidTarget : SharedTagGroupMutationResult
+    data class Failure(val message: String? = null) : SharedTagGroupMutationResult
 }
 
 sealed interface AssignTagResult {

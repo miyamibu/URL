@@ -22,6 +22,8 @@ const val EXTRA_DEEP_LINK_TAG_ID = "extra_deep_link_tag_id"
 const val EXTRA_DEEP_LINK_INVALID = "extra_deep_link_invalid"
 const val EXTRA_SHARED_TAG_INVITE_TOKEN = "extra_shared_tag_invite_token"
 const val EXTRA_SHARED_TAG_INVITE_INVALID = "extra_shared_tag_invite_invalid"
+const val EXTRA_PROMO_CODE = "extra_promo_code"
+const val EXTRA_PROMO_CODE_INVALID = "extra_promo_code_invalid"
 
 const val SHARE_DEGRADATION_TRUNCATED_TO_FIRST_URL = "truncated_to_first_url"
 const val SHARE_DEGRADATION_TRUNCATED_TO_MAX_URLS = "truncated_to_max_urls"

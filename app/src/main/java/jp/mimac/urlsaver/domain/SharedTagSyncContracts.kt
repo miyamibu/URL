@@ -89,6 +89,7 @@ data class RemoteSharedTag(
 data class RemoteSharedTagMember(
     @SerialName("tag_id") val tagId: String,
     @SerialName("user_id") val userId: String,
+    @SerialName("display_name") val displayName: String? = null,
     val role: String,
     val status: String,
     @SerialName("created_at") val createdAt: String,
@@ -122,6 +123,7 @@ data class RemoteSharedTagGroup(
 data class RemoteSharedTagGroupMember(
     @SerialName("group_id") val groupId: String,
     @SerialName("user_id") val userId: String,
+    @SerialName("display_name") val displayName: String? = null,
     val role: String,
     val status: String,
     @SerialName("created_at") val createdAt: String,
