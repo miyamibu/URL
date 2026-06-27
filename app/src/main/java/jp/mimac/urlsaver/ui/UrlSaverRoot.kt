@@ -2512,12 +2512,6 @@ private fun MainListContent(
         }
         Spacer(modifier = Modifier.height(8.dp))
     }
-    Text(
-        text = "保存したURL",
-        style = MaterialTheme.typography.titleMedium,
-        color = MaterialTheme.colorScheme.onBackground,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-    )
     if (selectedEntryIds.isNotEmpty()) {
         EntrySelectionBar(
             selectedCount = selectedEntryIds.size,
