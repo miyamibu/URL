@@ -91,8 +91,21 @@ enum AppIconMetrics {
 struct ScreenHeaderButton: Identifiable {
     let id = UUID()
     let icon: String
+    let title: String?
     let accessibilityLabel: String
     let action: () -> Void
+
+    init(
+        icon: String,
+        title: String? = nil,
+        accessibilityLabel: String,
+        action: @escaping () -> Void
+    ) {
+        self.icon = icon
+        self.title = title
+        self.accessibilityLabel = accessibilityLabel
+        self.action = action
+    }
 }
 
 struct ScreenContainer<Content: View>: View {
@@ -155,10 +168,19 @@ private struct IconChromeButton: View {
 
     var body: some View {
         Button(action: button.action) {
-            Image(systemName: button.icon)
-                .font(.system(size: AppIconMetrics.chrome, weight: .semibold))
-                .foregroundStyle(AppPalette.textPrimary)
-                .frame(width: 44, height: 48)
+            HStack(spacing: button.title == nil ? 0 : 6) {
+                Image(systemName: button.icon)
+                    .font(.system(size: AppIconMetrics.chrome, weight: .semibold))
+                if let title = button.title {
+                    Text(title)
+                        .font(.system(size: 15, weight: .heavy, design: .rounded))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
+                }
+            }
+            .foregroundStyle(AppPalette.textPrimary)
+            .frame(minWidth: 44, minHeight: 48)
+            .padding(.horizontal, button.title == nil ? 0 : 4)
         }
         .accessibilityLabel(button.accessibilityLabel)
     }

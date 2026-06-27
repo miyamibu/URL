@@ -144,6 +144,7 @@ struct RootView: View {
                                 sharedTags: model.sharedTags,
                                 onBack: { model.selectedTab = .main },
                                 onCreateGroup: { isShowingSharedTagGroupCreateSheet = true },
+                                onOpenSharedTag: { selectedSharedTagID = $0 },
                                 onShareInvite: { inviteURL in
                                     shareItems = [inviteURL]
                                     isShowingShareSheet = true
@@ -1582,7 +1583,7 @@ private struct SharedTagInviteConfirmationView: View {
                             .lineLimit(3)
                             .minimumScaleFactor(0.75)
 
-                        Text(inviteType == .group ? "参加すると、このグループ配下の共有タグが同期されます。" : "参加すると、この共有タグのURL一覧が同期されます。")
+                        Text(inviteType == .group ? "参加すると、このグループの共有タグが同期されます。" : "参加すると、この共有タグのURL一覧が同期されます。")
                             .font(.system(size: 17, weight: .medium))
                             .foregroundStyle(AppPalette.textSecondary)
                             .multilineTextAlignment(.center)
@@ -1777,11 +1778,13 @@ private struct SharedTagGroupScreen: View {
     let sharedTags: [SharedTagSummary]
     let onBack: () -> Void
     let onCreateGroup: () -> Void
+    let onOpenSharedTag: (String) -> Void
     let onShareInvite: (String) -> Void
 
     @State private var selectedGroupID: String?
     @State private var isWorking = false
-    @State private var selectedTab: SharedTagGroupDetailTab = .overview
+    @State private var selectedTab: SharedTagGroupDetailTab = .manage
+    @State private var managementContent: SharedTagGroupManagementContent = .roleGuide
     @State private var pendingAction: SharedTagGroupPendingAction?
     @State private var renameDraft = ""
     @State private var isShowingRename = false
@@ -1793,7 +1796,7 @@ private struct SharedTagGroupScreen: View {
     var body: some View {
         VStack(spacing: 0) {
             ScreenHeader(
-                title: selectedGroup?.name ?? "グループ",
+                title: "グループ",
                 leadingButton: ScreenHeaderButton(
                     icon: "arrow.left",
                     accessibilityLabel: "戻る",
@@ -1802,12 +1805,14 @@ private struct SharedTagGroupScreen: View {
                             onBack()
                         } else {
                             selectedGroupID = nil
+                            managementContent = .roleGuide
                         }
                     }
                 ),
                 trailingButtons: [
                     ScreenHeaderButton(
                         icon: "plus",
+                        title: "グループ作成",
                         accessibilityLabel: "グループを作成",
                         action: onCreateGroup
                     ),
@@ -1841,6 +1846,8 @@ private struct SharedTagGroupScreen: View {
                                 ForEach(groups) { group in
                                     Button {
                                         selectedGroupID = group.remoteGroupID
+                                        selectedTab = .manage
+                                        managementContent = .roleGuide
                                     } label: {
                                         SharedTagGroupCard(group: group)
                                             .frame(width: cardWidth)
@@ -1892,15 +1899,29 @@ private struct SharedTagGroupScreen: View {
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
         AppPanel {
-            Text("このグループに参加すると、配下の共有タグがまとめて見えます")
-                .font(.system(size: 18, weight: .heavy, design: .rounded))
-                .foregroundStyle(AppPalette.textPrimary)
-            Text("グループ → 共有タグ → URL")
-                .font(.system(size: 16, weight: .bold))
-                .foregroundStyle(AppPalette.textPrimary)
-            Text("参加者 → グループ内の共有タグをまとめて利用")
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(AppPalette.textSecondary)
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(group.name)
+                        .font(.system(size: 24, weight: .heavy, design: .rounded))
+                        .foregroundStyle(AppPalette.textPrimary)
+                        .lineLimit(1)
+                    Text("権限: \(group.currentUserRole?.displayName ?? "同期中") / 共有タグ \(groupTags.count)件 / メンバー \(members.count)人")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(AppPalette.textSecondary)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 0)
+                Button {
+                    renameDraft = group.name
+                    isShowingRename = true
+                } label: {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 17, weight: .bold))
+                        .frame(width: 38, height: 38)
+                }
+                .disabled(group.currentUserRole != .owner)
+                .accessibilityLabel("グループ名を変更")
+            }
         }
         .frame(width: cardWidth)
 
@@ -1913,133 +1934,49 @@ private struct SharedTagGroupScreen: View {
         .frame(width: cardWidth)
 
         switch selectedTab {
-        case .overview:
-            overview(group: group, cardWidth: cardWidth)
+        case .manage:
+            management(
+                group: group,
+                groupTags: groupTags,
+                addableTags: addableTags,
+                cardWidth: cardWidth
+            )
         case .tags:
-            tagManagement(group: group, groupTags: groupTags, addableTags: addableTags, cardWidth: cardWidth)
+            groupTagCards(groupTags: groupTags, cardWidth: cardWidth)
         case .members:
             memberManagement(group: group, members: members, cardWidth: cardWidth)
-        case .manage:
-            management(group: group, cardWidth: cardWidth)
         }
     }
 
     @ViewBuilder
-    private func overview(group: SharedTagGroupSummary, cardWidth: CGFloat) -> some View {
-        AppPanel {
-            Text("招待")
-                .font(.system(size: 18, weight: .heavy, design: .rounded))
-                .foregroundStyle(AppPalette.textPrimary)
-            HStack(spacing: 10) {
-                AppActionButton(tone: .secondary, enabled: group.currentUserRole == .owner && !isWorking) {
-                    createInvite(group: group, role: .editor)
-                } label: {
-                    Text("編集者を招待")
-                }
-                AppActionButton(tone: .secondary, enabled: group.currentUserRole == .owner && !isWorking) {
-                    createInvite(group: group, role: .viewer)
-                } label: {
-                    Text("閲覧者を招待")
-                }
-            }
-            if group.currentUserRole != .owner {
-                Text("招待リンクを作成できるのはグループオーナーだけです。")
-                    .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(AppPalette.textSecondary)
-            }
-            AppActionButton(tone: .secondary) {
-                selectedTab = .tags
-            } label: {
-                Text("共有タグを追加・確認")
-            }
-        }
-        .frame(width: cardWidth)
-
-        AppPanel {
-            Text("権限の違い")
-                .font(.system(size: 18, weight: .heavy, design: .rounded))
-                .foregroundStyle(AppPalette.textPrimary)
-            Text("オーナー: グループ設定、招待、メンバー管理、配下共有タグの管理ができます。")
-            Text("編集者: 配下共有タグにURLを追加・削除できます。")
-            Text("閲覧者: 配下共有タグとURLを見られます。編集はできません。")
-        }
-        .font(.system(size: 15, weight: .medium))
-        .foregroundStyle(AppPalette.textSecondary)
-        .frame(width: cardWidth)
-    }
-
-    @ViewBuilder
-    private func tagManagement(
-        group: SharedTagGroupSummary,
+    private func groupTagCards(
         groupTags: [SharedTagGroupTagSummary],
-        addableTags: [SharedTagSummary],
         cardWidth: CGFloat
     ) -> some View {
-        AppPanel {
-            Text("配下の共有タグ")
-                .font(.system(size: 18, weight: .heavy, design: .rounded))
-                .foregroundStyle(AppPalette.textPrimary)
+        VStack(alignment: .leading, spacing: 12) {
             if groupTags.isEmpty {
                 Text("このグループには共有タグがありません")
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(AppPalette.textSecondary)
             } else {
                 ForEach(groupTags) { tag in
-                    HStack(spacing: 12) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(tag.tagName)
-                                .font(.system(size: 16, weight: .bold))
-                                .foregroundStyle(AppPalette.textPrimary)
-                                .lineLimit(1)
-                            Text("あなたのタグ権限: \(tag.currentUserRole?.displayName ?? "同期中")")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(AppPalette.textSecondary)
-                        }
-                        Spacer(minLength: 0)
-                        Button("外す") {
-                            pendingAction = .removeTag(group: group, tag: tag)
-                        }
-                        .font(.system(size: 14, weight: .bold))
-                        .disabled(isWorking || !(group.currentUserRole == .owner || tag.currentUserRole == .owner))
+                    Button {
+                        onOpenSharedTag(tag.remoteTagID)
+                    } label: {
+                        SharedTagGroupTagCard(
+                            tag: tag,
+                            urlCount: sharedTagURLCount(remoteTagID: tag.remoteTagID)
+                        )
                     }
-                    .padding(.vertical, 8)
+                    .buttonStyle(.plain)
                 }
             }
         }
         .frame(width: cardWidth)
+    }
 
-        AppPanel {
-            Text("共有タグを追加")
-                .font(.system(size: 18, weight: .heavy, design: .rounded))
-                .foregroundStyle(AppPalette.textPrimary)
-            if addableTags.isEmpty {
-                Text("追加できるオーナー権限の共有タグはありません。")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(AppPalette.textSecondary)
-            } else {
-                ForEach(addableTags) { tag in
-                    HStack(spacing: 12) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(tag.name)
-                                .font(.system(size: 16, weight: .bold))
-                                .foregroundStyle(AppPalette.textPrimary)
-                                .lineLimit(1)
-                            Text("\(tag.activeURLCount)件")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(AppPalette.textSecondary)
-                        }
-                        Spacer(minLength: 0)
-                        Button("追加") {
-                            Task { await addTag(tag, to: group) }
-                        }
-                        .font(.system(size: 14, weight: .bold))
-                        .disabled(isWorking)
-                    }
-                    .padding(.vertical, 8)
-                }
-            }
-        }
-        .frame(width: cardWidth)
+    private func sharedTagURLCount(remoteTagID: String) -> Int? {
+        sharedTags.first { $0.remoteTagID == remoteTagID }?.activeURLCount
     }
 
     @ViewBuilder
@@ -2091,20 +2028,61 @@ private struct SharedTagGroupScreen: View {
     }
 
     @ViewBuilder
-    private func management(group: SharedTagGroupSummary, cardWidth: CGFloat) -> some View {
+    private func management(
+        group: SharedTagGroupSummary,
+        groupTags: [SharedTagGroupTagSummary],
+        addableTags: [SharedTagSummary],
+        cardWidth: CGFloat
+    ) -> some View {
         AppPanel {
-            Text("管理")
-                .font(.system(size: 18, weight: .heavy, design: .rounded))
-                .foregroundStyle(AppPalette.textPrimary)
-            AppActionButton(tone: .secondary, enabled: group.currentUserRole == .owner) {
-                renameDraft = group.name
-                isShowingRename = true
-            } label: {
-                Text("グループ名を変更")
+            HStack(spacing: 6) {
+                AppActionButton(tone: .secondary, enabled: group.currentUserRole == .owner && !isWorking) {
+                    createInvite(group: group, role: .editor)
+                } label: {
+                    Text("編集者招待")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+                AppActionButton(tone: .secondary, enabled: group.currentUserRole == .owner && !isWorking) {
+                    createInvite(group: group, role: .viewer)
+                } label: {
+                    Text("閲覧招待")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+                AppActionButton(tone: .secondary) {
+                    managementContent = .tagManagement
+                } label: {
+                    Text("共有タグ")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
             }
-            Text("同期エラーがある場合は、再同期後にこの画面へ反映されます。")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(AppPalette.textSecondary)
+            if group.currentUserRole != .owner {
+                Text("招待リンクを作成できるのはグループオーナーだけです。")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(AppPalette.textSecondary)
+            }
+            switch managementContent {
+            case .roleGuide:
+                Divider()
+                Text("権限の違い")
+                    .font(.system(size: 16, weight: .heavy))
+                    .foregroundStyle(AppPalette.textPrimary)
+                roleGuideLine(label: "オーナー:", body: "グループ設定、招待、メンバー管理、配下共有タグの管理ができます。")
+                roleGuideLine(label: "編集者:", body: "配下共有タグにURLを追加・削除できます。")
+                roleGuideLine(label: "閲覧者:", body: "配下共有タグとURLを見られます。編集はできません。")
+                    .padding(.bottom, 2)
+                Text("同期エラーがある場合は、再同期後にこの画面へ反映されます。")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(AppPalette.textSecondary)
+            case .tagManagement:
+                Divider()
+                groupTagManagement(group: group, groupTags: groupTags, addableTags: addableTags)
+            }
             Divider()
             Text("危険な操作")
                 .font(.system(size: 16, weight: .heavy))
@@ -2115,6 +2093,98 @@ private struct SharedTagGroupScreen: View {
             .disabled(group.currentUserRole != .owner)
         }
         .frame(width: cardWidth)
+    }
+
+    @ViewBuilder
+    private func groupTagManagement(
+        group: SharedTagGroupSummary,
+        groupTags: [SharedTagGroupTagSummary],
+        addableTags: [SharedTagSummary]
+    ) -> some View {
+        HStack {
+            Text("共有タグ管理")
+                .font(.system(size: 16, weight: .heavy))
+                .foregroundStyle(AppPalette.textPrimary)
+            Spacer(minLength: 0)
+            Button("権限の違いに戻る") {
+                managementContent = .roleGuide
+            }
+            .font(.system(size: 13, weight: .bold))
+        }
+        if groupTags.isEmpty {
+            Text("このグループには共有タグがありません")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(AppPalette.textSecondary)
+        } else {
+            ForEach(groupTags) { tag in
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(tag.tagName)
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(AppPalette.textPrimary)
+                            .lineLimit(1)
+                        Text(groupTagMetaText(tag: tag))
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(AppPalette.textSecondary)
+                    }
+                    Spacer(minLength: 0)
+                    Button("外す") {
+                        pendingAction = .removeTag(group: group, tag: tag)
+                    }
+                    .font(.system(size: 14, weight: .bold))
+                    .disabled(isWorking || !(group.currentUserRole == .owner || tag.currentUserRole == .owner))
+                }
+                .padding(.vertical, 8)
+            }
+        }
+        Text("共有タグを追加")
+            .font(.system(size: 15, weight: .heavy))
+            .foregroundStyle(AppPalette.textPrimary)
+        if addableTags.isEmpty {
+            Text("追加できるオーナー権限の共有タグはありません。")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(AppPalette.textSecondary)
+        } else {
+            ForEach(addableTags) { tag in
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(tag.name)
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(AppPalette.textPrimary)
+                            .lineLimit(1)
+                        Text("\(tag.activeURLCount)件")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(AppPalette.textSecondary)
+                    }
+                    Spacer(minLength: 0)
+                    Button("追加") {
+                        Task { await addTag(tag, to: group) }
+                    }
+                    .font(.system(size: 14, weight: .bold))
+                    .disabled(isWorking)
+                }
+                .padding(.vertical, 8)
+            }
+        }
+    }
+
+    private func groupTagMetaText(tag: SharedTagGroupTagSummary) -> String {
+        var parts = [tag.currentUserRole?.displayName ?? "同期中"]
+        if let count = sharedTagURLCount(remoteTagID: tag.remoteTagID) {
+            parts.append("\(count)件")
+        }
+        return parts.joined(separator: " / ")
+    }
+
+    private func roleGuideLine(label: String, body: String) -> some View {
+        HStack(alignment: .top, spacing: 0) {
+            Text(label)
+                .frame(width: 70, alignment: .leading)
+            Text(body)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .font(.system(size: 15, weight: .medium))
+        .foregroundStyle(AppPalette.textSecondary)
     }
 
     private func addTag(_ tag: SharedTagSummary, to group: SharedTagGroupSummary) async {
@@ -2171,20 +2241,57 @@ private struct SharedTagGroupScreen: View {
     }
 }
 
+private struct SharedTagGroupTagCard: View {
+    let tag: SharedTagGroupTagSummary
+    let urlCount: Int?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(tag.tagName)
+                .font(.system(size: 18, weight: .heavy, design: .rounded))
+                .foregroundStyle(AppPalette.textPrimary)
+                .lineLimit(1)
+            Text(metaText)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(AppPalette.textSecondary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(AppPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(AppPalette.outlineSoft, lineWidth: 1.5)
+        )
+    }
+
+    private var metaText: String {
+        var parts = [tag.currentUserRole?.displayName ?? "同期中"]
+        if let urlCount {
+            parts.append("\(urlCount)件")
+        }
+        return parts.joined(separator: " / ")
+    }
+}
+
+private enum SharedTagGroupManagementContent {
+    case roleGuide
+    case tagManagement
+}
+
 private enum SharedTagGroupDetailTab: String, CaseIterable, Identifiable {
-    case overview
+    case manage
     case tags
     case members
-    case manage
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .overview: return "概要"
+        case .manage: return "管理"
         case .tags: return "共有タグ"
         case .members: return "メンバー"
-        case .manage: return "管理"
         }
     }
 }

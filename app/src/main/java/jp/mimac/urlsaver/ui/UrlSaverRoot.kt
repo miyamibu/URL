@@ -128,6 +128,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
@@ -1236,7 +1237,7 @@ private fun MainScreen(
         newSharedTagName = sharedTagGroupDialogState.name,
         createSharedTagError = sharedTagGroupDialogState.error,
         title = "グループを作成",
-        body = "グループに招待すると、配下の共有タグをまとめて共有できます。",
+        body = "グループに招待すると、グループ内の共有タグをまとめて共有できます。",
         nameLabel = "グループ名",
         placeholder = "家族 / チーム / 旅行共有 など",
         onDismiss = { closeCreateSharedTagGroupDialog() },
@@ -1464,6 +1465,7 @@ private fun MainScreen(
                             groupTags = selectedGroupTags,
                             members = selectedGroupMembers,
                             onBack = { selectedSharedTagGroupId = null },
+                            onOpenTagDetail = onOpenTagDetail,
                             onAddTag = { addTagToSelectedGroup(it) },
                             onRemoveTag = { pendingGroupAction = GroupActionConfirmation.RemoveTag(it) },
                             onCreateInvite = { createSelectedGroupInvite(it) },
@@ -2613,10 +2615,14 @@ private fun SharedTagGroupListContent(
                     Icon(
                         imageVector = Icons.Outlined.Add,
                         contentDescription = null,
-                        modifier = Modifier.size(18.dp),
+                        modifier = Modifier.size(22.dp),
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("作成")
+                    Text(
+                        text = "作成",
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
                 }
             }
         }
@@ -2627,7 +2633,9 @@ private fun SharedTagGroupListContent(
         } else {
             items(groups, key = { it.id }) { group ->
                 Surface(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onOpenGroup(group) },
                     shape = MaterialTheme.shapes.medium,
                     color = MaterialTheme.colorScheme.surface,
                     tonalElevation = 1.dp,
@@ -2663,14 +2671,6 @@ private fun SharedTagGroupListContent(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End,
-                        ) {
-                            TextButton(onClick = { onOpenGroup(group) }) {
-                                Text("管理")
-                            }
-                        }
                     }
                 }
             }
@@ -2686,6 +2686,7 @@ private fun SharedTagGroupDetailContent(
     groupTags: List<SharedTagGroupTagRecord>,
     members: List<SharedTagGroupMemberRecord>,
     onBack: () -> Unit,
+    onOpenTagDetail: (Long) -> Unit,
     onAddTag: (Long) -> Unit,
     onRemoveTag: (SharedTagGroupTagRecord) -> Unit,
     onCreateInvite: (SharedTagMemberRole) -> Unit,
@@ -2695,7 +2696,7 @@ private fun SharedTagGroupDetailContent(
     onTransferOwnership: (SharedTagGroupMemberRecord) -> Unit,
     onRemoveMember: (SharedTagGroupMemberRecord) -> Unit,
 ) {
-    var selectedTab by rememberSaveable(group.id) { mutableStateOf(SharedTagGroupDetailTab.OVERVIEW) }
+    var selectedTab by rememberSaveable(group.id) { mutableStateOf(SharedTagGroupDetailTab.MANAGE) }
     val groupTagIds = remember(groupTags) { groupTags.map { it.tagId }.toSet() }
     val addableTags = remember(allTags, groupTagIds) {
         allTags
@@ -2707,6 +2708,7 @@ private fun SharedTagGroupDetailContent(
             }
             .sortedBy { it.name }
     }
+    val tagUrlCounts = remember(allTags) { allTags.associate { it.id to it.urlCount } }
     val isOwner = group.currentUserRole == SharedTagMemberRole.OWNER
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -2714,97 +2716,63 @@ private fun SharedTagGroupDetailContent(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "戻る")
-                }
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = group.name,
-                        style = MaterialTheme.typography.titleLarge,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = "権限: ${sharedTagRoleLabel(group.currentUserRole)} / 共有タグ ${groupTags.size}件 / メンバー ${members.size}人",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
-        item {
-            GroupRelationshipCard()
-        }
-        item {
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                SharedTagGroupDetailTab.entries.forEach { tab ->
-                    OutlinedButton(
-                        onClick = { selectedTab = tab },
-                        colors = if (selectedTab == tab) {
-                            ButtonDefaults.outlinedButtonColors(
-                                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                            )
-                        } else {
-                            ButtonDefaults.outlinedButtonColors()
-                        },
-                    ) {
-                        Text(tab.label)
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "戻る")
                     }
+                    Text(
+                        text = "グループ",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
                 }
+                GroupDetailSummaryCard(
+                    group = group,
+                    groupTags = groupTags,
+                    members = members,
+                    isOwner = isOwner,
+                    onRenameGroup = onRenameGroup,
+                )
             }
+        }
+        item {
+            SharedTagGroupDetailTabSwitcher(
+                selectedTab = selectedTab,
+                onSelectTab = { selectedTab = it },
+            )
         }
         when (selectedTab) {
-            SharedTagGroupDetailTab.OVERVIEW -> {
+            SharedTagGroupDetailTab.MANAGE -> {
                 item {
-                    GroupOverviewPanel(
+                    GroupManagePanel(
+                        groupId = group.id,
                         isOwner = isOwner,
+                        groupTags = groupTags,
+                        addableTags = addableTags,
+                        tagUrlCounts = tagUrlCounts,
+                        onAddTag = onAddTag,
+                        onRemoveTag = onRemoveTag,
                         onCreateInvite = onCreateInvite,
-                        onShowTags = { selectedTab = SharedTagGroupDetailTab.TAGS },
+                        onDeleteGroup = onDeleteGroup,
                     )
-                }
-                item {
-                    GroupRoleGuide()
                 }
             }
             SharedTagGroupDetailTab.TAGS -> {
-                item {
-                    Text("配下の共有タグ", style = MaterialTheme.typography.titleMedium)
-                }
                 if (groupTags.isEmpty()) {
                     item { EmptyState(title = "このグループには共有タグがありません") }
                 } else {
                     items(groupTags, key = { "${it.groupId}:${it.tagId}" }) { tag ->
-                        SharedTagGroupTagRow(
+                        SharedTagGroupTagCard(
                             tag = tag,
-                            canRemove = isOwner || tag.currentUserRole == SharedTagMemberRole.OWNER,
-                            onRemove = { onRemoveTag(tag) },
+                            urlCount = tagUrlCounts[tag.tagId],
+                            onClick = { onOpenTagDetail(tag.tagId) },
                         )
-                    }
-                }
-                item {
-                    Text("共有タグを追加", style = MaterialTheme.typography.titleMedium)
-                }
-                if (addableTags.isEmpty()) {
-                    item {
-                        Text(
-                            text = "追加できるオーナー権限の共有タグはありません。",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(bottom = 4.dp),
-                        )
-                    }
-                } else {
-                    items(addableTags, key = { it.id }) { tag ->
-                        SharedTagGroupAddableTagRow(tag = tag, onAdd = { onAddTag(tag.id) })
                     }
                 }
             }
@@ -2826,12 +2794,102 @@ private fun SharedTagGroupDetailContent(
                     }
                 }
             }
-            SharedTagGroupDetailTab.MANAGE -> {
-                item {
-                    GroupManagePanel(
-                        isOwner = isOwner,
-                        onRenameGroup = onRenameGroup,
-                        onDeleteGroup = onDeleteGroup,
+        }
+    }
+}
+
+@Composable
+private fun GroupDetailSummaryCard(
+    group: SharedTagGroupRecord,
+    groupTags: List<SharedTagGroupTagRecord>,
+    members: List<SharedTagGroupMemberRecord>,
+    isOwner: Boolean,
+    onRenameGroup: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Box(
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 18.dp),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(end = 56.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = group.name,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = "権限:${sharedTagRoleLabel(group.currentUserRole)} / 共有タグ ${groupTags.size}件 / メンバー ${members.size}人",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Clip,
+                )
+            }
+            IconButton(
+                enabled = isOwner,
+                onClick = onRenameGroup,
+                modifier = Modifier.align(Alignment.CenterEnd),
+            ) {
+                Icon(Icons.Outlined.Edit, contentDescription = "グループ名を変更")
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedTagGroupDetailTabSwitcher(
+    selectedTab: SharedTagGroupDetailTab,
+    onSelectTab: (SharedTagGroupDetailTab) -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(56.dp),
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
+    ) {
+        Row(
+            modifier = Modifier.padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SharedTagGroupDetailTab.entries.forEach { tab ->
+                val selected = selectedTab == tab
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(
+                            if (selected) {
+                                MaterialTheme.colorScheme.surface
+                            } else {
+                                Color.Transparent
+                            },
+                        )
+                        .clickable { onSelectTab(tab) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = tab.label,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = if (selected) {
+                            MaterialTheme.colorScheme.onSurface
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                     )
                 }
             }
@@ -2840,83 +2898,45 @@ private fun SharedTagGroupDetailContent(
 }
 
 @Composable
-private fun GroupRelationshipCard() {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.primaryContainer,
+private fun GroupRoleGuideText() {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text("このグループに参加すると、配下の共有タグがまとめて見えます", style = MaterialTheme.typography.titleMedium)
-            Text("グループ → 共有タグ → URL", style = MaterialTheme.typography.bodyLarge)
-            Text("参加者 → グループ内の共有タグをまとめて利用", style = MaterialTheme.typography.bodyMedium)
-        }
+        Text("権限の違い", style = MaterialTheme.typography.titleSmall)
+        GroupRoleGuideLine(
+            label = "オーナー:",
+            body = "グループ設定、招待、メンバー管理、配下共有タグの管理ができます。",
+        )
+        GroupRoleGuideLine(
+            label = "編集者:",
+            body = "配下共有タグにURLを追加・削除できます。",
+        )
+        GroupRoleGuideLine(
+            label = "閲覧者:",
+            body = "配下共有タグとURLを見られます。編集はできません。",
+        )
     }
 }
 
 @Composable
-private fun GroupOverviewPanel(
-    isOwner: Boolean,
-    onCreateInvite: (SharedTagMemberRole) -> Unit,
-    onShowTags: () -> Unit,
+private fun GroupRoleGuideLine(
+    label: String,
+    body: String,
 ) {
-    Surface(
+    Row(
         modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        verticalAlignment = Alignment.Top,
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text("招待", style = MaterialTheme.typography.titleMedium)
-            Button(
-                enabled = isOwner,
-                onClick = { onCreateInvite(SharedTagMemberRole.EDITOR) },
-            ) {
-                Text("編集者として招待")
-            }
-            OutlinedButton(
-                enabled = isOwner,
-                onClick = { onCreateInvite(SharedTagMemberRole.VIEWER) },
-            ) {
-                Text("閲覧のみで招待")
-            }
-            if (!isOwner) {
-                Text(
-                    text = "招待リンクを作成できるのはグループオーナーだけです。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            OutlinedButton(onClick = onShowTags) {
-                Text("共有タグを追加・確認")
-            }
-        }
-    }
-}
-
-@Composable
-private fun GroupRoleGuide() {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text("権限の違い", style = MaterialTheme.typography.titleMedium)
-            Text("オーナー: グループ設定、招待、メンバー管理、配下共有タグの管理ができます。")
-            Text("編集者: 配下共有タグにURLを追加・削除できます。")
-            Text("閲覧者: 配下共有タグとURLを見られます。編集はできません。")
-        }
+        Text(
+            text = label,
+            modifier = Modifier.width(72.dp),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Text(
+            text = body,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium,
+        )
     }
 }
 
@@ -3031,10 +3051,17 @@ private fun SharedTagGroupMemberRow(
 
 @Composable
 private fun GroupManagePanel(
+    groupId: Long,
     isOwner: Boolean,
-    onRenameGroup: () -> Unit,
+    groupTags: List<SharedTagGroupTagRecord>,
+    addableTags: List<TagWithCount>,
+    tagUrlCounts: Map<Long, Int>,
+    onAddTag: (Long) -> Unit,
+    onRemoveTag: (SharedTagGroupTagRecord) -> Unit,
+    onCreateInvite: (SharedTagMemberRole) -> Unit,
     onDeleteGroup: () -> Unit,
 ) {
+    var contentMode by rememberSaveable(groupId) { mutableStateOf(GroupManageContentMode.ROLE_GUIDE) }
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.medium,
@@ -3045,11 +3072,52 @@ private fun GroupManagePanel(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("管理", style = MaterialTheme.typography.titleMedium)
-            OutlinedButton(enabled = isOwner, onClick = onRenameGroup) {
-                Text("グループ名を変更")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                GroupManageActionButton(
+                    text = "編集者招待",
+                    enabled = isOwner,
+                    onClick = { onCreateInvite(SharedTagMemberRole.EDITOR) },
+                    modifier = Modifier.weight(1f),
+                )
+                GroupManageActionButton(
+                    text = "閲覧者招待",
+                    enabled = isOwner,
+                    onClick = { onCreateInvite(SharedTagMemberRole.VIEWER) },
+                    modifier = Modifier.weight(1f),
+                )
+                GroupManageActionButton(
+                    text = "共有タグ",
+                    onClick = { contentMode = GroupManageContentMode.TAG_MANAGEMENT },
+                    modifier = Modifier.weight(1f),
+                )
             }
-            Text("同期エラーがある場合は、再同期後にこの画面へ反映されます。", style = MaterialTheme.typography.bodySmall)
+            if (!isOwner) {
+                Text(
+                    text = "招待リンクを作成できるのはグループオーナーだけです。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            when (contentMode) {
+                GroupManageContentMode.ROLE_GUIDE -> {
+                    GroupRoleGuideText()
+                    Text("同期エラーがある場合は、再同期後にこの画面へ反映されます。", style = MaterialTheme.typography.bodySmall)
+                }
+                GroupManageContentMode.TAG_MANAGEMENT -> {
+                    GroupTagManagementContent(
+                        isOwner = isOwner,
+                        groupTags = groupTags,
+                        addableTags = addableTags,
+                        tagUrlCounts = tagUrlCounts,
+                        onAddTag = onAddTag,
+                        onRemoveTag = onRemoveTag,
+                        onBackToRoleGuide = { contentMode = GroupManageContentMode.ROLE_GUIDE },
+                    )
+                }
+            }
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = MaterialTheme.shapes.medium,
@@ -3070,6 +3138,63 @@ private fun GroupManagePanel(
     }
 }
 
+@Composable
+private fun GroupTagManagementContent(
+    isOwner: Boolean,
+    groupTags: List<SharedTagGroupTagRecord>,
+    addableTags: List<TagWithCount>,
+    tagUrlCounts: Map<Long, Int>,
+    onAddTag: (Long) -> Unit,
+    onRemoveTag: (SharedTagGroupTagRecord) -> Unit,
+    onBackToRoleGuide: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text("共有タグ管理", style = MaterialTheme.typography.titleSmall)
+            TextButton(onClick = onBackToRoleGuide) {
+                Text("権限の違いに戻る")
+            }
+        }
+        if (groupTags.isEmpty()) {
+            Text(
+                text = "このグループには共有タグがありません",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            groupTags.forEach { tag ->
+                SharedTagGroupTagRow(
+                    tag = tag,
+                    urlCount = tagUrlCounts[tag.tagId],
+                    canRemove = isOwner || tag.currentUserRole == SharedTagMemberRole.OWNER,
+                    onRemove = { onRemoveTag(tag) },
+                )
+            }
+        }
+        Text("共有タグを追加", style = MaterialTheme.typography.titleSmall)
+        if (addableTags.isEmpty()) {
+            Text(
+                text = "追加できるオーナー権限の共有タグはありません。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            addableTags.forEach { tag ->
+                SharedTagGroupAddableTagRow(tag = tag, onAdd = { onAddTag(tag.id) })
+            }
+        }
+    }
+}
+
+private enum class GroupManageContentMode {
+    ROLE_GUIDE,
+    TAG_MANAGEMENT,
+}
+
 private fun memberLabel(member: SharedTagGroupMemberRecord): String {
     return when {
         member.isCurrentUser -> "あなた"
@@ -3078,11 +3203,35 @@ private fun memberLabel(member: SharedTagGroupMemberRecord): String {
     }
 }
 
+@Composable
+private fun GroupManageActionButton(
+    text: String,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    OrbitActionButton(
+        onClick = onClick,
+        modifier = modifier.height(58.dp),
+        enabled = enabled,
+        style = OrbitActionStyle.SECONDARY,
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 2.dp, vertical = 0.dp),
+    ) {
+        Text(
+            text = text,
+            modifier = Modifier.fillMaxWidth(),
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Clip,
+            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+        )
+    }
+}
+
 private enum class SharedTagGroupDetailTab(val label: String) {
-    OVERVIEW("概要"),
+    MANAGE("管理"),
     TAGS("共有タグ"),
     MEMBERS("メンバー"),
-    MANAGE("管理"),
 }
 
 private sealed interface GroupActionConfirmation {
@@ -3145,6 +3294,7 @@ private sealed interface GroupActionConfirmation {
 @Composable
 private fun SharedTagGroupTagRow(
     tag: SharedTagGroupTagRecord,
+    urlCount: Int?,
     canRemove: Boolean,
     onRemove: () -> Unit,
 ) {
@@ -3167,7 +3317,10 @@ private fun SharedTagGroupTagRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = "あなたのタグ権限: ${sharedTagRoleLabel(tag.currentUserRole)}",
+                    text = buildString {
+                        append("あなたのタグ権限: ${sharedTagRoleLabel(tag.currentUserRole)}")
+                        if (urlCount != null) append(" / ${urlCount}件")
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -3178,6 +3331,42 @@ private fun SharedTagGroupTagRow(
             ) {
                 Text("外す")
             }
+        }
+    }
+}
+
+@Composable
+private fun SharedTagGroupTagCard(
+    tag: SharedTagGroupTagRecord,
+    urlCount: Int?,
+    onClick: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = tag.tagName,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = buildString {
+                    append(sharedTagRoleLabel(tag.currentUserRole))
+                    if (urlCount != null) append(" / ${urlCount}件")
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
