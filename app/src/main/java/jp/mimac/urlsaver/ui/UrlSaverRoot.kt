@@ -76,6 +76,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ScaffoldDefaults
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -1321,83 +1322,91 @@ private fun MainScreen(
         }
     }
 
-    val showMainBottomBar = !selectionModeActive && selectedEntryIds.isEmpty() && !showUsageGuide
+    val isGroupPane = mainPane == MainPane.GROUPS && showSharedTagCloudUi && !showUsageGuide
+    val showMainBottomBar = !selectionModeActive && selectedEntryIds.isEmpty() && !showUsageGuide && !isGroupPane
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             containerColor = MaterialTheme.colorScheme.background,
+            contentWindowInsets = if (isGroupPane) {
+                WindowInsets(0.dp)
+            } else {
+                ScaffoldDefaults.contentWindowInsets
+            },
             topBar = {
-                TopAppBar(
-                    title = { Text("りんばむ") },
-                    colors = orbitTopAppBarColors(),
-                    windowInsets = compactTopAppBarInsets(),
-                    actions = {
-                        IconButton(onClick = { viewModel.toggleEntryCardDisplayMode() }) {
-                            Icon(
-                                imageVector = if (entryCardDisplayMode == EntryCardDisplayMode.RICH) {
-                                    Icons.AutoMirrored.Outlined.ViewList
-                                } else {
-                                    Icons.Outlined.ViewAgenda
-                                },
-                                contentDescription = if (entryCardDisplayMode == EntryCardDisplayMode.RICH) {
-                                    "画像なし表示へ切り替える"
-                                } else {
-                                    "画像つき表示へ切り替える"
-                                },
-                                modifier = Modifier.size(MainTopBarActionIconSize),
-                            )
-                        }
-                        IconButton(onClick = { showProfileSheet = true }) {
-                            Icon(
-                                Icons.Outlined.AccountCircle,
-                                contentDescription = "プロフィール",
-                                modifier = Modifier.size(MainTopBarActionIconSize),
-                            )
-                        }
-                        IconButton(onClick = {
-                            if (!selectionModeActive) {
-                                selectionModeActive = true
-                                selectedEntryIds = emptySet()
+                if (!isGroupPane) {
+                    TopAppBar(
+                        title = { Text("りんばむ") },
+                        colors = orbitTopAppBarColors(),
+                        windowInsets = compactTopAppBarInsets(),
+                        actions = {
+                            IconButton(onClick = { viewModel.toggleEntryCardDisplayMode() }) {
+                                Icon(
+                                    imageVector = if (entryCardDisplayMode == EntryCardDisplayMode.RICH) {
+                                        Icons.AutoMirrored.Outlined.ViewList
+                                    } else {
+                                        Icons.Outlined.ViewAgenda
+                                    },
+                                    contentDescription = if (entryCardDisplayMode == EntryCardDisplayMode.RICH) {
+                                        "画像なし表示へ切り替える"
+                                    } else {
+                                        "画像つき表示へ切り替える"
+                                    },
+                                    modifier = Modifier.size(MainTopBarActionIconSize),
+                                )
                             }
-                        }) {
-                            Icon(
-                                Icons.Outlined.ChecklistRtl,
-                                contentDescription = "選択",
-                                modifier = Modifier.size(MainTopBarActionIconSize),
-                            )
-                        }
-                        IconButton(onClick = {
-                            selectedEntryIds = emptySet()
-                            selectionModeActive = false
-                            searchQueryLocal = ""
-                            searchBarVisible = false
-                            mainPane = MainPane.URLS
-                            showUsageGuide = true
-                        }) {
-                            Icon(
-                                Icons.Outlined.MenuBook,
-                                contentDescription = "使い方",
-                                modifier = Modifier.size(MainTopBarActionIconSize),
-                            )
-                        }
-                        IconButton(onClick = {
-                            if (showUsageGuide) {
-                                showUsageGuide = false
-                                searchBarVisible = true
-                            } else if (searchBarVisible) {
+                            IconButton(onClick = { showProfileSheet = true }) {
+                                Icon(
+                                    Icons.Outlined.AccountCircle,
+                                    contentDescription = "プロフィール",
+                                    modifier = Modifier.size(MainTopBarActionIconSize),
+                                )
+                            }
+                            IconButton(onClick = {
+                                if (!selectionModeActive) {
+                                    selectionModeActive = true
+                                    selectedEntryIds = emptySet()
+                                }
+                            }) {
+                                Icon(
+                                    Icons.Outlined.ChecklistRtl,
+                                    contentDescription = "選択",
+                                    modifier = Modifier.size(MainTopBarActionIconSize),
+                                )
+                            }
+                            IconButton(onClick = {
+                                selectedEntryIds = emptySet()
+                                selectionModeActive = false
                                 searchQueryLocal = ""
                                 searchBarVisible = false
-                            } else {
-                                searchBarVisible = true
+                                mainPane = MainPane.URLS
+                                showUsageGuide = true
+                            }) {
+                                Icon(
+                                    Icons.Outlined.MenuBook,
+                                    contentDescription = "使い方",
+                                    modifier = Modifier.size(MainTopBarActionIconSize),
+                                )
                             }
-                        }) {
-                            Icon(
-                                Icons.Outlined.Search,
-                                contentDescription = "検索",
-                                modifier = Modifier.size(MainTopBarActionIconSize),
-                            )
-                        }
-                    },
-                )
+                            IconButton(onClick = {
+                                if (showUsageGuide) {
+                                    showUsageGuide = false
+                                    searchBarVisible = true
+                                } else if (searchBarVisible) {
+                                    searchQueryLocal = ""
+                                    searchBarVisible = false
+                                } else {
+                                    searchBarVisible = true
+                                }
+                            }) {
+                                Icon(
+                                    Icons.Outlined.Search,
+                                    contentDescription = "検索",
+                                    modifier = Modifier.size(MainTopBarActionIconSize),
+                                )
+                            }
+                        },
+                    )
+                }
             },
             bottomBar = {},
         ) { paddingValues ->
@@ -2604,12 +2613,17 @@ private fun SharedTagGroupListContent(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "戻る")
+                    Icon(
+                        Icons.AutoMirrored.Outlined.ArrowBack,
+                        contentDescription = "戻る",
+                        modifier = Modifier.size(34.dp),
+                    )
                 }
                 Text(
                     text = "グループ",
-                    style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold,
                 )
                 Button(onClick = onCreateGroup) {
                     Icon(
@@ -2720,12 +2734,16 @@ private fun SharedTagGroupDetailContent(
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "戻る")
-                    }
-                    Text(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(
+                        Icons.AutoMirrored.Outlined.ArrowBack,
+                        contentDescription = "戻る",
+                        modifier = Modifier.size(34.dp),
+                    )
+                }
+                Text(
                         text = "グループ",
                         modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.headlineMedium,
