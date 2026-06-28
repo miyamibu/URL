@@ -2,6 +2,8 @@ package jp.mimac.urlsaver
 
 import jp.mimac.urlsaver.data.MainListRepository
 import jp.mimac.urlsaver.data.EntryCardDisplayModeStore
+import jp.mimac.urlsaver.data.CollectionEntity
+import jp.mimac.urlsaver.data.LocalTagEntryRef
 import jp.mimac.urlsaver.data.UrlEntryEntity
 import jp.mimac.urlsaver.domain.ContentContext
 import jp.mimac.urlsaver.domain.EntryCardDisplayMode
@@ -10,6 +12,8 @@ import jp.mimac.urlsaver.domain.RecordState
 import jp.mimac.urlsaver.domain.SaveResult
 import jp.mimac.urlsaver.domain.ServiceType
 import jp.mimac.urlsaver.domain.ShareSaveResult
+import jp.mimac.urlsaver.domain.TagWithCount
+import jp.mimac.urlsaver.ui.filterEntriesBySearch
 import jp.mimac.urlsaver.ui.MainListViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
@@ -68,6 +72,36 @@ class MainListViewModelTest {
     }
 
     @Test
+    fun archiveEntries_returnsOnlySuccessfulIds() = runTest {
+        val repository = FakeRepository().apply {
+            archiveResultsById[1L] = true
+            archiveResultsById[2L] = false
+            archiveResultsById[3L] = true
+        }
+        val viewModel = MainListViewModel(repository, FakeDisplayModeStore())
+
+        val archivedIds = viewModel.archiveEntries(listOf(1L, 2L, 3L))
+
+        assertEquals(listOf(1L, 3L), archivedIds)
+        assertEquals(listOf(1L, 2L, 3L), repository.archiveCalls)
+    }
+
+    @Test
+    fun markPendingDeleteEntries_returnsOnlySuccessfulPendingDeletes() = runTest {
+        val repository = FakeRepository().apply {
+            pendingDeleteResultsById[1L] = 1_001L
+            pendingDeleteResultsById[2L] = null
+            pendingDeleteResultsById[3L] = 1_003L
+        }
+        val viewModel = MainListViewModel(repository, FakeDisplayModeStore())
+
+        val pendingDeletions = viewModel.markPendingDeleteEntries(listOf(1L, 2L, 3L))
+
+        assertEquals(mapOf(1L to 1_001L, 3L to 1_003L), pendingDeletions)
+        assertEquals(listOf(1L, 2L, 3L), repository.pendingDeleteCalls)
+    }
+
+    @Test
     @OptIn(ExperimentalCoroutinesApi::class)
     fun uiState_filtersBySelectedCollection() = runTest {
         val repository = FakeRepository().apply {
@@ -116,16 +150,59 @@ class MainListViewModelTest {
         assertEquals(listOf(EntryCardDisplayMode.COMPACT), store.setCalls)
     }
 
+    @Test
+    fun filterEntriesBySearch_matchesOnlyEntryAssignedTagName() {
+        val entries = listOf(
+            entry(id = 1L, serviceType = ServiceType.WEB, collectionId = 1L),
+            entry(id = 2L, serviceType = ServiceType.WEB, collectionId = 1L),
+        )
+
+        val result = filterEntriesBySearch(
+            entries = entries,
+            query = "旅行",
+            collections = emptyList(),
+            tags = listOf(TagWithCount(id = 10L, name = "旅行", urlCount = 1)),
+            localTagEntryRefs = listOf(LocalTagEntryRef(tagId = 10L, entryId = 2L)),
+        )
+
+        assertEquals(listOf(2L), result.map { it.id })
+    }
+
+    @Test
+    fun filterEntriesBySearch_matchesOwnCollectionName() {
+        val entries = listOf(
+            entry(id = 1L, serviceType = ServiceType.WEB, collectionId = 10L),
+            entry(id = 2L, serviceType = ServiceType.WEB, collectionId = 11L),
+        )
+
+        val result = filterEntriesBySearch(
+            entries = entries,
+            query = "資料",
+            collections = listOf(
+                CollectionEntity(id = 10L, name = "仕事資料", sortOrder = 0, createdAt = 0L, updatedAt = 0L),
+                CollectionEntity(id = 11L, name = "料理", sortOrder = 1, createdAt = 0L, updatedAt = 0L),
+            ),
+            tags = emptyList(),
+            localTagEntryRefs = emptyList(),
+        )
+
+        assertEquals(listOf(1L), result.map { it.id })
+    }
+
     private class FakeRepository : MainListRepository {
         val archiveCalls = mutableListOf<Long>()
         val pendingDeleteCalls = mutableListOf<Long>()
         val manualInputCalls = mutableListOf<Pair<String, Long?>>()
         val activeEntries = MutableStateFlow<List<UrlEntryEntity>>(emptyList())
+        val localTagEntryRefs = MutableStateFlow<List<LocalTagEntryRef>>(emptyList())
+        val archiveResultsById = mutableMapOf<Long, Boolean>()
+        val pendingDeleteResultsById = mutableMapOf<Long, Long?>()
         var archiveResult: Boolean = false
         var pendingDeleteResult: Long? = null
         var manualSaveResult: SaveResult = SaveResult(ShareSaveResult.SAVE_FAILED)
 
         override fun observeActiveEntries(): Flow<List<UrlEntryEntity>> = activeEntries
+        override fun observeLocalTagEntryRefs(): Flow<List<LocalTagEntryRef>> = localTagEntryRefs
 
         override suspend fun saveFromManualInput(input: String): SaveResult = saveFromManualInput(input, collectionId = null)
 
@@ -136,12 +213,16 @@ class MainListViewModelTest {
 
         override suspend fun archive(entryId: Long): Boolean {
             archiveCalls += entryId
-            return archiveResult
+            return archiveResultsById[entryId] ?: archiveResult
         }
 
         override suspend fun markPendingDelete(entryId: Long, gracePeriodMillis: Long): Long? {
             pendingDeleteCalls += entryId
-            return pendingDeleteResult
+            return if (pendingDeleteResultsById.containsKey(entryId)) {
+                pendingDeleteResultsById[entryId]
+            } else {
+                pendingDeleteResult
+            }
         }
     }
 

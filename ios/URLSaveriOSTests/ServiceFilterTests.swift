@@ -13,6 +13,47 @@ final class ServiceFilterTests: XCTestCase {
         XCTAssertEqual(filteredEntries([tiktok, web], selectedService: .tiktok).map(\.id), [1])
     }
 
+    func testSearchFilteredEntriesMatchesOnlyAssignedLocalTagName() {
+        let first = makeRecord(id: 1, serviceType: .web, host: "example.com")
+        let second = makeRecord(id: 2, serviceType: .web, host: "travel.example.com")
+        let travel = URLSaveriOS.LocalTagSummary(
+            id: 10,
+            name: "旅行",
+            activeURLCount: 1,
+            createdAt: .distantPast,
+            updatedAt: .distantPast
+        )
+
+        let result = searchFilteredEntries(
+            [first, second],
+            query: "旅行",
+            localTags: [travel],
+            localTagAssignments: [2: [10]]
+        )
+
+        XCTAssertEqual(result.map(\.id), [2])
+    }
+
+    func testSearchFilteredEntriesDoesNotMatchUnassignedLocalTagName() {
+        let first = makeRecord(id: 1, serviceType: .web, host: "example.com")
+        let travel = URLSaveriOS.LocalTagSummary(
+            id: 10,
+            name: "旅行",
+            activeURLCount: 0,
+            createdAt: .distantPast,
+            updatedAt: .distantPast
+        )
+
+        let result = searchFilteredEntries(
+            [first],
+            query: "旅行",
+            localTags: [travel],
+            localTagAssignments: [:]
+        )
+
+        XCTAssertTrue(result.isEmpty)
+    }
+
     func testSwipeActionTriggerMatchesAndroidThreshold() {
         XCTAssertEqual(swipeActionTriggerWidth(containerWidth: 360), 144)
     }
@@ -161,6 +202,7 @@ final class ServiceFilterTests: XCTestCase {
             openURL: "https://\(host)/",
             normalizedHost: host,
             rawSourceHost: host,
+            collectionID: 1,
             serviceType: serviceType,
             contentContext: .standard,
             userTitle: nil,

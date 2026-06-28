@@ -571,6 +571,15 @@ struct LocalTagSummary: Identifiable, Equatable, Sendable {
     let updatedAt: Date
 }
 
+struct CollectionSummary: Identifiable, Equatable, Sendable {
+    let id: Int64
+    let name: String
+    let sortOrder: Int
+    let activeURLCount: Int
+    let createdAt: Date
+    let updatedAt: Date
+}
+
 struct TagSharePayload: Codable, Equatable, Sendable {
     let urlsaverVersion: Int
     let tag: String
@@ -642,6 +651,7 @@ struct URLRecord: Identifiable, Equatable, Sendable {
     let openURL: String
     let normalizedHost: String
     let rawSourceHost: String
+    let collectionID: Int64
     let serviceType: ServiceType
     let contentContext: ContentContext
     let userTitle: String?

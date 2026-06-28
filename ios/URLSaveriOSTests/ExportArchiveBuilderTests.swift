@@ -84,6 +84,7 @@ final class ExportArchiveBuilderTests: XCTestCase {
             openURL: "https://\(host)/",
             normalizedHost: host,
             rawSourceHost: host,
+            collectionID: 1,
             serviceType: .web,
             contentContext: .standard,
             userTitle: nil,

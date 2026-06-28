@@ -59,7 +59,12 @@ struct RootView: View {
                 selectedLocalTagID: selectedMainLocalTagID,
                 localTagAssignments: model.localTagAssignments
             )
-            let mainDisplayedEntries = searchFilteredEntries(mainVisibleEntries, query: searchQuery)
+            let mainDisplayedEntries = searchFilteredEntries(
+                mainVisibleEntries,
+                query: searchQuery,
+                localTags: model.localTags,
+                localTagAssignments: model.localTagAssignments
+            )
             let showsSharedTagCloud = shouldShowSharedTagCloudEntryPoints(
                 isConfigured: model.sharedTagCloudState.isConfigured,
                 hasSharedTags: !model.sharedTags.isEmpty || !model.sharedTagGroups.isEmpty,
@@ -1520,11 +1525,19 @@ private struct OnboardingGuidePanel: View {
     }
 }
 
-private func searchFilteredEntries(_ entries: [URLRecord], query: String) -> [URLRecord] {
+func searchFilteredEntries(
+    _ entries: [URLRecord],
+    query: String,
+    localTags: [LocalTagSummary] = [],
+    localTagAssignments: [Int64: Set<Int64>] = [:]
+) -> [URLRecord] {
     let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     guard !needle.isEmpty else { return entries }
+    let localTagNamesByID = Dictionary(uniqueKeysWithValues: localTags.map { ($0.id, $0.name.lowercased()) })
     return entries.filter { entry in
-        [
+        let entryLocalTagNames = (localTagAssignments[entry.id] ?? [])
+            .compactMap { localTagNamesByID[$0] }
+        return [
             entry.originalURL,
             entry.normalizedURL,
             entry.displayURL,
@@ -1540,6 +1553,7 @@ private func searchFilteredEntries(_ entries: [URLRecord], query: String) -> [UR
             entry.memo,
             entry.effectiveTitle,
         ].contains { $0.lowercased().contains(needle) }
+            || entryLocalTagNames.contains { $0.contains(needle) }
     }
 }
 

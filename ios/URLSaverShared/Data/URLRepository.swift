@@ -106,6 +106,117 @@ final class URLRepository: @unchecked Sendable {
         }
     }
 
+    func loadCollections() throws -> [CollectionSummary] {
+        try database.fetchMany(
+            sql: """
+            SELECT
+                collections.id,
+                collections.name,
+                collections.sort_order,
+                COUNT(CASE
+                    WHEN url_entries.local_provenance_count > 0
+                        AND url_entries.record_state = 'ACTIVE'
+                    THEN 1
+                END) AS active_url_count,
+                collections.created_at,
+                collections.updated_at
+            FROM collections
+            LEFT JOIN url_entries
+                ON url_entries.collection_id = collections.id
+            GROUP BY collections.id
+            ORDER BY collections.sort_order ASC, collections.id ASC;
+            """
+        ) { statement in
+            CollectionSummary(
+                id: sqlite3_column_int64(statement, 0),
+                name: textColumn(statement, index: 1) ?? "",
+                sortOrder: Int(sqlite3_column_int(statement, 2)),
+                activeURLCount: Int(sqlite3_column_int(statement, 3)),
+                createdAt: dateColumn(statement, index: 4) ?? Date(timeIntervalSince1970: 0),
+                updatedAt: dateColumn(statement, index: 5) ?? Date(timeIntervalSince1970: 0)
+            )
+        }
+    }
+
+    func createCollection(name rawName: String) throws -> CollectionSummary? {
+        guard let normalized = normalizeCollectionName(rawName) else { return nil }
+        if let existing = try loadCollectionByNormalizedName(normalized.key) {
+            return existing
+        }
+        let now = Date()
+        let nextSortOrder = (try database.fetchInt("SELECT COALESCE(MAX(sort_order), 0) FROM collections;") ?? 0) + 1
+        let id = try insert(
+            sql: """
+            INSERT INTO collections (name, normalized_name, sort_order, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?);
+            """,
+            binds: [
+                sql(normalized.name),
+                sql(normalized.key),
+                sql(nextSortOrder),
+                sql(now.timeIntervalSince1970),
+                sql(now.timeIntervalSince1970),
+            ]
+        )
+        return CollectionSummary(
+            id: id,
+            name: normalized.name,
+            sortOrder: nextSortOrder,
+            activeURLCount: 0,
+            createdAt: now,
+            updatedAt: now
+        )
+    }
+
+    func assignCollection(entryID: Int64, collectionID: Int64) throws -> Bool {
+        guard try loadEntry(id: entryID) != nil,
+              try loadCollection(id: collectionID) != nil else {
+            return false
+        }
+        try execute(
+            """
+            UPDATE url_entries
+            SET collection_id = ?,
+                updated_at = ?
+            WHERE id = ?;
+            """,
+            binds: [sql(collectionID), sql(Date().timeIntervalSince1970), sql(entryID)]
+        )
+        return true
+    }
+
+    func reorderCollections(collectionIDs: [Int64]) throws -> Bool {
+        let customCollections = try loadCollections().filter { $0.id != defaultCollectionID }
+        let customIDs = Set(customCollections.map(\.id))
+        guard Set(collectionIDs) == customIDs else { return false }
+        let now = Date().timeIntervalSince1970
+        try database.transaction {
+            for (index, collectionID) in collectionIDs.enumerated() {
+                try execute(
+                    "UPDATE collections SET sort_order = ?, updated_at = ? WHERE id = ?;",
+                    binds: [sql(index + 1), sql(now), sql(collectionID)]
+                )
+            }
+        }
+        return true
+    }
+
+    func deleteCollection(id collectionID: Int64) throws -> Bool {
+        guard let collection = try loadCollection(id: collectionID),
+              collection.id != defaultCollectionID,
+              collection.name != defaultCollectionName else {
+            return false
+        }
+        try database.transaction {
+            try execute(
+                "UPDATE url_entries SET collection_id = ?, updated_at = ? WHERE collection_id = ?;",
+                binds: [sql(defaultCollectionID), sql(Date().timeIntervalSince1970), sql(collectionID)]
+            )
+            try execute("DELETE FROM collections WHERE id = ?;", binds: [sql(collectionID)])
+        }
+        return true
+    }
+
     func loadLocalTagAssignments() throws -> [Int64: Set<Int64>] {
         let pairs = try database.fetchMany(
             sql: "SELECT entry_id, tag_id FROM local_tag_entries;"
@@ -760,6 +871,58 @@ final class URLRepository: @unchecked Sendable {
         return (name, name.lowercased())
     }
 
+    private func normalizeCollectionName(_ rawName: String) -> (name: String, key: String)? {
+        let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= 40 else { return nil }
+        let name = trimmed
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+        guard !name.isEmpty else { return nil }
+        return (name, name.lowercased())
+    }
+
+    private func loadCollection(id collectionID: Int64) throws -> CollectionSummary? {
+        try database.fetchOne(
+            sql: """
+            SELECT id, name, sort_order, 0 AS active_url_count, created_at, updated_at
+            FROM collections
+            WHERE id = ?
+            LIMIT 1;
+            """,
+            binds: [sql(collectionID)]
+        ) { statement in
+            CollectionSummary(
+                id: sqlite3_column_int64(statement, 0),
+                name: textColumn(statement, index: 1) ?? "",
+                sortOrder: Int(sqlite3_column_int(statement, 2)),
+                activeURLCount: Int(sqlite3_column_int(statement, 3)),
+                createdAt: dateColumn(statement, index: 4) ?? Date(timeIntervalSince1970: 0),
+                updatedAt: dateColumn(statement, index: 5) ?? Date(timeIntervalSince1970: 0)
+            )
+        }
+    }
+
+    private func loadCollectionByNormalizedName(_ normalizedName: String) throws -> CollectionSummary? {
+        try database.fetchOne(
+            sql: """
+            SELECT id, name, sort_order, 0 AS active_url_count, created_at, updated_at
+            FROM collections
+            WHERE normalized_name = ?
+            LIMIT 1;
+            """,
+            binds: [sql(normalizedName)]
+        ) { statement in
+            CollectionSummary(
+                id: sqlite3_column_int64(statement, 0),
+                name: textColumn(statement, index: 1) ?? "",
+                sortOrder: Int(sqlite3_column_int(statement, 2)),
+                activeURLCount: Int(sqlite3_column_int(statement, 3)),
+                createdAt: dateColumn(statement, index: 4) ?? Date(timeIntervalSince1970: 0),
+                updatedAt: dateColumn(statement, index: 5) ?? Date(timeIntervalSince1970: 0)
+            )
+        }
+    }
+
     private func migrateIfNeeded() throws {
         let createSQL = """
         CREATE TABLE IF NOT EXISTS url_entries (
@@ -793,7 +956,8 @@ final class URLRepository: @unchecked Sendable {
             archived_at REAL,
             pending_deletion_until REAL,
             badge_image_url TEXT,
-            fetched_author_name TEXT
+            fetched_author_name TEXT,
+            collection_id INTEGER NOT NULL DEFAULT 1
         );
         CREATE INDEX IF NOT EXISTS idx_url_entries_state ON url_entries(record_state);
         CREATE INDEX IF NOT EXISTS idx_url_entries_metadata ON url_entries(metadata_state);
@@ -818,8 +982,18 @@ final class URLRepository: @unchecked Sendable {
             FOREIGN KEY (entry_id) REFERENCES url_entries(id) ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS idx_local_tag_entries_entry ON local_tag_entries(entry_id);
+        CREATE TABLE IF NOT EXISTS collections (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            normalized_name TEXT NOT NULL UNIQUE,
+            sort_order INTEGER NOT NULL,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_collections_sort_order ON collections(sort_order);
         """
         try executeBatch(createSQL)
+        try ensureDefaultCollection()
         try database.addColumnIfMissing(
             table: "url_entries",
             column: "local_provenance_count",
@@ -840,8 +1014,31 @@ final class URLRepository: @unchecked Sendable {
             column: "fetched_author_name",
             definition: "fetched_author_name TEXT"
         )
+        try database.addColumnIfMissing(
+            table: "url_entries",
+            column: "collection_id",
+            definition: "collection_id INTEGER NOT NULL DEFAULT 1"
+        )
         try executeBatch("CREATE INDEX IF NOT EXISTS idx_url_entries_local_visibility ON url_entries(local_provenance_count, record_state);")
+        try executeBatch("CREATE INDEX IF NOT EXISTS idx_url_entries_collection ON url_entries(collection_id);")
         try scheduleSocialBadgeBackfillIfNeeded()
+    }
+
+    private func ensureDefaultCollection() throws {
+        let now = Date().timeIntervalSince1970
+        try execute(
+            """
+            INSERT OR IGNORE INTO collections (id, name, normalized_name, sort_order, created_at, updated_at)
+            VALUES (?, ?, ?, 0, ?, ?);
+            """,
+            binds: [
+                sql(defaultCollectionID),
+                sql(defaultCollectionName),
+                sql(defaultCollectionName.lowercased()),
+                sql(now),
+                sql(now),
+            ]
+        )
     }
 
     private func scheduleSocialBadgeBackfillIfNeeded() throws {
@@ -942,6 +1139,7 @@ final class URLRepository: @unchecked Sendable {
             openURL: textColumn(statement, name: "open_url") ?? "",
             normalizedHost: textColumn(statement, name: "normalized_host") ?? "",
             rawSourceHost: textColumn(statement, name: "raw_source_host") ?? "",
+            collectionID: sqlite3_column_int64(statement, index(of: "collection_id")),
             serviceType: ServiceType(rawValue: textColumn(statement, name: "service_type") ?? "") ?? .web,
             contentContext: ContentContext(rawValue: textColumn(statement, name: "content_context") ?? "") ?? .standard,
             userTitle: textColumn(statement, name: "user_title"),
@@ -1002,6 +1200,7 @@ final class URLRepository: @unchecked Sendable {
         case "pending_deletion_until": return 28
         case "badge_image_url": return 29
         case "fetched_author_name": return 30
+        case "collection_id": return 31
         default: return 0
         }
     }
@@ -1028,4 +1227,7 @@ final class URLRepository: @unchecked Sendable {
         guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
         return Date(timeIntervalSince1970: sqlite3_column_double(statement, index))
     }
+
+    private let defaultCollectionID: Int64 = 1
+    private let defaultCollectionName = "受信箱"
 }

@@ -102,6 +102,22 @@ interface TagDao {
     @Query(
         """
         SELECT
+            r.tagId AS tagId,
+            r.entryId AS entryId
+        FROM tag_url_cross_refs AS r
+        INNER JOIN tags AS t
+            ON t.id = r.tagId
+           AND t.scope = 'LOCAL_ONLY'
+           AND t.deletedAt IS NULL
+        WHERE r.deletedAt IS NULL
+        ORDER BY r.tagId ASC, r.entryId ASC
+        """
+    )
+    fun observeLocalTagEntryRefs(): Flow<List<LocalTagEntryRef>>
+
+    @Query(
+        """
+        SELECT
             t.id AS id,
             t.name AS name,
             t.scope AS scope,

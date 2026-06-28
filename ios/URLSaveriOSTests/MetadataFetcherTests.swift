@@ -613,6 +613,7 @@ final class MetadataFetcherTests: XCTestCase {
             openURL: url,
             normalizedHost: host,
             rawSourceHost: host,
+            collectionID: 1,
             serviceType: serviceType,
             contentContext: .standard,
             userTitle: nil,

@@ -134,3 +134,55 @@ Validation:
 
 Remaining simulator warning:
 - CoreSimulator WebCore/WebKit duplicate UIAccessibilityLoaderWebShared warning still appears.
+
+## 2026-06-29 Search Parity Fix
+
+Fixed:
+- US-037: Android search no longer matches every entry when any unrelated tag name matches the query.
+- US-037: Android search now uses per-entry local tag assignments for tag-name matching.
+- US-037: iOS search now includes assigned local tag names.
+
+Validation:
+- PASS: ./gradlew testDebugUnitTest --tests jp.mimac.urlsaver.MainListViewModelTest.
+- PASS: xcodebuild test -only-testing:URLSaveriOSTests/ServiceFilterTests, 15 tests.
+
+Corrected during validation:
+- First iOS retest failed because the Swift filter closure needed an explicit return after adding the local-tag condition. Fixed and retested successfully.
+
+Remaining gaps:
+- Physical Android/iPhone search-field open, input, clear, back, and guide-to-search UI operation is not verified.
+- iOS custom collection name search is not equivalent to Android yet. URLRecord.collectionID and collections Repository/API foundation now exist, but RootView/UI collection-name search wiring is still missing under US-035/US-037.
+
+## 2026-06-29 Batch Selection Contract Tests
+
+Retested and tracker-updated:
+- US-038: Android MainListViewModel batch archive returns only successfully archived ids while still attempting each selected id.
+- US-038: Android MainListViewModel batch pending-delete returns only successful pending-deletion timestamps.
+- US-038: iOS URLRepository multiple archive/pending-delete state transitions are covered by URLRepositoryTests.
+
+Validation:
+- PASS: ./gradlew testDebugUnitTest --tests jp.mimac.urlsaver.MainListViewModelTest.
+- PASS: xcodebuild test -only-testing:URLSaveriOSTests/URLRepositoryTests, 10 tests.
+
+Remaining gaps:
+- Physical Android/iPhone selection bar operation, select all, cancel, batch archive/delete, and Undo are not verified.
+- iOS RootView selection UI itself remains source-confirmed plus repository-tested, not UI-operated.
+
+## 2026-06-29 iOS Collection Foundation Pass
+
+Fixed/foundation added:
+- US-035: Added iOS URLRecord.collectionID.
+- US-035: Added iOS url_entries.collection_id with DEFAULT 1 and idx_url_entries_collection.
+- US-035: Added repository decoding and a URLRepositoryTests assertion that newly saved entries default to inbox collectionID 1.
+- US-035: Added iOS collections table, CollectionSummary, load/create/assign/reorder/delete repository APIs.
+- US-035: Added repository coverage for default inbox, duplicate collection name reuse, entry move, custom order, delete moving entries back to inbox, and default inbox delete refusal.
+
+Validation:
+- PASS: xcodebuild test -only-testing:URLSaveriOSTests/URLRepositoryTests, 12 tests.
+
+Corrected during validation:
+- First iOS retest failed because collectionID was accidentally added to ParsedURL instead of URLRecord. Moved it to URLRecord and retested successfully.
+
+Remaining gaps:
+- iOS still lacks UI connection for custom collection create, move, delete, reorder, and filter parity with Android.
+- Physical Android collection reorder/delete and physical iPhone collection UI are not verified.

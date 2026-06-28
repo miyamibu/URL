@@ -143,6 +143,7 @@ import jp.mimac.urlsaver.R
 import jp.mimac.urlsaver.ads.AdsManager
 import jp.mimac.urlsaver.data.CollectionEntity
 import jp.mimac.urlsaver.data.DEFAULT_COLLECTION_ID
+import jp.mimac.urlsaver.data.LocalTagEntryRef
 import jp.mimac.urlsaver.data.UrlEntryEntity
 import jp.mimac.urlsaver.domain.DetailEffect
 import jp.mimac.urlsaver.domain.EntryCardDisplayMode
@@ -639,6 +640,7 @@ private fun MainScreen(
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val collections by viewModel.collections.collectAsStateWithLifecycle()
+    val localTagEntryRefs by viewModel.localTagEntryRefs.collectAsStateWithLifecycle()
     val sharedTags by tagViewModel.tags.collectAsStateWithLifecycle()
     val sharedTagGroups by tagViewModel.groups.collectAsStateWithLifecycle()
     val selectedService by viewModel.selectedServiceFlow.collectAsStateWithLifecycle()
@@ -695,12 +697,13 @@ private fun MainScreen(
     var selectionModeActive by rememberSaveable { mutableStateOf(false) }
     var searchBarVisible by rememberSaveable { mutableStateOf(false) }
     var searchQueryLocal by rememberSaveable { mutableStateOf("") }
-    val searchFilteredEntries = remember(uiState.entries, searchQueryLocal, customCollections, sharedTags) {
+    val searchFilteredEntries = remember(uiState.entries, searchQueryLocal, customCollections, sharedTags, localTagEntryRefs) {
         filterEntriesBySearch(
             entries = uiState.entries,
             query = searchQueryLocal,
             collections = customCollections,
             tags = sharedTags,
+            localTagEntryRefs = localTagEntryRefs,
         )
     }
     val displayedUiState = remember(uiState, searchQueryLocal, searchFilteredEntries) {
@@ -5476,17 +5479,23 @@ private fun MainBottomNavItem(
     }
 }
 
-private fun filterEntriesBySearch(
+fun filterEntriesBySearch(
     entries: List<UrlEntryEntity>,
     query: String,
     collections: List<CollectionEntity>,
     tags: List<TagWithCount>,
+    localTagEntryRefs: List<LocalTagEntryRef> = emptyList(),
 ): List<UrlEntryEntity> {
     val normalizedQuery = query.trim().lowercase()
     if (normalizedQuery.isBlank()) return entries
     val collectionNamesById = collections.associate { it.id to it.name.lowercase() }
-    val tagNames = tags.map { it.name.lowercase() }
+    val tagNamesById = tags.associate { it.id to it.name.lowercase() }
+    val tagIdsByEntryId = localTagEntryRefs.groupBy(
+        keySelector = { it.entryId },
+        valueTransform = { it.tagId },
+    )
     return entries.filter { entry ->
+        val entryTagNames = tagIdsByEntryId[entry.id].orEmpty().mapNotNull { tagNamesById[it] }
         entry.normalizedUrl.lowercase().contains(normalizedQuery) ||
             entry.originalUrl.lowercase().contains(normalizedQuery) ||
             entry.displayUrl.lowercase().contains(normalizedQuery) ||
@@ -5494,7 +5503,7 @@ private fun filterEntriesBySearch(
             entry.fetchedTitle.orEmpty().lowercase().contains(normalizedQuery) ||
             entry.normalizedHost.lowercase().contains(normalizedQuery) ||
             collectionNamesById[entry.collectionId]?.contains(normalizedQuery) == true ||
-            tagNames.any { it.contains(normalizedQuery) }
+            entryTagNames.any { it.contains(normalizedQuery) }
     }
 }
 

@@ -38,6 +38,9 @@ class MainListViewModel(
     val collections: StateFlow<List<CollectionEntity>> = repository.observeCollections()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    val localTagEntryRefs = repository.observeLocalTagEntryRefs()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     val entryCardDisplayMode: StateFlow<EntryCardDisplayMode> = displayModeStore.observeDisplayMode()
         .stateIn(viewModelScope, SharingStarted.Eagerly, EntryCardDisplayMode.RICH)
 

@@ -43,6 +43,38 @@ final class URLRepositoryTests: XCTestCase {
         XCTAssertEqual(entry?.openURL, entry?.normalizedURL)
     }
 
+    func testSavedEntriesDefaultToInboxCollectionID() throws {
+        let created = try repository.saveFromManualInput("https://example.com/collection-default")
+        let entry = try XCTUnwrap(repository.loadEntry(id: created.entryID!))
+
+        XCTAssertEqual(entry.collectionID, 1)
+    }
+
+    func testCollectionLifecycleCreateAssignReorderAndDelete() throws {
+        let defaultCollection = try XCTUnwrap(try repository.loadCollections().first)
+        XCTAssertEqual(defaultCollection.id, 1)
+        XCTAssertEqual(defaultCollection.name, "受信箱")
+
+        let work = try XCTUnwrap(try repository.createCollection(name: " work "))
+        let later = try XCTUnwrap(try repository.createCollection(name: "later"))
+        let duplicateWork = try XCTUnwrap(try repository.createCollection(name: "work"))
+        XCTAssertEqual(duplicateWork.id, work.id)
+
+        let saved = try repository.saveFromManualInput("https://example.com/collection-work")
+        XCTAssertTrue(try repository.assignCollection(entryID: saved.entryID!, collectionID: work.id))
+        XCTAssertEqual(try repository.loadEntry(id: saved.entryID!)?.collectionID, work.id)
+
+        XCTAssertTrue(try repository.reorderCollections(collectionIDs: [later.id, work.id]))
+        let customOrder = try repository.loadCollections()
+            .filter { $0.id != 1 }
+            .map(\.id)
+        XCTAssertEqual(customOrder, [later.id, work.id])
+
+        XCTAssertTrue(try repository.deleteCollection(id: work.id))
+        XCTAssertEqual(try repository.loadEntry(id: saved.entryID!)?.collectionID, 1)
+        XCTAssertFalse(try repository.deleteCollection(id: 1))
+    }
+
     func testPendingDeleteRestorePreservesEntryAndSchedulesMetadataWhenNeeded() async throws {
         let created = try repository.saveFromManualInput("https://example.com/path")
         XCTAssertEqual(created.result, .created)
@@ -52,6 +84,24 @@ final class URLRepositoryTests: XCTestCase {
         XCTAssertEqual(restored.result, .restoredFromPendingDelete)
         XCTAssertEqual(restored.entryID, created.entryID)
         XCTAssertTrue(restored.shouldScheduleMetadata)
+    }
+
+    func testMultipleArchiveAndPendingDeleteStateTransitions() throws {
+        let first = try repository.saveFromManualInput("https://example.com/batch-first")
+        let second = try repository.saveFromManualInput("https://example.com/batch-second")
+        let third = try repository.saveFromManualInput("https://example.com/batch-third")
+
+        XCTAssertTrue(try repository.archive(entryID: first.entryID!))
+        XCTAssertTrue(try repository.archive(entryID: second.entryID!))
+        XCTAssertFalse(try repository.archive(entryID: first.entryID!))
+        XCTAssertEqual(try repository.loadEntry(id: first.entryID!)?.recordState, .archived)
+        XCTAssertEqual(try repository.loadEntry(id: second.entryID!)?.recordState, .archived)
+        XCTAssertEqual(try repository.loadEntry(id: third.entryID!)?.recordState, .active)
+
+        XCTAssertNotNil(try repository.markPendingDelete(entryID: third.entryID!, gracePeriod: 30))
+        XCTAssertNil(try repository.markPendingDelete(entryID: second.entryID!, gracePeriod: 30))
+        XCTAssertEqual(try repository.loadEntry(id: third.entryID!)?.recordState, .pendingDelete)
+        XCTAssertNotNil(try repository.loadEntry(id: third.entryID!)?.pendingDeletionUntil)
     }
 
     func testMetadataUpdateDoesNotChangeUpdatedAt() async throws {
