@@ -76,6 +76,7 @@ app_target.build_configurations.each do |config|
   config.base_configuration_reference = secrets_config
   config.build_settings["PRODUCT_BUNDLE_IDENTIFIER"] = "com.mibu.codebridge.ios"
   config.build_settings["INFOPLIST_FILE"] = "URLSaveriOS/Info.plist"
+  config.build_settings["ASSETCATALOG_COMPILER_APPICON_NAME"] = "AppIcon"
   unless ios_disable_app_group_entitlements
     config.build_settings["CODE_SIGN_ENTITLEMENTS"] = "URLSaveriOS/URLSaveriOS.entitlements"
   end
@@ -153,8 +154,10 @@ Dir.glob(File.join(__dir__, "URLSaveriOSTests/**/*.swift")).sort.each do |path|
 end
 
 app_privacy_manifest = app_group.new_file("PrivacyInfo.xcprivacy")
+app_assets_catalog = app_group.new_file("Assets.xcassets")
 extension_privacy_manifest = extension_group.new_file("PrivacyInfo.xcprivacy")
 app_target.resources_build_phase.add_file_reference(app_privacy_manifest)
+app_target.resources_build_phase.add_file_reference(app_assets_catalog)
 extension_target.resources_build_phase.add_file_reference(extension_privacy_manifest)
 
 info_files = [
