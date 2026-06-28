@@ -341,3 +341,88 @@ Validation:
 
 Remaining gaps:
 - Physical Android/iPhone collection/search UI operation is not verified.
+
+## 2026-06-29 iOS App Privacy Sheet Alignment
+
+Fixed:
+- US-040: iOS previously had PrivacyInfo manifests, but no user-facing in-app surface equivalent to Android's privacy dialog.
+- Added an `info.circle` entry point on the iOS main screen and `PrivacyInfoSheet` in `RootView.swift`.
+- The sheet now covers local URL/title/memo/tag storage, metadata fetch, shared-tag cloud sync, contact-support submission, Standard / Pro StoreKit processing, and no ads/external analytics.
+
+Validation:
+- PASS: `xcodebuild -quiet -project ios/URLSaveriOS.xcodeproj -scheme URLSaveriOS -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build`.
+- PASS: US-040 CSV/XLSX tracker row updated so Android and iOS app-side privacy disclosure are tracked together.
+
+Remaining:
+- Physical iPhone display and tap operation for the data-handling sheet is not verified.
+- Public privacy page is still stale until redeployed.
+
+## 2026-06-29 Canonical Story Tracker Verifier
+
+Added:
+- `scripts/verify_canonical_story_tracker.py` verifies the canonical CSV/XLSX tracker without third-party Python packages.
+- Checks CSV header, story row count, duplicate/missing story IDs, XLSX zip integrity, CSV/XLSX story sheet equality, and XLSX summary equality.
+
+Validation:
+- PASS: `python3 scripts/verify_canonical_story_tracker.py`.
+- Remaining gates reported by the verifier:
+  - physical_Android: 36
+  - physical_iPhone: 41
+  - supabase_or_auth_live: 13
+  - store_or_public_console: 5
+  - resend_live: 2
+  - connected_android_instrumentation: 0
+
+Remaining:
+- The verifier proves tracker structure and workbook sync only. It does not close the listed physical-device, live Supabase/Auth, store/public-console, Resend, or connected instrumentation gates.
+
+## 2026-06-29 Android Connected Instrumentation Gate
+
+Fixed:
+- Restored the Android in-app privacy disclosure entry point. `UrlSaverRoot.kt` had `showPrivacyDialog` and the AlertDialog, but no visible control set it to `true`.
+- Added a top-bar `Info` icon with content description `プライバシー情報`.
+- Updated `Phase1aFlowTest` from the obsolete expectation that the privacy action is absent to a real dialog-open test that checks `データの取り扱い`, `Standard / Pro`, and `Google Play Billing`.
+- Updated stale/fragile instrumentation waits:
+  - Home wait now accepts the current empty-state text containing `保存したURL`.
+  - Archive unarchive test verifies `RecordState.ACTIVE` instead of waiting for an archived-card tag to disappear from a retained UI tree.
+  - Copy button test no longer relies on Android clipboard readback or OS clipboard overlay timing.
+
+Validation:
+- PASS: `./gradlew assembleDebug`.
+- PASS: `URLSAVER_ALLOW_CONNECTED_ANDROID_TESTS=true URLSAVER_APPROVE_ANDROID_APP_DATA_RESET=true ./gradlew connectedDebugAndroidTest` on `urlsaverParityApi35(AVD) - 15`.
+- Result: 17 tests finished, build successful. `SharedTagCloudLiveDeviceTest` was skipped because live Supabase test configuration is absent; that remains under the Supabase/Auth live gate, not connected instrumentation.
+
+Remaining:
+- Physical Android operation proof is still separate from the AVD connected test proof.
+- Live Supabase shared-tag device test still requires live Supabase test configuration.
+
+## 2026-06-29 Public Web, Supabase, and Resend Live Hardening
+
+Changed:
+- Deployed `web/invite-link` to Vercel production project `invite-link`.
+- Production deployment `dpl_8WZa3BBdqQs4f8s8mKcvxzaspVdv` was aliased to `https://miyamibu.xyz`.
+- Deployed Supabase Functions on linked project `xocumgxbylmpoobfqows`:
+  - `contact-support` version 15
+  - `contact-support-resend-webhook` version 1
+  - `verify-store-purchase` version 13
+- Applied linked DB schema needed for shared groups/profiles, promo delivery inbox, contact support request audit, and store purchase verification.
+- Fixed `contact-support` so the audit DB stores hashed identifiers and delivery metadata only, not the inquiry body, email address, or name in raw form.
+- Hardened PUBLIC execute grants on SECURITY DEFINER RPCs. Anonymous execution now remains only for invite preview RPCs.
+
+Validation:
+- PASS: `scripts/verify_public_web_release.sh`.
+- PASS: `deno check supabase/functions/contact-support/index.ts supabase/functions/contact-support-resend-webhook/index.ts supabase/functions/verify-store-purchase/index.ts`.
+- PASS: `./gradlew testDebugUnitTest --tests jp.mimac.urlsaver.ContactSupportClientTest`.
+- PASS live contact support validation: invalid email returns HTTP 400 `invalid_email`.
+- PASS live contact support send: request `56d99d04-bbea-4b48-be13-eef62cb1f8d4` returned HTTP 202 accepted and DB row has `delivery_status=sent`, `delivery_provider=resend`, message id present, and `delivery_event_type=email.sent`.
+- PASS live webhook smoke: unsigned `contact-support-resend-webhook` request returns HTTP 401 `Invalid webhook secret`.
+- PASS linked DB checks for required tables/RPCs and store purchase verification unauthenticated rejection.
+- PASS canonical tracker verifier after CSV/XLSX update.
+
+Remaining:
+- Physical Android/iPhone gates are intentionally not executed per user instruction on 2026-06-29.
+- Resend delivered/bounced/complained webhook truth is not yet observed; 15-second follow-up still showed `email.sent`.
+- Manual Resend API delivery lookup still needs `RESEND_API_KEY` in an operator/admin context or a connected admin session.
+- Store sandbox purchases, RTDN/App Store Server Notifications, final Play App Signing SHA-256, and final store console declarations remain external-console gates.
+- Auth mail delivery/reset link end-to-end still requires a real test inbox and auth email flow.
+- Supabase advisors still report WARN items for intended signed-in SECURITY DEFINER RPCs, function search paths, RLS initplan performance, multiple permissive policies, and leaked password protection.

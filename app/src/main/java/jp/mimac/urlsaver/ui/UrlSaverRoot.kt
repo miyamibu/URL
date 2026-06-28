@@ -56,6 +56,7 @@ import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.IosShare
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.LinkOff
 import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.outlined.Groups
@@ -1374,6 +1375,13 @@ private fun MainScreen(
                                 Icon(
                                     Icons.Outlined.AccountCircle,
                                     contentDescription = "プロフィール",
+                                    modifier = Modifier.size(MainTopBarActionIconSize),
+                                )
+                            }
+                            IconButton(onClick = { showPrivacyDialog = true }) {
+                                Icon(
+                                    Icons.Outlined.Info,
+                                    contentDescription = stringResource(R.string.main_privacy_info),
                                     modifier = Modifier.size(MainTopBarActionIconSize),
                                 )
                             }

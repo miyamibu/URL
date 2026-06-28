@@ -36,6 +36,8 @@ const MAX_MESSAGE_LENGTH = 4000;
 const EMAIL_HOURLY_LIMIT = 10;
 const IP_HOURLY_LIMIT = 50;
 const IP_DAILY_LIMIT = 200;
+const VALID_PLATFORMS = new Set(["android", "ios"]);
+const VALID_BUILD_TYPES = new Set(["debug", "release"]);
 
 Deno.serve(async (request) => {
   const requestId = crypto.randomUUID();
@@ -65,19 +67,27 @@ Deno.serve(async (request) => {
       return jsonResponse({ error: validationError, requestId }, 400);
     }
 
+    const emailHash = await hashClient(normalized.email);
+    const authUserIdHash = normalized.authUserId ? await hashClient(normalized.authUserId) : null;
     const ipHash = await hashClient(clientIp(request));
-    const rateLimit = await enforceRateLimit(databaseUrl, ipHash, normalized.email);
+    const rateLimit = await enforceRateLimit(databaseUrl, ipHash, emailHash);
     if (!rateLimit.ok) {
       return jsonResponse({ error: rateLimit.error, requestId }, rateLimit.status);
     }
 
-    const queued = await recordSubmission(databaseUrl, normalized, ipHash, "queued");
+    const queued = await recordSubmission(databaseUrl, requestId, normalized, emailHash, authUserIdHash, ipHash);
     if (!queued.ok) {
       return jsonResponse({ error: queued.error, requestId }, queued.status);
     }
 
     const sent = await sendWithResend(resendApiKey, contactFromEmail, contactToEmail, requestId, normalized);
-    await updateSubmissionStatus(databaseUrl, queued.id, sent.ok ? "sent" : "failed", sent.ok ? null : sent.error);
+    await updateSubmissionStatus(
+      databaseUrl,
+      queued.id,
+      sent.ok ? "sent" : "failed",
+      sent.ok ? sent.messageId : null,
+      sent.ok ? null : sent.error,
+    );
     if (!sent.ok) {
       return jsonResponse({ error: "send_failed", requestId }, 502);
     }
@@ -130,6 +140,12 @@ function validateContactRequest(body: NormalizedContactRequest): string | null {
   if (body.message.length > MAX_MESSAGE_LENGTH) {
     return "message_too_long";
   }
+  if (!VALID_PLATFORMS.has(body.platform)) {
+    return "invalid_platform";
+  }
+  if (!VALID_BUILD_TYPES.has(body.buildType)) {
+    return "invalid_build_type";
+  }
   return null;
 }
 
@@ -146,26 +162,26 @@ function clientIp(request: Request): string {
 async function enforceRateLimit(
   databaseUrl: string,
   ipHash: string,
-  email: string,
+  emailHash: string,
 ): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
   const sql = postgres(databaseUrl, { prepare: false });
   try {
     const [emailHourly, ipHourly, ipDaily] = await Promise.all([
       sql`
         select count(*)::int as count
-        from private.contact_support_submissions
+        from public.contact_support_requests
         where created_at > now() - interval '1 hour'
-          and user_email = ${email}
+          and email_hash = ${emailHash}
       `,
       sql`
         select count(*)::int as count
-        from private.contact_support_submissions
+        from public.contact_support_requests
         where created_at > now() - interval '1 hour'
           and ip_hash = ${ipHash}
       `,
       sql`
         select count(*)::int as count
-        from private.contact_support_submissions
+        from public.contact_support_requests
         where created_at > now() - interval '24 hour'
           and ip_hash = ${ipHash}
       `,
@@ -185,28 +201,36 @@ async function enforceRateLimit(
 
 async function recordSubmission(
   databaseUrl: string,
+  requestId: string,
   body: NormalizedContactRequest,
+  emailHash: string,
+  authUserIdHash: string | null,
   ipHash: string,
-  status: string,
 ): Promise<{ ok: true; id: string } | { ok: false; status: number; error: string }> {
   const sql = postgres(databaseUrl, { prepare: false });
   try {
     const rows = await sql`
-      insert into private.contact_support_submissions (
-        user_email,
-        user_name,
-        message,
-        source,
+      insert into public.contact_support_requests (
+        request_id,
+        email_hash,
+        auth_user_id_hash,
         ip_hash,
-        status
+        platform,
+        app_version,
+        build_type,
+        is_signed_in,
+        delivery_status
       )
       values (
-        ${body.email},
-        ${body.name},
-        ${body.message},
-        ${diagnosticSource(body)},
+        ${requestId},
+        ${emailHash},
+        ${authUserIdHash},
         ${ipHash},
-        ${status}
+        ${body.platform},
+        ${body.appVersion},
+        ${body.buildType},
+        ${body.isSignedIn},
+        'pending'
       )
       returning id
     `;
@@ -225,15 +249,19 @@ async function updateSubmissionStatus(
   databaseUrl: string,
   id: string,
   status: string,
+  messageId: string | null,
   errorMessage: string | null,
 ) {
   const sql = postgres(databaseUrl, { prepare: false });
   try {
     await sql`
-      update private.contact_support_submissions
-      set status = ${status},
-          delivery_error = ${errorMessage},
-          delivered_at = case when ${status} = 'sent' then now() else delivered_at end
+      update public.contact_support_requests
+      set delivery_status = ${status},
+          delivery_provider = 'resend',
+          delivery_message_id = ${messageId},
+          delivery_event_type = case when ${status} = 'sent' then 'email.sent' else 'email.failed' end,
+          delivery_event_at = now(),
+          delivery_error = ${errorMessage}
       where id = ${id}
     `;
   } finally {
@@ -247,7 +275,7 @@ async function sendWithResend(
   to: string,
   requestId: string,
   body: NormalizedContactRequest,
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<{ ok: true; messageId: string | null } | { ok: false; error: string }> {
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -287,18 +315,9 @@ async function sendWithResend(
   if (!response.ok) {
     return { ok: false, error: await response.text() };
   }
-  return { ok: true };
-}
-
-function diagnosticSource(body: NormalizedContactRequest): string {
-  return [
-    body.source,
-    `platform=${body.platform}`,
-    `appVersion=${body.appVersion}`,
-    `buildType=${body.buildType}`,
-    `isSignedIn=${body.isSignedIn}`,
-    `authUserId=${body.authUserId ? "present" : "none"}`,
-  ].join(" ");
+  const responseBody = await response.json().catch(() => ({}));
+  const messageId = typeof responseBody?.id === "string" ? responseBody.id : null;
+  return { ok: true, messageId };
 }
 
 async function hashClient(value: string): Promise<string> {

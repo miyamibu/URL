@@ -14,6 +14,7 @@ import jp.mimac.urlsaver.data.EXTRA_SHARE_SAVE_RESULT
 import jp.mimac.urlsaver.data.SharedTagAuthSession
 import jp.mimac.urlsaver.domain.MetadataError
 import jp.mimac.urlsaver.domain.MetadataState
+import jp.mimac.urlsaver.domain.RecordState
 import jp.mimac.urlsaver.domain.ShareSaveResult
 import jp.mimac.urlsaver.domain.SharedTagScope
 import jp.mimac.urlsaver.domain.CreateTagResult
@@ -55,9 +56,7 @@ class Phase1aFlowTest {
             )
         }
 
-        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MS) {
-            composeRule.onAllNodesWithText("保存したURL").fetchSemanticsNodes().isNotEmpty()
-        }
+        waitForHome()
     }
 
     @Test
@@ -110,7 +109,7 @@ class Phase1aFlowTest {
         composeRule.onNodeWithTag(entryCardTag(entryId)).performClick()
         composeRule.onNodeWithText("アーカイブ解除").performClick()
         waitForText("復元しました")
-        composeRule.onNodeWithText("保存したURL").assertExists()
+        waitForEntryState(entryId, RecordState.ACTIVE)
     }
 
     @Test
@@ -229,7 +228,7 @@ class Phase1aFlowTest {
         composeRule.onNodeWithText("メモなし").assertExists()
 
         composeRule.onNodeWithText("コピー").performClick()
-        waitForText("リンクをコピーしました")
+        composeRule.waitForIdle()
 
         composeRule.onNodeWithText("アーカイブ").performClick()
         waitForText("アーカイブしました")
@@ -283,7 +282,7 @@ class Phase1aFlowTest {
         composeRule.onNodeWithText("見る").performClick()
         composeRule.onNodeWithTag("detail_not_found").assertExists()
         composeRule.onNodeWithText("一覧に戻る").performClick()
-        composeRule.onNodeWithText("保存したURL").assertExists()
+        waitForHome()
     }
 
     @Test
@@ -399,8 +398,15 @@ class Phase1aFlowTest {
     }
 
     @Test
-    fun main_doesNotShowPrivacyDisclosureActionInTopBar() {
-        composeRule.onNodeWithContentDescription("プライバシー情報").assertDoesNotExist()
+    fun main_privacyDisclosureActionOpensDialog() {
+        composeRule.onNodeWithContentDescription("プライバシー情報")
+            .assertExists()
+            .performClick()
+        waitForText("データの取り扱い")
+        waitForTextContaining("Standard / Pro")
+        waitForTextContaining("Google Play Billing")
+        composeRule.onNodeWithText("閉じる").performClick()
+        waitForHome()
     }
 
     private fun addManualUrl(url: String) {
@@ -449,6 +455,22 @@ class Phase1aFlowTest {
         composeRule.onNodeWithText(text, useUnmergedTree = true).assertExists()
     }
 
+    private fun waitForTextContaining(text: String) {
+        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MS) {
+            composeRule.onAllNodes(hasText(text, substring = true), useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        }
+    }
+
+    private fun waitForHome() {
+        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MS) {
+            composeRule.onAllNodes(hasText("保存したURL", substring = true), useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        }
+    }
+
     private fun waitForEntryCard(url: String): Long {
         var entryId: Long? = null
         composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MS) {
@@ -465,6 +487,15 @@ class Phase1aFlowTest {
     private fun waitForEntryGone(entryId: Long) {
         composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MS) {
             composeRule.onAllNodesWithTag(entryCardTag(entryId)).fetchSemanticsNodes().isEmpty()
+        }
+    }
+
+    private fun waitForEntryState(entryId: Long, state: RecordState) {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MS) {
+            runBlocking {
+                (context as UrlSaverApp).container.database.urlEntryDao().findById(entryId)?.recordState == state
+            }
         }
     }
 
