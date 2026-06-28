@@ -23,10 +23,15 @@ struct RootView: View {
     @State private var selectedArchiveService: ServiceType = .all
     @State private var selectedMainLocalTagID: Int64?
     @State private var selectedArchiveLocalTagID: Int64?
+    @State private var selectedMainCollectionID: Int64?
+    @State private var selectedArchiveCollectionID: Int64?
     @AppStorage("entryListDisplayMode") private var displayModeRaw = EntryListDisplayMode.compact.rawValue
     @State private var isShowingLocalTagCreateAlert = false
+    @State private var isShowingCollectionCreateAlert = false
+    @State private var isShowingCollectionManagementSheet = false
     @State private var isShowingLocalTagManagementSheet = false
     @State private var localTagNameDraft = ""
+    @State private var collectionNameDraft = ""
     @State private var isShowingUsageGuide = false
     @State private var isShowingSearchBar = false
     @State private var searchQuery = ""
@@ -57,13 +62,17 @@ struct RootView: View {
                 model.activeEntries,
                 selectedService: selectedMainService,
                 selectedLocalTagID: selectedMainLocalTagID,
-                localTagAssignments: model.localTagAssignments
+                selectedCollectionID: selectedMainCollectionID,
+                localTagAssignments: model.localTagAssignments,
+                localTags: model.localTags,
+                collections: model.collections
             )
             let mainDisplayedEntries = searchFilteredEntries(
                 mainVisibleEntries,
                 query: searchQuery,
                 localTags: model.localTags,
-                localTagAssignments: model.localTagAssignments
+                localTagAssignments: model.localTagAssignments,
+                collections: model.collections
             )
             let showsSharedTagCloud = shouldShowSharedTagCloudEntryPoints(
                 isConfigured: model.sharedTagCloudState.isConfigured,
@@ -80,9 +89,11 @@ struct RootView: View {
                                 totalEntries: model.activeEntries,
                                 pendingInviteRecord: model.pendingInviteRecord,
                                 localTags: model.localTags,
+                                collections: model.collections,
                                 sharedTags: model.sharedTags,
                                 selectedService: $selectedMainService,
                                 selectedLocalTagID: $selectedMainLocalTagID,
+                                selectedCollectionID: $selectedMainCollectionID,
                                 displayMode: displayModeBinding,
                                 isShowingUsageGuide: $isShowingUsageGuide,
                                 isShowingSearchBar: $isShowingSearchBar,
@@ -91,6 +102,8 @@ struct RootView: View {
                                 onOpenGroups: { model.selectedTab = .groups },
                                 onOpenDetail: model.openEntry(_:),
                                 onCreateLocalTag: { isShowingLocalTagCreateAlert = true },
+                                onCreateCollection: { isShowingCollectionCreateAlert = true },
+                                onManageCollections: { isShowingCollectionManagementSheet = true },
                                 onManageLocalTags: { isShowingLocalTagManagementSheet = true },
                                 onArchive: { entryID in
                                     Task { await model.archive(entryID: entryID) }
@@ -140,15 +153,22 @@ struct RootView: View {
                                     model.archivedEntries,
                                     selectedService: selectedArchiveService,
                                     selectedLocalTagID: selectedArchiveLocalTagID,
-                                    localTagAssignments: model.localTagAssignments
+                                    selectedCollectionID: selectedArchiveCollectionID,
+                                    localTagAssignments: model.localTagAssignments,
+                                    localTags: model.localTags,
+                                    collections: model.collections
                                 ),
                                 totalEntries: model.archivedEntries,
                                 localTags: model.localTags,
+                                collections: model.collections,
                                 selectedService: $selectedArchiveService,
                                 selectedLocalTagID: $selectedArchiveLocalTagID,
+                                selectedCollectionID: $selectedArchiveCollectionID,
                                 displayMode: displayModeBinding,
                                 onBack: { model.selectedTab = .main },
                                 onCreateLocalTag: { isShowingLocalTagCreateAlert = true },
+                                onCreateCollection: { isShowingCollectionCreateAlert = true },
+                                onManageCollections: { isShowingCollectionManagementSheet = true },
                                 onManageLocalTags: { isShowingLocalTagManagementSheet = true },
                                 onOpenDetail: model.openEntry(_:)
                             )
@@ -208,6 +228,7 @@ struct RootView: View {
                 model.selectedTab = .main
                 selectedMainService = .all
                 selectedMainLocalTagID = tagID
+                selectedMainCollectionID = nil
                 model.consumeIncomingLocalTagID()
             }
             .onChange(of: selectedMainService) { _, _ in
@@ -215,6 +236,18 @@ struct RootView: View {
             }
             .onChange(of: selectedMainLocalTagID) { _, _ in
                 selectedMainEntryIDs = []
+            }
+            .onChange(of: selectedMainCollectionID) { _, _ in
+                selectedMainEntryIDs = []
+            }
+            .onChange(of: model.collections) { _, collections in
+                let collectionIDs = Set(collections.map(\.id))
+                if let selectedMainCollectionID, !collectionIDs.contains(selectedMainCollectionID) {
+                    self.selectedMainCollectionID = nil
+                }
+                if let selectedArchiveCollectionID, !collectionIDs.contains(selectedArchiveCollectionID) {
+                    self.selectedArchiveCollectionID = nil
+                }
             }
             .overlay(alignment: .bottom) {
                 if let notification = model.currentNotification {
@@ -229,7 +262,7 @@ struct RootView: View {
             }
             }
             .sheet(isPresented: $isShowingManualSheet) {
-                ManualInputSheet(model: model)
+                ManualInputSheet(model: model, selectedCollectionID: selectedMainCollectionID)
                     .presentationDetents([.height(640)])
                     .presentationDragIndicator(.hidden)
                     .presentationCornerRadius(32)
@@ -250,6 +283,21 @@ struct RootView: View {
                         localTagPendingDeletion = tag
                     },
                     onClose: { isShowingLocalTagManagementSheet = false }
+                )
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationCornerRadius(32)
+            }
+            .sheet(isPresented: $isShowingCollectionManagementSheet) {
+                CollectionManagementSheet(
+                    collections: model.collections,
+                    onMove: { ids in
+                        Task { _ = await model.reorderCollections(collectionIDs: ids) }
+                    },
+                    onDelete: { collection in
+                        Task { _ = await model.deleteCollection(collectionID: collection.id) }
+                    },
+                    onClose: { isShowingCollectionManagementSheet = false }
                 )
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
@@ -289,10 +337,7 @@ struct RootView: View {
                 ActivityShareSheet(items: shareItems)
             }
             .fullScreenCover(
-                isPresented: Binding(
-                    get: { selectedSharedTagID != nil },
-                    set: { if !$0 { selectedSharedTagID = nil } }
-                )
+                isPresented: selectedSharedTagPresented
             ) {
                 if let selectedSharedTagID {
                     SharedTagDetailSheet(
@@ -303,10 +348,7 @@ struct RootView: View {
                 }
             }
             .fullScreenCover(
-                isPresented: Binding(
-                    get: { model.inviteConfirmationToken != nil },
-                    set: { if !$0 { model.clearInviteConfirmation() } }
-                )
+                isPresented: inviteConfirmationPresented
             ) {
                 if let token = model.inviteConfirmationToken {
                     SharedTagInviteConfirmationView(
@@ -328,6 +370,25 @@ struct RootView: View {
                 }
             } message: {
                 Text("このiPhone内でURLを整理するタグを作成します。")
+            }
+            .alert("コレクションを作成", isPresented: $isShowingCollectionCreateAlert) {
+                TextField("コレクション名", text: $collectionNameDraft)
+                Button("作成") {
+                    let name = collectionNameDraft
+                    collectionNameDraft = ""
+                    Task {
+                        if let collection = await model.createCollection(name: name) {
+                            selectedMainService = .all
+                            selectedMainLocalTagID = nil
+                            selectedMainCollectionID = collection.id
+                        }
+                    }
+                }
+                Button("キャンセル", role: .cancel) {
+                    collectionNameDraft = ""
+                }
+            } message: {
+                Text("URLの保存先として使うコレクションを作成します。")
             }
             .alert("タグを削除", isPresented: isShowingLocalTagDeleteAlert) {
                 Button("キャンセル", role: .cancel) {
@@ -365,6 +426,28 @@ struct RootView: View {
         )
     }
 
+    private var selectedSharedTagPresented: Binding<Bool> {
+        Binding(
+            get: { selectedSharedTagID != nil },
+            set: { isPresented in
+                if !isPresented {
+                    selectedSharedTagID = nil
+                }
+            }
+        )
+    }
+
+    private var inviteConfirmationPresented: Binding<Bool> {
+        Binding(
+            get: { model.inviteConfirmationToken != nil },
+            set: { isPresented in
+                if !isPresented {
+                    model.clearInviteConfirmation()
+                }
+            }
+        )
+    }
+
     private func localTagDeleteMessage(_ tag: LocalTagSummary?) -> String {
         guard let tag else {
             return "このタグを削除します。URL自体は削除されません。"
@@ -386,9 +469,11 @@ private struct MainScreen: View {
     let totalEntries: [URLRecord]
     let pendingInviteRecord: PendingInviteRecord?
     let localTags: [LocalTagSummary]
+    let collections: [CollectionSummary]
     let sharedTags: [SharedTagSummary]
     @Binding var selectedService: ServiceType
     @Binding var selectedLocalTagID: Int64?
+    @Binding var selectedCollectionID: Int64?
     @Binding var displayMode: EntryListDisplayMode
     @Binding var isShowingUsageGuide: Bool
     @Binding var isShowingSearchBar: Bool
@@ -397,6 +482,8 @@ private struct MainScreen: View {
     let onOpenGroups: () -> Void
     let onOpenDetail: (Int64) -> Void
     let onCreateLocalTag: () -> Void
+    let onCreateCollection: () -> Void
+    let onManageCollections: () -> Void
     let onManageLocalTags: () -> Void
     let onArchive: (Int64) -> Void
     let onDelete: (Int64) -> Void
@@ -457,9 +544,13 @@ private struct MainScreen: View {
             ServiceFilterRow(
                 selectedService: $selectedService,
                 selectedLocalTagID: $selectedLocalTagID,
+                selectedCollectionID: $selectedCollectionID,
                 showsCreateChip: true,
                 createAction: onCreateLocalTag,
-                localTags: localTags
+                collectionCreateAction: onCreateCollection,
+                collectionManageAction: onManageCollections,
+                localTags: localTags,
+                collections: collections
             )
 
             if showsSharedTagCloud {
@@ -1529,14 +1620,17 @@ func searchFilteredEntries(
     _ entries: [URLRecord],
     query: String,
     localTags: [LocalTagSummary] = [],
-    localTagAssignments: [Int64: Set<Int64>] = [:]
+    localTagAssignments: [Int64: Set<Int64>] = [:],
+    collections: [CollectionSummary] = []
 ) -> [URLRecord] {
     let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     guard !needle.isEmpty else { return entries }
     let localTagNamesByID = Dictionary(uniqueKeysWithValues: localTags.map { ($0.id, $0.name.lowercased()) })
+    let collectionNamesByID = Dictionary(uniqueKeysWithValues: collections.map { ($0.id, $0.name.lowercased()) })
     return entries.filter { entry in
         let entryLocalTagNames = (localTagAssignments[entry.id] ?? [])
             .compactMap { localTagNamesByID[$0] }
+        let collectionName = collectionNamesByID[entry.collectionID] ?? ""
         return [
             entry.originalURL,
             entry.normalizedURL,
@@ -1552,6 +1646,7 @@ func searchFilteredEntries(
             entry.description ?? "",
             entry.memo,
             entry.effectiveTitle,
+            collectionName,
         ].contains { $0.lowercased().contains(needle) }
             || entryLocalTagNames.contains { $0.contains(needle) }
     }
@@ -1714,11 +1809,15 @@ private struct ArchiveScreen: View {
     let entries: [URLRecord]
     let totalEntries: [URLRecord]
     let localTags: [LocalTagSummary]
+    let collections: [CollectionSummary]
     @Binding var selectedService: ServiceType
     @Binding var selectedLocalTagID: Int64?
+    @Binding var selectedCollectionID: Int64?
     @Binding var displayMode: EntryListDisplayMode
     let onBack: () -> Void
     let onCreateLocalTag: () -> Void
+    let onCreateCollection: () -> Void
+    let onManageCollections: () -> Void
     let onManageLocalTags: () -> Void
     let onOpenDetail: (Int64) -> Void
 
@@ -1743,9 +1842,13 @@ private struct ArchiveScreen: View {
             ServiceFilterRow(
                 selectedService: $selectedService,
                 selectedLocalTagID: $selectedLocalTagID,
+                selectedCollectionID: $selectedCollectionID,
                 showsCreateChip: true,
                 createAction: onCreateLocalTag,
-                localTags: localTags
+                collectionCreateAction: onCreateCollection,
+                collectionManageAction: onManageCollections,
+                localTags: localTags,
+                collections: collections
             )
                 .padding(.bottom, 10)
 
@@ -2762,6 +2865,141 @@ private struct LocalTagManagementFlowLayout: Layout {
     }
 }
 
+private struct CollectionManagementSheet: View {
+    let collections: [CollectionSummary]
+    let onMove: ([Int64]) -> Void
+    let onDelete: (CollectionSummary) -> Void
+    let onClose: () -> Void
+
+    @State private var pendingDelete: CollectionSummary?
+
+    private var customCollections: [CollectionSummary] {
+        collections
+            .filter { $0.id != 1 }
+            .sorted { $0.sortOrder < $1.sortOrder }
+    }
+
+    var body: some View {
+        ZStack {
+            AppPalette.background.ignoresSafeArea()
+
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Text("保存先管理")
+                        .font(.system(size: 26, weight: .heavy, design: .rounded))
+                        .foregroundStyle(AppPalette.textPrimary)
+                    Spacer()
+                    Button("閉じる", action: onClose)
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(AppPalette.primaryStrong)
+                }
+
+                AppPanel {
+                    Text("受信箱は常に残ります。自作コレクションを削除すると、中のURLは受信箱へ戻ります。")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(AppPalette.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if customCollections.isEmpty {
+                    AppPanel {
+                        Text("管理できる自作コレクションはまだありません")
+                            .font(.system(size: 17, weight: .heavy, design: .rounded))
+                            .foregroundStyle(AppPalette.textSecondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } else {
+                    ScrollView(showsIndicators: false) {
+                        VStack(spacing: 10) {
+                            ForEach(Array(customCollections.enumerated()), id: \.element.id) { index, collection in
+                                collectionRow(collection, index: index)
+                            }
+                        }
+                        .padding(.bottom, 12)
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 22)
+            .padding(.bottom, 24)
+        }
+        .alert("コレクションを削除", isPresented: Binding(
+            get: { pendingDelete != nil },
+            set: { if !$0 { pendingDelete = nil } }
+        )) {
+            Button("キャンセル", role: .cancel) { pendingDelete = nil }
+            Button("削除する", role: .destructive) {
+                guard let pendingDelete else { return }
+                self.pendingDelete = nil
+                onDelete(pendingDelete)
+            }
+        } message: {
+            Text(pendingDelete.map { "「\($0.name)」を削除します。URL自体は削除されず、受信箱へ戻ります。" } ?? "このコレクションを削除します。")
+        }
+    }
+
+    @ViewBuilder
+    private func collectionRow(_ collection: CollectionSummary, index: Int) -> some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(collection.name)
+                    .font(.system(size: 18, weight: .heavy, design: .rounded))
+                    .foregroundStyle(AppPalette.textPrimary)
+                    .lineLimit(1)
+                Text("\(collection.activeURLCount)件")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(AppPalette.textSecondary)
+            }
+            Spacer(minLength: 0)
+            Button {
+                moveCollection(from: index, offset: -1)
+            } label: {
+                Image(systemName: "chevron.up")
+                    .font(.system(size: 15, weight: .bold))
+                    .frame(width: 38, height: 38)
+            }
+            .disabled(index == 0)
+            .accessibilityLabel("上へ移動")
+
+            Button {
+                moveCollection(from: index, offset: 1)
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 15, weight: .bold))
+                    .frame(width: 38, height: 38)
+            }
+            .disabled(index == customCollections.count - 1)
+            .accessibilityLabel("下へ移動")
+
+            Button(role: .destructive) {
+                pendingDelete = collection
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 15, weight: .bold))
+                    .frame(width: 38, height: 38)
+            }
+            .accessibilityLabel("削除")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(AppPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(AppPalette.outlineSoft, lineWidth: 1.5)
+        )
+    }
+
+    private func moveCollection(from index: Int, offset: Int) {
+        let target = index + offset
+        guard customCollections.indices.contains(index), customCollections.indices.contains(target) else { return }
+        var ids = customCollections.map(\.id)
+        ids.swapAt(index, target)
+        onMove(ids)
+    }
+}
+
 private struct LocalTagManagementPill: View {
     let tag: LocalTagSummary
     let localLinkText: String
@@ -2820,12 +3058,16 @@ private struct ManualInputSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @ObservedObject var model: URLSaverAppModel
+    let selectedCollectionID: Int64?
     @State private var input = ""
     @State private var inputError: ShareSaveResult?
     @State private var isSaving = false
     @State private var selectedLocalTagID: Int64?
+    @State private var selectedSaveCollectionID: Int64?
     @State private var isShowingCreateTagAlert = false
+    @State private var isShowingCreateCollectionAlert = false
     @State private var newTagName = ""
+    @State private var newCollectionName = ""
 
     var body: some View {
         ScreenContainer {
@@ -2873,6 +3115,33 @@ private struct ManualInputSheet: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
 
+                Text("保存先")
+                    .font(.system(size: 18, weight: .heavy))
+                    .foregroundStyle(AppPalette.textPrimary)
+                    .padding(.top, 6)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(model.collections) { collection in
+                            FilterChipButton(
+                                label: collection.name,
+                                selected: (selectedSaveCollectionID ?? selectedCollectionID ?? 1) == collection.id
+                            ) {
+                                selectedSaveCollectionID = collection.id
+                            }
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+
+                Button("＋ コレクションを作成") {
+                    isShowingCreateCollectionAlert = true
+                }
+                    .font(.system(size: 18, weight: .heavy))
+                    .foregroundStyle(AppPalette.primaryStrong)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 4)
+
                 Text("タグ")
                     .font(.system(size: 18, weight: .heavy))
                     .foregroundStyle(AppPalette.textPrimary)
@@ -2915,7 +3184,8 @@ private struct ManualInputSheet: View {
                     Task {
                         isSaving = true
                         let localTagIDs: Set<Int64> = selectedLocalTagID.map { Set([$0]) } ?? []
-                        let error = await model.manualSave(input: input, localTagIDs: localTagIDs)
+                        let collectionID = selectedSaveCollectionID ?? selectedCollectionID
+                        let error = await model.manualSave(input: input, localTagIDs: localTagIDs, collectionID: collectionID)
                         isSaving = false
                         if let error {
                             inputError = error
@@ -2936,6 +3206,9 @@ private struct ManualInputSheet: View {
             .onChange(of: input) { _, _ in
                 inputError = nil
             }
+            .onAppear {
+                selectedSaveCollectionID = selectedCollectionID ?? model.collections.first?.id
+            }
         }
         .alert("タグを作成", isPresented: $isShowingCreateTagAlert) {
             TextField("タグ名", text: $newTagName)
@@ -2953,6 +3226,23 @@ private struct ManualInputSheet: View {
             }
         } message: {
             Text("保存時に選べる通常タグを作成します。")
+        }
+        .alert("コレクションを作成", isPresented: $isShowingCreateCollectionAlert) {
+            TextField("コレクション名", text: $newCollectionName)
+            Button("作成") {
+                let name = newCollectionName
+                newCollectionName = ""
+                Task {
+                    if let collection = await model.createCollection(name: name) {
+                        selectedSaveCollectionID = collection.id
+                    }
+                }
+            }
+            Button("キャンセル", role: .cancel) {
+                newCollectionName = ""
+            }
+        } message: {
+            Text("保存先に使うコレクションを作成します。")
         }
     }
 

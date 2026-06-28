@@ -186,3 +186,58 @@ Corrected during validation:
 Remaining gaps:
 - iOS still lacks UI connection for custom collection create, move, delete, reorder, and filter parity with Android.
 - Physical Android collection reorder/delete and physical iPhone collection UI are not verified.
+
+## 2026-06-29 iOS Collection UI Wiring Pass
+
+Fixed/added:
+- US-035: iOS AppModel now loads collections and exposes create/assign collection actions.
+- US-035: iOS main/archive top filters now show collection chips and a +保存先 create chip.
+- US-035: iOS manual URL save sheet can choose an existing collection or create a new collection before saving.
+- US-037: iOS search now matches the entry's own collection name, not unrelated collection names.
+
+Validation:
+- PASS: xcodebuild test -only-testing:URLSaveriOSTests/ServiceFilterTests, 17 tests.
+
+Remaining gaps:
+- iOS still needs existing-entry move UI, collection delete UI, collection reorder UI, and same-name local-tag linkage UI for full US-035 parity.
+- Physical Android/iPhone collection/search UI operation is not verified.
+
+## 2026-06-29 iOS Collection Detail Move Pass
+
+Fixed/added:
+- US-035: DetailView now shows the current collection and opens a save-destination editor.
+- US-035: Existing entries can be moved to another collection or to a newly created collection from the detail screen.
+
+Validation:
+- PASS: xcodebuild test -only-testing:URLSaveriOSTests/ServiceFilterTests, 17 tests.
+
+Remaining gaps:
+- iOS still needs collection delete UI, collection reorder UI, and same-name local-tag linkage UI for full US-035 parity.
+- Physical Android/iPhone collection/search UI operation is not verified.
+
+## 2026-06-29 iOS Collection Management Parity Pass
+
+Fixed/added:
+- US-035: iOS top filter can open 保存先管理.
+- US-035: iOS custom collections can be reordered with up/down controls and deleted from the management sheet.
+- US-035: Deleting a custom collection moves entries back to inbox and deletes a same-name local tag.
+- US-035: Detail collection moves now create/assign same-name local tags, including the previous custom collection name, matching the Android preservation behavior.
+
+Validation:
+- PASS: xcodebuild test -only-testing:URLSaveriOSTests/URLRepositoryTests -only-testing:URLSaveriOSTests/ServiceFilterTests, 29 tests.
+
+Remaining gaps:
+- Physical Android/iPhone collection/search UI operation is not verified.
+
+## 2026-06-29 iOS Same-Name Collection Tag Filter Fix
+
+Fixed/added:
+- US-035: iOS collection filtering now includes entries assigned to a local tag with the same name as the selected collection, matching Android ListFilterState behavior.
+- Added ServiceFilterTests coverage for same-name local-tag entries appearing under the selected collection.
+
+Validation:
+- First retest failed because filteredEntries became a multi-statement Swift function without an explicit return. Added the return and retested.
+- PASS: xcodebuild test -only-testing:URLSaveriOSTests/URLRepositoryTests -only-testing:URLSaveriOSTests/ServiceFilterTests, 30 tests.
+
+Remaining gaps:
+- Physical Android/iPhone collection/search UI operation is not verified.

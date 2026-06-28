@@ -59,6 +59,7 @@ final class URLSaverAppModel: ObservableObject {
     @Published private(set) var sharedTagGroups: [SharedTagGroupSummary] = []
     @Published private(set) var localTags: [LocalTagSummary] = []
     @Published private(set) var localTagAssignments: [Int64: Set<Int64>] = [:]
+    @Published private(set) var collections: [CollectionSummary] = []
     @Published private(set) var chatGptPersonalLinkSettings = ChatGptPersonalLinkSettings()
     @Published private(set) var isUpdatingChatGptPersonalLinkSync = false
     @Published private(set) var profileStatusMessage: String?
@@ -105,6 +106,7 @@ final class URLSaverAppModel: ObservableObject {
         archivedEntries = (try? services.repository.observeArchiveSnapshot()) ?? []
         localTags = (try? services.repository.loadLocalTags()) ?? []
         localTagAssignments = (try? services.repository.loadLocalTagAssignments()) ?? [:]
+        collections = (try? services.repository.loadCollections()) ?? []
     }
 
     func processMetadataBacklog() async {
@@ -212,7 +214,7 @@ final class URLSaverAppModel: ObservableObject {
         await reload()
     }
 
-    func manualSave(input: String, localTagIDs: Set<Int64> = []) async -> ShareSaveResult? {
+    func manualSave(input: String, localTagIDs: Set<Int64> = [], collectionID: Int64? = nil) async -> ShareSaveResult? {
         if let data = input.trimmingCharacters(in: .whitespacesAndNewlines).data(using: .utf8),
            (try? JSONDecoder().decode(TagSharePayload.self, from: data)) != nil {
             _ = await importLocalTagPayloadText(input)
@@ -229,6 +231,9 @@ final class URLSaverAppModel: ObservableObject {
         case .inputTooLarge, .invalidURL, .noURLFound:
             return saveResult.result
         default:
+            if let collectionID, let entryID = saveResult.entryID {
+                _ = try? services.repository.assignCollection(entryID: entryID, collectionID: collectionID)
+            }
             await handleSaveResult(saveResult, degradationNotice: nil)
             return nil
         }
@@ -363,6 +368,67 @@ final class URLSaverAppModel: ObservableObject {
         await reload()
         enqueueNotification(AppNotification(message: "タグを作成しました", actionLabel: nil, action: nil, autoDismissAfter: 3))
         return tag
+    }
+
+    func createCollection(name: String) async -> CollectionSummary? {
+        guard let collection = try? services.repository.createCollection(name: name) else {
+            enqueueNotification(AppNotification(message: "コレクションを作成できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
+            return nil
+        }
+        await reload()
+        enqueueNotification(AppNotification(message: "コレクションを作成しました", actionLabel: nil, action: nil, autoDismissAfter: 3))
+        return collection
+    }
+
+    func assignCollection(entryID: Int64, collectionID: Int64) async -> Bool {
+        guard (try? services.repository.assignCollection(entryID: entryID, collectionID: collectionID)) == true else {
+            enqueueNotification(AppNotification(message: "コレクションに移動できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
+            return false
+        }
+        await reload()
+        enqueueNotification(AppNotification(message: "コレクションに移動しました", actionLabel: nil, action: nil, autoDismissAfter: 3))
+        return true
+    }
+
+    func assignCollectionAndCreateLocalTag(entryID: Int64, collection: CollectionSummary) async -> Bool {
+        let previousCollection = entry(for: entryID).flatMap { entry in
+            collections.first { $0.id == entry.collectionID && $0.id != collection.id && $0.id != 1 }
+        }
+        guard (try? services.repository.assignCollection(entryID: entryID, collectionID: collection.id)) == true else {
+            enqueueNotification(AppNotification(message: "コレクションに移動できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
+            return false
+        }
+        if let previousCollection,
+           let tag = try? services.repository.createLocalTag(name: previousCollection.name) {
+            _ = try? services.repository.assignLocalTag(entryID: entryID, tagID: tag.id)
+        }
+        if collection.id != 1,
+           let tag = try? services.repository.createLocalTag(name: collection.name) {
+            _ = try? services.repository.assignLocalTag(entryID: entryID, tagID: tag.id)
+        }
+        await reload()
+        enqueueNotification(AppNotification(message: "コレクションに移動しました", actionLabel: nil, action: nil, autoDismissAfter: 3))
+        return true
+    }
+
+    func reorderCollections(collectionIDs: [Int64]) async -> Bool {
+        guard (try? services.repository.reorderCollections(collectionIDs: collectionIDs)) == true else {
+            enqueueNotification(AppNotification(message: "コレクションを並び替えできませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
+            return false
+        }
+        await reload()
+        enqueueNotification(AppNotification(message: "コレクションを並び替えました", actionLabel: nil, action: nil, autoDismissAfter: 3))
+        return true
+    }
+
+    func deleteCollection(collectionID: Int64) async -> Bool {
+        guard (try? services.repository.deleteCollection(id: collectionID)) == true else {
+            enqueueNotification(AppNotification(message: "コレクションを削除できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
+            return false
+        }
+        await reload()
+        enqueueNotification(AppNotification(message: "コレクションを削除しました", actionLabel: nil, action: nil, autoDismissAfter: 3))
+        return true
     }
 
     func loadLocalTagsForEntry(entryID: Int64) -> [LocalTagSummary] {

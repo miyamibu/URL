@@ -925,25 +925,40 @@ private struct RemoteURLImage<Content: View, Placeholder: View>: View {
 struct ServiceFilterRow: View {
     @Binding var selectedService: ServiceType
     @Binding var selectedLocalTagID: Int64?
+    @Binding var selectedCollectionID: Int64?
     let showsCreateChip: Bool
     let createAction: (() -> Void)?
+    let collectionCreateAction: (() -> Void)?
+    let collectionManageAction: (() -> Void)?
     let localTags: [LocalTagSummary]
+    let collections: [CollectionSummary]
     let onSelectLocalTag: (Int64?) -> Void
+    let onSelectCollection: (Int64?) -> Void
 
     init(
         selectedService: Binding<ServiceType>,
         selectedLocalTagID: Binding<Int64?> = .constant(nil),
+        selectedCollectionID: Binding<Int64?> = .constant(nil),
         showsCreateChip: Bool = false,
         createAction: (() -> Void)? = nil,
+        collectionCreateAction: (() -> Void)? = nil,
+        collectionManageAction: (() -> Void)? = nil,
         localTags: [LocalTagSummary] = [],
-        onSelectLocalTag: @escaping (Int64?) -> Void = { _ in }
+        collections: [CollectionSummary] = [],
+        onSelectLocalTag: @escaping (Int64?) -> Void = { _ in },
+        onSelectCollection: @escaping (Int64?) -> Void = { _ in }
     ) {
         _selectedService = selectedService
         _selectedLocalTagID = selectedLocalTagID
+        _selectedCollectionID = selectedCollectionID
         self.showsCreateChip = showsCreateChip
         self.createAction = createAction
+        self.collectionCreateAction = collectionCreateAction
+        self.collectionManageAction = collectionManageAction
         self.localTags = localTags
+        self.collections = collections
         self.onSelectLocalTag = onSelectLocalTag
+        self.onSelectCollection = onSelectCollection
     }
 
     var body: some View {
@@ -951,7 +966,7 @@ struct ServiceFilterRow: View {
             HStack(spacing: 8) {
                 if showsCreateChip {
                     FilterChipButton(
-                        label: "+",
+                        label: "+タグ",
                         selected: false,
                         action: createAction
                     )
@@ -960,11 +975,42 @@ struct ServiceFilterRow: View {
                 ForEach(serviceFilterOrder, id: \.self) { service in
                     FilterChipButton(
                         label: chipLabel(for: service),
-                        selected: selectedLocalTagID == nil && selectedService == service
+                        selected: selectedLocalTagID == nil && selectedCollectionID == nil && selectedService == service
                     ) {
                         selectedLocalTagID = nil
+                        selectedCollectionID = nil
                         onSelectLocalTag(nil)
+                        onSelectCollection(nil)
                         selectedService = service
+                    }
+                }
+
+                if let collectionCreateAction {
+                    FilterChipButton(
+                        label: "+保存先",
+                        selected: false,
+                        action: collectionCreateAction
+                    )
+                }
+
+                if let collectionManageAction, !collections.isEmpty {
+                    FilterChipButton(
+                        label: "保存先管理",
+                        selected: false,
+                        action: collectionManageAction
+                    )
+                }
+
+                ForEach(collections) { collection in
+                    FilterChipButton(
+                        label: collection.name,
+                        selected: selectedCollectionID == collection.id
+                    ) {
+                        selectedService = .all
+                        selectedLocalTagID = nil
+                        selectedCollectionID = selectedCollectionID == collection.id ? nil : collection.id
+                        onSelectLocalTag(nil)
+                        onSelectCollection(selectedCollectionID)
                     }
                 }
 
@@ -974,7 +1020,9 @@ struct ServiceFilterRow: View {
                         selected: selectedLocalTagID == tag.id
                     ) {
                         selectedService = .all
+                        selectedCollectionID = nil
                         selectedLocalTagID = tag.id
+                        onSelectCollection(nil)
                         onSelectLocalTag(tag.id)
                     }
                 }
@@ -1184,14 +1232,32 @@ func filteredEntries(
     _ entries: [URLRecord],
     selectedService: ServiceType,
     selectedLocalTagID: Int64? = nil,
-    localTagAssignments: [Int64: Set<Int64>] = [:]
+    selectedCollectionID: Int64? = nil,
+    localTagAssignments: [Int64: Set<Int64>] = [:],
+    localTags: [LocalTagSummary] = [],
+    collections: [CollectionSummary] = []
 ) -> [URLRecord] {
-    entries.filter { entry in
+    let selectedCollection = selectedCollectionID.flatMap { collectionID in
+        collections.first { $0.id == collectionID }
+    }
+    let matchingLocalTagIDs = Set(
+        localTags
+            .filter { tag in
+                guard let selectedCollection else { return false }
+                return tag.name.caseInsensitiveCompare(selectedCollection.name) == .orderedSame
+            }
+            .map(\.id)
+    )
+    return entries.filter { entry in
         let serviceMatches = selectedService == .all || entry.serviceType == selectedService
         let tagMatches = selectedLocalTagID.map { tagID in
             localTagAssignments[entry.id]?.contains(tagID) == true
         } ?? true
-        return serviceMatches && tagMatches
+        let collectionMatches = selectedCollectionID.map { collectionID in
+            entry.collectionID == collectionID
+                || !(localTagAssignments[entry.id] ?? []).isDisjoint(with: matchingLocalTagIDs)
+        } ?? true
+        return serviceMatches && tagMatches && collectionMatches
     }
 }
 

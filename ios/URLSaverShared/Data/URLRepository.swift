@@ -212,6 +212,11 @@ final class URLRepository: @unchecked Sendable {
                 "UPDATE url_entries SET collection_id = ?, updated_at = ? WHERE collection_id = ?;",
                 binds: [sql(defaultCollectionID), sql(Date().timeIntervalSince1970), sql(collectionID)]
             )
+            if let normalized = normalizeLocalTagName(collection.name),
+               let localTag = try loadLocalTagByNormalizedName(normalized.key) {
+                try execute("DELETE FROM local_tag_entries WHERE tag_id = ?;", binds: [sql(localTag.id)])
+                try execute("DELETE FROM local_tags WHERE id = ?;", binds: [sql(localTag.id)])
+            }
             try execute("DELETE FROM collections WHERE id = ?;", binds: [sql(collectionID)])
         }
         return true

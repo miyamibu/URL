@@ -63,6 +63,8 @@ final class URLRepositoryTests: XCTestCase {
         let saved = try repository.saveFromManualInput("https://example.com/collection-work")
         XCTAssertTrue(try repository.assignCollection(entryID: saved.entryID!, collectionID: work.id))
         XCTAssertEqual(try repository.loadEntry(id: saved.entryID!)?.collectionID, work.id)
+        let sameNameTag = try XCTUnwrap(try repository.createLocalTag(name: "work"))
+        XCTAssertTrue(try repository.assignLocalTag(entryID: saved.entryID!, tagID: sameNameTag.id))
 
         XCTAssertTrue(try repository.reorderCollections(collectionIDs: [later.id, work.id]))
         let customOrder = try repository.loadCollections()
@@ -72,6 +74,7 @@ final class URLRepositoryTests: XCTestCase {
 
         XCTAssertTrue(try repository.deleteCollection(id: work.id))
         XCTAssertEqual(try repository.loadEntry(id: saved.entryID!)?.collectionID, 1)
+        XCTAssertFalse(try repository.loadLocalTags().contains { $0.name == "work" })
         XCTAssertFalse(try repository.deleteCollection(id: 1))
     }
 
