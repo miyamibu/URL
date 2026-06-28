@@ -40,6 +40,7 @@ struct RootView: View {
     @State private var isShowingSharedTagGroupCreateSheet = false
     @State private var isShowingExportSheet = false
     @State private var isShowingShareSheet = false
+    @State private var isShowingPrivacyInfoSheet = false
     @State private var shareItems: [Any] = []
     @State private var selectedSharedTagID: String?
     @State private var localTagPendingDeletion: LocalTagSummary?
@@ -142,6 +143,7 @@ struct RootView: View {
                                     isShowingSearchBar = false
                                     isShowingUsageGuide = true
                                 },
+                                onOpenPrivacyInfo: { isShowingPrivacyInfoSheet = true },
                                 onOpenSharedTagCloud: { isShowingSharedTagCloudSheet = true },
                                 onCreateSharedTag: { isShowingSharedTagCreateSheet = true },
                                 onOpenSharedTag: { selectedSharedTagID = $0 },
@@ -270,6 +272,12 @@ struct RootView: View {
             .sheet(isPresented: $isShowingSharedTagCloudSheet) {
                 SharedTagCloudSheet(model: model)
                     .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+                    .presentationCornerRadius(32)
+            }
+            .sheet(isPresented: $isShowingPrivacyInfoSheet) {
+                PrivacyInfoSheet()
+                    .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
                     .presentationCornerRadius(32)
             }
@@ -497,6 +505,7 @@ private struct MainScreen: View {
     let onOpenManualInput: () -> Void
     let onOpenShare: () -> Void
     let onOpenUsageGuide: () -> Void
+    let onOpenPrivacyInfo: () -> Void
     let onOpenSharedTagCloud: () -> Void
     let onCreateSharedTag: () -> Void
     let onOpenSharedTag: (String) -> Void
@@ -656,6 +665,13 @@ private struct MainScreen: View {
         ]
         buttons.append(
             ScreenHeaderButton(
+                icon: "info.circle",
+                accessibilityLabel: "データの取り扱い",
+                action: onOpenPrivacyInfo
+            )
+        )
+        buttons.append(
+            ScreenHeaderButton(
                 icon: "person.crop.circle",
                 accessibilityLabel: "プロフィール",
                 action: onOpenSharedTagCloud
@@ -752,6 +768,74 @@ private struct BottomHomeActionBar: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label == "タグ" ? "タグ管理" : label)
+    }
+}
+
+private struct PrivacyInfoSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ScreenContainer {
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack {
+                        Text("データの取り扱い")
+                            .font(.system(size: 28, weight: .heavy, design: .rounded))
+                            .foregroundStyle(AppPalette.textPrimary)
+                        Spacer()
+                        Button("閉じる") { dismiss() }
+                            .font(.system(size: 17, weight: .bold))
+                            .foregroundStyle(AppPalette.primaryStrong)
+                    }
+
+                    PrivacyInfoPanel(
+                        title: "端末内に保存する情報",
+                        message: "保存したURL、タイトル、メモ、ローカルタグ、アーカイブ状態はこのiPhone内に保存します。"
+                    )
+                    PrivacyInfoPanel(
+                        title: "メタデータ取得",
+                        message: "ページのタイトルやサムネイルを取得するため、保存したURLや公開oEmbedエンドポイントへ通信することがあります。"
+                    )
+                    PrivacyInfoPanel(
+                        title: "共有タグクラウド",
+                        message: "サインインして共有タグクラウドを使う場合は、メールアドレス、共有タグ、共有タグ内のURL、メンバー情報を同期します。"
+                    )
+                    PrivacyInfoPanel(
+                        title: "問い合わせ",
+                        message: "問い合わせを送信した場合は、入力したメールアドレス、名前、問い合わせ内容をサポート対応のために送信します。"
+                    )
+                    PrivacyInfoPanel(
+                        title: "Standard / Pro",
+                        message: "アプリ内サブスクリプション購入はStoreKitを通じて処理し、権限付与の確認に使います。"
+                    )
+                    PrivacyInfoPanel(
+                        title: "広告・分析",
+                        message: "広告表示、外部アナリティクス、第三者クラッシュ収集サービスは現時点で使用していません。"
+                    )
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 18)
+            }
+        }
+    }
+}
+
+private struct PrivacyInfoPanel: View {
+    let title: String
+    let message: String
+
+    var body: some View {
+        AppPanel {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(title)
+                    .font(.system(size: 18, weight: .heavy, design: .rounded))
+                    .foregroundStyle(AppPalette.textPrimary)
+                Text(message)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(AppPalette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 }
 

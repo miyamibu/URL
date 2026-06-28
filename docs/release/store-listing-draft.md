@@ -72,7 +72,7 @@ URL, bookmark, share, later, archive, save, link, productivity
 | Full description / description | Use `Full Description` above. | Use `Full Description` above, shortened if App Store field limits require it. | DONE |
 | Category | Productivity | Productivity | DONE |
 | Support email | `miyamibu@privaterelay.appleid.com` | `miyamibu@privaterelay.appleid.com` | DONE |
-| Privacy policy URL | `https://miyamibu.xyz/privacy/` if current deployment is verified | `https://miyamibu.xyz/privacy/` if current deployment is verified | NEEDS_USER_ACTION |
+| Privacy policy URL | `https://miyamibu.xyz/privacy/` after redeploy verification | `https://miyamibu.xyz/privacy/` after redeploy verification | BLOCKED_PUBLIC_DEPLOY_STALE: live page was HTTP 200 on 2026-06-29 but still had stale no-real-billing wording. |
 | Marketing URL | optional | optional | NOT_APPLICABLE |
 | Review contact | Use developer account owner contact in console | Use App Store Connect review contact | NEEDS_USER_ACTION |
 | Review notes | Use `Review Notes Draft` above. Provide a test account if store review requires cloud-sharing sign-in. | Use `Review Notes Draft` above. Provide a test account if store review requires cloud-sharing sign-in. | NEEDS_USER_ACTION |

@@ -229,6 +229,106 @@ Validation:
 Remaining gaps:
 - Physical Android/iPhone collection/search UI operation is not verified.
 
+## 2026-06-29 iPhone Physical Verification Preflight
+
+Checked:
+- Ran Appium XCUITest real-device lister.
+- Ran Xcode device listing.
+- Checked local Appium server status on 127.0.0.1:4723.
+
+Result:
+- BLOCKED: Appium server was not running.
+- BLOCKED: Appium/usbmuxd reported 0 connected real devices.
+- BLOCKED: Xcode listed physical iPhones/iPads only under Devices Offline.
+
+Impact:
+- Physical iPhone UI gaps in the tracker remain NOT VERIFIED on physical iPhone.
+- Simulator/local XCTest results must not be treated as physical-iPhone operation proof.
+
+## 2026-06-29 UserLabel Foundation Audit
+
+Checked:
+- Android source has UserLabelEntity, UserLabelDao, userLabelId, observe/create/delete/assign repository APIs, and migration coverage.
+- Android UI source and tests do not reference observeUserLabels/createUserLabel/deleteUserLabel/assignLabel/userLabelId outside migration coverage.
+- iOS shared/app/test source has no UserLabel/userLabelId equivalent.
+- git history shows UserLabel entering through the Android data-foundation commit, not through a removed user-facing UI flow.
+- PASS: ./gradlew testDebugUnitTest --tests jp.mimac.urlsaver.MigrationDedupTest.migration_8_9_preservesExistingData_andCreatesUserLabels.
+
+Conclusion:
+- TS-001 remains FOUNDATION_ONLY_NOT_USER_FACING.
+- Do not add a user-facing label UI without a product decision, because DESIGN.md treats advanced tagging as out of scope unless explicitly approved and the app already has local tags and collections.
+
+## 2026-06-29 Canonical Tracker Integrity Fix
+
+Fixed:
+- ES-001: The XLSX workbook filter definedName still covered A1:S42 while the current sheet dimension was A1:S57.
+- Updated `_xlnm._FilterDatabase` to `canonical_story_status!A1:S57` so all 56 story rows are included in the spreadsheet filter range.
+- Regenerated the XLSX `summary` sheet from the CSV status counts after ES-002 status changed from the old full-PASS text to `LOCAL_PASS_WITH_CONNECTED_TEST_GAP`.
+- Added a remaining-gate section to the XLSX `summary` sheet so physical-device, Supabase/Auth, Store/public-console, Resend, and connected instrumentation gaps are visible in the same workbook.
+
+Validation:
+- PASS: CSV row count is 56.
+- PASS: XLSX sheet dimension is A1:S57.
+- PASS: XLSX filter definedName is A1:S57.
+- PASS: CSV/XLSX sheet1 cell comparison has 0 diffs.
+- PASS: XLSX summary status counts match the CSV status counts.
+- PASS: XLSX summary remaining-gate counts are generated from the current tracker rows.
+- PASS: unzip integrity check reports no errors.
+
+## 2026-06-29 ES-002 Status Precision Fix
+
+Fixed:
+- ES-002 previously used a `PASS:` status while the same row still documented unverified connectedDebugAndroidTest, physical share, and purchase-operation gates.
+- Updated the status to `LOCAL_PASS_WITH_CONNECTED_TEST_GAP` so local Android build/test/lint success is separated from destructive/physical-device gates.
+
+Validation:
+- PASS: tracker contradiction scan no longer reports ES-002 as full PASS with unverified text.
+
+## 2026-06-29 Public Privacy Live Verification
+
+Checked:
+- ES-006: `https://miyamibu.xyz/privacy/` returned HTTP 200.
+- ES-006: `https://miyamibu.xyz/account-deletion/` returned HTTP 200.
+- ES-006: `https://miyamibu.xyz/.well-known/assetlinks.json` parsed as JSON and includes `jp.miyamibu.urlalbum`.
+- ES-006: `https://miyamibu.xyz/.well-known/apple-app-site-association` parsed as JSON and includes `8R3B5675ZJ.com.mibu.codebridge.ios`.
+
+Found:
+- BLOCKED_PUBLIC_DEPLOY_STALE: live privacy page still says `本物の課金も行いません`.
+- Repo source `web/invite-link/privacy/index.html` already discloses Standard / Pro subscriptions, Google Play Billing, and StoreKit.
+- The public deployment is therefore stale relative to the billing-enabled `1.0.11` source and store/privacy assumptions.
+
+Updated:
+- ES-006 status changed to `PARTIAL_PUBLIC_PRIVACY_STALE_WITH_FINAL_SHA_GAP`.
+- US-040 status changed to `LOCAL_PASS_WITH_STORE_DECLARATION_AND_PUBLIC_PRIVACY_GAP`.
+- `docs/release/final-submission-checklist.md` now marks the public privacy URL as stale until redeployed.
+- `docs/release/privacy-data-safety-draft.md` now separates account-deletion public 200 from the stale public privacy page.
+- `docs/release/store-listing-draft.md` now marks the privacy policy URL as usable only after redeploy verification.
+- Added `scripts/verify_public_web_release.sh` so the public web release checks can be rerun without copying ad hoc curl commands.
+
+Validation:
+- PASS: `bash -n scripts/verify_public_web_release.sh`.
+- FAIL expected-current: `scripts/verify_public_web_release.sh` passes HTTP/JSON/package/bundle checks but reports 5 privacy wording issues because the live page is stale.
+
+Remaining:
+- Redeploy the privacy page, then re-run live curl/body checks.
+- After redeploy, rerun `scripts/verify_public_web_release.sh`; it should exit 0 only when the public privacy page discloses Standard / Pro, Google Play Billing, and StoreKit and no longer contains no-real-billing wording.
+- Replace/reverify Android App Links after final Play App Signing SHA-256 is available.
+
+## 2026-06-29 Android App Privacy Dialog Alignment
+
+Fixed:
+- US-040: Android `privacy_dialog_body` previously described local URL storage, metadata fetch, and no third-party crash collection only.
+- Updated it to also disclose shared-tag cloud sync, contact-support submission, Standard / Pro Google Play Billing processing, and no ads/analytics/third-party crash collection.
+
+Validation:
+- PASS: `./gradlew assembleDebug`.
+- PASS: `./gradlew testDebugUnitTest --tests jp.mimac.urlsaver.ads.AdsConfigTest`.
+- NOTE: An earlier `--tests jp.mimac.urlsaver.AdsConfigTest` run failed because the filter used the wrong package name; the correct test class is `jp.mimac.urlsaver.ads.AdsConfigTest`.
+
+Remaining:
+- Physical Android privacy dialog display is not verified.
+- Public privacy page is still stale until redeployed.
+
 ## 2026-06-29 iOS Same-Name Collection Tag Filter Fix
 
 Fixed/added:
