@@ -72,6 +72,7 @@ private val PlanType.priority: Int
     get() = when (this) {
         PlanType.PROMO_PRO -> 0
         PlanType.PRO -> 1
-        PlanType.LAUNCH_STANDARD -> 2
-        PlanType.FREE -> 3
+        PlanType.STANDARD -> 2
+        PlanType.LAUNCH_STANDARD -> 3
+        PlanType.FREE -> 4
     }

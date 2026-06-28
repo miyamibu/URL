@@ -537,6 +537,8 @@ private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
                     tagRepository = context.appContainer().tagRepository,
                     userProfileStore = context.appContainer().userProfileStore,
                     entitlementGrantRepository = context.appContainer().entitlementGrantRepository,
+                    googlePlayBillingService = context.appContainer().googlePlayBillingService,
+                    chatGptPersonalLinkSyncRepository = context.appContainer().chatGptPersonalLinkSyncRepository,
                     contactSupportClient = context.appContainer().contactSupportClient,
                     authSessionProvider = context.appContainer().sharedTagAuthSessionProvider,
                 )
@@ -655,6 +657,8 @@ private fun MainScreen(
                     tagRepository = context.appContainer().tagRepository,
                     userProfileStore = context.appContainer().userProfileStore,
                     entitlementGrantRepository = context.appContainer().entitlementGrantRepository,
+                    googlePlayBillingService = context.appContainer().googlePlayBillingService,
+                    chatGptPersonalLinkSyncRepository = context.appContainer().chatGptPersonalLinkSyncRepository,
                     contactSupportClient = context.appContainer().contactSupportClient,
                     authSessionProvider = context.appContainer().sharedTagAuthSessionProvider,
                 )
@@ -2244,7 +2248,7 @@ private fun GuideAIExportPreview() {
             MiniOutlinedPanel(Modifier.weight(1f)) {
                 Text("エクスポート形式", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ExportFileChip("CSV", Color(0xFF16A34A))
+                    ExportFileChip("ZIP", Color(0xFF16A34A))
                     ExportFileChip("JSON", MaterialTheme.colorScheme.primary)
                 }
             }

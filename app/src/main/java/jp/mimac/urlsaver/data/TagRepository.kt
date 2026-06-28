@@ -46,6 +46,7 @@ interface TagRepository {
     suspend fun createTagWithResult(name: String): CreateTagResult
     suspend fun createLocalTagWithResult(name: String): CreateTagResult
     suspend fun createSyncedTagWithResult(name: String): CreateTagResult
+    suspend fun findLocalTagIdByName(name: String): Long? = null
     suspend fun deleteTag(tagId: Long)
     suspend fun assignTag(tagId: Long, entryId: Long)
     suspend fun assignTagWithResult(tagId: Long, entryId: Long): AssignTagResult
@@ -60,6 +61,10 @@ interface TagRepository {
         SharedTagAuthResult.Failure("Googleサインインを開始できませんでした")
     suspend fun signIn(email: String, password: String): SharedTagAuthResult
     suspend fun signUp(email: String, password: String): SharedTagAuthResult
+    suspend fun resendEmailConfirmation(email: String): SharedTagAuthResult =
+        SharedTagAuthResult.Failure("確認メールを再送できませんでした")
+    suspend fun sendPasswordRecovery(email: String): SharedTagAuthResult =
+        SharedTagAuthResult.Failure("パスワード再設定メールを送信できませんでした")
     suspend fun signOut()
     suspend fun deleteAccount(): SharedTagAccountDeletionResult
     suspend fun createInviteLink(tagId: Long): SharedTagInviteCreationResult

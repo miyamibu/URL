@@ -29,6 +29,12 @@ fun buildConfigString(value: String): String {
     return "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
 }
 
+fun contactSupportEndpointFromSupabaseUrl(supabaseUrl: String): String {
+    return supabaseUrl.trim().trimEnd('/').takeIf { it.isNotBlank() }
+        ?.let { "$it/functions/v1/contact-support" }
+        .orEmpty()
+}
+
 val publicInviteLinkBaseUrl = configString(
     propertyName = "invite.link.base.url",
     envName = "URLSAVER_INVITE_LINK_BASE_URL",
@@ -51,18 +57,28 @@ val releaseSupabaseAnonKey = configString(
     propertyName = "release.supabase.anon.key",
     envName = "URLSAVER_RELEASE_SUPABASE_ANON_KEY",
 ).trim()
+val debugSupabaseUrl = configString("supabase.url", "URLSAVER_SUPABASE_URL").trim()
+val debugSupabaseAnonKey = configString("supabase.anon.key", "URLSAVER_SUPABASE_ANON_KEY").trim()
+val debugContactSupportEndpointUrl = contactSupportEndpointUrl.ifBlank {
+    contactSupportEndpointFromSupabaseUrl(debugSupabaseUrl)
+}
+val releaseContactSupportEndpointUrl = contactSupportEndpointUrl.ifBlank {
+    contactSupportEndpointFromSupabaseUrl(releaseSupabaseUrl)
+}
 val releaseBuildRequested = gradle.startParameter.taskNames.any { taskName ->
     taskName.contains("Release", ignoreCase = true) || taskName == "build"
 }
 if (releaseBuildRequested &&
     releaseSharedTagCloudEnabled &&
-    (releaseSupabaseUrl.isBlank() || releaseSupabaseAnonKey.isBlank())
+    (releaseSupabaseUrl.isBlank() || releaseSupabaseAnonKey.isBlank() || releaseContactSupportEndpointUrl.isBlank())
 ) {
     throw GradleException(
         "Release builds with shared-tag cloud enabled require beta/production Supabase config. Set " +
-            "release.shared.tag.cloud.enabled=true, release.supabase.url, release.supabase.anon.key " +
+            "release.shared.tag.cloud.enabled=true, release.supabase.url, release.supabase.anon.key, " +
+            "and optionally contact.support.endpoint.url " +
             "or URLSAVER_RELEASE_SHARED_TAG_CLOUD_ENABLED=true, URLSAVER_RELEASE_SUPABASE_URL, " +
-            "URLSAVER_RELEASE_SUPABASE_ANON_KEY. For a local-only pre-contract release build, leave " +
+            "URLSAVER_RELEASE_SUPABASE_ANON_KEY, and optionally URLSAVER_CONTACT_SUPPORT_ENDPOINT_URL. " +
+            "For a local-only pre-contract release build, leave " +
             "release.shared.tag.cloud.enabled unset or false. Use a publishable/anon key, never service_role/secret.",
     )
 }
@@ -75,8 +91,8 @@ android {
         applicationId = "jp.miyamibu.urlalbum"
         minSdk = 26
         targetSdk = 35
-        versionCode = 11
-        versionName = "1.0.11"
+        versionCode = 13
+        versionName = "1.0.13"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -93,10 +109,10 @@ android {
             buildConfigField("String", "ADMOB_INTERSTITIAL_AD_UNIT_ID", buildConfigString("ca-app-pub-3940256099942544/1033173712"))
             buildConfigField("String", "INSTAGRAM_OEMBED_ACCESS_TOKEN", buildConfigString(configString("instagram.oembed.access.token", "URLSAVER_INSTAGRAM_OEMBED_ACCESS_TOKEN")))
             buildConfigField("boolean", "SHARED_TAG_CLOUD_ENABLED", configBoolean("shared.tag.cloud.enabled", "URLSAVER_SHARED_TAG_CLOUD_ENABLED").toString())
-            buildConfigField("String", "SUPABASE_URL", buildConfigString(configString("supabase.url", "URLSAVER_SUPABASE_URL")))
-            buildConfigField("String", "SUPABASE_ANON_KEY", buildConfigString(configString("supabase.anon.key", "URLSAVER_SUPABASE_ANON_KEY")))
+            buildConfigField("String", "SUPABASE_URL", buildConfigString(debugSupabaseUrl))
+            buildConfigField("String", "SUPABASE_ANON_KEY", buildConfigString(debugSupabaseAnonKey))
             buildConfigField("String", "INVITE_LINK_BASE_URL", buildConfigString(publicInviteLinkBaseUrl))
-            buildConfigField("String", "CONTACT_SUPPORT_ENDPOINT_URL", buildConfigString(contactSupportEndpointUrl))
+            buildConfigField("String", "CONTACT_SUPPORT_ENDPOINT_URL", buildConfigString(debugContactSupportEndpointUrl))
         }
         release {
             isMinifyEnabled = false
@@ -110,7 +126,7 @@ android {
             buildConfigField("String", "SUPABASE_URL", buildConfigString(releaseSupabaseUrl))
             buildConfigField("String", "SUPABASE_ANON_KEY", buildConfigString(releaseSupabaseAnonKey))
             buildConfigField("String", "INVITE_LINK_BASE_URL", buildConfigString(publicInviteLinkBaseUrl))
-            buildConfigField("String", "CONTACT_SUPPORT_ENDPOINT_URL", buildConfigString(contactSupportEndpointUrl))
+            buildConfigField("String", "CONTACT_SUPPORT_ENDPOINT_URL", buildConfigString(releaseContactSupportEndpointUrl))
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -171,6 +187,7 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
+    implementation("com.android.billingclient:billing:8.3.0")
     compileOnly("com.google.android.gms:play-services-ads:23.6.0")
     debugImplementation("com.google.android.gms:play-services-ads:23.6.0")
     implementation("io.coil-kt:coil-compose:2.6.0")

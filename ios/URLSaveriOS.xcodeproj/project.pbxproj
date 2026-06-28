@@ -23,6 +23,7 @@
 		2A3422CC6D2DDB8FBAEB5F79 /* PendingInviteStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51B5A9AACEF4B548A8880BED /* PendingInviteStore.swift */; };
 		2AA7F28380362F83ACD57EED /* SharedTagCloudSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8649B1C31B4EB0C285A375DA /* SharedTagCloudSheet.swift */; };
 		2F7A8D8117DD4E5A9F460541 /* DefaultProfilePig.png in Resources */ = {isa = PBXBuildFile; fileRef = 4F4E16E5F6E445D3A93E352A /* DefaultProfilePig.png */; };
+		2F9D4A8B2F0D4C1D9C1F0001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2F9D4A8B2F0D4C1D9C1F0002 /* Assets.xcassets */; };
 		30B10BBB0B3CC480E0B49FEB /* URLRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC6F434AE1592577D5DFACBB /* URLRules.swift */; };
 		30C8AF85D856EC552A2B5710 /* URLRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D9F1AE70C913F6E9DBF50F8 /* URLRepository.swift */; };
 		31A30D5625E73416531F735B /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 39187CA7BEA7BDFB5886D09A /* libsqlite3.tbd */; };
@@ -79,6 +80,7 @@
 		BC4F3E91825BFAE1BC5C4972 /* URLSaverAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62917385A8429E547EE136BF /* URLSaverAppModel.swift */; };
 		BD1CEF4C9B6CA52E3850C54D /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4733368DC2EBE268FB536F6F /* Security.framework */; };
 		C12D25F62898B0B728B57110 /* AppServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4D00E4E305DD669D4DE303E /* AppServices.swift */; };
+		C7A9F1E940A94377A91A62B4 /* StoreKitPurchaseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7A9F1E840A94377A91A62B4 /* StoreKitPurchaseService.swift */; };
 		C7D5DED5CF98B224D332ED35 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3236A8591F8712CF45719E94 /* ShareViewController.swift */; };
 		CB28B8A492E4591E0778EB65 /* MetadataFetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DA970E40A835B9247B942A5 /* MetadataFetcher.swift */; };
 		D270D9A9EC3CCF27FEF50683 /* SharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7E0EB10D508602CBAD63D06 /* SharedContainer.swift */; };
@@ -136,6 +138,7 @@
 		308EBF3A3D7C2E7DFABC7C65 /* PendingInviteStoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PendingInviteStoreTests.swift; sourceTree = "<group>"; };
 		30CD2C1A66441C47F07C68C9 /* BackgroundTaskRunner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BackgroundTaskRunner.swift; path = Support/BackgroundTaskRunner.swift; sourceTree = "<group>"; };
 		3236A8591F8712CF45719E94 /* ShareViewController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
+		2F9D4A8B2F0D4C1D9C1F0002 /* Assets.xcassets */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		3786C2F58B31036CAE6DCEF8 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; name = Info.plist; path = URLSaveriOS/Info.plist; sourceTree = "<group>"; };
 		39187CA7BEA7BDFB5886D09A /* libsqlite3.tbd */ = {isa = PBXFileReference; includeInIndex = 1; name = libsqlite3.tbd; path = usr/lib/libsqlite3.tbd; sourceTree = SDKROOT; };
 		3DA0B712A11CD1415B5044A6 /* URLSaveriOSTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = URLSaveriOSTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -168,6 +171,7 @@
 		B7E0EB10D508602CBAD63D06 /* SharedContainer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SharedContainer.swift; path = Support/SharedContainer.swift; sourceTree = "<group>"; };
 		CCBEB31BBC48B5C81422D418 /* UserProfile.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = UserProfile.swift; path = Domain/UserProfile.swift; sourceTree = "<group>"; };
 		CF6AC3954A007FE091502EDA /* UserProfileStoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = UserProfileStoreTests.swift; sourceTree = "<group>"; };
+		C7A9F1E840A94377A91A62B4 /* StoreKitPurchaseService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StoreKitPurchaseService.swift; path = App/StoreKitPurchaseService.swift; sourceTree = "<group>"; };
 		D5176C4FA32442389B31AADA /* MetadataStatusTextTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MetadataStatusTextTests.swift; sourceTree = "<group>"; };
 		D6244A07EE412C2C68F725E6 /* Models.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Models.swift; path = Domain/Models.swift; sourceTree = "<group>"; };
 		DC6F434AE1592577D5DFACBB /* URLRules.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = URLRules.swift; path = Domain/URLRules.swift; sourceTree = "<group>"; };
@@ -284,6 +288,7 @@
 				E4D00E4E305DD669D4DE303E /* AppServices.swift */,
 				6E239553C5A0BC8885869512 /* MetadataCoordinator.swift */,
 				0108994AE127C81F8F032F61 /* SharedTagSyncExecutor.swift */,
+				C7A9F1E840A94377A91A62B4 /* StoreKitPurchaseService.swift */,
 				62917385A8429E547EE136BF /* URLSaverAppModel.swift */,
 				85B8383FA9E05E8FB78EE112 /* URLSaveriOSApp.swift */,
 				B080D7A224280E9931C3AB3A /* ActivityShareSheet.swift */,
@@ -293,6 +298,7 @@
 				267E32874B0F4AE28B151099 /* RootView.swift */,
 				8649B1C31B4EB0C285A375DA /* SharedTagCloudSheet.swift */,
 				0AB87796B191A6B637724547 /* SharedTagManagementSheets.swift */,
+				2F9D4A8B2F0D4C1D9C1F0002 /* Assets.xcassets */,
 				4F4E16E5F6E445D3A93E352A /* DefaultProfilePig.png */,
 				FE57C39ABAF3844DAB83DBE6 /* PrivacyInfo.xcprivacy */,
 			);
@@ -462,6 +468,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				2F9D4A8B2F0D4C1D9C1F0001 /* Assets.xcassets in Resources */,
 				2F7A8D8117DD4E5A9F460541 /* DefaultProfilePig.png in Resources */,
 				3A99CC728102CFD333AC8783 /* PrivacyInfo.xcprivacy in Resources */,
 			);
@@ -492,6 +499,7 @@
 				C12D25F62898B0B728B57110 /* AppServices.swift in Sources */,
 				80FCFD6E124DAF55BDC0A8C7 /* MetadataCoordinator.swift in Sources */,
 				AC656DE3016A9ABE7A45825F /* SharedTagSyncExecutor.swift in Sources */,
+				C7A9F1E940A94377A91A62B4 /* StoreKitPurchaseService.swift in Sources */,
 				BC4F3E91825BFAE1BC5C4972 /* URLSaverAppModel.swift in Sources */,
 				E5BCBF0AA5612C8B8AD4E3BC /* URLSaveriOSApp.swift in Sources */,
 				B309221D3A89B2E95429F9B3 /* ActivityShareSheet.swift in Sources */,

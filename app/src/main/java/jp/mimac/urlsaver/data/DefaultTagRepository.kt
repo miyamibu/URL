@@ -197,6 +197,10 @@ class DefaultTagRepository(
         return createSyncedTag(normalized, session)
     }
 
+    override suspend fun findLocalTagIdByName(name: String): Long? {
+        return tagDao.findLocalTagByName(normalizeSharedTagName(name))?.id
+    }
+
     override suspend fun deleteTag(tagId: Long) {
         val tag = tagDao.findTagById(tagId) ?: return
         if (tag.scope == SharedTagScope.LOCAL_ONLY) {
@@ -637,6 +641,30 @@ class DefaultTagRepository(
             }
         }.getOrElse { error ->
             SharedTagAuthResult.Failure(error.message ?: "アカウントを作成できませんでした")
+        }
+    }
+
+    override suspend fun resendEmailConfirmation(email: String): SharedTagAuthResult {
+        if (!remoteConfig.isConfigured) {
+            return SharedTagAuthResult.Failure("クラウド共有はまだ設定されていません")
+        }
+        return runCatching {
+            authRemoteDataSource.resendEmailConfirmation(email.trim())
+            SharedTagAuthResult.NeedsEmailConfirmation
+        }.getOrElse { error ->
+            SharedTagAuthResult.Failure(error.message ?: "確認メールを再送できませんでした")
+        }
+    }
+
+    override suspend fun sendPasswordRecovery(email: String): SharedTagAuthResult {
+        if (!remoteConfig.isConfigured) {
+            return SharedTagAuthResult.Failure("クラウド共有はまだ設定されていません")
+        }
+        return runCatching {
+            authRemoteDataSource.sendPasswordRecovery(email.trim())
+            SharedTagAuthResult.NeedsEmailConfirmation
+        }.getOrElse { error ->
+            SharedTagAuthResult.Failure(error.message ?: "パスワード再設定メールを送信できませんでした")
         }
     }
 

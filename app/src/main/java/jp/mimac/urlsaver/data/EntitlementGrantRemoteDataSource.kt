@@ -153,6 +153,7 @@ class SupabaseEntitlementGrantRemoteDataSource(
             return when (lowercase()) {
                 "free" -> PlanType.FREE
                 "launch_standard" -> PlanType.LAUNCH_STANDARD
+                "standard" -> PlanType.STANDARD
                 "pro" -> PlanType.PRO
                 "promo_pro" -> PlanType.PROMO_PRO
                 else -> null

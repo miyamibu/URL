@@ -29,6 +29,12 @@ interface SharedTagAuthRemoteDataSource {
     suspend fun signUp(email: String, password: String): SharedTagAuthRemoteResult
     suspend fun signIn(email: String, password: String): SharedTagAuthRemoteResult
     suspend fun refreshSession(refreshToken: String): SharedTagAuthSession
+    suspend fun resendEmailConfirmation(email: String) {
+        throw IOException("Email confirmation resend is not configured.")
+    }
+    suspend fun sendPasswordRecovery(email: String) {
+        throw IOException("Password recovery is not configured.")
+    }
 }
 
 sealed interface SharedTagAuthRemoteResult {
@@ -101,7 +107,7 @@ class SupabaseSharedTagAuthRemoteDataSource(
     override suspend fun signUp(email: String, password: String): SharedTagAuthRemoteResult {
         val response = withContext(Dispatchers.IO) {
             executeAuthRequest(
-                path = "/auth/v1/signup",
+                path = authPathWithRedirect("/auth/v1/signup"),
                 requestBody = json.encodeToString(
                     SupabasePasswordAuthRequest(email = email, password = password),
                 ),
@@ -132,6 +138,32 @@ class SupabaseSharedTagAuthRemoteDataSource(
             )
         }
         return parseSession(requireSession(response))
+    }
+
+    override suspend fun resendEmailConfirmation(email: String) {
+        withContext(Dispatchers.IO) {
+            executeAuthRequest(
+                path = "/auth/v1/resend",
+                requestBody = json.encodeToString(
+                    SupabaseResendRequest(
+                        type = "signup",
+                        email = email.trim(),
+                        options = SupabaseEmailRedirectOptions(emailRedirectTo = AUTH_CALLBACK_URL),
+                    ),
+                ),
+            )
+        }
+    }
+
+    override suspend fun sendPasswordRecovery(email: String) {
+        withContext(Dispatchers.IO) {
+            executeAuthRequest(
+                path = authPathWithRedirect("/auth/v1/recover"),
+                requestBody = json.encodeToString(
+                    SupabasePasswordRecoveryRequest(email = email.trim()),
+                ),
+            )
+        }
     }
 
     private fun parseSessionResult(response: String): SharedTagAuthRemoteResult {
@@ -207,6 +239,12 @@ class SupabaseSharedTagAuthRemoteDataSource(
             )
         }
         return body
+    }
+
+    private fun authPathWithRedirect(path: String): String {
+        val encodedRedirect = URLEncoder.encode(AUTH_CALLBACK_URL, Charsets.UTF_8.name())
+        val separator = if (path.contains("?")) "&" else "?"
+        return "$path${separator}redirect_to=$encodedRedirect"
     }
 
     private companion object {
@@ -348,6 +386,23 @@ private data class SupabaseRefreshTokenRequest(
 private data class SupabasePkceTokenRequest(
     @SerialName("auth_code") val authCode: String,
     @SerialName("code_verifier") val codeVerifier: String,
+)
+
+@Serializable
+private data class SupabaseEmailRedirectOptions(
+    @SerialName("email_redirect_to") val emailRedirectTo: String,
+)
+
+@Serializable
+private data class SupabaseResendRequest(
+    val type: String,
+    val email: String,
+    val options: SupabaseEmailRedirectOptions,
+)
+
+@Serializable
+private data class SupabasePasswordRecoveryRequest(
+    val email: String,
 )
 
 @Serializable

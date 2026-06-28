@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">URL Saver</string>
+    <string name="app_name">りんばむ</string>
     <string name="main_empty_title">保存したURLはまだありません</string>
     <string name="main_empty_body">共有または手動追加であとから開くURLを保存できます</string>
     <string name="main_filtered_empty_title">この条件に一致するURLはありません</string>

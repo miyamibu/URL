@@ -2,18 +2,58 @@ import UIKit
 import UniformTypeIdentifiers
 
 final class ShareViewController: UIViewController {
+    private enum Layout {
+        static let pickerBottomOffset: CGFloat = -19
+        static let resultBottomOffset: CGFloat = -152
+        static let pickerTopInset: CGFloat = 19
+        static let pickerHorizontalInset: CGFloat = 8
+        static let compactResultHeight: CGFloat = 420
+        static let compactPickerHeight: CGFloat = 590
+        static let expandedPickerHeight: CGFloat = 700
+    }
+
     private let statusLabel = UILabel()
     private let activityIndicator = UIActivityIndicatorView(style: .large)
     private let doneButton = UIButton(type: .system)
+    private let panelView = UIView()
+    private let contentStack = UIStackView()
+    private let pickerContainerView = UIView()
+    private let pickerTitleLabel = UILabel()
+    private let pickerMessageLabel = UILabel()
+    private let tagAreaView = UIView()
+    private let tagScrollView = UIScrollView()
+    private let tagFlowView = TagFlowView()
+    private let createTagField = UITextField()
+    private let createTagButton = UIButton(type: .system)
+    private let saveButton = UIButton(type: .system)
+    private let cancelButton = UIButton(type: .system)
+    private let pickerActionsStack = UIStackView()
+    private let resultSpacer = UIView()
+    private var pickerBottomConstraint: NSLayoutConstraint?
+    private var resultBottomConstraint: NSLayoutConstraint?
+    private var panelHeightConstraint: NSLayoutConstraint?
+    private var tagAreaHeightConstraint: NSLayoutConstraint?
+    private var resultDirectConstraints: [NSLayoutConstraint] = []
+    private var repository: URLRepository?
+    private var localTags: [LocalTagSummary] = []
+    private var pendingShare: PendingExtensionShare?
+    private var selectedLocalTagIDs = Set<Int64>()
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        preferredContentSize = CGSize(width: 0, height: Layout.compactPickerHeight)
         view.backgroundColor = .systemBackground
+        view.isOpaque = true
         configureUI()
 
         Task {
             await processShare()
         }
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        preferredContentSize = CGSize(width: view.bounds.width, height: panelHeightConstraint?.constant ?? Layout.compactPickerHeight)
     }
 
     private func configureUI() {
@@ -27,20 +67,139 @@ final class ShareViewController: UIViewController {
 
         doneButton.translatesAutoresizingMaskIntoConstraints = false
         doneButton.setTitle("完了", for: .normal)
+        doneButton.titleLabel?.font = .preferredFont(forTextStyle: .title2)
+        doneButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        var doneConfiguration = UIButton.Configuration.filled()
+        doneConfiguration.title = "完了"
+        doneConfiguration.contentInsets = NSDirectionalEdgeInsets(top: 16, leading: 48, bottom: 16, trailing: 48)
+        doneConfiguration.cornerStyle = .capsule
+        doneButton.configuration = doneConfiguration
         doneButton.addTarget(self, action: #selector(finishExtension), for: .touchUpInside)
         doneButton.isHidden = true
 
-        let stack = UIStackView(arrangedSubviews: [activityIndicator, statusLabel, doneButton])
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.axis = .vertical
-        stack.spacing = 16
-        stack.alignment = .center
+        resultSpacer.translatesAutoresizingMaskIntoConstraints = false
+        resultSpacer.setContentHuggingPriority(.defaultLow, for: .vertical)
+        resultSpacer.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
 
-        view.addSubview(stack)
+        tagAreaView.translatesAutoresizingMaskIntoConstraints = false
+        tagAreaView.setContentHuggingPriority(.required, for: .vertical)
+        tagAreaView.setContentCompressionResistancePriority(.required, for: .vertical)
+
+        tagScrollView.translatesAutoresizingMaskIntoConstraints = false
+        tagScrollView.alwaysBounceVertical = true
+        tagScrollView.showsVerticalScrollIndicator = false
+        tagScrollView.addSubview(tagFlowView)
+
+        tagFlowView.translatesAutoresizingMaskIntoConstraints = false
+        tagAreaView.addSubview(tagScrollView)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
-            stack.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            tagScrollView.leadingAnchor.constraint(equalTo: tagAreaView.leadingAnchor),
+            tagScrollView.trailingAnchor.constraint(equalTo: tagAreaView.trailingAnchor),
+            tagScrollView.topAnchor.constraint(equalTo: tagAreaView.topAnchor),
+            tagScrollView.bottomAnchor.constraint(equalTo: tagAreaView.bottomAnchor),
+            tagFlowView.leadingAnchor.constraint(equalTo: tagScrollView.contentLayoutGuide.leadingAnchor),
+            tagFlowView.trailingAnchor.constraint(equalTo: tagScrollView.contentLayoutGuide.trailingAnchor),
+            tagFlowView.topAnchor.constraint(equalTo: tagScrollView.contentLayoutGuide.topAnchor),
+            tagFlowView.bottomAnchor.constraint(equalTo: tagScrollView.contentLayoutGuide.bottomAnchor),
+            tagFlowView.widthAnchor.constraint(equalTo: tagScrollView.frameLayoutGuide.widthAnchor),
+            tagFlowView.heightAnchor.constraint(greaterThanOrEqualTo: tagScrollView.frameLayoutGuide.heightAnchor),
+        ])
+
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.axis = .vertical
+        contentStack.spacing = 16
+        contentStack.alignment = .center
+        contentStack.addArrangedSubview(activityIndicator)
+        contentStack.addArrangedSubview(statusLabel)
+        contentStack.addArrangedSubview(doneButton)
+
+        pickerContainerView.translatesAutoresizingMaskIntoConstraints = false
+        pickerContainerView.isHidden = true
+
+        pickerTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        pickerTitleLabel.text = "保存先タグ"
+        pickerTitleLabel.font = .preferredFont(forTextStyle: .largeTitle)
+        pickerTitleLabel.adjustsFontForContentSizeCategory = true
+        pickerTitleLabel.textAlignment = .left
+
+        pickerMessageLabel.translatesAutoresizingMaskIntoConstraints = false
+        pickerMessageLabel.numberOfLines = 0
+        pickerMessageLabel.font = .preferredFont(forTextStyle: .headline)
+        pickerMessageLabel.adjustsFontForContentSizeCategory = true
+        pickerMessageLabel.textColor = .secondaryLabel
+        pickerMessageLabel.isHidden = true
+
+        createTagField.translatesAutoresizingMaskIntoConstraints = false
+        createTagButton.translatesAutoresizingMaskIntoConstraints = false
+        saveButton.translatesAutoresizingMaskIntoConstraints = false
+        cancelButton.translatesAutoresizingMaskIntoConstraints = false
+        pickerActionsStack.translatesAutoresizingMaskIntoConstraints = false
+        pickerActionsStack.axis = .horizontal
+        pickerActionsStack.spacing = 16
+        pickerActionsStack.distribution = .fillEqually
+        pickerActionsStack.addArrangedSubview(cancelButton)
+        pickerActionsStack.addArrangedSubview(saveButton)
+
+        panelView.translatesAutoresizingMaskIntoConstraints = false
+        panelView.backgroundColor = .systemBackground
+        panelView.layer.cornerRadius = 28
+        panelView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        panelView.clipsToBounds = true
+
+        view.addSubview(panelView)
+        panelView.addSubview(contentStack)
+        view.addSubview(pickerContainerView)
+        pickerContainerView.addSubview(pickerTitleLabel)
+        pickerContainerView.addSubview(pickerMessageLabel)
+        pickerContainerView.addSubview(tagAreaView)
+        pickerContainerView.addSubview(createTagField)
+        pickerContainerView.addSubview(createTagButton)
+        pickerContainerView.addSubview(pickerActionsStack)
+        pickerBottomConstraint = contentStack.bottomAnchor.constraint(
+            equalTo: panelView.safeAreaLayoutGuide.bottomAnchor,
+            constant: Layout.pickerBottomOffset
+        )
+        resultBottomConstraint = contentStack.bottomAnchor.constraint(
+            equalTo: panelView.safeAreaLayoutGuide.bottomAnchor,
+            constant: Layout.resultBottomOffset
+        )
+        panelHeightConstraint = panelView.heightAnchor.constraint(equalToConstant: Layout.compactPickerHeight)
+        resultBottomConstraint?.isActive = false
+        NSLayoutConstraint.activate([
+            panelView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            panelView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            panelView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            panelHeightConstraint!,
+            contentStack.leadingAnchor.constraint(equalTo: panelView.layoutMarginsGuide.leadingAnchor),
+            contentStack.trailingAnchor.constraint(equalTo: panelView.layoutMarginsGuide.trailingAnchor),
+            contentStack.topAnchor.constraint(equalTo: panelView.safeAreaLayoutGuide.topAnchor, constant: 18),
+            pickerBottomConstraint!,
+            pickerContainerView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Layout.pickerHorizontalInset),
+            pickerContainerView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -Layout.pickerHorizontalInset),
+            pickerContainerView.topAnchor.constraint(equalTo: view.topAnchor, constant: Layout.pickerTopInset),
+            pickerContainerView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: Layout.pickerBottomOffset),
+            pickerTitleLabel.leadingAnchor.constraint(equalTo: pickerContainerView.leadingAnchor),
+            pickerTitleLabel.trailingAnchor.constraint(equalTo: pickerContainerView.trailingAnchor),
+            pickerTitleLabel.topAnchor.constraint(equalTo: pickerContainerView.topAnchor),
+            pickerMessageLabel.leadingAnchor.constraint(equalTo: pickerContainerView.leadingAnchor),
+            pickerMessageLabel.trailingAnchor.constraint(equalTo: pickerContainerView.trailingAnchor),
+            pickerMessageLabel.topAnchor.constraint(equalTo: pickerTitleLabel.bottomAnchor, constant: 8),
+            pickerActionsStack.leadingAnchor.constraint(equalTo: pickerContainerView.leadingAnchor),
+            pickerActionsStack.trailingAnchor.constraint(equalTo: pickerContainerView.trailingAnchor),
+            pickerActionsStack.bottomAnchor.constraint(equalTo: pickerContainerView.bottomAnchor),
+            pickerActionsStack.heightAnchor.constraint(equalToConstant: 58),
+            createTagButton.leadingAnchor.constraint(equalTo: pickerContainerView.leadingAnchor),
+            createTagButton.trailingAnchor.constraint(equalTo: pickerContainerView.trailingAnchor),
+            createTagButton.bottomAnchor.constraint(equalTo: pickerActionsStack.topAnchor, constant: -22),
+            createTagButton.heightAnchor.constraint(equalToConstant: 54),
+            createTagField.leadingAnchor.constraint(equalTo: pickerContainerView.leadingAnchor),
+            createTagField.trailingAnchor.constraint(equalTo: pickerContainerView.trailingAnchor),
+            createTagField.bottomAnchor.constraint(equalTo: createTagButton.topAnchor, constant: -18),
+            createTagField.heightAnchor.constraint(equalToConstant: 58),
+            tagAreaView.leadingAnchor.constraint(equalTo: pickerContainerView.leadingAnchor),
+            tagAreaView.trailingAnchor.constraint(equalTo: pickerContainerView.trailingAnchor),
+            tagAreaView.bottomAnchor.constraint(equalTo: createTagField.topAnchor, constant: -14),
+            tagAreaView.topAnchor.constraint(greaterThanOrEqualTo: pickerMessageLabel.bottomAnchor, constant: 18),
         ])
     }
 
@@ -51,7 +210,46 @@ final class ShareViewController: UIViewController {
 
     @MainActor
     private func updateStatus(_ text: String, finished: Bool) {
+        if finished {
+            pickerContainerView.isHidden = true
+            contentStack.isHidden = true
+            contentStack.arrangedSubviews.forEach { view in
+                contentStack.removeArrangedSubview(view)
+                view.removeFromSuperview()
+            }
+            pickerBottomConstraint?.isActive = false
+            resultBottomConstraint?.isActive = true
+            statusLabel.font = .preferredFont(forTextStyle: .title2)
+            statusLabel.adjustsFontForContentSizeCategory = true
+            statusLabel.textColor = .label
+            statusLabel.isHidden = false
+            statusLabel.removeFromSuperview()
+            doneButton.removeFromSuperview()
+            panelView.addSubview(statusLabel)
+            panelView.addSubview(doneButton)
+            NSLayoutConstraint.deactivate(resultDirectConstraints)
+            resultDirectConstraints = [
+                doneButton.centerXAnchor.constraint(equalTo: panelView.centerXAnchor),
+                doneButton.widthAnchor.constraint(greaterThanOrEqualTo: panelView.widthAnchor, multiplier: 0.72),
+                doneButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 58),
+                doneButton.bottomAnchor.constraint(equalTo: panelView.safeAreaLayoutGuide.bottomAnchor, constant: Layout.resultBottomOffset),
+                statusLabel.centerXAnchor.constraint(equalTo: panelView.centerXAnchor),
+                statusLabel.leadingAnchor.constraint(greaterThanOrEqualTo: panelView.leadingAnchor, constant: 24),
+                statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: panelView.trailingAnchor, constant: -24),
+                statusLabel.topAnchor.constraint(greaterThanOrEqualTo: panelView.safeAreaLayoutGuide.topAnchor, constant: 24),
+                statusLabel.bottomAnchor.constraint(equalTo: doneButton.topAnchor, constant: -96),
+            ]
+            NSLayoutConstraint.activate(resultDirectConstraints)
+            updatePreferredContentHeight(Layout.compactResultHeight)
+        } else if statusLabel.superview == nil {
+            contentStack.arrangedSubviews.forEach { view in
+                contentStack.removeArrangedSubview(view)
+                view.removeFromSuperview()
+            }
+            contentStack.addArrangedSubview(statusLabel)
+        }
         statusLabel.text = text
+        statusLabel.textAlignment = .center
         if finished {
             activityIndicator.stopAnimating()
             doneButton.isHidden = false
@@ -70,86 +268,246 @@ final class ShareViewController: UIViewController {
             return
         }
         let repository = try? URLRepository()
-        let handoffStore = ShareHandoffStore()
 
         guard let repository else {
             await MainActor.run { updateStatus("保存先の初期化に失敗しました", finished: true) }
             return
         }
+        self.repository = repository
 
         let extractedBatch = URLRules.extractAllFromCandidateGroups(payload.candidateGroups)
         let allURLs = extractedBatch.urls
-        let report: ShareHandoffReport
-        let statusText: String
 
         if payload.isExplicitMultiShare && allURLs.count > 1 {
-            var created = 0
-            var duplicate = 0
-            var restored = 0
-            var failed = 0
-
-            for url in allURLs {
-                let result = (try? repository.saveFromResolvedURL(url)) ?? SaveResult(result: .saveFailed)
-                switch result.result {
-                case .created:
-                    created += 1
-                case .duplicateActive, .duplicateArchived:
-                    duplicate += 1
-                case .restoredFromPendingDelete:
-                    restored += 1
-                default:
-                    failed += 1
-                }
-            }
-
-            let summary = BatchSaveSummary(
-                total: allURLs.count,
-                created: created,
-                duplicate: duplicate,
-                restored: restored,
-                failed: failed
-            )
             let degradation: ShareDegradationNotice? = extractedBatch.truncatedToMaxURLs ? .truncatedToMaxURLs : nil
-            report = ShareHandoffReport(
-                result: .batchProcessed,
-                entryID: nil,
-                normalizedURL: nil,
-                degradationNotice: degradation,
-                batchSummary: summary,
-                createdAt: Date()
+            await presentTagPicker(
+                repository: repository,
+                share: PendingExtensionShare(
+                    urls: allURLs,
+                    isBatch: true,
+                    degradationNotice: degradation
+                )
             )
-            if degradation == .truncatedToMaxURLs {
-                statusText = "\(summary.total)件を処理しました（新規\(summary.created) / 既存\(summary.duplicate) / 復元\(summary.restored) / 失敗\(summary.failed)）\n多数のURLが含まれていたため、先頭\(URLRules.maxBatchSaveURLsPerIntake)件のみ処理しました"
-            } else {
-                statusText = "\(summary.total)件を処理しました（新規\(summary.created) / 既存\(summary.duplicate) / 復元\(summary.restored) / 失敗\(summary.failed)）"
-            }
+            return
         } else {
             let degradation = URLRules.countValidURLs(in: payload.candidateGroups) > 1 ? ShareDegradationNotice.truncatedToFirstURL : nil
-            let result: SaveResult
             switch URLRules.extractFromCandidateGroups(payload.candidateGroups) {
             case .found(let url):
-                result = (try? repository.saveFromResolvedURL(url)) ?? SaveResult(result: .saveFailed)
+                await presentTagPicker(
+                    repository: repository,
+                    share: PendingExtensionShare(
+                        urls: [url],
+                        isBatch: false,
+                        degradationNotice: degradation
+                    )
+                )
+                return
             case .inputTooLarge:
-                result = SaveResult(result: .inputTooLarge)
+                await MainActor.run { updateStatus("共有内容が長すぎるため処理できませんでした", finished: true) }
+                return
             case .invalidURL:
-                result = SaveResult(result: .invalidURL)
+                await MainActor.run { updateStatus("有効なURLではありませんでした", finished: true) }
+                return
             case .noURLFound:
-                result = SaveResult(result: .noURLFound)
+                await MainActor.run { updateStatus("URLが見つかりませんでした", finished: true) }
+                return
             }
-
-            report = ShareHandoffReport(
-                result: result.result,
-                entryID: result.entryID,
-                normalizedURL: result.normalizedURL,
-                degradationNotice: degradation,
-                batchSummary: nil,
-                createdAt: Date()
-            )
-            statusText = shareStatusText(result: result.result, degradation: degradation)
         }
+    }
 
-        try? await handoffStore.write(report)
-        await MainActor.run { updateStatus(statusText, finished: true) }
+    private func presentTagPicker(repository: URLRepository, share: PendingExtensionShare) async {
+        let tags = (try? repository.loadLocalTags()) ?? []
+        await MainActor.run {
+            localTags = tags
+            pendingShare = share
+            selectedLocalTagIDs = []
+            showTagPicker()
+        }
+    }
+
+    @MainActor
+    private func showTagPicker() {
+        activityIndicator.stopAnimating()
+        doneButton.isHidden = true
+        contentStack.isHidden = true
+        pickerContainerView.isHidden = false
+        pickerBottomConstraint?.isActive = true
+        resultBottomConstraint?.isActive = false
+        updatePreferredContentHeight(localTags.count > 8 ? Layout.expandedPickerHeight : Layout.compactPickerHeight)
+
+        statusLabel.textAlignment = .left
+        statusLabel.font = .preferredFont(forTextStyle: .headline)
+        statusLabel.adjustsFontForContentSizeCategory = true
+        statusLabel.textColor = .secondaryLabel
+        statusLabel.text = nil
+        statusLabel.isHidden = true
+        pickerMessageLabel.text = nil
+        pickerMessageLabel.isHidden = true
+
+        rebuildTagButtons()
+
+        createTagField.borderStyle = .roundedRect
+        createTagField.placeholder = "新しいタグ名"
+        createTagField.font = .preferredFont(forTextStyle: .title3)
+        createTagField.adjustsFontForContentSizeCategory = true
+        createTagField.autocorrectionType = .no
+        createTagField.returnKeyType = .done
+        createTagField.setContentHuggingPriority(.required, for: .vertical)
+        createTagField.setContentCompressionResistancePriority(.required, for: .vertical)
+
+        createTagButton.setTitle("＋ タグを作成", for: .normal)
+        createTagButton.titleLabel?.font = .preferredFont(forTextStyle: .title2)
+        createTagButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        createTagButton.setContentHuggingPriority(.required, for: .vertical)
+        createTagButton.setContentCompressionResistancePriority(.required, for: .vertical)
+        createTagButton.removeTarget(nil, action: nil, for: .allEvents)
+        createTagButton.addTarget(self, action: #selector(createLocalTagFromInput), for: .touchUpInside)
+
+        saveButton.setTitle("保存", for: .normal)
+        saveButton.titleLabel?.font = .preferredFont(forTextStyle: .title2)
+        saveButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        saveButton.removeTarget(nil, action: nil, for: .allEvents)
+        saveButton.addTarget(self, action: #selector(savePendingShare), for: .touchUpInside)
+        saveButton.isEnabled = true
+
+        cancelButton.setTitle("キャンセル", for: .normal)
+        cancelButton.titleLabel?.font = .preferredFont(forTextStyle: .title2)
+        cancelButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        cancelButton.removeTarget(nil, action: nil, for: .allEvents)
+        cancelButton.addTarget(self, action: #selector(finishExtension), for: .touchUpInside)
+
+        tagAreaHeightConstraint?.isActive = false
+        tagAreaHeightConstraint = tagAreaView.heightAnchor.constraint(equalToConstant: preferredTagAreaHeight())
+        tagAreaHeightConstraint?.isActive = true
+
+        if localTags.isEmpty {
+            pickerMessageLabel.text = "タグがまだありません。必要なら作成できます。"
+            pickerMessageLabel.isHidden = false
+            createTagField.becomeFirstResponder()
+        }
+    }
+
+    @MainActor
+    private func rebuildTagButtons() {
+        tagFlowView.configure(
+            tags: localTags,
+            selectedTagIDs: selectedLocalTagIDs,
+            onToggle: { [weak self] tagID in
+                self?.toggleLocalTag(tagID)
+            }
+        )
+        tagAreaHeightConstraint?.constant = preferredTagAreaHeight()
+    }
+
+    private func preferredTagAreaHeight() -> CGFloat {
+        guard !localTags.isEmpty else { return 0 }
+        let marginsWidth = view.layoutMargins.left + view.layoutMargins.right
+        let availableWidth = max(240, view.bounds.width - marginsWidth)
+        let measuredHeight = tagFlowView.preferredHeight(for: availableWidth)
+        return min(max(measuredHeight, 56), 230)
+    }
+
+    private func updatePreferredContentHeight(_ height: CGFloat) {
+        panelHeightConstraint?.constant = height
+        preferredContentSize = CGSize(width: view.bounds.width, height: height)
+    }
+
+    private func toggleLocalTag(_ tagID: Int64) {
+        if selectedLocalTagIDs.contains(tagID) {
+            selectedLocalTagIDs.remove(tagID)
+        } else {
+            selectedLocalTagIDs.insert(tagID)
+        }
+        saveButton.isEnabled = true
+        rebuildTagButtons()
+    }
+
+    @objc
+    private func createLocalTagFromInput() {
+        guard let repository else { return }
+        let name = createTagField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !name.isEmpty else {
+            pickerMessageLabel.text = "タグ名を入力してください"
+            pickerMessageLabel.isHidden = false
+            return
+        }
+        guard let tag = try? repository.createLocalTag(name: name) else {
+            pickerMessageLabel.text = "タグを作成できませんでした"
+            pickerMessageLabel.isHidden = false
+            return
+        }
+        localTags = (try? repository.loadLocalTags()) ?? [tag]
+        selectedLocalTagIDs.insert(tag.id)
+        createTagField.text = ""
+        pickerMessageLabel.text = nil
+        pickerMessageLabel.isHidden = true
+        saveButton.isEnabled = true
+        rebuildTagButtons()
+    }
+
+    @objc
+    private func savePendingShare() {
+        guard let repository, let pendingShare else { return }
+        let localTagIDs = Array(selectedLocalTagIDs)
+        saveButton.isEnabled = false
+        cancelButton.isEnabled = false
+        createTagButton.isEnabled = false
+        statusLabel.text = "保存しています…"
+        Task {
+            if pendingShare.urls.count > 1 || pendingShare.isBatch {
+                var created = 0
+                var duplicate = 0
+                var restored = 0
+                var failed = 0
+                for url in pendingShare.urls {
+                    let result = (try? repository.saveFromResolvedURL(url, localTagIDs: localTagIDs))
+                        ?? SaveResult(result: .saveFailed)
+                    switch result.result {
+                    case .created:
+                        created += 1
+                    case .duplicateActive, .duplicateArchived:
+                        duplicate += 1
+                    case .restoredFromPendingDelete:
+                        restored += 1
+                    default:
+                        failed += 1
+                    }
+                }
+                let summary = BatchSaveSummary(
+                    total: pendingShare.urls.count,
+                    created: created,
+                    duplicate: duplicate,
+                    restored: restored,
+                    failed: failed
+                )
+                let report = ShareHandoffReport(
+                    result: .batchProcessed,
+                    entryID: nil,
+                    normalizedURL: nil,
+                    degradationNotice: pendingShare.degradationNotice,
+                    batchSummary: summary,
+                    createdAt: Date()
+                )
+                try? await ShareHandoffStore().write(report)
+                let statusText = "\(summary.total)件を処理しました（新規\(summary.created) / 既存\(summary.duplicate) / 復元\(summary.restored) / 失敗\(summary.failed)）"
+                await MainActor.run { updateStatus(statusText, finished: true) }
+            } else {
+                let result = (try? repository.saveFromResolvedURL(pendingShare.urls[0], localTagIDs: localTagIDs))
+                    ?? SaveResult(result: .saveFailed)
+                let report = ShareHandoffReport(
+                    result: result.result,
+                    entryID: result.entryID,
+                    normalizedURL: result.normalizedURL,
+                    degradationNotice: pendingShare.degradationNotice,
+                    batchSummary: nil,
+                    createdAt: Date()
+                )
+                try? await ShareHandoffStore().write(report)
+                await MainActor.run {
+                    updateStatus(shareStatusText(result: result.result, degradation: pendingShare.degradationNotice), finished: true)
+                }
+            }
+        }
     }
 
     private func processShareViaHostAppFallback(payload: ShareExtensionPayload) async {
@@ -242,9 +600,148 @@ final class ShareViewController: UIViewController {
     }
 }
 
+private final class TagFlowView: UIView {
+    private let horizontalSpacing: CGFloat = 8
+    private let verticalSpacing: CGFloat = 8
+    private let maxChipWidth: CGFloat = 210
+    private var chipButtons: [UIButton] = []
+    private var tagIDsByButton = [UIButton: Int64]()
+    private var onToggle: ((Int64) -> Void)?
+
+    func configure(
+        tags: [LocalTagSummary],
+        selectedTagIDs: Set<Int64>,
+        onToggle: @escaping (Int64) -> Void
+    ) {
+        chipButtons.forEach { $0.removeFromSuperview() }
+        chipButtons = []
+        tagIDsByButton = [:]
+        self.onToggle = onToggle
+
+        for tag in tags {
+            let button = UIButton(type: .system)
+            let selected = selectedTagIDs.contains(tag.id)
+            var configuration = UIButton.Configuration.plain()
+            configuration.title = tag.name
+            configuration.image = UIImage(systemName: selected ? "checkmark.circle.fill" : "circle")
+            configuration.imagePlacement = .leading
+            configuration.imagePadding = 8
+            configuration.baseForegroundColor = .label
+            configuration.background.backgroundColor = selected
+                ? UIColor.systemBlue.withAlphaComponent(0.16)
+                : UIColor.secondarySystemBackground
+            configuration.contentInsets = NSDirectionalEdgeInsets(top: 14, leading: 14, bottom: 14, trailing: 16)
+            button.configuration = configuration
+            button.contentHorizontalAlignment = .leading
+            button.titleLabel?.font = .preferredFont(forTextStyle: .title3)
+            button.titleLabel?.adjustsFontForContentSizeCategory = true
+            button.titleLabel?.lineBreakMode = .byTruncatingTail
+            button.layer.cornerRadius = 16
+            button.layer.borderWidth = 1
+            button.layer.borderColor = selected ? UIColor.systemBlue.cgColor : UIColor.separator.cgColor
+            button.clipsToBounds = true
+            button.addTarget(self, action: #selector(toggleTag(_:)), for: .touchUpInside)
+            addSubview(button)
+            chipButtons.append(button)
+            tagIDsByButton[button] = tag.id
+        }
+
+        invalidateIntrinsicContentSize()
+        setNeedsLayout()
+    }
+
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: UIView.noIntrinsicMetric, height: measuredHeight(for: bounds.width))
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let rows = makeRows(maxWidth: bounds.width)
+        let totalHeight = rows.reduce(CGFloat(0)) { partial, row in partial + row.height } +
+            CGFloat(max(0, rows.count - 1)) * verticalSpacing
+        var y = max(0, bounds.height - totalHeight)
+
+        for row in rows {
+            var x: CGFloat = 0
+            for item in row.items {
+                item.button.frame = CGRect(x: x, y: y, width: item.size.width, height: item.size.height)
+                x += item.size.width + horizontalSpacing
+            }
+            y += row.height + verticalSpacing
+        }
+    }
+
+    override func systemLayoutSizeFitting(_ targetSize: CGSize) -> CGSize {
+        CGSize(width: targetSize.width, height: measuredHeight(for: targetSize.width))
+    }
+
+    func preferredHeight(for width: CGFloat) -> CGFloat {
+        measuredHeight(for: width)
+    }
+
+    @objc
+    private func toggleTag(_ sender: UIButton) {
+        guard let tagID = tagIDsByButton[sender] else { return }
+        onToggle?(tagID)
+    }
+
+    private func measuredHeight(for width: CGFloat) -> CGFloat {
+        let rows = makeRows(maxWidth: width > 0 ? width : UIScreen.main.bounds.width - 40)
+        return rows.reduce(CGFloat(0)) { partial, row in partial + row.height } +
+            CGFloat(max(0, rows.count - 1)) * verticalSpacing
+    }
+
+    private func makeRows(maxWidth: CGFloat) -> [FlowRow] {
+        guard maxWidth > 0 else { return [] }
+        var rows: [FlowRow] = []
+        var currentItems: [FlowItem] = []
+        var currentWidth: CGFloat = 0
+        var currentHeight: CGFloat = 0
+
+        for button in chipButtons {
+            let fittingSize = button.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
+            let itemWidth = min(maxChipWidth, fittingSize.width)
+            let itemHeight = fittingSize.height
+            let nextWidth = currentItems.isEmpty ? itemWidth : currentWidth + horizontalSpacing + itemWidth
+
+            if !currentItems.isEmpty && nextWidth > maxWidth {
+                rows.append(FlowRow(items: currentItems, height: currentHeight))
+                currentItems = []
+                currentWidth = 0
+                currentHeight = 0
+            }
+
+            currentItems.append(FlowItem(button: button, size: CGSize(width: itemWidth, height: itemHeight)))
+            currentWidth = currentItems.count == 1 ? itemWidth : currentWidth + horizontalSpacing + itemWidth
+            currentHeight = max(currentHeight, itemHeight)
+        }
+
+        if !currentItems.isEmpty {
+            rows.append(FlowRow(items: currentItems, height: currentHeight))
+        }
+        return rows
+    }
+
+    private struct FlowItem {
+        let button: UIButton
+        let size: CGSize
+    }
+
+    private struct FlowRow {
+        let items: [FlowItem]
+        let height: CGFloat
+    }
+}
+
 private struct ShareExtensionPayload {
     let candidateGroups: ShareCandidateGroups
     let isExplicitMultiShare: Bool
+}
+
+private struct PendingExtensionShare {
+    let urls: [String]
+    let isBatch: Bool
+    let degradationNotice: ShareDegradationNotice?
 }
 
 private enum ShareExtensionPayloadExtractor {

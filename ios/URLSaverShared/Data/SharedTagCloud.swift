@@ -449,7 +449,7 @@ private struct SharedTagAuthRemoteDataSource {
 
     func signUp(email: String, password: String) async throws -> SharedTagAuthRemoteResult {
         let response = try await executeAuthRequest(
-            path: "/auth/v1/signup",
+            path: authPathWithRedirect("/auth/v1/signup"),
             body: SupabasePasswordAuthRequest(email: email, password: password)
         )
         return try parseSessionResult(response)
@@ -469,6 +469,24 @@ private struct SharedTagAuthRemoteDataSource {
             body: SupabaseRefreshTokenRequest(refreshToken: refreshToken)
         )
         return try requireSession(from: response)
+    }
+
+    func resendEmailConfirmation(email: String) async throws {
+        _ = try await executeAuthRequest(
+            path: "/auth/v1/resend",
+            body: SupabaseResendRequest(
+                type: "signup",
+                email: email.trimmingCharacters(in: .whitespacesAndNewlines),
+                options: SupabaseEmailRedirectOptions(emailRedirectTo: Self.authCallbackURL)
+            )
+        )
+    }
+
+    func sendPasswordRecovery(email: String) async throws {
+        _ = try await executeAuthRequest(
+            path: authPathWithRedirect("/auth/v1/recover"),
+            body: SupabasePasswordRecoveryRequest(email: email.trimmingCharacters(in: .whitespacesAndNewlines))
+        )
     }
 
     func signInWithAppleIDToken(idToken: String, nonce: String) async throws -> SharedTagAuthRemoteResult {
@@ -513,6 +531,12 @@ private struct SharedTagAuthRemoteDataSource {
             bearerToken: nil,
             body: body
         )
+    }
+
+    private func authPathWithRedirect(_ path: String) -> String {
+        let encodedRedirect = Self.percentEncodedQueryValue(Self.authCallbackURL)
+        let separator = path.contains("?") ? "&" : "?"
+        return "\(path)\(separator)redirect_to=\(encodedRedirect)"
     }
 
     private static func percentEncodedQueryValue(_ value: String) -> String {
@@ -743,6 +767,33 @@ private struct SharedTagSyncRemoteDataSource {
             session: session,
             body: EmptyPayload()
         )
+    }
+
+    func setChatGptPersonalLinkSync(
+        session: SharedTagAuthSession,
+        enabled: Bool,
+        contentFetchEnabled: Bool
+    ) async throws {
+        _ = try await executeRPC(
+            path: "/rest/v1/rpc/set_personal_link_chatgpt_sync",
+            session: session,
+            body: SetPersonalLinkChatGptSyncPayload(
+                enabled: enabled,
+                contentFetchEnabled: contentFetchEnabled
+            )
+        )
+    }
+
+    func applyChatGptPersonalLinkOps(
+        session: SharedTagAuthSession,
+        operations: [ChatGptPersonalLinkOperation]
+    ) async throws -> ChatGptPersonalLinkOpsResponse {
+        let data = try await executeRPC(
+            path: "/rest/v1/rpc/apply_personal_link_ops",
+            session: session,
+            body: ChatGptPersonalLinkOpsPayload(ops: operations)
+        )
+        return try makeSharedTagCloudDecoder().decode(ChatGptPersonalLinkOpsResponse.self, from: data)
     }
 
     private func executeUnauthenticatedRPC<T: Encodable>(
@@ -1943,9 +1994,104 @@ final class SharedTagCloudService: @unchecked Sendable {
         }
     }
 
+    func resendEmailConfirmation(email: String) async -> SharedTagAuthResult {
+        guard config.isConfigured else {
+            return .failure("共有タグクラウドの設定がありません")
+        }
+        do {
+            try await authRemoteDataSource.resendEmailConfirmation(email: email)
+            return .needsEmailConfirmation
+        } catch let error as SharedTagCloudError {
+            return .failure(error.userMessage)
+        } catch {
+            return .failure(error.localizedDescription)
+        }
+    }
+
+    func sendPasswordRecovery(email: String) async -> SharedTagAuthResult {
+        guard config.isConfigured else {
+            return .failure("共有タグクラウドの設定がありません")
+        }
+        do {
+            try await authRemoteDataSource.sendPasswordRecovery(email: email)
+            return .needsEmailConfirmation
+        } catch let error as SharedTagCloudError {
+            return .failure(error.userMessage)
+        } catch {
+            return .failure(error.localizedDescription)
+        }
+    }
+
     func signOut() throws {
         try sessionStore.clear()
         try store.clearLocalSharedState()
+    }
+
+    func setChatGptPersonalLinkSync(enabled: Bool, contentFetchEnabled: Bool) async throws {
+        guard let session = try? sessionStore.load() else { throw SharedTagCloudError.authRequired }
+        try await syncRemoteDataSource.setChatGptPersonalLinkSync(
+            session: session,
+            enabled: enabled,
+            contentFetchEnabled: contentFetchEnabled
+        )
+        if enabled {
+            _ = try await syncChatGptPersonalLinks(contentFetchEnabled: contentFetchEnabled)
+        }
+    }
+
+    func syncChatGptPersonalLinks(contentFetchEnabled: Bool) async throws -> Int {
+        guard let session = try? sessionStore.load() else { throw SharedTagCloudError.authRequired }
+        let records = try repository.observeActiveSnapshot() + repository.observeArchiveSnapshot()
+        let operations = try records.map { record in
+            try makeChatGptPersonalLinkOperation(
+                record: record,
+                tags: repository.loadLocalTagsForEntry(entryID: record.id).map(\.name),
+                contentFetchEnabled: contentFetchEnabled
+            )
+        }
+        guard !operations.isEmpty else { return 0 }
+        let response = try await syncRemoteDataSource.applyChatGptPersonalLinkOps(
+            session: session,
+            operations: operations
+        )
+        if !response.results.isEmpty {
+            return response.results.filter { $0.status == "ok" || $0.status == "skipped" }.count
+        }
+        return response.appliedCount
+    }
+
+    private func makeChatGptPersonalLinkOperation(
+        record: URLRecord,
+        tags: [String],
+        contentFetchEnabled: Bool
+    ) throws -> ChatGptPersonalLinkOperation {
+        ChatGptPersonalLinkOperation(
+            opID: UUID().uuidString.lowercased(),
+            clientEntryID: "ios:\(record.id)",
+            url: record.normalizedURL,
+            title: record.userTitle ?? record.fetchedTitle,
+            memo: record.memo.isEmpty ? nil : record.memo,
+            extractedText: contentFetchEnabled ? record.fetchedBody : nil,
+            isArchived: record.recordState == .archived,
+            updatedAt: Self.chatGptISO8601String(record.updatedAt),
+            tags: tags,
+            metadata: ChatGptPersonalLinkMetadata(
+                authorName: record.fetchedAuthorName,
+                bodySummary: record.bodySummary,
+                description: record.description,
+                thumbnailURL: record.thumbnailURL,
+                normalizedHost: record.normalizedHost,
+                rawSourceHost: record.rawSourceHost,
+                serviceType: record.serviceType.rawValue,
+                contentFetchAllowed: contentFetchEnabled
+            )
+        )
+    }
+
+    private static func chatGptISO8601String(_ date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: date)
     }
 
     func syncCurrentSession() async -> Bool {
@@ -2726,6 +2872,111 @@ private struct SupabaseIDTokenAuthRequest: Encodable {
         case idToken = "id_token"
         case nonce
     }
+}
+
+private struct SupabaseEmailRedirectOptions: Encodable {
+    let emailRedirectTo: String
+
+    enum CodingKeys: String, CodingKey {
+        case emailRedirectTo = "email_redirect_to"
+    }
+}
+
+private struct SupabaseResendRequest: Encodable {
+    let type: String
+    let email: String
+    let options: SupabaseEmailRedirectOptions
+}
+
+private struct SupabasePasswordRecoveryRequest: Encodable {
+    let email: String
+}
+
+private struct SetPersonalLinkChatGptSyncPayload: Encodable {
+    let enabled: Bool
+    let contentFetchEnabled: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case enabled = "p_enabled"
+        case contentFetchEnabled = "p_content_fetch_enabled"
+    }
+}
+
+private struct ChatGptPersonalLinkOpsPayload: Encodable {
+    let ops: [ChatGptPersonalLinkOperation]
+}
+
+private struct ChatGptPersonalLinkOperation: Encodable {
+    let opID: String
+    let clientEntryID: String
+    let operation = "upsert_link"
+    let url: String
+    let title: String?
+    let memo: String?
+    let extractedText: String?
+    let isArchived: Bool
+    let updatedAt: String
+    let tags: [String]
+    let metadata: ChatGptPersonalLinkMetadata
+
+    enum CodingKeys: String, CodingKey {
+        case opID = "op_id"
+        case clientEntryID = "client_entry_id"
+        case operation
+        case url
+        case title
+        case memo
+        case extractedText = "extracted_text"
+        case isArchived = "is_archived"
+        case updatedAt = "updated_at"
+        case tags
+        case metadata
+    }
+}
+
+private struct ChatGptPersonalLinkMetadata: Encodable {
+    let authorName: String?
+    let bodySummary: String?
+    let description: String?
+    let thumbnailURL: String?
+    let normalizedHost: String
+    let rawSourceHost: String
+    let serviceType: String
+    let contentFetchAllowed: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case authorName = "author_name"
+        case bodySummary = "body_summary"
+        case description
+        case thumbnailURL = "thumbnail_url"
+        case normalizedHost = "normalized_host"
+        case rawSourceHost = "raw_source_host"
+        case serviceType = "service_type"
+        case contentFetchAllowed = "content_fetch_allowed"
+    }
+}
+
+private struct ChatGptPersonalLinkOpsResponse: Decodable {
+    let status: String?
+    let results: [ChatGptPersonalLinkOpResult]
+    let appliedCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case results
+        case appliedCount = "applied_count"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        status = try container.decodeIfPresent(String.self, forKey: .status)
+        results = try container.decodeIfPresent([ChatGptPersonalLinkOpResult].self, forKey: .results) ?? []
+        appliedCount = try container.decodeIfPresent(Int.self, forKey: .appliedCount) ?? 0
+    }
+}
+
+private struct ChatGptPersonalLinkOpResult: Decodable {
+    let status: String
 }
 
 private struct SupabaseRefreshTokenRequest: Encodable {

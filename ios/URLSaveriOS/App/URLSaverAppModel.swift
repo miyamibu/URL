@@ -37,6 +37,13 @@ enum ContactSupportSendResult: Equatable {
     case failure(String)
 }
 
+struct ChatGptPersonalLinkSettings: Equatable {
+    var enabled: Bool = false
+    var contentFetchEnabled: Bool = false
+    var lastSyncedAt: Date?
+    var lastErrorMessage: String?
+}
+
 @MainActor
 final class URLSaverAppModel: ObservableObject {
     @Published private(set) var activeEntries: [URLRecord] = []
@@ -51,6 +58,8 @@ final class URLSaverAppModel: ObservableObject {
     @Published private(set) var sharedTagGroups: [SharedTagGroupSummary] = []
     @Published private(set) var localTags: [LocalTagSummary] = []
     @Published private(set) var localTagAssignments: [Int64: Set<Int64>] = [:]
+    @Published private(set) var chatGptPersonalLinkSettings = ChatGptPersonalLinkSettings()
+    @Published private(set) var isUpdatingChatGptPersonalLinkSync = false
     @Published private(set) var profileStatusMessage: String?
     @Published var selectedTab: RootTab = .main
     @Published var navigationPath: [Int64] = []
@@ -76,6 +85,7 @@ final class URLSaverAppModel: ObservableObject {
         await reload()
         await refreshSharedTagCloudState()
         await refreshEntitlements()
+        refreshChatGptPersonalLinkSettings()
         await scheduleDeleteTimersForPersistedEntries()
         await consumeShareHandoffReport()
         startPostBootstrapRefresh()
@@ -105,6 +115,66 @@ final class URLSaverAppModel: ObservableObject {
 
     func refreshEntitlements() async {
         entitlements = await services.entitlementService.refreshForCurrentSession()
+    }
+
+    func refreshChatGptPersonalLinkSettings() {
+        let defaults = UserDefaults.standard
+        chatGptPersonalLinkSettings = ChatGptPersonalLinkSettings(
+            enabled: defaults.bool(forKey: "chatgpt_personal_link_sync.enabled"),
+            contentFetchEnabled: defaults.bool(forKey: "chatgpt_personal_link_sync.content_fetch_enabled"),
+            lastSyncedAt: defaults.object(forKey: "chatgpt_personal_link_sync.last_synced_at") as? Date,
+            lastErrorMessage: defaults.string(forKey: "chatgpt_personal_link_sync.last_error_message")
+        )
+    }
+
+    func setChatGptPersonalLinkSync(enabled: Bool, contentFetchEnabled: Bool) async {
+        guard !isUpdatingChatGptPersonalLinkSync else { return }
+        isUpdatingChatGptPersonalLinkSync = true
+        defer { isUpdatingChatGptPersonalLinkSync = false }
+        do {
+            try await services.sharedTagCloud.setChatGptPersonalLinkSync(
+                enabled: enabled,
+                contentFetchEnabled: contentFetchEnabled
+            )
+            let defaults = UserDefaults.standard
+            defaults.set(enabled, forKey: "chatgpt_personal_link_sync.enabled")
+            defaults.set(enabled && contentFetchEnabled, forKey: "chatgpt_personal_link_sync.content_fetch_enabled")
+            defaults.set(Date(), forKey: "chatgpt_personal_link_sync.last_synced_at")
+            defaults.removeObject(forKey: "chatgpt_personal_link_sync.last_error_message")
+            refreshChatGptPersonalLinkSettings()
+            enqueueNotification(AppNotification(message: enabled ? "ChatGPT連携を有効にしました" : "ChatGPT連携を無効にしました", actionLabel: nil, action: nil, autoDismissAfter: 4))
+        } catch SharedTagCloudError.authRequired {
+            enqueueNotification(AppNotification(message: "ChatGPT連携にはサインインが必要です", actionLabel: nil, action: nil, autoDismissAfter: 4))
+        } catch {
+            let message = error.localizedDescription
+            UserDefaults.standard.set(message, forKey: "chatgpt_personal_link_sync.last_error_message")
+            refreshChatGptPersonalLinkSettings()
+            enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 5))
+        }
+    }
+
+    func purchasePaidCourse(planType: PlanType, billingPeriod: BillingPeriod) async {
+        let result = await services.storePurchaseService.purchase(
+            planType: planType,
+            billingPeriod: billingPeriod
+        )
+        switch result {
+        case .verified(let plan, let period):
+            await refreshEntitlements()
+            let planName = plan == .pro ? "Pro" : "Standard"
+            let periodName = period == .yearly ? "年払い" : "月額"
+            enqueueNotification(AppNotification(message: "\(planName) \(periodName) が有効になりました", actionLabel: nil, action: nil, autoDismissAfter: 4))
+        case .authRequired:
+            enqueueNotification(AppNotification(message: "購入前にサインインしてください", actionLabel: nil, action: nil, autoDismissAfter: 4))
+        case .notConfigured:
+            enqueueNotification(AppNotification(message: "購入機能はこのビルドでは設定されていません", actionLabel: nil, action: nil, autoDismissAfter: 4))
+        case .cancelled:
+            enqueueNotification(AppNotification(message: "購入をキャンセルしました", actionLabel: nil, action: nil, autoDismissAfter: 3))
+        case .pending:
+            enqueueNotification(AppNotification(message: "購入確認中です。完了後にプランが反映されます", actionLabel: nil, action: nil, autoDismissAfter: 5))
+        case .failed(let message):
+            enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 5))
+        }
     }
 
     func redeemPromoCode(_ code: String) async -> PromoCodeApplyResult {
@@ -619,6 +689,34 @@ final class URLSaverAppModel: ObservableObject {
                 )
             )
         case .failure(let message):
+            enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 4))
+        }
+    }
+
+    func resendSharedTagEmailConfirmation(email: String) async {
+        switch await services.sharedTagCloud.resendEmailConfirmation(email: email) {
+        case .success:
+            profileStatusMessage = "確認メールを再送しました。メール確認後にサインインしてください。"
+            enqueueNotification(AppNotification(message: "確認メールを再送しました", actionLabel: nil, action: nil, autoDismissAfter: 4))
+        case .needsEmailConfirmation:
+            profileStatusMessage = "確認メールを再送しました。メール確認後にサインインしてください。"
+            enqueueNotification(AppNotification(message: "確認メールを再送しました", actionLabel: nil, action: nil, autoDismissAfter: 4))
+        case .failure(let message):
+            profileStatusMessage = message
+            enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 4))
+        }
+    }
+
+    func sendSharedTagPasswordRecovery(email: String) async {
+        switch await services.sharedTagCloud.sendPasswordRecovery(email: email) {
+        case .success:
+            profileStatusMessage = "パスワード再設定メールを送信しました。"
+            enqueueNotification(AppNotification(message: "パスワード再設定メールを送信しました", actionLabel: nil, action: nil, autoDismissAfter: 4))
+        case .needsEmailConfirmation:
+            profileStatusMessage = "パスワード再設定メールを送信しました。メールの案内に従ってください。"
+            enqueueNotification(AppNotification(message: "パスワード再設定メールを送信しました", actionLabel: nil, action: nil, autoDismissAfter: 4))
+        case .failure(let message):
+            profileStatusMessage = message
             enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 4))
         }
     }

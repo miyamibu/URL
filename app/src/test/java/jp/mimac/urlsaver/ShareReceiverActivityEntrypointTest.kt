@@ -29,6 +29,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -220,7 +221,7 @@ class ShareReceiverActivityEntrypointTest {
     }
 
     @Test
-    fun actionSend_created_finishesAndSavesUrl() {
+    fun actionSend_created_showsTagSelectionBeforeSaving() {
         val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
         val url = "https://example.com/share-created-${System.currentTimeMillis()}"
         val normalizedUrl = UrlRules.normalize(url)
@@ -239,12 +240,13 @@ class ShareReceiverActivityEntrypointTest {
         }
 
         val activeEntries = runBlocking { context.container.repository.observeActiveEntries().first() }
-        assertTrue(activity.isFinishing)
-        assertTrue(activeEntries.any { it.normalizedUrl == normalizedUrl })
+        assertFalse(activity.isFinishing)
+        assertNull(shadowOf(activity).nextStartedActivity)
+        assertFalse(activeEntries.any { it.normalizedUrl == normalizedUrl })
     }
 
     @Test
-    fun actionSend_restoredFromPending_requiresEntryIdExtra() = runBlocking {
+    fun actionSend_restoredFromPending_waitsForUserConfirmation() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
         val repository = context.container.repository
         val url = "https://example.com/share-restore-${System.currentTimeMillis()}"
@@ -262,21 +264,17 @@ class ShareReceiverActivityEntrypointTest {
         ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
 
         val activity = controller.get()
-        val started = shadowOf(activity).nextStartedActivity
-        assertTrue(activity.isFinishing)
-        assertEquals(ShareSaveResult.RESTORED_FROM_PENDING_DELETE.name, started.getStringExtra(EXTRA_SHARE_SAVE_RESULT))
-        assertTrue(started.hasExtra(EXTRA_SHARE_ENTRY_ID))
-        assertEquals(entryId, started.getLongExtra(EXTRA_SHARE_ENTRY_ID, -1L))
+        assertFalse(activity.isFinishing)
+        assertNull(shadowOf(activity).nextStartedActivity)
         assertEquals(UrlRules.normalize(url), repository.loadEntry(entryId)?.normalizedUrl)
     }
 
     @Test
-    fun actionSend_duplicateActive_passesEntryIdForOpenExisting() = runBlocking {
+    fun actionSend_duplicateActive_waitsForUserConfirmation() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
         val repository = context.container.repository
         val url = "https://example.com/share-dup-active-${System.currentTimeMillis()}"
-        val created = repository.saveFromManualInput(url)
-        val entryId = created.entryId!!
+        repository.saveFromManualInput(url)
 
         val intent = Intent(context, ShareReceiverActivity::class.java).apply {
             action = Intent.ACTION_SEND
@@ -288,14 +286,12 @@ class ShareReceiverActivityEntrypointTest {
         ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
 
         val activity = controller.get()
-        val started = shadowOf(activity).nextStartedActivity
-        assertEquals(ShareSaveResult.DUPLICATE_ACTIVE.name, started.getStringExtra(EXTRA_SHARE_SAVE_RESULT))
-        assertTrue(started.hasExtra(EXTRA_SHARE_ENTRY_ID))
-        assertEquals(entryId, started.getLongExtra(EXTRA_SHARE_ENTRY_ID, -1L))
+        assertFalse(activity.isFinishing)
+        assertNull(shadowOf(activity).nextStartedActivity)
     }
 
     @Test
-    fun actionSend_duplicateArchived_passesEntryIdForOpenExisting() = runBlocking {
+    fun actionSend_duplicateArchived_waitsForUserConfirmation() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
         val repository = context.container.repository
         val url = "https://example.com/share-dup-archived-${System.currentTimeMillis()}"
@@ -313,10 +309,8 @@ class ShareReceiverActivityEntrypointTest {
         ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
 
         val activity = controller.get()
-        val started = shadowOf(activity).nextStartedActivity
-        assertEquals(ShareSaveResult.DUPLICATE_ARCHIVED.name, started.getStringExtra(EXTRA_SHARE_SAVE_RESULT))
-        assertTrue(started.hasExtra(EXTRA_SHARE_ENTRY_ID))
-        assertEquals(entryId, started.getLongExtra(EXTRA_SHARE_ENTRY_ID, -1L))
+        assertFalse(activity.isFinishing)
+        assertNull(shadowOf(activity).nextStartedActivity)
     }
 
     @Test
@@ -366,7 +360,7 @@ class ShareReceiverActivityEntrypointTest {
     }
 
     @Test
-    fun actionSend_malformedJson_fallsBackToExistingUrlFlow() = runBlocking {
+    fun actionSend_malformedJson_fallsBackToTagSelectionFlow() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
         val url = "https://example.com/malformed-json-${System.currentTimeMillis()}"
         val malformed = """{"urlsaver_version":1,"tag":"broken","urls":[{"url":"$url"}]"""
@@ -379,24 +373,20 @@ class ShareReceiverActivityEntrypointTest {
 
         val controller = Robolectric.buildActivity(ShareReceiverActivity::class.java, intent).setup()
         val activity = controller.get()
-        var startedIntent: Intent? = null
         for (attempt in 0 until 20) {
             ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
-            startedIntent = shadowOf(activity).nextStartedActivity
-            if (startedIntent != null) {
-                break
-            }
             if (attempt < 19) {
                 Thread.sleep(20)
             }
         }
-        val started = startedIntent ?: error("MainActivity intent should be started for malformed tag payload.")
-        assertEquals(ShareSaveResult.CREATED.name, started.getStringExtra(EXTRA_SHARE_SAVE_RESULT))
-        assertFalse(started.hasExtra(EXTRA_TAG_IMPORT_TAG_ID))
+        assertFalse(activity.isFinishing)
+        assertNull(shadowOf(activity).nextStartedActivity)
+        val activeEntries = context.container.repository.observeActiveEntries().first()
+        assertFalse(activeEntries.any { it.normalizedUrl == UrlRules.normalize(url) })
     }
 
     @Test
-    fun actionSend_unsupportedTagJsonVersion_fallsBackWithoutCrash() = runBlocking {
+    fun actionSend_unsupportedTagJsonVersion_fallsBackToTagSelectionFlow() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
         val url = "https://example.com/unsupported-json-${System.currentTimeMillis()}"
         val unsupported = """
@@ -416,24 +406,20 @@ class ShareReceiverActivityEntrypointTest {
 
         val controller = Robolectric.buildActivity(ShareReceiverActivity::class.java, intent).setup()
         val activity = controller.get()
-        var startedIntent: Intent? = null
         for (attempt in 0 until 20) {
             ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
-            startedIntent = shadowOf(activity).nextStartedActivity
-            if (startedIntent != null) {
-                break
-            }
             if (attempt < 19) {
                 Thread.sleep(20)
             }
         }
-        val started = startedIntent ?: error("MainActivity intent should be started for unsupported tag payload.")
-        assertEquals(ShareSaveResult.CREATED.name, started.getStringExtra(EXTRA_SHARE_SAVE_RESULT))
-        assertFalse(started.hasExtra(EXTRA_TAG_IMPORT_TAG_ID))
+        assertFalse(activity.isFinishing)
+        assertNull(shadowOf(activity).nextStartedActivity)
+        val activeEntries = context.container.repository.observeActiveEntries().first()
+        assertFalse(activeEntries.any { it.normalizedUrl == UrlRules.normalize(url) })
     }
 
     @Test
-    fun actionSend_singleExtraStreamUrl_isSaved() {
+    fun actionSend_singleExtraStreamUrl_showsTagSelectionBeforeSaving() {
         val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
         val url = "https://example.com/share-stream-${System.currentTimeMillis()}"
         val normalizedUrl = UrlRules.normalize(url)
@@ -444,14 +430,17 @@ class ShareReceiverActivityEntrypointTest {
             putExtra(Intent.EXTRA_STREAM, android.net.Uri.parse(url))
         }
 
-        Robolectric.buildActivity(ShareReceiverActivity::class.java, intent).setup()
+        val controller = Robolectric.buildActivity(ShareReceiverActivity::class.java, intent).setup()
         repeat(50) { attempt ->
             ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
             if (attempt < 49) ShadowLooper.idleMainLooper(20)
         }
 
         val activeEntries = runBlocking { context.container.repository.observeActiveEntries().first() }
-        assertTrue(activeEntries.any { it.normalizedUrl == normalizedUrl })
+        val activity = controller.get()
+        assertFalse(activity.isFinishing)
+        assertNull(shadowOf(activity).nextStartedActivity)
+        assertFalse(activeEntries.any { it.normalizedUrl == normalizedUrl })
     }
 
     @Test

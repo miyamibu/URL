@@ -24,7 +24,6 @@ struct RootView: View {
     @State private var selectedMainLocalTagID: Int64?
     @State private var selectedArchiveLocalTagID: Int64?
     @State private var displayMode: EntryListDisplayMode = .compact
-    @State private var isShowingUnavailableNotice = false
     @State private var isShowingLocalTagCreateAlert = false
     @State private var isShowingLocalTagManagementSheet = false
     @State private var localTagNameDraft = ""
@@ -291,11 +290,6 @@ struct RootView: View {
                         onClose: { model.clearInviteConfirmation() }
                     )
                 }
-            }
-            .alert("未対応", isPresented: $isShowingUnavailableNotice) {
-                Button("閉じる", role: .cancel) {}
-            } message: {
-                Text("このフィルター操作は iOS 版ではまだ未対応です。")
             }
             .alert("タグを作成", isPresented: $isShowingLocalTagCreateAlert) {
                 TextField("タグ名", text: $localTagNameDraft)
@@ -986,7 +980,7 @@ private struct GuideAIExportPreview: View {
                     Text("エクスポート形式")
                         .font(.system(size: 10, weight: .bold))
                     HStack(spacing: 8) {
-                        ExportFileChip(label: "CSV", color: Color(hex: 0x16A34A))
+                        ExportFileChip(label: "ZIP", color: Color(hex: 0x16A34A))
                         ExportFileChip(label: "JSON", color: AppPalette.primaryStrong)
                     }
                 }

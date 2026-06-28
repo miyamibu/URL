@@ -23,8 +23,62 @@ enum ServiceType: String, Codable, CaseIterable, Sendable {
 enum PlanType: String, Codable, CaseIterable, Sendable {
     case free
     case launchStandard = "launch_standard"
+    case standard
     case pro
     case promoPro = "promo_pro"
+}
+
+enum BillingPeriod: String, Codable, CaseIterable, Sendable {
+    case monthly
+    case yearly
+}
+
+enum StorePlatform: String, Codable, CaseIterable, Sendable {
+    case googlePlay = "google_play"
+    case appStore = "app_store"
+}
+
+struct SubscriptionProduct: Codable, Equatable, Sendable {
+    let planType: PlanType
+    let billingPeriod: BillingPeriod
+    let storePlatform: StorePlatform
+    let storeProductID: String
+
+    init(
+        planType: PlanType,
+        billingPeriod: BillingPeriod,
+        storePlatform: StorePlatform,
+        storeProductID: String
+    ) {
+        precondition(
+            planType == .standard || planType == .pro,
+            "Only paid plans can be store subscription products."
+        )
+        self.planType = planType
+        self.billingPeriod = billingPeriod
+        self.storePlatform = storePlatform
+        self.storeProductID = storeProductID
+    }
+}
+
+enum SubscriptionProductIDs {
+    static func expectedProductID(planType: PlanType, billingPeriod: BillingPeriod) -> String {
+        precondition(
+            planType == .standard || planType == .pro,
+            "Only paid plans have store product ids."
+        )
+        let planSegment: String
+        switch planType {
+        case .standard:
+            planSegment = "standard"
+        case .pro:
+            planSegment = "pro"
+        case .free, .launchStandard, .promoPro:
+            preconditionFailure("Only paid plans have store product ids.")
+        }
+        let billingSegment = billingPeriod == .yearly ? "yearly" : "monthly"
+        return "urlsaver.\(planSegment).\(billingSegment)"
+    }
 }
 
 struct PlanLimits: Codable, Equatable, Sendable {
@@ -225,6 +279,17 @@ enum ProPlan {
     )
 }
 
+enum StandardPlan {
+    static let entitlements = FeatureEntitlements(
+        planType: .standard,
+        limits: LaunchStandardPlan.limits,
+        subscriptionEnabled: true,
+        shouldShowAds: false,
+        exportEnabled: true,
+        sharedSyncEnabled: true
+    )
+}
+
 enum PromoProPlan {
     static let entitlements = FeatureEntitlements(
         planType: .promoPro,
@@ -243,6 +308,8 @@ enum PlanEntitlements {
             return FreePlan.entitlements
         case .launchStandard:
             return LaunchStandardPlan.entitlements
+        case .standard:
+            return StandardPlan.entitlements
         case .pro:
             return ProPlan.entitlements
         case .promoPro:
@@ -340,8 +407,9 @@ private extension PlanType {
         switch self {
         case .promoPro: return 0
         case .pro: return 1
-        case .launchStandard: return 2
-        case .free: return 3
+        case .standard: return 2
+        case .launchStandard: return 3
+        case .free: return 4
         }
     }
 
@@ -349,6 +417,7 @@ private extension PlanType {
         switch self {
         case .free: return "無料プラン"
         case .launchStandard: return "ローンチ版"
+        case .standard: return "Standardプラン"
         case .pro: return "Proプラン"
         case .promoPro: return "優待Pro"
         }

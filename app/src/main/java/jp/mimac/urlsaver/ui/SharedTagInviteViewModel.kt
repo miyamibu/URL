@@ -63,6 +63,14 @@ class SharedTagInviteViewModel(
         return tagRepository.signUp(email, password)
     }
 
+    suspend fun resendEmailConfirmation(email: String): SharedTagAuthResult {
+        return tagRepository.resendEmailConfirmation(email)
+    }
+
+    suspend fun sendPasswordRecovery(email: String): SharedTagAuthResult {
+        return tagRepository.sendPasswordRecovery(email)
+    }
+
     fun googleOAuthUrl(): String? {
         return tagRepository.googleOAuthUrl()
     }

@@ -243,8 +243,10 @@ final class URLRepository: @unchecked Sendable {
         }
     }
 
-    func saveFromResolvedURL(_ url: String) throws -> SaveResult {
-        try saveFromURL(url)
+    func saveFromResolvedURL(_ url: String, localTagIDs: [Int64] = []) throws -> SaveResult {
+        let result = try saveFromURL(url)
+        try assignLocalTagsAfterSave(result: result, localTagIDs: localTagIDs)
+        return result
     }
 
     func archive(entryID: Int64) throws -> Bool {

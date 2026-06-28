@@ -67,7 +67,9 @@ struct SharedTagCloudSheet: View {
 
                     profileSection
                     usageSummarySection
+                    chatGptSyncSection
                     accountActionsSection
+                    paidCourseSection
 
                     if model.sharedTagCloudState.isConfigured && !model.sharedTagCloudState.isSignedIn {
                         signedOutSection
@@ -447,6 +449,30 @@ struct SharedTagCloudSheet: View {
                     Text("新規登録")
                 }
             }
+
+            HStack(spacing: 10) {
+                AppActionButton(enabled: canSubmitEmailOnly && !isWorking) {
+                    guard !isWorking else { return }
+                    isWorking = true
+                    Task {
+                        await model.resendSharedTagEmailConfirmation(email: email)
+                        isWorking = false
+                    }
+                } label: {
+                    Text("確認メール再送")
+                }
+
+                AppActionButton(enabled: canSubmitEmailOnly && !isWorking) {
+                    guard !isWorking else { return }
+                    isWorking = true
+                    Task {
+                        await model.sendSharedTagPasswordRecovery(email: email)
+                        isWorking = false
+                    }
+                } label: {
+                    Text("パスワード再設定")
+                }
+            }
         }
     }
 
@@ -547,9 +573,130 @@ struct SharedTagCloudSheet: View {
         }
     }
 
+    private var chatGptSyncSection: some View {
+        AppPanel {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("ChatGPT連携")
+                        .font(.system(size: 20, weight: .heavy, design: .rounded))
+                        .foregroundStyle(AppPalette.textPrimary)
+                    Text(model.sharedTagCloudState.isSignedIn ? "保存中とアーカイブのリンクをChatGPT提案対象にします" : "サインイン後に利用できます")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(AppPalette.textSecondary)
+                }
+                Spacer(minLength: 0)
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { model.chatGptPersonalLinkSettings.enabled },
+                        set: { enabled in
+                            Task {
+                                await model.setChatGptPersonalLinkSync(
+                                    enabled: enabled,
+                                    contentFetchEnabled: model.chatGptPersonalLinkSettings.contentFetchEnabled
+                                )
+                            }
+                        }
+                    )
+                )
+                .labelsHidden()
+                .disabled(!model.sharedTagCloudState.isSignedIn || model.isUpdatingChatGptPersonalLinkSync)
+                .accessibilityLabel("ChatGPT連携")
+            }
+
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("公開ページ本文も同期")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(AppPalette.textPrimary)
+                    Text("取得済み本文があるリンクだけ同期します")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(AppPalette.textSecondary)
+                }
+                Spacer(minLength: 0)
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { model.chatGptPersonalLinkSettings.contentFetchEnabled },
+                        set: { enabled in
+                            Task {
+                                await model.setChatGptPersonalLinkSync(enabled: true, contentFetchEnabled: enabled)
+                            }
+                        }
+                    )
+                )
+                .labelsHidden()
+                .disabled(!model.sharedTagCloudState.isSignedIn || !model.chatGptPersonalLinkSettings.enabled || model.isUpdatingChatGptPersonalLinkSync)
+                .accessibilityLabel("公開ページ本文を同期")
+            }
+
+            if model.isUpdatingChatGptPersonalLinkSync {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("同期中")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(AppPalette.textSecondary)
+                }
+            }
+            if let lastSyncedAt = model.chatGptPersonalLinkSettings.lastSyncedAt {
+                Text("最終同期: \(DateFormatters.detailTimestamp.string(from: lastSyncedAt))")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(AppPalette.textSecondary)
+            }
+            if let message = model.chatGptPersonalLinkSettings.lastErrorMessage {
+                Text(message)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(AppPalette.danger)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
+    private var paidCourseSection: some View {
+        AppPanel {
+            Text("有料コース")
+                .font(.system(size: 20, weight: .heavy, design: .rounded))
+                .foregroundStyle(AppPalette.textPrimary)
+
+            Text("購入後はサーバー検証が完了したコースだけ反映されます。")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(AppPalette.textSecondary)
+
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                paidCourseButton(title: "Standard 月額", plan: .standard, period: .monthly)
+                paidCourseButton(title: "Standard 年払い", plan: .standard, period: .yearly)
+                paidCourseButton(title: "Pro 月額", plan: .pro, period: .monthly)
+                paidCourseButton(title: "Pro 年払い", plan: .pro, period: .yearly)
+            }
+        }
+    }
+
+    private func paidCourseButton(title: String, plan: PlanType, period: BillingPeriod) -> some View {
+        AppActionButton(
+            tone: plan == .pro ? .primary : .secondary,
+            enabled: model.sharedTagCloudState.isSignedIn && !isWorking
+        ) {
+            guard !isWorking else { return }
+            isWorking = true
+            Task {
+                await model.purchasePaidCourse(planType: plan, billingPeriod: period)
+                isWorking = false
+            }
+        } label: {
+            Text(title)
+                .font(.system(size: 15, weight: .heavy, design: .rounded))
+                .lineLimit(2)
+                .minimumScaleFactor(0.82)
+        }
+    }
+
     private var canSubmitAuth: Bool {
         !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
             password.trimmingCharacters(in: .whitespacesAndNewlines).count >= 8
+    }
+
+    private var canSubmitEmailOnly: Bool {
+        !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var canRedeemPromoCode: Bool {

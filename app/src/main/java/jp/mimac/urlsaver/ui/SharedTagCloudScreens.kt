@@ -1,6 +1,8 @@
 package jp.mimac.urlsaver.ui
 
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -44,6 +46,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -73,7 +76,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import jp.mimac.urlsaver.R
 import jp.mimac.urlsaver.domain.SharedTagAccountDeletionResult
 import jp.mimac.urlsaver.domain.SharedTagAuthResult
+import jp.mimac.urlsaver.domain.BillingPeriod
 import jp.mimac.urlsaver.domain.FeatureEntitlements
+import jp.mimac.urlsaver.domain.PlanType
+import jp.mimac.urlsaver.data.ChatGptPersonalLinkSyncSettings
+import jp.mimac.urlsaver.data.ChatGptSyncResult
 import jp.mimac.urlsaver.domain.SharedTagInviteAcceptanceResult
 import jp.mimac.urlsaver.domain.SharedTagInvitePreviewResult
 import jp.mimac.urlsaver.domain.UsageSummary
@@ -97,6 +104,7 @@ fun SharedTagCloudAuthScreen(
     val cloudState by viewModel.cloudState.collectAsStateWithLifecycle()
     val profile by viewModel.profile.collectAsStateWithLifecycle()
     val usageSummary by viewModel.usageSummary.collectAsStateWithLifecycle()
+    val chatGptSyncSettings by viewModel.chatGptSyncSettings.collectAsStateWithLifecycle()
     val entitlements = viewModel.entitlements
     val scope = rememberCoroutineScope()
 
@@ -115,6 +123,8 @@ fun SharedTagCloudAuthScreen(
     var promoCode by remember { mutableStateOf(initialPromoCode.orEmpty()) }
     var promoMessage by remember { mutableStateOf<String?>(null) }
     var isRedeemingPromoCode by remember { mutableStateOf(false) }
+    var isPurchasing by remember { mutableStateOf(false) }
+    var isUpdatingChatGptSync by remember { mutableStateOf(false) }
     var draftAvatarBase64 by remember { mutableStateOf<String?>(null) }
     val avatarBitmap = remember(draftAvatarBase64) { draftAvatarBase64.toImageBitmapOrNull() }
     val isAvatarChanged = draftAvatarBase64 != profile.avatarBase64
@@ -194,6 +204,25 @@ fun SharedTagCloudAuthScreen(
                 is PromoCodeApplyResult.Failure -> result.message
             }
             isRedeemingPromoCode = false
+        }
+    }
+
+    fun purchasePaidCourse(planType: PlanType, billingPeriod: BillingPeriod) {
+        val activity = context.findActivity()
+        if (activity == null) {
+            message = "購入画面を開けませんでした"
+            return
+        }
+        scope.launch {
+            isPurchasing = true
+            message = when (val result = viewModel.purchasePaidCourse(activity, planType, billingPeriod)) {
+                PaidCoursePurchaseUiResult.Started -> "購入画面を開きました"
+                PaidCoursePurchaseUiResult.AuthRequired -> "購入にはサインインが必要です"
+                PaidCoursePurchaseUiResult.ProductUnavailable -> "このコースは現在購入できません"
+                PaidCoursePurchaseUiResult.Unavailable -> "購入機能がこのビルドで利用できません"
+                is PaidCoursePurchaseUiResult.Failure -> result.message.ifBlank { "購入画面を開けませんでした" }
+            }
+            isPurchasing = false
         }
     }
 
@@ -277,6 +306,28 @@ fun SharedTagCloudAuthScreen(
                 UsageSummaryCard(
                     usageSummary = usageSummary,
                 )
+                ChatGptSyncCard(
+                    isSignedIn = cloudState.isSignedIn,
+                    settings = chatGptSyncSettings,
+                    isUpdating = isUpdatingChatGptSync,
+                    onSetEnabled = { enabled, contentFetchEnabled ->
+                        scope.launch {
+                            isUpdatingChatGptSync = true
+                            message = when (
+                                val result = viewModel.setChatGptPersonalLinkSync(
+                                    enabled = enabled,
+                                    contentFetchEnabled = contentFetchEnabled,
+                                )
+                            ) {
+                                ChatGptSyncResult.Success ->
+                                    if (enabled) "ChatGPT連携を有効にしました" else "ChatGPT連携を無効にしました"
+                                ChatGptSyncResult.AuthRequired -> "ChatGPT連携にはサインインが必要です"
+                                is ChatGptSyncResult.Failure -> result.message
+                            }
+                            isUpdatingChatGptSync = false
+                        }
+                    },
+                )
                 if (entitlements.subscriptionEnabled) {
                     OutlinedButton(
                         onClick = {},
@@ -341,6 +392,11 @@ fun SharedTagCloudAuthScreen(
                             Text("アカウント削除")
                         }
                     }
+                    PaidCourseSection(
+                        isEnabled = !isSubmitting && !isPurchasing,
+                        isPurchasing = isPurchasing,
+                        onPurchase = ::purchasePaidCourse,
+                    )
                     PromoCodeSection(
                         promoCode = promoCode,
                         promoMessage = promoMessage,
@@ -406,6 +462,31 @@ fun SharedTagCloudAuthScreen(
                             isSubmitting = false
                         }
                     },
+                    onResendConfirmation = {
+                        scope.launch {
+                            isSubmitting = true
+                            message = viewModel.resendEmailConfirmation(email).toUiMessage(
+                                success = "確認メールを再送しました。メール確認後にサインインしてください。",
+                                emailConfirmation = "確認メールを再送しました。メール確認後にサインインしてください。",
+                            )
+                            isSubmitting = false
+                        }
+                    },
+                    onPasswordRecovery = {
+                        scope.launch {
+                            isSubmitting = true
+                            message = viewModel.sendPasswordRecovery(email).toUiMessage(
+                                success = "パスワード再設定メールを送信しました。",
+                                emailConfirmation = "パスワード再設定メールを送信しました。メールの案内に従ってください。",
+                            )
+                            isSubmitting = false
+                        }
+                    },
+                )
+                PaidCourseSection(
+                    isEnabled = !isSubmitting && !isPurchasing,
+                    isPurchasing = isPurchasing,
+                    onPurchase = ::purchasePaidCourse,
                 )
                 PromoCodeSection(
                     promoCode = promoCode,
@@ -686,6 +767,26 @@ fun SharedTagInviteScreen(
                                 } else {
                                     isSubmitting = false
                                 }
+                            }
+                        },
+                        onResendConfirmation = {
+                            scope.launch {
+                                isSubmitting = true
+                                message = viewModel.resendEmailConfirmation(email).toUiMessage(
+                                    success = "確認メールを再送しました。メール確認後にこの招待リンクをもう一度開いてください。",
+                                    emailConfirmation = "確認メールを再送しました。メール確認後にこの招待リンクをもう一度開いてください。",
+                                )
+                                isSubmitting = false
+                            }
+                        },
+                        onPasswordRecovery = {
+                            scope.launch {
+                                isSubmitting = true
+                                message = viewModel.sendPasswordRecovery(email).toUiMessage(
+                                    success = "パスワード再設定メールを送信しました。",
+                                    emailConfirmation = "パスワード再設定メールを送信しました。メールの案内に従ってください。",
+                                )
+                                isSubmitting = false
                             }
                         },
                     )
@@ -1127,6 +1228,8 @@ private fun SharedTagAuthForm(
     onGoogleSignIn: () -> Unit,
     onSignIn: () -> Unit,
     onSignUp: () -> Unit,
+    onResendConfirmation: () -> Unit,
+    onPasswordRecovery: () -> Unit,
 ) {
     var passwordVisible by remember { mutableStateOf(false) }
 
@@ -1208,6 +1311,25 @@ private fun SharedTagAuthForm(
             Text("新規登録")
         }
     }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        TextButton(
+            onClick = onResendConfirmation,
+            modifier = Modifier.weight(1f),
+            enabled = !isSubmitting && email.isNotBlank(),
+        ) {
+            Text("確認メール再送")
+        }
+        TextButton(
+            onClick = onPasswordRecovery,
+            modifier = Modifier.weight(1f),
+            enabled = !isSubmitting && email.isNotBlank(),
+        ) {
+            Text("パスワード再設定")
+        }
+    }
     if (isSubmitting) {
         CircularProgressIndicator()
     }
@@ -1216,6 +1338,150 @@ private fun SharedTagAuthForm(
             text = it,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+@Composable
+private fun ChatGptSyncCard(
+    isSignedIn: Boolean,
+    settings: ChatGptPersonalLinkSyncSettings,
+    isUpdating: Boolean,
+    onSetEnabled: (enabled: Boolean, contentFetchEnabled: Boolean) -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        tonalElevation = 1.dp,
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("ChatGPT連携", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        text = if (isSignedIn) {
+                            "保存中とアーカイブのリンクをChatGPT提案対象にします"
+                        } else {
+                            "サインイン後に利用できます"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = settings.enabled,
+                    onCheckedChange = { onSetEnabled(it, settings.contentFetchEnabled) },
+                    enabled = isSignedIn && !isUpdating,
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    text = "公開ページ本文も同期",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Switch(
+                    checked = settings.contentFetchEnabled,
+                    onCheckedChange = { onSetEnabled(true, it) },
+                    enabled = isSignedIn && settings.enabled && !isUpdating,
+                )
+            }
+            if (isUpdating) {
+                Text("同期中", style = MaterialTheme.typography.bodySmall)
+            }
+            settings.lastSyncedAt?.let {
+                Text("最終同期: $it", style = MaterialTheme.typography.bodySmall)
+            }
+            settings.lastErrorMessage?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PaidCourseSection(
+    isEnabled: Boolean,
+    isPurchasing: Boolean,
+    onPurchase: (PlanType, BillingPeriod) -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = "有料コース",
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            PaidCourseButton(
+                label = "Standard 月額",
+                enabled = isEnabled,
+                isPurchasing = isPurchasing,
+                modifier = Modifier.weight(1f),
+                onClick = { onPurchase(PlanType.STANDARD, BillingPeriod.MONTHLY) },
+            )
+            PaidCourseButton(
+                label = "Standard 年払い",
+                enabled = isEnabled,
+                isPurchasing = isPurchasing,
+                modifier = Modifier.weight(1f),
+                onClick = { onPurchase(PlanType.STANDARD, BillingPeriod.YEARLY) },
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            PaidCourseButton(
+                label = "Pro 月額",
+                enabled = isEnabled,
+                isPurchasing = isPurchasing,
+                modifier = Modifier.weight(1f),
+                onClick = { onPurchase(PlanType.PRO, BillingPeriod.MONTHLY) },
+            )
+            PaidCourseButton(
+                label = "Pro 年払い",
+                enabled = isEnabled,
+                isPurchasing = isPurchasing,
+                modifier = Modifier.weight(1f),
+                onClick = { onPurchase(PlanType.PRO, BillingPeriod.YEARLY) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun PaidCourseButton(
+    label: String,
+    enabled: Boolean,
+    isPurchasing: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier.height(56.dp),
+    ) {
+        Text(if (isPurchasing) "処理中" else label)
     }
 }
 
@@ -1253,6 +1519,14 @@ private suspend fun readAvatarBytes(
             stream.readBytes()
         }
     }.getOrNull()
+}
+
+private tailrec fun Context.findActivity(): Activity? {
+    return when (this) {
+        is Activity -> this
+        is ContextWrapper -> baseContext.findActivity()
+        else -> null
+    }
 }
 
 private fun String?.toImageBitmapOrNull(): ImageBitmap? {

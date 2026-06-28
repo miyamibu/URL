@@ -5,7 +5,9 @@ import android.util.Log
 import androidx.work.WorkerFactory
 import androidx.work.WorkManager
 import jp.mimac.urlsaver.BuildConfig
+import jp.mimac.urlsaver.billing.GooglePlayBillingService
 import jp.mimac.urlsaver.data.AppDatabase
+import jp.mimac.urlsaver.data.ChatGptPersonalLinkSyncRepository
 import jp.mimac.urlsaver.data.ConfiguredContactSupportClient
 import jp.mimac.urlsaver.data.ContactSupportClient
 import jp.mimac.urlsaver.data.DataStoreEntryCardDisplayModeStore
@@ -25,14 +27,17 @@ import jp.mimac.urlsaver.data.DefaultExportRepository
 import jp.mimac.urlsaver.data.SharedTagAuthRemoteDataSource
 import jp.mimac.urlsaver.data.SharedPreferencesSharedTagAuthSessionProvider
 import jp.mimac.urlsaver.data.SharedPreferencesSharedTagOAuthStateStore
+import jp.mimac.urlsaver.data.SharedPreferencesChatGptPersonalLinkSyncSettingsStore
 import jp.mimac.urlsaver.data.SharedTagAuthSessionProvider
 import jp.mimac.urlsaver.data.SharedTagSyncCoordinator
 import jp.mimac.urlsaver.data.SharedTagSyncRemoteConfig
 import jp.mimac.urlsaver.data.SharedTagSyncRemoteDataSource
 import jp.mimac.urlsaver.data.SharedTagSyncScheduler
 import jp.mimac.urlsaver.data.SupabaseSharedTagAuthRemoteDataSource
+import jp.mimac.urlsaver.data.SupabaseChatGptPersonalLinkRemoteDataSource
 import jp.mimac.urlsaver.data.SupabaseEntitlementGrantRemoteDataSource
 import jp.mimac.urlsaver.data.SupabaseSharedTagSyncRemoteDataSource
+import jp.mimac.urlsaver.data.SupabaseStorePurchaseRemoteDataSource
 import jp.mimac.urlsaver.data.WorkManagerSharedTagSyncScheduler
 import jp.mimac.urlsaver.data.TagRepository
 import jp.mimac.urlsaver.data.TopFilterOrderStore
@@ -146,6 +151,30 @@ class AppContainer(context: Context) {
             ),
             grantStore = entitlementGrantStore,
             clock = clock,
+        )
+    }
+    val googlePlayBillingService: GooglePlayBillingService by lazy {
+        GooglePlayBillingService(
+            context = appContext,
+            authSessionProvider = sharedTagAuthSessionProvider,
+            remoteDataSource = SupabaseStorePurchaseRemoteDataSource(
+                config = sharedTagSyncRemoteConfig,
+                authSessionProvider = sharedTagAuthSessionProvider,
+                authRemoteDataSource = sharedTagAuthRemoteDataSource,
+            ),
+        )
+    }
+    val chatGptPersonalLinkSyncRepository: ChatGptPersonalLinkSyncRepository by lazy {
+        ChatGptPersonalLinkSyncRepository(
+            authSessionProvider = sharedTagAuthSessionProvider,
+            urlEntryDao = database.urlEntryDao(),
+            tagDao = database.tagDao(),
+            settingsStore = SharedPreferencesChatGptPersonalLinkSyncSettingsStore(appContext),
+            remoteDataSource = SupabaseChatGptPersonalLinkRemoteDataSource(
+                config = sharedTagSyncRemoteConfig,
+                authSessionProvider = sharedTagAuthSessionProvider,
+                authRemoteDataSource = sharedTagAuthRemoteDataSource,
+            ),
         )
     }
     private val sharedTagSyncScheduler: SharedTagSyncScheduler by lazy {

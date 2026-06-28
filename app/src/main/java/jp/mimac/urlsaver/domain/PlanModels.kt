@@ -3,8 +3,52 @@ package jp.mimac.urlsaver.domain
 enum class PlanType {
     FREE,
     LAUNCH_STANDARD,
+    STANDARD,
     PRO,
     PROMO_PRO,
+}
+
+enum class BillingPeriod {
+    MONTHLY,
+    YEARLY,
+}
+
+enum class StorePlatform {
+    GOOGLE_PLAY,
+    APP_STORE,
+}
+
+data class SubscriptionProduct(
+    val planType: PlanType,
+    val billingPeriod: BillingPeriod,
+    val storePlatform: StorePlatform,
+    val storeProductId: String,
+) {
+    init {
+        require(planType == PlanType.STANDARD || planType == PlanType.PRO) {
+            "Only paid plans can be store subscription products."
+        }
+    }
+}
+
+object SubscriptionProductIds {
+    fun expectedProductId(planType: PlanType, billingPeriod: BillingPeriod): String {
+        require(planType == PlanType.STANDARD || planType == PlanType.PRO) {
+            "Only paid plans have store product ids."
+        }
+        val planSegment = when (planType) {
+            PlanType.STANDARD -> "standard"
+            PlanType.PRO -> "pro"
+            PlanType.FREE,
+            PlanType.LAUNCH_STANDARD,
+            PlanType.PROMO_PRO -> error("Only paid plans have store product ids.")
+        }
+        val billingSegment = when (billingPeriod) {
+            BillingPeriod.MONTHLY -> "monthly"
+            BillingPeriod.YEARLY -> "yearly"
+        }
+        return "urlsaver.$planSegment.$billingSegment"
+    }
 }
 
 data class PlanLimits(
@@ -176,6 +220,13 @@ object ProPlan {
     )
 }
 
+object StandardPlan {
+    val entitlements: FeatureEntitlements = LaunchStandardPlan.entitlements.copy(
+        planType = PlanType.STANDARD,
+        subscriptionEnabled = true,
+    )
+}
+
 object PromoProPlan {
     val entitlements: FeatureEntitlements = ProPlan.entitlements.copy(
         planType = PlanType.PROMO_PRO,
@@ -188,6 +239,7 @@ object PlanEntitlements {
         return when (planType) {
             PlanType.FREE -> FreePlan.entitlements
             PlanType.LAUNCH_STANDARD -> LaunchStandardPlan.entitlements
+            PlanType.STANDARD -> StandardPlan.entitlements
             PlanType.PRO -> ProPlan.entitlements
             PlanType.PROMO_PRO -> PromoProPlan.entitlements
         }
@@ -202,6 +254,7 @@ private fun PlanType.limitMessageLabel(): String {
     return when (this) {
         PlanType.FREE -> "無料プラン"
         PlanType.LAUNCH_STANDARD -> "ローンチ版"
+        PlanType.STANDARD -> "Standardプラン"
         PlanType.PRO -> "Proプラン"
         PlanType.PROMO_PRO -> "優待Pro"
     }
