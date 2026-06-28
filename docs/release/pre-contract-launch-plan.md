@@ -3,9 +3,13 @@
 ## Goal
 外部契約前に完了できる launch 準備を終わらせ、契約後に差し込む値と外部操作だけを残す。
 
+## Current Status Note
+この文書は契約前 baseline の履歴メモ。現在の公開候補は Standard / Pro のアプリ内サブスクリプション復元後の前提で、privacy / Data safety / store listing draft も課金ありとして扱う。
+
 ## Scope
 - 対象: Android / iOS の初回公開前準備。
 - 初回契約前 baseline: local URL saver、広告なし、課金なし、LaunchStandard 固定、shared-tag cloud は無効化可能。
+- 現在の store-submission baseline: 広告なし、Standard / Pro のアプリ内サブスクリプションあり、shared-tag cloud / account 機能あり。
 - shared-tag cloud を公開する場合は、契約後に Supabase production 設定、account deletion URL、ストア回答を最終化する。
 
 ## Worktree Inventory
@@ -23,7 +27,7 @@
 - Keep Android release build possible when shared-tag cloud is disabled.
 - Make live Supabase XCTest skip when the live environment is absent.
 - Keep App Store / Google Play submission copy as drafts in this repo.
-- Keep privacy and Data safety answers aligned with the initial no-ads / no-billing posture.
+- Keep privacy and Data safety answers aligned with the current no-ads / paid-subscription posture.
 - Keep App Links / Universal Links files ready, but mark SHA-256 and Team ID as contract-dependent.
 - Keep iOS local-only App Store / Release validation independent from ignored dev Supabase `ios/Config/URLSaverSecrets.xcconfig`; do not pass that file with `-xcconfig` for local-only v1.0.
 - Run local verification and record the exact pass/fail state.

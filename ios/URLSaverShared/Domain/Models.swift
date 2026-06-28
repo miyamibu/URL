@@ -571,6 +571,35 @@ struct LocalTagSummary: Identifiable, Equatable, Sendable {
     let updatedAt: Date
 }
 
+struct TagSharePayload: Codable, Equatable, Sendable {
+    let urlsaverVersion: Int
+    let tag: String
+    let exportedAt: Int64
+    let urls: [TagShareURL]
+
+    enum CodingKeys: String, CodingKey {
+        case urlsaverVersion = "urlsaver_version"
+        case tag
+        case exportedAt = "exported_at"
+        case urls
+    }
+}
+
+struct TagShareURL: Codable, Equatable, Sendable {
+    let url: String
+    let title: String?
+    let memo: String?
+}
+
+struct TagImportResult: Equatable, Sendable {
+    let tagID: Int64
+    let tagName: String
+    let created: Int
+    let merged: Int
+    let duplicateSkipped: Int
+    let failed: Int
+}
+
 struct BatchSaveSummary: Codable, Equatable, Sendable {
     let total: Int
     let created: Int

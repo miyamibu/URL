@@ -14,6 +14,8 @@ import jp.mimac.urlsaver.domain.SharedTagInviteCreationResult
 import jp.mimac.urlsaver.domain.SharedTagMemberRecord
 import jp.mimac.urlsaver.domain.SharedTagOwnershipTransferResult
 import jp.mimac.urlsaver.domain.SharedTagRecord
+import jp.mimac.urlsaver.domain.TagShareJson
+import kotlinx.serialization.encodeToString
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -73,6 +75,11 @@ class TagDetailViewModel(
 
     fun buildLocalShareLink(): String {
         return "urlsaver://tag/$tagId"
+    }
+
+    suspend fun buildTagSharePayloadText(): String? {
+        val payload = tagRepository.exportTag(tagId) ?: return null
+        return TagShareJson.encodeToString(payload)
     }
 
     fun toggleEntryCardDisplayMode() {

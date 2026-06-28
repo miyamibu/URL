@@ -1,7 +1,10 @@
 # iOS LaunchStandard Spec Memo
 
 ## Goal
-Align iOS behavior with the Android `LaunchStandard` limits and gating rules without implementing billing yet.
+Align iOS behavior with the Android `LaunchStandard` limits and gating rules.
+
+## Current Status Note
+This memo originally described the no-billing launch baseline. Current iOS builds include StoreKit purchase entry points for Standard / Pro, and LaunchStandard remains the fallback when no active entitlement grant is available.
 
 ## Plan
 - Plan type: `LaunchStandard` (fixed for launch)
@@ -12,7 +15,7 @@ Align iOS behavior with the Android `LaunchStandard` limits and gating rules wit
 - Export: enabled
 - Ads: disabled (`shouldShowAds = false`)
 - Shared sync: enabled only for shared-tag scope
-- Subscription entry: hidden while `subscriptionEnabled = false`
+- Subscription entry: shown when `subscriptionEnabled = true`; otherwise hidden and LaunchStandard fallback remains active.
 
 ## Limit Rules
 - Existing data must always remain visible.
@@ -40,4 +43,4 @@ Align iOS behavior with the Android `LaunchStandard` limits and gating rules wit
   - `通常タグ x / 10`
   - `共有タグ x / 2`
   - Per shared tag: `タグ名 y / 20`
-- Show non-billing limit messages (no paywall wording).
+- Show non-billing limit messages while subscription entry is disabled; when enabled, keep paywall wording tied to Standard / Pro entitlements.

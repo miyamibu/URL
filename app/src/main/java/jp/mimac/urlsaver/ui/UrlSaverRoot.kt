@@ -541,6 +541,7 @@ private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
                     chatGptPersonalLinkSyncRepository = context.appContainer().chatGptPersonalLinkSyncRepository,
                     contactSupportClient = context.appContainer().contactSupportClient,
                     authSessionProvider = context.appContainer().sharedTagAuthSessionProvider,
+                    pendingInviteStore = context.appContainer().pendingInviteStore,
                 )
             },
         )
@@ -577,6 +578,7 @@ private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
                 SharedTagInviteViewModel(
                     inviteToken = inviteToken,
                     tagRepository = context.appContainer().tagRepository,
+                    pendingInviteStore = context.appContainer().pendingInviteStore,
                 )
             },
         )
@@ -661,10 +663,12 @@ private fun MainScreen(
                     chatGptPersonalLinkSyncRepository = context.appContainer().chatGptPersonalLinkSyncRepository,
                     contactSupportClient = context.appContainer().contactSupportClient,
                     authSessionProvider = context.appContainer().sharedTagAuthSessionProvider,
+                    pendingInviteStore = context.appContainer().pendingInviteStore,
                 )
             },
         )
     val sharedTagCloudState by profileVm.cloudState.collectAsStateWithLifecycle()
+    val pendingInvite by profileVm.pendingInvite.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val mainListState = rememberLazyListState()
     val customCollections = remember(collections) {
@@ -682,7 +686,12 @@ private fun MainScreen(
     val showSharedTagCloudUi = shouldShowSharedTagCloudEntryPoints(
         isConfigured = sharedTagCloudState.isConfigured,
         hasSharedTags = visibleSharedTags.isNotEmpty() || sharedTagGroups.isNotEmpty(),
+        hasPendingInvite = pendingInvite != null,
     )
+
+    LaunchedEffect(Unit) {
+        profileVm.refreshPendingInvite()
+    }
     var selectionModeActive by rememberSaveable { mutableStateOf(false) }
     var searchBarVisible by rememberSaveable { mutableStateOf(false) }
     var searchQueryLocal by rememberSaveable { mutableStateOf("") }

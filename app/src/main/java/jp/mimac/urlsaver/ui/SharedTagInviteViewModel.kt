@@ -2,6 +2,7 @@ package jp.mimac.urlsaver.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import jp.mimac.urlsaver.data.PendingInviteStore
 import jp.mimac.urlsaver.data.TagRepository
 import jp.mimac.urlsaver.domain.SharedTagAuthResult
 import jp.mimac.urlsaver.domain.SharedTagCloudState
@@ -22,6 +23,7 @@ import kotlinx.coroutines.flow.stateIn
 class SharedTagInviteViewModel(
     private val inviteToken: String,
     private val tagRepository: TagRepository,
+    private val pendingInviteStore: PendingInviteStore,
 ) : ViewModel() {
 
     val cloudState: StateFlow<SharedTagCloudState> = tagRepository.cloudState
@@ -46,6 +48,16 @@ class SharedTagInviteViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     fun hasInviteToken(): Boolean = inviteToken.isNotBlank()
+
+    fun savePendingInvite() {
+        if (inviteToken.isNotBlank()) {
+            pendingInviteStore.save(inviteToken)
+        }
+    }
+
+    fun clearPendingInvite() {
+        pendingInviteStore.clear()
+    }
 
     suspend fun loadPreview() {
         if (inviteToken.isBlank()) {
@@ -79,6 +91,11 @@ class SharedTagInviteViewModel(
         val result = tagRepository.acceptInvite(inviteToken)
         if (result is SharedTagInviteAcceptanceResult.Success && result.inviteType == SharedInviteType.TAG) {
             acceptedRemoteTagId.value = result.remoteId
+        }
+        if (result is SharedTagInviteAcceptanceResult.Success ||
+            result == SharedTagInviteAcceptanceResult.InvalidInvite
+        ) {
+            pendingInviteStore.clear()
         }
         return result
     }

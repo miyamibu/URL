@@ -191,6 +191,101 @@ final class URLRepository: @unchecked Sendable {
         return true
     }
 
+    func exportLocalTag(tagID: Int64) throws -> TagSharePayload? {
+        guard let tag = try loadLocalTag(id: tagID) else { return nil }
+        let entries = try database.fetchMany(
+            sql: """
+            SELECT url_entries.normalized_url, url_entries.user_title, url_entries.fetched_title, url_entries.memo
+            FROM url_entries
+            INNER JOIN local_tag_entries ON local_tag_entries.entry_id = url_entries.id
+            WHERE local_tag_entries.tag_id = ?
+              AND url_entries.local_provenance_count > 0
+              AND url_entries.record_state IN ('ACTIVE', 'ARCHIVED')
+            ORDER BY url_entries.created_at DESC;
+            """,
+            binds: [sql(tagID)]
+        ) { statement in
+            TagShareURL(
+                url: textColumn(statement, index: 0) ?? "",
+                title: textColumn(statement, index: 1) ?? textColumn(statement, index: 2),
+                memo: (textColumn(statement, index: 3) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? nil
+                    : textColumn(statement, index: 3)
+            )
+        }
+        return TagSharePayload(
+            urlsaverVersion: 1,
+            tag: tag.name,
+            exportedAt: Int64(Date().timeIntervalSince1970 * 1000),
+            urls: entries.filter { !$0.url.isEmpty }
+        )
+    }
+
+    func importLocalTagPayload(_ payload: TagSharePayload) throws -> TagImportResult {
+        guard payload.urlsaverVersion == 1,
+              let normalized = normalizeLocalTagName(payload.tag) else {
+            return TagImportResult(
+                tagID: -1,
+                tagName: payload.tag,
+                created: 0,
+                merged: 0,
+                duplicateSkipped: 0,
+                failed: payload.urls.count
+            )
+        }
+        let tag = try createLocalTag(name: normalized.name) ?? loadLocalTagByNormalizedName(normalized.key)
+        guard let tag else {
+            return TagImportResult(
+                tagID: -1,
+                tagName: normalized.name,
+                created: 0,
+                merged: 0,
+                duplicateSkipped: 0,
+                failed: payload.urls.count
+            )
+        }
+
+        var created = 0
+        var merged = 0
+        var duplicateSkipped = 0
+        var failed = 0
+        for item in payload.urls {
+            let result = try saveFromResolvedURL(item.url)
+            guard let entryID = result.entryID else {
+                failed += 1
+                continue
+            }
+            let wasAlreadyAssigned = try hasLocalTagAssignment(entryID: entryID, tagID: tag.id)
+            _ = try assignLocalTag(entryID: entryID, tagID: tag.id)
+            switch result.result {
+            case .created, .restoredFromPendingDelete:
+                created += 1
+                if let title = item.title, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    _ = try saveUserTitle(entryID: entryID, rawTitle: title)
+                }
+                if let memo = item.memo, !memo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    _ = try saveMemo(entryID: entryID, rawMemo: memo)
+                }
+            case .duplicateActive, .duplicateArchived:
+                if wasAlreadyAssigned {
+                    duplicateSkipped += 1
+                } else {
+                    merged += 1
+                }
+            case .batchProcessed, .inputTooLarge, .invalidURL, .noURLFound, .saveFailed:
+                failed += 1
+            }
+        }
+        return TagImportResult(
+            tagID: tag.id,
+            tagName: tag.name,
+            created: created,
+            merged: merged,
+            duplicateSkipped: duplicateSkipped,
+            failed: failed
+        )
+    }
+
     func loadEntry(id: Int64) throws -> URLRecord? {
         let statementSQL = "SELECT * FROM url_entries WHERE id = ? LIMIT 1;"
         return try fetchOne(sql: statementSQL, binds: [sql(id)])
@@ -643,6 +738,16 @@ final class URLRepository: @unchecked Sendable {
         case .batchProcessed, .inputTooLarge, .invalidURL, .noURLFound, .saveFailed:
             return
         }
+    }
+
+    private func hasLocalTagAssignment(entryID: Int64, tagID: Int64) throws -> Bool {
+        let count = try database.fetchOne(
+            sql: "SELECT COUNT(*) FROM local_tag_entries WHERE entry_id = ? AND tag_id = ?;",
+            binds: [sql(entryID), sql(tagID)]
+        ) { statement in
+            Int(sqlite3_column_int(statement, 0))
+        } ?? 0
+        return count > 0
     }
 
     private func normalizeLocalTagName(_ rawName: String) -> (name: String, key: String)? {

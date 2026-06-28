@@ -187,6 +187,13 @@ struct RootView: View {
                     isShowingSharedTagCloudSheet = true
                 }
             }
+            .onChange(of: model.incomingLocalTagID) { _, tagID in
+                guard let tagID else { return }
+                model.selectedTab = .main
+                selectedMainService = .all
+                selectedMainLocalTagID = tagID
+                model.consumeIncomingLocalTagID()
+            }
             .onChange(of: selectedMainService) { _, _ in
                 selectedMainEntryIDs = []
             }
@@ -220,6 +227,8 @@ struct RootView: View {
             .sheet(isPresented: $isShowingLocalTagManagementSheet) {
                 LocalTagManagementSheet(
                     localTags: model.localTags,
+                    localLinkText: { model.localTagShareText(for: $0) },
+                    payloadText: { model.localTagPayloadText(tagID: $0.id) },
                     onDelete: { tag in
                         isShowingLocalTagManagementSheet = false
                         localTagPendingDeletion = tag
@@ -2601,6 +2610,8 @@ private struct SharedTagGroupCreateSheet: View {
 
 private struct LocalTagManagementSheet: View {
     let localTags: [LocalTagSummary]
+    let localLinkText: (LocalTagSummary) -> String
+    let payloadText: (LocalTagSummary) -> String?
     let onDelete: (LocalTagSummary) -> Void
     let onClose: () -> Void
 
@@ -2630,7 +2641,12 @@ private struct LocalTagManagementSheet: View {
                     ScrollView(showsIndicators: false) {
                         LocalTagManagementFlowLayout(horizontalSpacing: 8, verticalSpacing: 8) {
                             ForEach(localTags) { tag in
-                                LocalTagManagementPill(tag: tag, onDelete: onDelete)
+                                LocalTagManagementPill(
+                                    tag: tag,
+                                    localLinkText: localLinkText(tag),
+                                    payloadText: payloadText(tag),
+                                    onDelete: onDelete
+                                )
                             }
                         }
                         .padding(.bottom, 12)
@@ -2723,6 +2739,8 @@ private struct LocalTagManagementFlowLayout: Layout {
 
 private struct LocalTagManagementPill: View {
     let tag: LocalTagSummary
+    let localLinkText: String
+    let payloadText: String?
     let onDelete: (LocalTagSummary) -> Void
 
     var body: some View {
@@ -2732,6 +2750,24 @@ private struct LocalTagManagementPill: View {
                 .foregroundStyle(AppPalette.textPrimary)
                 .lineLimit(1)
                 .frame(maxWidth: 104, alignment: .leading)
+
+            ShareLink(item: localLinkText) {
+                Label("リンク", systemImage: "link")
+                    .font(.system(size: 18, weight: .heavy))
+                    .lineLimit(1)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(AppPalette.primaryStrong)
+
+            if let payloadText {
+                ShareLink(item: payloadText) {
+                    Label("JSON", systemImage: "square.and.arrow.up")
+                        .font(.system(size: 18, weight: .heavy))
+                        .lineLimit(1)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(AppPalette.primaryStrong)
+            }
 
             Button(role: .destructive) {
                 onDelete(tag)

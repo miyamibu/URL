@@ -24,8 +24,10 @@ import jp.mimac.urlsaver.data.DataStoreServiceFilterOrderStore
 import jp.mimac.urlsaver.data.DataStoreTopFilterOrderStore
 import jp.mimac.urlsaver.data.ServiceFilterOrderStore
 import jp.mimac.urlsaver.data.DefaultExportRepository
+import jp.mimac.urlsaver.data.PendingInviteStore
 import jp.mimac.urlsaver.data.SharedTagAuthRemoteDataSource
 import jp.mimac.urlsaver.data.SharedPreferencesSharedTagAuthSessionProvider
+import jp.mimac.urlsaver.data.SharedPreferencesPendingInviteStore
 import jp.mimac.urlsaver.data.SharedPreferencesSharedTagOAuthStateStore
 import jp.mimac.urlsaver.data.SharedPreferencesChatGptPersonalLinkSyncSettingsStore
 import jp.mimac.urlsaver.data.SharedTagAuthSessionProvider
@@ -116,6 +118,9 @@ class AppContainer(context: Context) {
     }
     val userProfileStore: UserProfileStore by lazy {
         DataStoreUserProfileStore(appContext)
+    }
+    val pendingInviteStore: PendingInviteStore by lazy {
+        SharedPreferencesPendingInviteStore(appContext)
     }
     private val sharedTagSyncRemoteConfig: SharedTagSyncRemoteConfig by lazy {
         SharedTagSyncRemoteConfig(

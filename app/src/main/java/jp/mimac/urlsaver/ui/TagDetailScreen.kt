@@ -118,6 +118,7 @@ fun TagDetailScreen(
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showLeaveDialog by remember { mutableStateOf(false) }
     var showInfoDialog by remember { mutableStateOf(false) }
+    var showShareOptionsDialog by remember { mutableStateOf(false) }
     var pendingOwnershipTransferMember by remember { mutableStateOf<SharedTagMemberRecord?>(null) }
     var shareError by remember { mutableStateOf<String?>(null) }
     var memberRemoveError by remember { mutableStateOf<String?>(null) }
@@ -199,6 +200,7 @@ fun TagDetailScreen(
         currentTag.currentUserRole == SharedTagMemberRole.EDITOR
     val canShareInvite = currentTag.scope == SharedTagScope.SYNCED &&
         currentTag.currentUserRole == SharedTagMemberRole.OWNER
+    val canShareTag = currentTag.scope == SharedTagScope.LOCAL_ONLY || canShareInvite
     val canDeleteSharedTag = currentTag.scope == SharedTagScope.LOCAL_ONLY ||
         (currentTag.scope == SharedTagScope.SYNCED && currentTag.currentUserRole == SharedTagMemberRole.OWNER)
     val canLeaveSharedTag = currentTag.scope == SharedTagScope.SYNCED &&
@@ -308,45 +310,13 @@ fun TagDetailScreen(
                             )
                         }
                     }
-                    if (canShareInvite) {
+                    if (canShareTag) {
                         SharedTagHeaderIconButton(
-                            onClick = {
-                                scope.launch {
-                                    when (val result = viewModel.createInviteLink()) {
-                                        is SharedTagInviteCreationResult.Success -> {
-                                            shareError = null
-                                            launchShare(
-                                                text = inviteShareText(result.inviteUrl),
-                                                chooserTitle = "共有招待リンクを共有",
-                                            )
-                                        }
-
-                                        SharedTagInviteCreationResult.AuthRequired -> {
-                                            shareError = "招待リンクを作るにはサインインが必要です"
-                                        }
-
-                                        SharedTagInviteCreationResult.NotSharedTag -> {
-                                            shareError = "この共有タグはまだクラウド共有ではありません"
-                                        }
-
-                                        SharedTagInviteCreationResult.OwnerOnly -> {
-                                            shareError = "招待リンクを共有できるのはオーナーだけです"
-                                        }
-
-                                        SharedTagInviteCreationResult.SyncPending -> {
-                                            shareError = "同期が終わってから招待リンクを共有してください"
-                                        }
-
-                                        is SharedTagInviteCreationResult.Failure -> {
-                                            shareError = result.message
-                                        }
-                                    }
-                                }
-                            },
+                            onClick = { showShareOptionsDialog = true },
                         ) {
                             Icon(
                                 Icons.Outlined.IosShare,
-                                contentDescription = "共有招待リンクを共有",
+                                contentDescription = "タグを共有",
                                 modifier = Modifier.size(SharedTagHeaderIconSize),
                             )
                         }
@@ -469,6 +439,93 @@ fun TagDetailScreen(
                 }
             }
         }
+    }
+
+    if (showShareOptionsDialog) {
+        AlertDialog(
+            onDismissRequest = { showShareOptionsDialog = false },
+            title = { Text("タグを共有") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (canShareInvite) {
+                        TextButton(
+                            onClick = {
+                                showShareOptionsDialog = false
+                                scope.launch {
+                                    when (val result = viewModel.createInviteLink()) {
+                                        is SharedTagInviteCreationResult.Success -> {
+                                            shareError = null
+                                            launchShare(
+                                                text = inviteShareText(result.inviteUrl),
+                                                chooserTitle = "共有招待リンクを共有",
+                                            )
+                                        }
+
+                                        SharedTagInviteCreationResult.AuthRequired -> {
+                                            shareError = "招待リンクを作るにはサインインが必要です"
+                                        }
+
+                                        SharedTagInviteCreationResult.NotSharedTag -> {
+                                            shareError = "この共有タグはまだクラウド共有ではありません"
+                                        }
+
+                                        SharedTagInviteCreationResult.OwnerOnly -> {
+                                            shareError = "招待リンクを共有できるのはオーナーだけです"
+                                        }
+
+                                        SharedTagInviteCreationResult.SyncPending -> {
+                                            shareError = "同期が終わってから招待リンクを共有してください"
+                                        }
+
+                                        is SharedTagInviteCreationResult.Failure -> {
+                                            shareError = result.message
+                                        }
+                                    }
+                                }
+                            },
+                        ) {
+                            Text("クラウド招待リンクを共有")
+                        }
+                    }
+                    TextButton(
+                        onClick = {
+                            showShareOptionsDialog = false
+                            shareError = null
+                            launchShare(
+                                text = localTagShareText(currentTag.name, viewModel.buildLocalShareLink()),
+                                chooserTitle = "同じ端末用タグリンクを共有",
+                            )
+                        },
+                    ) {
+                        Text("この端末用リンクを共有")
+                    }
+                    TextButton(
+                        onClick = {
+                            showShareOptionsDialog = false
+                            scope.launch {
+                                val payloadText = viewModel.buildTagSharePayloadText()
+                                if (payloadText == null) {
+                                    shareError = "タグデータを書き出せませんでした"
+                                } else {
+                                    shareError = null
+                                    launchShare(
+                                        text = payloadText,
+                                        chooserTitle = "タグデータを共有",
+                                    )
+                                }
+                            }
+                        },
+                    ) {
+                        Text("タグデータ(JSON)を共有")
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showShareOptionsDialog = false }) {
+                    Text("閉じる")
+                }
+            },
+        )
     }
 
     if (showInfoDialog) {
@@ -930,6 +987,17 @@ private fun inviteShareText(inviteUrl: String): String {
 
         開けない場合:
         urlsaver://invite/$token
+    """.trimIndent()
+}
+
+private fun localTagShareText(tagName: String, localLink: String): String {
+    return """
+        URL Saverの端末内タグ:
+        $tagName
+
+        $localLink
+
+        このリンクは同じ端末内のタグを開くためのものです。
     """.trimIndent()
 }
 

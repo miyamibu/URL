@@ -13,6 +13,8 @@ import jp.mimac.urlsaver.data.ContactSupportClient
 import jp.mimac.urlsaver.data.ContactSupportRequest
 import jp.mimac.urlsaver.data.ContactSupportResult
 import jp.mimac.urlsaver.data.EntitlementGrantRepository
+import jp.mimac.urlsaver.data.PendingInviteRecord
+import jp.mimac.urlsaver.data.PendingInviteStore
 import jp.mimac.urlsaver.data.PromoCodeRedemptionResult
 import jp.mimac.urlsaver.data.SharedTagAuthSessionProvider
 import jp.mimac.urlsaver.data.TagRepository
@@ -23,8 +25,10 @@ import jp.mimac.urlsaver.domain.PlanType
 import jp.mimac.urlsaver.domain.SharedTagAccountDeletionResult
 import jp.mimac.urlsaver.domain.SharedTagAuthResult
 import jp.mimac.urlsaver.domain.SharedTagCloudState
+import jp.mimac.urlsaver.domain.SharedTagInviteAcceptanceResult
 import jp.mimac.urlsaver.domain.UsageSummary
 import jp.mimac.urlsaver.domain.UserProfile
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flowOf
@@ -43,6 +47,7 @@ class SharedTagAuthViewModel(
         }
     },
     private val authSessionProvider: SharedTagAuthSessionProvider? = null,
+    private val pendingInviteStore: PendingInviteStore? = null,
 ) : ViewModel() {
 
     val cloudState: StateFlow<SharedTagCloudState> = tagRepository.cloudState
@@ -76,13 +81,19 @@ class SharedTagAuthViewModel(
                 SharingStarted.WhileSubscribed(5_000),
                 ChatGptPersonalLinkSyncSettings(),
             )
+    private val _pendingInvite = MutableStateFlow(pendingInviteStore?.load())
+    val pendingInvite: StateFlow<PendingInviteRecord?> = _pendingInvite
 
     suspend fun signIn(email: String, password: String): SharedTagAuthResult {
-        return tagRepository.signIn(email, password)
+        val result = tagRepository.signIn(email, password)
+        if (result is SharedTagAuthResult.Success) refreshPendingInvite()
+        return result
     }
 
     suspend fun signUp(email: String, password: String): SharedTagAuthResult {
-        return tagRepository.signUp(email, password)
+        val result = tagRepository.signUp(email, password)
+        if (result is SharedTagAuthResult.Success) refreshPendingInvite()
+        return result
     }
 
     suspend fun resendEmailConfirmation(email: String): SharedTagAuthResult {
@@ -99,6 +110,28 @@ class SharedTagAuthViewModel(
 
     suspend fun signOut() {
         tagRepository.signOut()
+    }
+
+    fun refreshPendingInvite() {
+        _pendingInvite.value = pendingInviteStore?.load()
+    }
+
+    fun clearPendingInvite() {
+        pendingInviteStore?.clear()
+        _pendingInvite.value = null
+    }
+
+    suspend fun acceptPendingInvite(): SharedTagInviteAcceptanceResult {
+        val record = pendingInviteStore?.load() ?: return SharedTagInviteAcceptanceResult.InvalidInvite
+        val result = tagRepository.acceptInvite(record.inviteToken)
+        if (result is SharedTagInviteAcceptanceResult.Success ||
+            result == SharedTagInviteAcceptanceResult.InvalidInvite
+        ) {
+            clearPendingInvite()
+        } else {
+            refreshPendingInvite()
+        }
+        return result
     }
 
     suspend fun deleteAccount(): SharedTagAccountDeletionResult {

@@ -93,6 +93,45 @@ final class URLRepositoryTests: XCTestCase {
         XCTAssertNil(entry.userTitle)
     }
 
+    func testLocalTagPayloadExportImportTracksCreatedMergedAndSkipped() throws {
+        let tag = try XCTUnwrap(repository.createLocalTag(name: "shared-import"))
+        let alreadyTagged = try repository.saveFromResolvedURL("https://example.com/already-tagged")
+        let mergeOnly = try repository.saveFromResolvedURL("https://example.com/merge-me")
+        _ = try repository.saveUserTitle(entryID: mergeOnly.entryID!, rawTitle: "existing title")
+        _ = try repository.saveMemo(entryID: mergeOnly.entryID!, rawMemo: "existing memo")
+        XCTAssertTrue(try repository.assignLocalTag(entryID: alreadyTagged.entryID!, tagID: tag.id))
+
+        let payload = TagSharePayload(
+            urlsaverVersion: 1,
+            tag: "shared-import",
+            exportedAt: 1_234,
+            urls: [
+                TagShareURL(url: "https://example.com/new-entry", title: "Imported title", memo: "Imported memo"),
+                TagShareURL(url: "https://example.com/merge-me", title: "Should not replace", memo: "Should not replace"),
+                TagShareURL(url: "https://example.com/already-tagged", title: "Ignored title", memo: "Ignored memo"),
+                TagShareURL(url: "not-a-url", title: "Broken", memo: "Broken"),
+            ]
+        )
+
+        let result = try repository.importLocalTagPayload(payload)
+
+        XCTAssertEqual(result.tagID, tag.id)
+        XCTAssertEqual(result.tagName, "shared-import")
+        XCTAssertEqual(result.created, 1)
+        XCTAssertEqual(result.merged, 1)
+        XCTAssertEqual(result.duplicateSkipped, 1)
+        XCTAssertEqual(result.failed, 1)
+
+        let exported = try XCTUnwrap(repository.exportLocalTag(tagID: tag.id))
+        XCTAssertEqual(exported.urlsaverVersion, 1)
+        XCTAssertEqual(exported.tag, "shared-import")
+        XCTAssertTrue(exported.urls.contains { $0.url == "https://example.com/new-entry" && $0.title == "Imported title" })
+
+        let existing = try XCTUnwrap(repository.loadEntry(id: mergeOnly.entryID!))
+        XCTAssertEqual(existing.userTitle, "existing title")
+        XCTAssertEqual(existing.memo, "existing memo")
+    }
+
     func testManualInputTooLargeReturnsExplicitResult() throws {
         let oversized = String(repeating: "a", count: URLRules.maxInputTextBytes + 1) + " https://example.com/oversized"
         let result = try repository.saveFromManualInput(oversized)

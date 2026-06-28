@@ -28,12 +28,13 @@ Supabase が `pro` grant を返したとき、Android / iOS の両方で Pro ユ
 - cache TTL / grace period は 7 日。TTL を超えた cache は使わず LaunchStandard fallback に戻る。
 - サインアウト時や session なしでは remote/cache grant を使わず LaunchStandard fallback に戻る。
 
-## Phase D: Future Billing Insertion Points
+## Phase D: Store Billing Integration
 - Google Play Billing は Android client で購入開始と purchase token 取得を担当する。
 - StoreKit は iOS client で購入開始と transaction/JWS 取得を担当する。
-- receipt / purchase token 検証、grant 作成、revocation 反映は Supabase Edge Function または service_role backend に寄せる。
-- Google Play RTDN / Apple App Store Server Notifications は backend で受け、`user_entitlement_grants` を更新する。
-- クライアントは引き続き Supabase の grant を読むだけで、自分を Pro にする書き込み権限を持たない。
+- receipt / purchase token 検証、grant 作成は Supabase Edge Function `verify-store-purchase` に寄せる。
+- purchase token / transaction JWS の raw payload は保存せず、検証履歴には token hash と transaction ID を保存する。
+- Google Play RTDN / Apple App Store Server Notifications による継続更新・失効反映は次段階で backend に追加する。
+- クライアントは引き続き Supabase の grant を読むだけで、自分を Pro にする直接書き込み権限を持たない。
 
 ## Debug Override
 - Android は debug source set の `BuildVariantEntitlementOverrides` だけが override を返す。`BuildConfig.DEBUG` でもガードする。
@@ -42,14 +43,11 @@ Supabase が `pro` grant を返したとき、Android / iOS の両方で Pro ユ
 - release build では override は空になる。
 
 ## Out Of Scope
-- Apple StoreKit 本実装
-- Google Play Billing 本実装
-- 実決済、receipt 検証、purchase token 検証
-- webhook / Edge Function 本実装
-- 課金価格、product ID、ストア申請文言の確定
+- Google Play RTDN / Apple App Store Server Notifications の本番 webhook
+- ストア側での subscription product / 価格 / 審査文言の最終登録
 - 広告 SDK 追加や UI デザイン変更
 
 ## Validation
 - Android unit tests: Resolver, LimitChecker, active/revoked/pending/expired/multiple grants, debug override。
 - iOS tests: Android と同等の entitlement domain、LimitChecker、last-known cache。
-- Supabase SQL validation: own SELECT, client write denial, RPC active non-expired filtering。
+- Supabase validation: own SELECT, client write denial, RPC active non-expired filtering、store purchase verification table RLS、Edge Function type check。

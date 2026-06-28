@@ -275,6 +275,21 @@ final class ShareViewController: UIViewController {
         }
         self.repository = repository
 
+        if let tagPayload = payload.tagSharePayload {
+            do {
+                let result = try repository.importLocalTagPayload(tagPayload)
+                await MainActor.run {
+                    updateStatus(
+                        "タグ「\(result.tagName)」を読み込みました\n新規\(result.created)件 / 追加\(result.merged)件",
+                        finished: true
+                    )
+                }
+            } catch {
+                await MainActor.run { updateStatus("タグデータを読み込めませんでした", finished: true) }
+            }
+            return
+        }
+
         let extractedBatch = URLRules.extractAllFromCandidateGroups(payload.candidateGroups)
         let allURLs = extractedBatch.urls
 
@@ -736,6 +751,20 @@ private final class TagFlowView: UIView {
 private struct ShareExtensionPayload {
     let candidateGroups: ShareCandidateGroups
     let isExplicitMultiShare: Bool
+
+    var tagSharePayload: TagSharePayload? {
+        for group in candidateGroups.orderedGroups {
+            for candidate in group {
+                let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard trimmed.hasPrefix("{"), let data = trimmed.data(using: .utf8) else { continue }
+                if let payload = try? JSONDecoder().decode(TagSharePayload.self, from: data),
+                   payload.urlsaverVersion == 1 {
+                    return payload
+                }
+            }
+        }
+        return nil
+    }
 }
 
 private struct PendingExtensionShare {

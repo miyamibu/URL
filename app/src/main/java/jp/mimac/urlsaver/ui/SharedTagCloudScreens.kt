@@ -74,6 +74,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import jp.mimac.urlsaver.R
+import jp.mimac.urlsaver.data.PendingInviteRecord
 import jp.mimac.urlsaver.domain.SharedTagAccountDeletionResult
 import jp.mimac.urlsaver.domain.SharedTagAuthResult
 import jp.mimac.urlsaver.domain.BillingPeriod
@@ -105,6 +106,7 @@ fun SharedTagCloudAuthScreen(
     val profile by viewModel.profile.collectAsStateWithLifecycle()
     val usageSummary by viewModel.usageSummary.collectAsStateWithLifecycle()
     val chatGptSyncSettings by viewModel.chatGptSyncSettings.collectAsStateWithLifecycle()
+    val pendingInvite by viewModel.pendingInvite.collectAsStateWithLifecycle()
     val entitlements = viewModel.entitlements
     val scope = rememberCoroutineScope()
 
@@ -159,6 +161,10 @@ fun SharedTagCloudAuthScreen(
             promoCode = initialPromoCode
             promoMessage = "メールの優待コードを読み込みました"
         }
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.refreshPendingInvite()
     }
 
     fun openContactPage() {
@@ -223,6 +229,25 @@ fun SharedTagCloudAuthScreen(
                 is PaidCoursePurchaseUiResult.Failure -> result.message.ifBlank { "購入画面を開けませんでした" }
             }
             isPurchasing = false
+        }
+    }
+
+    fun acceptPendingInvite() {
+        scope.launch {
+            isSubmitting = true
+            message = when (val result = viewModel.acceptPendingInvite()) {
+                is SharedTagInviteAcceptanceResult.Success -> {
+                    if (result.inviteType == jp.mimac.urlsaver.domain.SharedInviteType.GROUP) {
+                        "保留中のグループ招待に参加しました。同期後にグループ一覧へ表示されます。"
+                    } else {
+                        "保留中の共有タグ招待に参加しました。同期後にタグ一覧へ表示されます。"
+                    }
+                }
+                SharedTagInviteAcceptanceResult.AuthRequired -> "参加するにはサインインが必要です"
+                SharedTagInviteAcceptanceResult.InvalidInvite -> "保留中の招待リンクが無効か期限切れです"
+                is SharedTagInviteAcceptanceResult.Failure -> result.message
+            }
+            isSubmitting = false
         }
     }
 
@@ -303,6 +328,18 @@ fun SharedTagCloudAuthScreen(
                     themeMode = themeMode,
                     onThemeModeChange = onThemeModeChange,
                 )
+                pendingInvite?.let { record ->
+                    PendingInviteResumeCard(
+                        record = record,
+                        isSignedIn = cloudState.isSignedIn,
+                        isSubmitting = isSubmitting,
+                        onAccept = ::acceptPendingInvite,
+                        onClear = {
+                            viewModel.clearPendingInvite()
+                            message = "保留中の招待を削除しました"
+                        },
+                    )
+                }
                 UsageSummaryCard(
                     usageSummary = usageSummary,
                 )
@@ -580,6 +617,66 @@ private fun PromoCodeSection(
     }
 }
 
+@Composable
+private fun PendingInviteResumeCard(
+    record: PendingInviteRecord,
+    isSignedIn: Boolean,
+    isSubmitting: Boolean,
+    onAccept: () -> Unit,
+    onClear: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        tonalElevation = 1.dp,
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = "保留中の招待",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = if (isSignedIn) {
+                    "前回開いた共有タグ招待を再開できます。"
+                } else {
+                    "前回開いた共有タグ招待を保存しています。サインイン後に参加できます。"
+                },
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (record.inviteToken.isNotBlank()) {
+                Text(
+                    text = "招待情報を保存済みです",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Button(
+                    onClick = onAccept,
+                    enabled = isSignedIn && !isSubmitting,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(if (isSignedIn) "参加する" else "サインイン後に参加")
+                }
+                TextButton(
+                    onClick = onClear,
+                    enabled = !isSubmitting,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("削除")
+                }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SharedTagInviteScreen(
@@ -622,6 +719,7 @@ fun SharedTagInviteScreen(
                     }
                 }
                 SharedTagInviteAcceptanceResult.AuthRequired -> {
+                    viewModel.savePendingInvite()
                     message = "参加するにはサインインが必要です"
                 }
                 SharedTagInviteAcceptanceResult.InvalidInvite -> {
@@ -637,8 +735,9 @@ fun SharedTagInviteScreen(
 
     fun handleJoinClick() {
         if (!cloudState.isSignedIn) {
+            viewModel.savePendingInvite()
             showAuthForm = true
-            message = "参加するにはサインインが必要です"
+            message = "招待を保留しました。サインイン後にこの画面から参加できます。"
             return
         }
         acceptInvite()

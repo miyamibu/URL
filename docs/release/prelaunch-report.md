@@ -3,6 +3,9 @@
 ## Date
 2026-05-11
 
+## Current Status Note
+This report records the 2026-05-11 contract-free posture. It is no longer the current store-submission posture after the Standard / Pro subscription restoration work.
+
 ## Goal
 外部契約前に実行できる launch 準備の現状を記録し、契約後に残る外部値と承認ゲートを明確にする。
 
@@ -10,7 +13,7 @@
 - Android release dry run: local-only / shared-tag cloud disabled.
 - iOS release-style build: generic iOS build with code signing disabled.
 - Ads: disabled in Android release BuildConfig.
-- Billing: not implemented for initial launch.
+- Billing: not implemented in this historical contract-free baseline. Current store-submission drafts now assume Google Play Billing / StoreKit subscriptions for Standard / Pro.
 - External analytics and third-party crash reporting: not integrated for initial launch.
 
 ## Validation Results
@@ -55,7 +58,7 @@ Main categories still requiring owner review:
 
 ## Failure Handling
 - If shared-tag cloud is enabled for release, re-run Android release build with production Supabase values and re-run the live Supabase validation path.
-- If ads or billing are enabled later, stop and rewrite store listing, privacy, and Data safety drafts before submission.
+- If ads are enabled later or billing behavior changes from the current Standard / Pro subscription posture, stop and rewrite store listing, privacy, and Data safety drafts before submission.
 - If App Links or Universal Links fail after contract-issued values are available, update only the SHA-256 / Team ID placeholders and verify on real devices.
 
 ## Done Criteria Status

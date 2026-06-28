@@ -50,6 +50,7 @@ final class URLSaverAppModel: ObservableObject {
     @Published private(set) var archivedEntries: [URLRecord] = []
     @Published private(set) var profile: UserProfile = .empty
     @Published private(set) var pendingInviteRecord: PendingInviteRecord?
+    @Published private(set) var incomingLocalTagID: Int64?
     @Published var pendingPromoCode: String?
     @Published var inviteConfirmationToken: String?
     @Published private(set) var sharedTagCloudState = SharedTagCloudState(isConfigured: false, isSignedIn: false, signedInEmail: nil)
@@ -79,8 +80,7 @@ final class URLSaverAppModel: ObservableObject {
         guard !hasBootstrapped else { return }
         hasBootstrapped = true
         profile = (try? services.profileStore.load()) ?? .empty
-        try? services.pendingInviteStore.clear()
-        pendingInviteRecord = nil
+        pendingInviteRecord = try? services.pendingInviteStore.load()
         try? services.repository.cleanupExpiredPendingDeletes()
         await reload()
         await refreshSharedTagCloudState()
@@ -213,6 +213,11 @@ final class URLSaverAppModel: ObservableObject {
     }
 
     func manualSave(input: String, localTagIDs: Set<Int64> = []) async -> ShareSaveResult? {
+        if let data = input.trimmingCharacters(in: .whitespacesAndNewlines).data(using: .utf8),
+           (try? JSONDecoder().decode(TagSharePayload.self, from: data)) != nil {
+            _ = await importLocalTagPayloadText(input)
+            return nil
+        }
         guard let saveResult = try? services.repository.saveFromManualInput(input, localTagIDs: Array(localTagIDs)) else {
             enqueueNotification(
                 AppNotification(message: "保存できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3)
@@ -394,6 +399,45 @@ final class URLSaverAppModel: ObservableObject {
         return true
     }
 
+    func localTagShareText(for tag: LocalTagSummary) -> String {
+        """
+        URL Saverの端末内タグ:
+        \(tag.name)
+
+        urlsaver://tag/\(tag.id)
+
+        このリンクは同じ端末内のタグを開くためのものです。
+        """
+    }
+
+    func localTagPayloadText(tagID: Int64) -> String? {
+        guard let payload = try? services.repository.exportLocalTag(tagID: tagID),
+              let data = try? JSONEncoder().encode(payload) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    @discardableResult
+    func importLocalTagPayloadText(_ text: String) async -> Bool {
+        guard let data = text.trimmingCharacters(in: .whitespacesAndNewlines).data(using: .utf8),
+              let payload = try? JSONDecoder().decode(TagSharePayload.self, from: data),
+              let result = try? services.repository.importLocalTagPayload(payload) else {
+            enqueueNotification(AppNotification(message: "タグデータを読み込めませんでした", actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return false
+        }
+        await reload()
+        enqueueNotification(
+            AppNotification(
+                message: "タグ「\(result.tagName)」を読み込みました（新規\(result.created)件 / 追加\(result.merged)件）",
+                actionLabel: nil,
+                action: nil,
+                autoDismissAfter: 5
+            )
+        )
+        return true
+    }
+
     func retryMetadata(entryID: Int64) async {
         guard (try? services.repository.retryMetadata(entryID: entryID)) == true else {
             enqueueNotification(AppNotification(message: "再取得できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
@@ -443,9 +487,19 @@ final class URLSaverAppModel: ObservableObject {
                 return
             }
             await handleSaveResult(saveResult, degradationNotice: degradationNotice)
-        case .tag, .unknown:
+        case .tag(let rawTagID):
+            guard let tagID = Int64(rawTagID), ((try? services.repository.loadLocalTags().contains { $0.id == tagID }) == true) else {
+                enqueueNotification(AppNotification(message: "タグを開けませんでした", actionLabel: nil, action: nil, autoDismissAfter: 4))
+                return
+            }
+            incomingLocalTagID = tagID
+        case .unknown:
             break
         }
+    }
+
+    func consumeIncomingLocalTagID() {
+        incomingLocalTagID = nil
     }
 
     func googleOAuthURLForSharedTagCloud() -> URL? {
@@ -469,6 +523,7 @@ final class URLSaverAppModel: ObservableObject {
             _ = await services.sharedTagCloud.syncCurrentSession()
             await refreshSharedTagCloudState()
             await refreshEntitlements()
+            await acceptPendingInviteIfPossible()
         case .needsEmailConfirmation:
             profileStatusMessage = "Appleサインインの確認後に再度サインインしてください。"
             enqueueNotification(AppNotification(message: "Appleサインイン確認後に共有タグクラウドへサインインしてください", actionLabel: nil, action: nil, autoDismissAfter: 5))
@@ -495,6 +550,7 @@ final class URLSaverAppModel: ObservableObject {
             _ = await services.sharedTagCloud.syncCurrentSession()
             await refreshSharedTagCloudState()
             await refreshEntitlements()
+            await acceptPendingInviteIfPossible()
         case .needsEmailConfirmation:
             profileStatusMessage = "メール確認後に再度サインインしてください。"
             enqueueNotification(AppNotification(message: "メール確認後に共有タグクラウドへサインインしてください", actionLabel: nil, action: nil, autoDismissAfter: 5))
@@ -642,6 +698,7 @@ final class URLSaverAppModel: ObservableObject {
             _ = await services.sharedTagCloud.syncCurrentSession()
             await refreshSharedTagCloudState()
             await refreshEntitlements()
+            await acceptPendingInviteIfPossible()
         case .needsEmailConfirmation:
             enqueueNotification(
                 AppNotification(
@@ -679,6 +736,7 @@ final class URLSaverAppModel: ObservableObject {
             _ = await services.sharedTagCloud.syncCurrentSession()
             await refreshSharedTagCloudState()
             await refreshEntitlements()
+            await acceptPendingInviteIfPossible()
         case .needsEmailConfirmation:
             enqueueNotification(
                 AppNotification(
@@ -768,6 +826,8 @@ final class URLSaverAppModel: ObservableObject {
                 )
             )
         case .authRequired:
+            try? services.pendingInviteStore.save(inviteToken: pendingInviteRecord.inviteToken)
+            self.pendingInviteRecord = try? services.pendingInviteStore.load()
             enqueueNotification(AppNotification(message: "先に共有タグクラウドへサインインしてください", actionLabel: nil, action: nil, autoDismissAfter: 4))
         case .invalidInvite:
             try? services.pendingInviteStore.clear()
@@ -776,6 +836,11 @@ final class URLSaverAppModel: ObservableObject {
         case .failure(let message):
             enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 4))
         }
+    }
+
+    private func acceptPendingInviteIfPossible() async {
+        guard pendingInviteRecord != nil else { return }
+        await acceptPendingInvite()
     }
 
     func previewInvite(inviteToken: String) async -> SharedTagInvitePreviewResult {
