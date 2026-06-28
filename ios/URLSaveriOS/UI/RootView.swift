@@ -23,7 +23,7 @@ struct RootView: View {
     @State private var selectedArchiveService: ServiceType = .all
     @State private var selectedMainLocalTagID: Int64?
     @State private var selectedArchiveLocalTagID: Int64?
-    @State private var displayMode: EntryListDisplayMode = .compact
+    @AppStorage("entryListDisplayMode") private var displayModeRaw = EntryListDisplayMode.compact.rawValue
     @State private var isShowingLocalTagCreateAlert = false
     @State private var isShowingLocalTagManagementSheet = false
     @State private var localTagNameDraft = ""
@@ -39,6 +39,17 @@ struct RootView: View {
     @State private var selectedSharedTagID: String?
     @State private var localTagPendingDeletion: LocalTagSummary?
     @State private var selectedMainEntryIDs: Set<Int64> = []
+
+    private var displayMode: EntryListDisplayMode {
+        EntryListDisplayMode(rawValue: displayModeRaw) ?? .compact
+    }
+
+    private var displayModeBinding: Binding<EntryListDisplayMode> {
+        Binding(
+            get: { EntryListDisplayMode(rawValue: displayModeRaw) ?? .compact },
+            set: { displayModeRaw = $0.rawValue }
+        )
+    }
 
     var body: some View {
         GeometryReader { proxy in
@@ -67,7 +78,7 @@ struct RootView: View {
                                 sharedTags: model.sharedTags,
                                 selectedService: $selectedMainService,
                                 selectedLocalTagID: $selectedMainLocalTagID,
-                                displayMode: $displayMode,
+                                displayMode: displayModeBinding,
                                 isShowingUsageGuide: $isShowingUsageGuide,
                                 isShowingSearchBar: $isShowingSearchBar,
                                 searchQuery: $searchQuery,
@@ -130,7 +141,7 @@ struct RootView: View {
                                 localTags: model.localTags,
                                 selectedService: $selectedArchiveService,
                                 selectedLocalTagID: $selectedArchiveLocalTagID,
-                                displayMode: $displayMode,
+                                displayMode: displayModeBinding,
                                 onBack: { model.selectedTab = .main },
                                 onCreateLocalTag: { isShowingLocalTagCreateAlert = true },
                                 onManageLocalTags: { isShowingLocalTagManagementSheet = true },
@@ -282,7 +293,7 @@ struct RootView: View {
                     SharedTagDetailSheet(
                         model: model,
                         remoteTagID: selectedSharedTagID,
-                        displayMode: $displayMode
+                        displayMode: displayModeBinding
                     )
                 }
             }

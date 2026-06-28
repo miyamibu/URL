@@ -1798,8 +1798,16 @@ final class SharedTagStore: @unchecked Sendable {
             CREATE INDEX IF NOT EXISTS idx_shared_tag_urls_lookup ON shared_tag_urls(auth_user_id, normalized_url, deleted_at);
             """
         )
-        try? database.execute("ALTER TABLE shared_tag_members ADD COLUMN display_name TEXT;", binds: [])
-        try? database.execute("ALTER TABLE shared_tag_group_members ADD COLUMN display_name TEXT;", binds: [])
+        try database.addColumnIfMissing(
+            table: "shared_tag_members",
+            column: "display_name",
+            definition: "display_name TEXT"
+        )
+        try database.addColumnIfMissing(
+            table: "shared_tag_group_members",
+            column: "display_name",
+            definition: "display_name TEXT"
+        )
     }
 
     static func parseISO8601(_ value: String?) -> Date? {

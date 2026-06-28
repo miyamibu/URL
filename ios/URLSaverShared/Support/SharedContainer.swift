@@ -4,14 +4,26 @@ enum SharedContainer {
     static let appGroupIdentifier = "group.jp.mimac.urlsaver"
 
     static func hasAppGroupAccess() -> Bool {
-        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) != nil
+        guard !isRunningXCTest else { return false }
+        return FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) != nil
     }
 
     static func baseURL() -> URL {
+        if isRunningXCTest {
+            return fallbackBaseURL()
+        }
         if let appGroupURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) {
             return appGroupURL
         }
 
+        return fallbackBaseURL()
+    }
+
+    private static var isRunningXCTest: Bool {
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    }
+
+    private static func fallbackBaseURL() -> URL {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         let fallback = support.appendingPathComponent("URLSaveriOS", isDirectory: true)

@@ -56,3 +56,81 @@
 - 物理iPhoneはAppium/WebDriverAgent復旧後にShare Extension/招待再開を確認する。
 - Supabase local DBを起動するか、承認済みlinked環境でmigration/RLS検証を実施する。
 - ストアsandbox購入は外部ストア設定完了後に実施する。
+
+
+## 2026-06-29 Additional Inventory Pass
+
+Added tracker rows:
+- US-037 保存リンク検索: Android/iOS source-confirmed, UI/device test gap remains.
+- US-038 複数選択で一括アーカイブ/削除: Android/iOS source-confirmed, UI/device test gap remains.
+- US-039 確認メール再送/パスワード再設定: Android/iOS/Supabase source-confirmed, live auth mail gap remains.
+- US-040 データ取り扱い表示と広告無効化ガード: AdsConfigTest/source-confirmed, store declaration/device UI gap remains.
+- TS-001 UserLabel DB/Repository基盤のみでUI未接続: foundation-only not user-facing; needs UI+iOS parity design if promoted.
+
+## 2026-06-29 Targeted Test Pass
+
+- Targeted Android unit pass: AdsConfigTest, MigrationDedupTest.migration_8_9_preservesExistingData_andCreatesUserLabels, SharedTagAuthViewModelTest.
+
+## 2026-06-29 Web/Admin Inventory Pass
+
+Added/updated tracker rows:
+- US-039: added public reset-password page evidence and remaining live recovery gap.
+- AS-009: added Resend message id manual delivery lookup API; live Resend query gap remains.
+
+## 2026-06-29 Web Admin Retest
+
+- Web admin pass: npm run typecheck && npm run build; delivery API route included in Next build output.
+
+## 2026-06-29 Parity Fix Pass
+
+Fixed and retested:
+- US-006: iOS display mode was @State-only while Android persisted it. Changed iOS RootView/AppChrome to persist EntryListDisplayMode via @AppStorage("entryListDisplayMode").
+- US-012: Added iOS BGTaskScheduler/BackgroundTaskRunner evidence to tracker.
+
+Validation:
+- PASS: ./gradlew testDebugUnitTest --tests MainListViewModelTest.toggleEntryCardDisplayMode_updatesStore --tests ArchiveViewModelTest
+- PASS: xcodebuild generic iOS Simulator build after iOS display persistence change
+- PASS: xcodebuild test -only-testing:URLSaveriOSTests/MetadataStatusTextTests, 5 tests
+
+Remaining gaps:
+- Physical iPhone display-mode persistence across relaunch is not verified.
+- Physical Android/iOS background metadata scheduling is not verified.
+- iOS test emitted simulator/runtime warnings for App Group entitlement and duplicate display_name migration logs; tests still passed.
+
+## 2026-06-29 Export Entitlement Retest
+
+Retested and tracker-updated:
+- US-025 export: Android ExportRepositoryTest/ExportScreenTest PASS; iOS ExportArchiveBuilderTests/ServiceFilterTests export/filter coverage PASS.
+- US-023/US-024 entitlement and limits: Android EntitlementResolverTest PASS; iOS URLRulesTests LimitChecker targeted tests PASS.
+- US-040: added iOS PrivacyInfo.xcprivacy app/share-extension evidence to tracker.
+
+Remaining gaps:
+- Physical Android/iPhone export share sheet and file-save handoff are not verified.
+- Supabase live entitlement RPC and actual promo redemption remain unverified.
+- iOS simulator tests still emit App Group entitlement and duplicate display_name migration logs; no test failures observed.
+
+## 2026-06-29 iOS Migration Log Fix
+
+Fixed:
+- Replaced SharedTagCloud display_name try? ALTER TABLE calls with SQLiteDatabase.addColumnIfMissing for shared_tag_members and shared_tag_group_members.
+
+Validation:
+- PASS: xcodebuild test -only-testing:URLSaveriOSTests/MetadataStatusTextTests, 5 tests.
+- PASS: /tmp/rinbam-metadata-test.log contains no duplicate column name/display_name migration log after fix.
+
+Remaining simulator warnings:
+- App Group entitlement warning still appears in simulator test context.
+- CoreSimulator WebCore/WebKit duplicate UIAccessibilityLoaderWebShared warning still appears.
+
+## 2026-06-29 iOS SharedContainer XCTest Warning Fix
+
+Fixed:
+- Added XCTest-only SharedContainer fallback so unit tests avoid App Group container lookup when the test host is not entitled.
+
+Validation:
+- PASS: xcodebuild test -only-testing:URLSaveriOSTests/MetadataStatusTextTests, 5 tests.
+- PASS: /tmp/rinbam-metadata-test-after-sharedcontainer.log contains no App Group container_create_or_lookup warning.
+- PASS: /tmp/rinbam-metadata-test-after-sharedcontainer.log contains no duplicate column name/display_name migration log.
+
+Remaining simulator warning:
+- CoreSimulator WebCore/WebKit duplicate UIAccessibilityLoaderWebShared warning still appears.

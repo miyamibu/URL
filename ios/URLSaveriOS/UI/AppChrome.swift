@@ -71,7 +71,7 @@ enum AppThemeMode: String, CaseIterable, Identifiable {
     }
 }
 
-enum EntryListDisplayMode {
+enum EntryListDisplayMode: String {
     case rich
     case compact
 }
