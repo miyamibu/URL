@@ -1,14 +1,15 @@
 # Privacy And Data Safety Draft
 
 ## Goal
-契約前に privacy / Data safety 回答の下書きを作り、提出直前に binary と公開方針へ照合できる状態にする。
+提出版 `1.0.11` の privacy / Data safety 回答を、cloud 有効 binary と照合できる状態にする。
 
-## Initial Release Assumption
+## Release Assumption
 - Ads: disabled.
-- Billing: disabled.
+- Billing: enabled for Standard / Pro subscriptions through Google Play Billing and StoreKit.
 - Third-party analytics: not used.
 - Third-party crash reporting: not used.
-- Shared-tag cloud: disabled for initial v1.0 release. Production Supabase/shared-tag cloud is v1.1-or-later scope.
+- Shared-tag cloud: enabled for `1.0.11`.
+- Account sign-in: enabled for shared-tag sync and collaboration.
 
 ## Data Stored Locally
 - Saved URL, normalized URL, display URL.
@@ -18,44 +19,28 @@
 
 ## Network Access
 - Metadata fetch may access user-provided pages and public oEmbed endpoints.
-- Saved URL data is not synced to Supabase in the initial v1.0 release.
+- Shared-tag URL data and shared-tag metadata are synced to Supabase when the user signs in and uses shared tags.
 - If in-app contact support is enabled, the app sends the user's contact email, name, and inquiry body to the configured support endpoint for email delivery. The support log stores only minimal audit metadata such as request ID, hashed email/IP/user identifiers, platform, app version, build type, delivery provider/message ID, and delivery status; it does not store the raw inquiry body, raw email, or name in the database.
 
 ## Account Data
-Not applicable for local-only v1.0 because account creation/login is not exposed.
-
-Only applicable for a future shared-tag cloud release:
 - Email address and authentication session are handled through Supabase Auth.
 - Shared tag membership, role, invite, and owner transfer records are stored in Supabase.
 - Account deletion is available in app and through a public deletion request page.
 
 ## App Store Privacy Draft
-For initial local-only release:
 - Tracking: No.
-- Data linked to user: None declared for local-only use.
-- Data not linked to user: Consider whether diagnostics are collected by Apple platform services only; no app-owned third-party diagnostics are integrated.
+- Data linked to user: email address for account authentication; shared-tag URLs and shared-tag metadata for sync/collaboration; contact-support email/name/inquiry body when the user submits support.
+- Data not linked to user: minimal hashed support delivery/audit metadata may be retained for abuse prevention and delivery diagnostics.
 - Required reason APIs: no app-owned categories currently declared in `PrivacyInfo.xcprivacy`.
-
-For shared-tag cloud release:
-- Contact info: email address, used for account authentication.
-- Contact support: email address, name, and inquiry body are processed to send the support request; only minimal hashed delivery/audit metadata is retained in Supabase logs.
-- User content: URLs inside shared tags and shared-tag names, used for cloud sync and collaboration.
-- Identifiers: Supabase user ID/session, used for authentication and access control.
 - Account deletion: available in app and by public web request.
 
 ## Google Play Data Safety Draft
-For initial local-only release:
-- Data collection: No app-owned external collection for saved URLs.
-- Data sharing: No app-owned third-party sharing.
-- Security practices: data is stored locally; Android backup is disabled.
-- Delete account URL: not applicable because account creation is not enabled.
-
-For shared-tag cloud release:
 - Data collected: email address, user-provided shared-tag URLs, shared-tag metadata.
 - Contact support data: email address, name, and inquiry body are transmitted for support email delivery when the user submits the contact form. Raw inquiry content is not retained in the support log table.
-- Purpose: app functionality, account management, sync.
+- Purchase data: store subscription product ID, purchase token / transaction ID, and entitlement grant state are processed to unlock paid plan features.
+- Purpose: app functionality, account management, sync, purchase processing, entitlement management.
 - Sharing: shared-tag URLs are visible to participants of the same shared tag.
-- Delete account URL: use the public account deletion route from the deployed `docs/account-deletion-request.html`.
+- Delete account URL: use the public account deletion route from the deployed `web/invite-link/account-deletion/index.html`.
 
 ## Validation Method
 - Check submitted Android release `BuildConfig.SHARED_TAG_CLOUD_ENABLED`.
@@ -64,8 +49,8 @@ For shared-tag cloud release:
 - Verify release manifest has no AdMob app ID, ad permissions, or ad provider declarations.
 
 ## Failure Handling
-- If the submitted binary enables shared-tag cloud, do not use the local-only privacy answers.
-- If ads or billing are re-enabled, stop and rewrite this draft before submission.
+- If the submitted binary disables shared-tag cloud, do not use the cloud-enabled privacy answers.
+- If ads are re-enabled or billing behavior changes, stop and rewrite this draft before submission.
 - If any production value is missing, mark the submission as blocked rather than guessing.
 
 ## Evidence From Current Repo
@@ -75,23 +60,21 @@ For shared-tag cloud release:
 | Android backup | `app/src/main/AndroidManifest.xml` has `android:allowBackup="false"` and `android:fullBackupContent="false"`. | Local saved URLs are not configured for Android cloud backup. | DONE |
 | Android network | `android.permission.INTERNET` is present. | Required for metadata fetch and invite/shared-tag flows. | DONE |
 | Android ads | `app/build.gradle.kts` release sets `ADS_ENABLED=false` and empty AdMob IDs; `app/src/release/AndroidManifest.xml` removes ad IDs/providers. | Release can be no-ads if built with default release settings. | DONE |
-| Android shared-tag cloud | `app/build.gradle.kts` release reads `release.shared.tag.cloud.enabled`; default is false. | Android release can be local-only unless release cloud flag is set. | DONE |
-| iOS privacy manifest | `ios/URLSaveriOS/PrivacyInfo.xcprivacy` and share extension privacy manifest have empty collection arrays and tracking false. | Fits local-only posture, but does not fit cloud-sharing release unless App Store privacy answers disclose cloud data collection. | DONE |
-| iOS shared-tag cloud | `ios/URLSaveriOS.xcodeproj/project.pbxproj` app Debug/Release set `URLSAVER_SHARED_TAG_CLOUD_ENABLED=false`, `URLSAVER_SUPABASE_URL=""`, `URLSAVER_SUPABASE_ANON_KEY=""`. | iOS submitted build is local-only unless these build settings are intentionally changed for v1.1. | DONE |
-| Account deletion | `docs/account-deletion.md` and `docs/account-deletion-request.html` exist for future cloud release. | Not applicable for local-only v1.0 because no account creation/login is exposed. | NOT_APPLICABLE |
+| Android shared-tag cloud | `app/build.gradle.kts` release reads `release.shared.tag.cloud.enabled`; current local release config sets it true. | Android submitted build is cloud-enabled when built from this machine's release config. | DONE |
+| iOS privacy manifest | `ios/URLSaveriOS/PrivacyInfo.xcprivacy` and share extension privacy manifest have empty tracking arrays. | App Store privacy labels must disclose cloud account/contact/user-content data even though no tracking SDK is present. | DONE |
+| iOS shared-tag cloud | `ios/URLSaveriOS.xcodeproj/project.pbxproj` app Debug/Release use `ios/Config/URLSaverSecrets.xcconfig`; current Release build settings show cloud true and production Supabase/contact-support values. | iOS submitted build is cloud-enabled on this machine. | DONE |
+| Account deletion | `docs/account-deletion.md` and `web/invite-link/account-deletion/index.html` exist for cloud release. | Public deletion route must be deployed and entered in store consoles. | NEEDS_USER_ACTION |
 | Public privacy policy | `web/invite-link/privacy/index.html` exists and names URL Saver plus contact address. | Needs final public deployment verification before store entry. | NEEDS_USER_ACTION |
 
 ## Data Safety / App Privacy Input Matrix
 
 | Release mode | Platform form item | Recommended answer | Evidence / caveat |
 |---|---|---|---|
-| Local-only | Tracking | No | No tracking SDK found in active app sources. |
-| Local-only | Data collected | No app-owned external collection for saved URLs. | URLs, memo, tags remain local; metadata requests may contact user-provided URLs. |
-| Local-only | Data shared | No app-owned sharing. | No cloud sync when shared-tag cloud is disabled. |
-| Local-only | Security | Data in transit is encrypted for HTTPS metadata endpoints; user-provided HTTP URLs may be opened/fetched as provided. | Do not overstate "all data encrypted in transit" if HTTP user URLs are supported. |
-| Local-only | Account deletion | Not applicable. | Account creation must not be exposed. |
-| Cloud-sharing | Contact info | Email address collected for account authentication. | Supabase Auth. |
+| Cloud-sharing | Tracking | No | No tracking SDK found in active app sources. |
+| Cloud-sharing | Contact info | Email address collected for account authentication; email/name/inquiry body transmitted for contact support. | Supabase Auth and contact-support function. |
 | Cloud-sharing | User content | Shared-tag names and shared-tag URLs collected for sync/collaboration. | Shared-tag cloud code and Supabase migrations. |
 | Cloud-sharing | Identifiers | User/account identifier/session used for auth and access control. | Supabase Auth/session. |
-| Cloud-sharing | Data sharing | Shared-tag URLs visible to participants of that shared tag. | Product behavior; disclose as app functionality. |
-| Cloud-sharing | Account deletion | In-app account deletion plus public HTTPS deletion URL required. | `docs/account-deletion-request.html` must be deployed. |
+| Cloud-sharing | Purchases | Store subscription product ID and purchase token / transaction ID are processed for entitlement grants. | Google Play Billing, StoreKit, and entitlement grant code. |
+| Cloud-sharing | Data sharing | Shared-tag URLs visible to participants of the same shared tag; support email content sent through configured email delivery provider. | Product behavior and support delivery. |
+| Cloud-sharing | Security | HTTPS is used for Supabase/contact-support and normal metadata endpoints; user-provided HTTP URLs may be opened/fetched as provided. | Do not overstate all data encrypted in transit. |
+| Cloud-sharing | Account deletion | In-app account deletion plus public HTTPS deletion URL required. | `web/invite-link/account-deletion/index.html` must be deployed. |

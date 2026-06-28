@@ -6,7 +6,7 @@
 
 ## Current repo state
 
-- 初回ストア公開方針は local-only。v1.0 では shared-tag cloud / account creation / login / Supabase sync を公開面に出さないため、ストア提出上の account deletion URL は `NOT_APPLICABLE` とする。
+- 提出版 `1.0.11` は shared-tag cloud / account sign-in / Supabase sync を公開面に出すため、ストア提出上の account deletion URL が必要。
 - Android shared-tag cloud auth UI には in-app の `アカウント削除` 導線を追加した。
 - iOS shared-tag cloud シートにも in-app の `アカウント削除` 導線を追加した。
 - Supabase 側には `delete_my_account()` RPC を追加した。
@@ -18,17 +18,14 @@
 
 ## Google Play web route
 
-- local-only v1.0 では account creation を公開しないため、Google Play の削除 URL は不要。
-- shared-tag cloud / account creation を v1.1 以降で公開する前に、`docs/account-deletion-request.html` を静的公開して app listing / data safety の削除 URL として設定する。
-- この HTML は repo 内の source-of-truth であり、運用環境では public HTTPS URL として配信する。
-- repo には `.github/workflows/account-deletion-page.yml` を追加してあり、GitHub Pages を有効化すれば `docs/account-deletion-request.html` を `/account-deletion/` に配信できる。
+- `web/invite-link/account-deletion/index.html` を public HTTPS URL として配信し、app listing / data safety の削除 URL として設定する。
+- 正本 URL は `https://miyamibu.xyz/account-deletion/` を想定する。
+- 2026-06-27 時点では live URL が 404 のため、`web/invite-link` のデプロイと再確認が提出前ブロッカー。
 
 ## Remaining release work
 
-- Android release で shared-tag cloud を公開する場合は、`release.supabase.url` / `release.supabase.anon.key` / `release.shared.tag.cloud.enabled=true`、または対応する `URLSAVER_RELEASE_*` 環境変数を設定して cloud を有効化する。
-- 契約前の local-only release build では `release.shared.tag.cloud.enabled` を未設定または `false` にし、cloud / account creation を公開面に出さない。
-- local-only v1.0 の iOS release では `URLSAVER_SHARED_TAG_CLOUD_ENABLED=false`、`URLSAVER_SUPABASE_URL=""`、`URLSAVER_SUPABASE_ANON_KEY=""` を維持する。
-- iOS で shared-tag cloud を公開する将来版では `ruby ios/generate_xcodeproj.rb` 実行前に cloud 有効フラグと production Supabase URL / anon key を設定して Info.plist へ反映させる。
-- iOS / Android の shared-tag cloud を public release で有効化する前に、実運用用の Supabase 設定と web deletion route の公開をそろえる。
+- Android release は `release.supabase.url` / `release.supabase.anon.key` / `release.shared.tag.cloud.enabled=true`、または対応する `URLSAVER_RELEASE_*` 環境変数で cloud を有効化する。
+- iOS release は `URLSAVER_SHARED_TAG_CLOUD_ENABLED=true`、production Supabase URL / anon key、contact-support endpoint を Info.plist に反映させる。
+- iOS / Android の shared-tag cloud を public release で有効化する前に、実運用用の Supabase 設定、store privacy answers、public web deletion route の公開をそろえる。
 - owner with active members の削除は引き続きブロックされるが、アプリ内の owner 移譲後は削除できる。
 - `delete_my_account()` を production で有効にする前に、Supabase project 側で migration 適用と public web deletion route の配信を完了する。
