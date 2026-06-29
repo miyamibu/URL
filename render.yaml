@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: rinbam-media-resolver
+    env: python
+    plan: starter
+    buildCommand: pip install -r requirements-media-resolver.txt
+    startCommand: python3 scripts/media_resolver_backend.py
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.5
+      - key: MEDIA_RESOLVER_CACHE_DIR
+        value: /tmp/rinbam-media-cache
