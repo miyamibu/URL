@@ -192,6 +192,8 @@ import kotlinx.coroutines.launch
 import java.time.ZoneId
 import kotlin.math.abs
 
+private const val SHOW_COLLECTION_UI = false
+
 fun shouldShowSharedTagCloudEntryPoints(
     isConfigured: Boolean,
     hasSharedTags: Boolean,
@@ -675,7 +677,11 @@ private fun MainScreen(
     val scope = rememberCoroutineScope()
     val mainListState = rememberLazyListState()
     val customCollections = remember(collections) {
-        collections.filter { it.id != DEFAULT_COLLECTION_ID }
+        if (SHOW_COLLECTION_UI) {
+            collections.filter { it.id != DEFAULT_COLLECTION_ID }
+        } else {
+            emptyList()
+        }
     }
     val localCollectionNameSet = remember(customCollections) {
         customCollections.map { normalizeSharedTagName(it.name) }.toSet()
@@ -691,6 +697,12 @@ private fun MainScreen(
         hasSharedTags = visibleSharedTags.isNotEmpty() || sharedTagGroups.isNotEmpty(),
         hasPendingInvite = pendingInvite != null,
     )
+
+    LaunchedEffect(selectedCollectionId) {
+        if (!SHOW_COLLECTION_UI && selectedCollectionId != null) {
+            viewModel.selectCollection(null)
+        }
+    }
 
     LaunchedEffect(Unit) {
         profileVm.refreshPendingInvite()
@@ -795,7 +807,11 @@ private fun MainScreen(
     fun openManualInput() {
         manualInputState = ManualInputUiState(
             visible = true,
-            selectedCollectionId = customCollections.firstOrNull { it.id == selectedCollectionId }?.id,
+            selectedCollectionId = if (SHOW_COLLECTION_UI) {
+                customCollections.firstOrNull { it.id == selectedCollectionId }?.id
+            } else {
+                null
+            },
         )
     }
 
@@ -815,7 +831,7 @@ private fun MainScreen(
         scope.launch {
             manualInputState = manualInputState.copy(isSaving = true)
             try {
-                val targetCollectionId = manualInputState.selectedCollectionId
+                val targetCollectionId = if (SHOW_COLLECTION_UI) manualInputState.selectedCollectionId else null
                 val (result, entryId) = viewModel.submitManualInput(manualInputState.inputText, targetCollectionId)
                 when (result) {
                     ShareSaveResult.INPUT_TOO_LARGE,
@@ -1172,16 +1188,22 @@ private fun MainScreen(
             }
         },
         onSelectCollection = { targetId ->
-            manualInputState = manualInputState.copy(
-                collectionError = null,
-                selectedCollectionId = if (manualInputState.selectedCollectionId == targetId) null else targetId,
-            )
+            if (SHOW_COLLECTION_UI) {
+                manualInputState = manualInputState.copy(
+                    collectionError = null,
+                    selectedCollectionId = if (manualInputState.selectedCollectionId == targetId) null else targetId,
+                )
+            }
         },
-        onRequestCreateCollection = {
-            createCollectionState = createCollectionState.copy(
-                visible = true,
-                error = null,
-            )
+        onRequestCreateCollection = if (SHOW_COLLECTION_UI) {
+            {
+                createCollectionState = createCollectionState.copy(
+                    visible = true,
+                    error = null,
+                )
+            }
+        } else {
+            null
         },
         onSave = { submitManualSave() },
     )
@@ -1223,7 +1245,7 @@ private fun MainScreen(
     }
 
     CreateCollectionDialog(
-        visible = createCollectionState.visible,
+        visible = SHOW_COLLECTION_UI && createCollectionState.visible,
         newCollectionName = createCollectionState.name,
         createCollectionError = createCollectionState.error,
         onDismiss = { closeCreateCollectionDialog() },
@@ -1540,15 +1562,23 @@ private fun MainScreen(
                         onReorderTopFilters = { tokens ->
                             viewModel.reorderTopFilters(tokens)
                         },
-                        onSelectCollection = { targetId -> toggleSelectedCollection(targetId) },
-                        onRequestCreateCollection = {
-                            createCollectionState = createCollectionState.copy(
-                                visible = true,
-                                error = null,
-                            )
+                        onSelectCollection = { targetId ->
+                            if (SHOW_COLLECTION_UI) toggleSelectedCollection(targetId)
                         },
-                        onReorderCollections = { collectionIds ->
-                            reorderCollections(collectionIds)
+                        onRequestCreateCollection = if (SHOW_COLLECTION_UI) {
+                            {
+                                createCollectionState = createCollectionState.copy(
+                                    visible = true,
+                                    error = null,
+                                )
+                            }
+                        } else {
+                            null
+                        },
+                        onReorderCollections = if (SHOW_COLLECTION_UI) {
+                            { collectionIds -> reorderCollections(collectionIds) }
+                        } else {
+                            null
                         },
                         onOpenTagDetail = onOpenTagDetail,
                         onRequestCreateSharedTag = {
@@ -1615,7 +1645,7 @@ private fun ManualInputSheet(
     onInputChange: (String) -> Unit,
     onPaste: () -> Unit,
     onSelectCollection: (Long?) -> Unit,
-    onRequestCreateCollection: () -> Unit,
+    onRequestCreateCollection: (() -> Unit)?,
     onSave: () -> Unit,
 ) {
     if (!visible) return
@@ -1657,43 +1687,45 @@ private fun ManualInputSheet(
             ) {
                 Text("クリップボードを貼り付け")
             }
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = "タグ",
-                style = MaterialTheme.typography.titleSmall,
-                modifier = Modifier.padding(bottom = 6.dp),
-            )
-            if (customCollections.isEmpty()) {
+            if (onRequestCreateCollection != null) {
+                Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "タグがまだありません。必要なら作成してください",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    text = "タグ",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.padding(bottom = 6.dp),
                 )
-            } else {
-                CollectionFilterRow(
-                    collections = customCollections,
-                    selectedCollectionId = selectedTargetCollectionId,
-                    includeAllOption = false,
-                    onSelect = { targetId -> onSelectCollection(targetId) },
-                )
-            }
-            if (!manualCollectionError.isNullOrBlank()) {
-                Text(
-                    text = manualCollectionError,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                )
-            }
-            Spacer(Modifier.height(6.dp))
-            TextButton(
-                onClick = onRequestCreateCollection,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("＋ タグを作成")
+                if (customCollections.isEmpty()) {
+                    Text(
+                        text = "タグがまだありません。必要なら作成してください",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                    )
+                } else {
+                    CollectionFilterRow(
+                        collections = customCollections,
+                        selectedCollectionId = selectedTargetCollectionId,
+                        includeAllOption = false,
+                        onSelect = { targetId -> onSelectCollection(targetId) },
+                    )
+                }
+                if (!manualCollectionError.isNullOrBlank()) {
+                    Text(
+                        text = manualCollectionError,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+                TextButton(
+                    onClick = onRequestCreateCollection,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("＋ タグを作成")
+                }
             }
             Spacer(Modifier.height(8.dp))
             Button(
@@ -2496,8 +2528,8 @@ private fun MainListContent(
     onReorderServices: (List<ServiceType>) -> Unit,
     onReorderTopFilters: (List<String>) -> Unit,
     onSelectCollection: (Long?) -> Unit,
-    onRequestCreateCollection: () -> Unit,
-    onReorderCollections: (List<Long>) -> Unit,
+    onRequestCreateCollection: (() -> Unit)?,
+    onReorderCollections: ((List<Long>) -> Unit)?,
     onOpenTagDetail: (Long) -> Unit,
     onRequestCreateSharedTag: () -> Unit,
     onOpenGroups: (() -> Unit)?,
@@ -3682,8 +3714,17 @@ private fun ArchiveScreen(
     val topFilterOrderTokens by viewModel.topFilterOrderTokens.collectAsStateWithLifecycle()
     val entryCardDisplayMode by viewModel.entryCardDisplayMode.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
+    LaunchedEffect(selectedCollectionId) {
+        if (!SHOW_COLLECTION_UI && selectedCollectionId != null) {
+            viewModel.selectCollection(null)
+        }
+    }
     val customCollections = remember(collections) {
-        collections.filter { it.id != DEFAULT_COLLECTION_ID }
+        if (SHOW_COLLECTION_UI) {
+            collections.filter { it.id != DEFAULT_COLLECTION_ID }
+        } else {
+            emptyList()
+        }
     }
     var createCollectionState by remember { mutableStateOf(CreateCollectionDialogUiState()) }
 
@@ -3727,7 +3768,7 @@ private fun ArchiveScreen(
     }
 
     CreateCollectionDialog(
-        visible = createCollectionState.visible,
+        visible = SHOW_COLLECTION_UI && createCollectionState.visible,
         newCollectionName = createCollectionState.name,
         createCollectionError = createCollectionState.error,
         onDismiss = { closeCreateCollectionDialog() },
@@ -3781,20 +3822,28 @@ private fun ArchiveScreen(
                         viewModel.reorderTopFilters(tokens)
                     },
                     onSelectCollection = { targetId ->
-                        if (selectedCollectionId == targetId) {
-                            viewModel.selectCollection(null)
-                        } else {
-                            viewModel.selectCollection(targetId)
+                        if (SHOW_COLLECTION_UI) {
+                            if (selectedCollectionId == targetId) {
+                                viewModel.selectCollection(null)
+                            } else {
+                                viewModel.selectCollection(targetId)
+                            }
                         }
                     },
-                    onCreateCollection = {
-                        createCollectionState = createCollectionState.copy(
-                            visible = true,
-                            error = null,
-                        )
+                    onCreateCollection = if (SHOW_COLLECTION_UI) {
+                        {
+                            createCollectionState = createCollectionState.copy(
+                                visible = true,
+                                error = null,
+                            )
+                        }
+                    } else {
+                        null
                     },
-                    onReorderCollections = { collectionIds ->
-                        reorderCollections(collectionIds)
+                    onReorderCollections = if (SHOW_COLLECTION_UI) {
+                        { collectionIds -> reorderCollections(collectionIds) }
+                    } else {
+                        null
                     },
                 )
                 Spacer(modifier = Modifier.height(8.dp))

@@ -15,6 +15,8 @@ func shouldShowSharedTagCloudEntryPoints(
     isConfigured || hasSharedTags || hasPendingInvite
 }
 
+private let showsCollectionUI = false
+
 struct RootView: View {
     @ObservedObject var model: URLSaverAppModel
 
@@ -556,10 +558,10 @@ private struct MainScreen: View {
                 selectedCollectionID: $selectedCollectionID,
                 showsCreateChip: true,
                 createAction: onCreateLocalTag,
-                collectionCreateAction: onCreateCollection,
-                collectionManageAction: onManageCollections,
+                collectionCreateAction: showsCollectionUI ? onCreateCollection : nil,
+                collectionManageAction: showsCollectionUI ? onManageCollections : nil,
                 localTags: localTags,
-                collections: collections
+                collections: showsCollectionUI ? collections : []
             )
 
             if showsSharedTagCloud {
@@ -1462,7 +1464,7 @@ private func buildMainShareSummary(
     visibleEntries: [URLRecord]
 ) -> String {
     var lines: [String] = [
-        "URL Saver",
+        "りんばむ",
         "",
         "保存したURL: \(activeCount)件",
         "アーカイブ: \(archivedCount)件",
@@ -1929,10 +1931,10 @@ private struct ArchiveScreen: View {
                 selectedCollectionID: $selectedCollectionID,
                 showsCreateChip: true,
                 createAction: onCreateLocalTag,
-                collectionCreateAction: onCreateCollection,
-                collectionManageAction: onManageCollections,
+                collectionCreateAction: showsCollectionUI ? onCreateCollection : nil,
+                collectionManageAction: showsCollectionUI ? onManageCollections : nil,
                 localTags: localTags,
-                collections: collections
+                collections: showsCollectionUI ? collections : []
             )
                 .padding(.bottom, 10)
 
@@ -3199,32 +3201,34 @@ private struct ManualInputSheet: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
 
-                Text("保存先")
-                    .font(.system(size: 18, weight: .heavy))
-                    .foregroundStyle(AppPalette.textPrimary)
-                    .padding(.top, 6)
+                if showsCollectionUI {
+                    Text("保存先")
+                        .font(.system(size: 18, weight: .heavy))
+                        .foregroundStyle(AppPalette.textPrimary)
+                        .padding(.top, 6)
 
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(model.collections) { collection in
-                            FilterChipButton(
-                                label: collection.name,
-                                selected: (selectedSaveCollectionID ?? selectedCollectionID ?? 1) == collection.id
-                            ) {
-                                selectedSaveCollectionID = collection.id
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(model.collections) { collection in
+                                FilterChipButton(
+                                    label: collection.name,
+                                    selected: (selectedSaveCollectionID ?? selectedCollectionID ?? 1) == collection.id
+                                ) {
+                                    selectedSaveCollectionID = collection.id
+                                }
                             }
                         }
+                        .padding(.vertical, 2)
                     }
-                    .padding(.vertical, 2)
-                }
 
-                Button("＋ コレクションを作成") {
-                    isShowingCreateCollectionAlert = true
+                    Button("＋ コレクションを作成") {
+                        isShowingCreateCollectionAlert = true
+                    }
+                        .font(.system(size: 18, weight: .heavy))
+                        .foregroundStyle(AppPalette.primaryStrong)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 4)
                 }
-                    .font(.system(size: 18, weight: .heavy))
-                    .foregroundStyle(AppPalette.primaryStrong)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 4)
 
                 Text("タグ")
                     .font(.system(size: 18, weight: .heavy))
@@ -3268,7 +3272,7 @@ private struct ManualInputSheet: View {
                     Task {
                         isSaving = true
                         let localTagIDs: Set<Int64> = selectedLocalTagID.map { Set([$0]) } ?? []
-                        let collectionID = selectedSaveCollectionID ?? selectedCollectionID
+                        let collectionID = showsCollectionUI ? (selectedSaveCollectionID ?? selectedCollectionID) : nil
                         let error = await model.manualSave(input: input, localTagIDs: localTagIDs, collectionID: collectionID)
                         isSaving = false
                         if let error {
@@ -3291,7 +3295,7 @@ private struct ManualInputSheet: View {
                 inputError = nil
             }
             .onAppear {
-                selectedSaveCollectionID = selectedCollectionID ?? model.collections.first?.id
+                selectedSaveCollectionID = showsCollectionUI ? (selectedCollectionID ?? model.collections.first?.id) : nil
             }
         }
         .alert("タグを作成", isPresented: $isShowingCreateTagAlert) {

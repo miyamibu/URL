@@ -1,6 +1,8 @@
 import SwiftUI
 import UIKit
 
+private let showsCollectionUI = false
+
 struct DetailView: View {
     let entryID: Int64
     @ObservedObject var model: URLSaverAppModel
@@ -246,17 +248,19 @@ struct DetailView: View {
                                     }
                                 }
 
-                                AppPanel {
-                                    DetailSectionLabel(text: "保存先")
-                                    HStack(spacing: 10) {
-                                        DetailTagValuePill(
-                                            text: currentCollection?.name ?? "受信箱",
-                                            isEmpty: false,
-                                            canRemove: false,
-                                            onRemove: nil
-                                        )
-                                        DetailTagEditButton(action: { isShowingCollectionEditor = true })
-                                            .frame(maxWidth: 120)
+                                if showsCollectionUI {
+                                    AppPanel {
+                                        DetailSectionLabel(text: "保存先")
+                                        HStack(spacing: 10) {
+                                            DetailTagValuePill(
+                                                text: currentCollection?.name ?? "受信箱",
+                                                isEmpty: false,
+                                                canRemove: false,
+                                                onRemove: nil
+                                            )
+                                            DetailTagEditButton(action: { isShowingCollectionEditor = true })
+                                                .frame(maxWidth: 120)
+                                        }
                                     }
                                 }
 
