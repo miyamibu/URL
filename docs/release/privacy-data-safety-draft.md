@@ -64,7 +64,7 @@
 | iOS privacy manifest | `ios/URLSaveriOS/PrivacyInfo.xcprivacy` and share extension privacy manifest have empty tracking arrays. | App Store privacy labels must disclose cloud account/contact/user-content data even though no tracking SDK is present. | DONE |
 | iOS shared-tag cloud | `ios/URLSaveriOS.xcodeproj/project.pbxproj` app Debug/Release use `ios/Config/URLSaverSecrets.xcconfig`; current Release build settings show cloud true and production Supabase/contact-support values. | iOS submitted build is cloud-enabled on this machine. | DONE |
 | Account deletion | `docs/account-deletion.md` and `web/invite-link/account-deletion/index.html` exist for cloud release; `https://miyamibu.xyz/account-deletion/` returned HTTP 200 on 2026-06-29. | Public deletion route is reachable; enter the URL in store consoles and keep it aligned with account features. | DONE_PUBLIC_200 |
-| Public privacy policy | `web/invite-link/privacy/index.html` source discloses Standard / Pro subscriptions, Google Play Billing, and StoreKit. | `https://miyamibu.xyz/privacy/` returned HTTP 200 on 2026-06-29 but live text still says real billing is not offered; redeploy before relying on the public URL. | BLOCKED_PUBLIC_DEPLOY_STALE |
+| Public privacy policy | `web/invite-link/privacy/index.html` source discloses Standard / Pro subscriptions, Google Play Billing, and StoreKit. | `./scripts/verify_public_web_release.sh` passed on 2026-06-29; live `https://miyamibu.xyz/privacy/` returns HTTP 200 and no longer contains stale no-real-billing wording. | DONE_PUBLIC_VERIFIED |
 
 ## Data Safety / App Privacy Input Matrix
 

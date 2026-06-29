@@ -4,7 +4,7 @@
 App Store / Google Play へ提出する `1.0.11` の文言を、提出 binary の cloud 有効構成と一致させる。
 
 ## App Identity
-- App name: URL Saver
+- App name: りんばむ
 - Subtitle / short description: 共有したURLをあとで見返すための軽量保存アプリ。
 - Category: Productivity
 - Release posture: shared-tag cloud enabled, ads disabled, in-app subscriptions enabled, account sign-in available for sync/collaboration, no third-party analytics, no third-party crash reporting.
@@ -26,7 +26,7 @@ Store release `1.0.11` is cloud-enabled:
 SNSやメッセージで見つけたURLを保存し、あとで一覧・詳細・アーカイブから開き直せます。
 
 ## Full Description
-URL Saver は、共有メニューや手入力からURLを保存し、あとで見返しやすく整理するためのアプリです。
+りんばむは、共有メニューや手入力からURLを保存し、あとで見返しやすく整理するためのアプリです。
 
 主な機能:
 - 共有メニューからURLを保存
@@ -67,12 +67,12 @@ URL, bookmark, share, later, archive, save, link, productivity
 
 | Field | Google Play draft | App Store draft | Status |
 |---|---|---|---|
-| App name | URL Saver | URL Saver | DONE |
+| App name | りんばむ | りんばむ | DONE |
 | Short description / subtitle | 共有したURLをあとで見返すための軽量保存アプリ。 | URLをあとで見返す軽量保存アプリ | DONE |
 | Full description / description | Use `Full Description` above. | Use `Full Description` above, shortened if App Store field limits require it. | DONE |
 | Category | Productivity | Productivity | DONE |
 | Support email | `miyamibu@privaterelay.appleid.com` | `miyamibu@privaterelay.appleid.com` | DONE |
-| Privacy policy URL | `https://miyamibu.xyz/privacy/` after redeploy verification | `https://miyamibu.xyz/privacy/` after redeploy verification | BLOCKED_PUBLIC_DEPLOY_STALE: live page was HTTP 200 on 2026-06-29 but still had stale no-real-billing wording. |
+| Privacy policy URL | `https://miyamibu.xyz/privacy/` | `https://miyamibu.xyz/privacy/` | DONE_PUBLIC_VERIFIED: `./scripts/verify_public_web_release.sh` passed on 2026-06-29 and confirmed billing-enabled privacy wording. |
 | Marketing URL | optional | optional | NOT_APPLICABLE |
 | Review contact | Use developer account owner contact in console | Use App Store Connect review contact | NEEDS_USER_ACTION |
 | Review notes | Use `Review Notes Draft` above. Provide a test account if store review requires cloud-sharing sign-in. | Use `Review Notes Draft` above. Provide a test account if store review requires cloud-sharing sign-in. | NEEDS_USER_ACTION |

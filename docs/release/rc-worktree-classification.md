@@ -23,7 +23,7 @@ committed, or pushed as part of this report commit.
 | RC_EXCLUDE_CANDIDATE | Non-launch repo instruction churn and web-local Vercel ignore file | Keep out of RC unless separately justified. |
 | CONTRACT_DEPENDENT | Associated domains / placeholder config that depends on paid Apple/Google values | Do not finalize until Apple Team ID and Play App Signing SHA-256 are issued. |
 | EVIDENCE_ONLY | Store assets and UI review artifacts | Keep as evidence or explicitly stage selected final assets only after owner approval. |
-| DESTRUCTIVE_OR_RESTORE_NEEDS_APPROVAL | Deleted files under `CODEX_INSTRUCTIONS.md`, `archive/root-unrelated/**`, old `artifacts/ui-review/2026-04-30/**`, and `tmp/laptimer-*.png` | Do not restore or delete-finalize without explicit approval. |
+| DESTRUCTIVE_OR_RESTORE_NEEDS_APPROVAL | Historical deleted-file candidates under `archive/root-unrelated/**`, old `artifacts/ui-review/2026-04-30/**`, and `tmp/laptimer-*.png`; `CODEX_INSTRUCTIONS.md` is now restored as a short compatibility entry point. | Do not restore or delete-finalize historical deletion candidates without explicit approval. |
 | UNKNOWN_NEEDS_REVIEW | Large regenerated iOS project file and broad app implementation changes whose intended final scope is not isolated yet | Inspect diffs and split before staging. |
 
 ## Path classification
@@ -47,14 +47,13 @@ committed, or pushed as part of this report commit.
 | EVIDENCE_ONLY | `artifacts/store-assets/**` | Feature graphic and partial screenshots/evidence. | Stage only selected final store assets after owner approval. |
 | EVIDENCE_ONLY | `artifacts/ui-review/2026-05-01/**`, `artifacts/ui-review/2026-05-11/**` | UI/device evidence, including release-equivalent Android evidence from this run. | Keep uncommitted unless evidence policy requires selected artifacts in RC. |
 | EVIDENCE_ONLY | `artifacts/app-icon/**` | App icon source/master evidence. | Stage only if chosen as canonical source asset. |
-| DESTRUCTIVE_OR_RESTORE_NEEDS_APPROVAL | `CODEX_INSTRUCTIONS.md` | Tracked deletion candidate. | Do not restore or delete-finalize without explicit approval. |
+| RC_EXCLUDE_CANDIDATE | `CODEX_INSTRUCTIONS.md` | Restored short Codex compatibility entry point; local workflow documentation, not app/runtime release payload. | Keep out of RC unless repo-instruction cleanup is explicitly included. |
 | DESTRUCTIVE_OR_RESTORE_NEEDS_APPROVAL | `archive/root-unrelated/**` | Tracked deletions of archived audit/inventory files. | Do not restore or delete-finalize without explicit approval. |
 | DESTRUCTIVE_OR_RESTORE_NEEDS_APPROVAL | `artifacts/ui-review/2026-04-30/**` | Tracked deletion of prior UI evidence screenshots. | Do not restore or delete-finalize without explicit approval. |
 | DESTRUCTIVE_OR_RESTORE_NEEDS_APPROVAL | `tmp/laptimer-ios*.png`, `tmp/laptimer-watch*.png` | Tracked deletion of unrelated LapTimer screenshots. | Do not restore or delete-finalize without explicit approval. |
 
 ## Must not delete or restore without approval
 
-- `CODEX_INSTRUCTIONS.md`
 - `archive/root-unrelated/**`
 - `artifacts/ui-review/2026-04-30/**`
 - `tmp/laptimer-ios-2.png`

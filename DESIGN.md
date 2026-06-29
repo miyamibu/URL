@@ -12,7 +12,7 @@ Keep URL Saver fast, calm, and reliable for saving shared links now and rediscov
 
 ## Source Of Truth
 1. Current explicit user instruction.
-2. Existing Android Compose/iOS SwiftUI code, domain contracts, and Phase 1a/1b scope.
+2. Existing Android Compose/iOS SwiftUI code, domain contracts, Phase 1a/1b core invariants, and approved post-Phase features.
 3. This `DESIGN.md`.
 4. Approved Figma/design files or approved mockups.
 5. Screenshots or `gpt-image-2` generated images.
@@ -23,7 +23,7 @@ If sources conflict, explain the conflict before changing the UI direction.
 ## UX Principles
 - Saving a URL must feel instant and trustworthy. Silent failure is forbidden.
 - List, archive, detail, share extension, duplicate handling, metadata status, and shared-tag states must be understandable without technical knowledge.
-- Do not widen scope into search, WebView, advanced tagging, Hilt/Koin, or Phase 1c features unless explicitly approved.
+- Do not widen scope into WebView, unapproved advanced search/tagging, Hilt/Koin, or Phase 1c features unless explicitly approved.
 - Preserve core URL contracts: `normalizedUrl` is the duplicate key and `openUrl = normalizedUrl`.
 - Metadata and shared-tag sync should communicate partial success, retry, disabled, or unavailable states clearly.
 

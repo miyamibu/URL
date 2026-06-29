@@ -45,7 +45,7 @@ Main categories still requiring owner review:
 - iOS shared-tag / UI / project changes.
 - App icon assets.
 - Evidence artifacts under `artifacts/`.
-- Deletion candidates such as `CODEX_INSTRUCTIONS.md`, `archive/root-unrelated/...`, and `tmp/laptimer-*.png`.
+- Historical deletion candidates such as `archive/root-unrelated/...` and `tmp/laptimer-*.png`; `CODEX_INSTRUCTIONS.md` is now restored as a short compatibility entry point.
 
 ## Contract-dependent Blockers
 - Apple Developer Team ID and provisioning.

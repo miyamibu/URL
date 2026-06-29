@@ -467,7 +467,7 @@ final class URLSaverAppModel: ObservableObject {
 
     func localTagShareText(for tag: LocalTagSummary) -> String {
         """
-        URL Saverの端末内タグ:
+        りんばむの端末内タグ:
         \(tag.name)
 
         urlsaver://tag/\(tag.id)

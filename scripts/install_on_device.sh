@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_ID="jp.mimac.urlsaver"
-MAIN_ACTIVITY=".MainActivity"
+APP_ID="${APP_ID:-jp.miyamibu.urlalbum}"
+MAIN_ACTIVITY="jp.mimac.urlsaver.MainActivity"
 ADB_BIN="${ADB_BIN:-adb}"
 
 usage() {
@@ -16,7 +16,7 @@ Options:
   --allow-emulator
              Allow installing to emulator if physical device is not connected
   --allow-fresh-install
-             Allow installing when jp.mimac.urlsaver is not already installed.
+             Allow installing when jp.miyamibu.urlalbum is not already installed.
              Without this flag, the script refuses fresh installs to avoid silently
              replacing a data-bearing app with an empty database.
 EOF

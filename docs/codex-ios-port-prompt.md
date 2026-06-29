@@ -1,5 +1,7 @@
 # Codex Prompt: Native iOS Port with Android Phase 1a/1b Parity
 
+> Historical prompt: this document describes the original Phase 1a/1b native iOS port request. Current iOS work must also follow `AGENTS.md`, `DESIGN.md`, and `docs/qa/rinbam_canonical_story_status.csv` because search, tags, collections, shared tags, AI-friendly export, and store/account flows are now approved product areas in this repo.
+
 Use this prompt when asking Codex to build a native iOS version of `URL共有アプリ_UrlSaver` that matches the Android app's documented product contract as closely as possible.
 
 ## Issue map
@@ -78,7 +80,7 @@ Explicitly out of scope
 
 Constraints
 - Inspect the current repo first. Do not rely on assumptions or stale memory.
-- Treat repo features outside the documented Phase 1a/1b URL-saving contract as noise unless the docs explicitly include them in scope. In particular, do not carry `collections`, `user labels`, shared tag flows, shared tag import/export, or tag deep links into the iOS parity build.
+- Treat this historical prompt as subordinate to current repo contracts. If `AGENTS.md`, `DESIGN.md`, or `docs/qa/rinbam_canonical_story_status.csv` includes collections, shared tags, tag import/export, tag deep links, or search as current product behavior, preserve parity instead of removing those flows.
 - Build a real iOS app, not just a design document.
 - Prefer native Apple technologies. Default to Swift + SwiftUI unless repo reality strongly suggests otherwise.
 - Choose a boring, stable local persistence approach that can enforce the equivalent of a DB-level unique constraint on `normalizedUrl` and support migration safely. Do not weaken the uniqueness contract.

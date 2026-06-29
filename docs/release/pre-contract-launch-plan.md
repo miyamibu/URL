@@ -21,7 +21,7 @@
 | iOS shared-tag / UI / project | `ios/URLSaveriOS/...`, `ios/URLSaveriOS.xcodeproj/project.pbxproj` | simulator build/test、採用判断 |
 | App icon assets | `app/src/main/res/mipmap-*`, `ios/URLSaveriOS/Assets.xcassets/` | 表示確認、採用判断 |
 | Evidence artifacts | `artifacts/ui-review/...`, `artifacts/app-icon/...` | 証跡として保持するか分類 |
-| Deletion candidates | `CODEX_INSTRUCTIONS.md`, `archive/root-unrelated/...`, `tmp/laptimer-*.png` | 承認なしでは削除/破棄しない |
+| Historical deletion candidates | `CODEX_INSTRUCTIONS.md`, `archive/root-unrelated/...`, `tmp/laptimer-*.png` | `CODEX_INSTRUCTIONS.md` は現在、短い互換入口として復元済み。その他は承認なしでは削除/破棄しない |
 
 ## No-contract Tasks
 - Keep Android release build possible when shared-tag cloud is disabled.

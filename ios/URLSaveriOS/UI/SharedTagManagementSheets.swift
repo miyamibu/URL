@@ -434,7 +434,7 @@ private func inviteShareText(inviteURL: String) -> String {
         return inviteURL
     }
     return """
-    URL Saverの共有タグに参加:
+    りんばむの共有タグに参加:
     \(inviteURL)
 
     開けない場合:

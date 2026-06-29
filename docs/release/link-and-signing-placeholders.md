@@ -5,13 +5,13 @@
 
 ## Android App Links
 - File: `web/invite-link/.well-known/assetlinks.json`
-- Current package: `jp.mimac.urlsaver`
+- Current package: `jp.miyamibu.urlalbum`
 - Contract-dependent value: Google Play App Signing SHA-256 certificate fingerprint.
 - Current SHA-256 is beta/debug evidence only until Play Console confirms the final app signing certificate.
 
 ## iOS Universal Links
 - File: `web/invite-link/.well-known/apple-app-site-association`
-- Current bundle ID: `jp.mimac.urlsaver.ios`
+- Current bundle ID: `com.mibu.codebridge.ios`
 - Contract-dependent value: Apple Team ID.
 - Current Team ID is beta/provisioning evidence only until the paid Apple Developer team is confirmed.
 

@@ -1,19 +1,23 @@
 ---
 name: iphone-device-install
-description: Use this skill whenever installing URL Saver on a physical iPhone. Prefer the previously signed Debug-iphoneos .app route with devicectl before trying a fresh Xcode device build.
+description: Use this skill whenever installing りんばむ on a physical iPhone. Prefer the previously signed Debug-iphoneos .app route with devicectl before trying a fresh Xcode device build.
 ---
 
 # iPhone Device Install
 
 ## Goal
-Install URL Saver on the paired physical iPhone without getting blocked by Xcode account or provisioning setup when a usable signed device build already exists.
+Install りんばむ on the paired physical iPhone without getting blocked by Xcode account or provisioning setup when a usable signed device build already exists.
 
 ## Context
 This repo has an iOS project at `ios/URLSaveriOS.xcodeproj`. A direct `xcodebuild` device build can fail with missing Xcode account or provisioning profiles, even when a previously signed `Debug-iphoneos/URLSaveriOS.app` is still installable.
 
-The known working route from 2026-05-01 was:
+The canonical current app identity is:
+- Bundle ID: `com.mibu.codebridge.ios`.
+- Share extension Bundle ID: `com.mibu.codebridge.ios.share`.
+
+The historical working route from 2026-05-01 used an old development bundle ID and is no longer the user-facing target:
 - Device: iPhone 12 shown by `devicectl` as paired/available.
-- Bundle ID: `jp.mimac.urlsaver.ios`.
+- Historical Bundle ID: `jp.mimac.urlsaver.ios`.
 - Reinstall a signed `.app` from Xcode DerivedData with `xcrun devicectl device install app`.
 - Confirm with `xcrun devicectl device info apps`.
 - For a fresh current-source physical build, passing `DEVELOPMENT_TEAM=8R3B5675ZJ -allowProvisioningUpdates` allowed Xcode to create/use the local development profile without editing project signing settings.
@@ -32,10 +36,10 @@ The known working route from 2026-05-01 was:
 xcrun devicectl list devices
 ```
 
-2. Check whether URL Saver is already installed:
+2. Check whether りんばむ is already installed:
 
 ```bash
-xcrun devicectl device info apps --device <DEVICE_ID> 2>/dev/null | rg -i 'URL Saver|jp\.mimac\.urlsaver\.ios' || true
+xcrun devicectl device info apps --device <DEVICE_ID> 2>/dev/null | rg -i 'りんばむ|com\.mibu\.codebridge\.ios' || true
 ```
 
 3. Find existing physical-device builds:
@@ -57,7 +61,7 @@ done | sort
 ```
 
 Expected signs:
-- `Identifier=jp.mimac.urlsaver.ios`
+- `Identifier=com.mibu.codebridge.ios`
 - `Format=app bundle with Mach-O thin (arm64)`
 - `TeamIdentifier=...`
 
@@ -70,7 +74,7 @@ xcrun devicectl device install app --device <DEVICE_ID> "<APP_PATH>"
 6. Confirm installation:
 
 ```bash
-xcrun devicectl device info apps --device <DEVICE_ID> 2>/dev/null | rg -i 'URL Saver|jp\.mimac\.urlsaver\.ios'
+xcrun devicectl device info apps --device <DEVICE_ID> 2>/dev/null | rg -i 'りんばむ|com\.mibu\.codebridge\.ios'
 ```
 
 ## Fresh build fallback
@@ -104,8 +108,8 @@ xcrun devicectl device install app \
 If it fails with `No Account for Team` or `No profiles for ... were found`, stop and report that Xcode account/provisioning must be repaired instead of changing project signing settings automatically.
 
 ## Done when
-- `devicectl device install app` reports `App installed` for `jp.mimac.urlsaver.ios`.
-- `devicectl device info apps` lists `URL Saver    jp.mimac.urlsaver.ios`.
+- `devicectl device install app` reports `App installed` for `com.mibu.codebridge.ios`.
+- `devicectl device info apps` lists `りんばむ    com.mibu.codebridge.ios`.
 - Final response says which app path was installed and whether Android was also installed if that was part of the user request.
 
 ## Output format

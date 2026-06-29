@@ -4,7 +4,7 @@
 2026-06-28
 
 ## Goal
-URL Saver `1.0.11` を Google Play / App Store へ提出するため、repo内で確認・作成できる提出素材、設定、検証結果、外部待ちを一箇所にまとめる。
+りんばむ `1.0.11` を Google Play / App Store へ提出するため、repo内で確認・作成できる提出素材、設定、検証結果、外部待ちを一箇所にまとめる。
 
 ## Official Requirements Checked
 - Google Play User Data policy: privacy policy URL is required for all apps, must be public/non-geofenced/non-PDF, and Data safety must match the privacy policy.
@@ -35,7 +35,7 @@ The repo-side cloud-enabled alignment is fixed. Google Play and App Store Connec
 | Target SDK | DONE | `targetSdk = 35` | Recheck at submission date. |
 | App name/listing copy | DONE | `docs/release/store-listing-draft.md` | Paste into Play Console after account setup. |
 | Privacy policy source | DONE | `web/invite-link/privacy/index.html` updated for cloud-enabled `1.0.11`. | Deploy and verify final public URL before entry. |
-| Privacy policy public URL | BLOCKED_PUBLIC_DEPLOY_STALE | `https://miyamibu.xyz/privacy/` returned HTTP 200 on 2026-06-29, but the live page still says `本物の課金も行いません` while repo source now discloses Standard / Pro subscriptions. | Redeploy `web/invite-link/privacy/index.html`, then re-curl and update store privacy URLs only after live wording matches billing-enabled `1.0.11`. |
+| Privacy policy public URL | DONE_PUBLIC_VERIFIED | `./scripts/verify_public_web_release.sh` passed on 2026-06-29: `https://miyamibu.xyz/privacy/` returned HTTP 200, discloses Standard / Pro subscriptions, Google Play Billing, and StoreKit, and no longer contains stale no-real-billing wording. | Re-run verifier before changing store metadata or release mode. |
 | Data safety draft | DONE | `docs/release/privacy-data-safety-draft.md` cloud-sharing rows match the current release mode. | Copy cloud-sharing answers into Play Console. |
 | Account deletion URL | DONE | `https://miyamibu.xyz/account-deletion/` returned HTTP 200 on 2026-06-27. | Enter this URL in Play Console. |
 | Ads declaration | DONE | Release config sets `ADS_ENABLED=false`; release manifest removes ad components. | Keep ads disabled or revise privacy/listing. |
@@ -58,12 +58,12 @@ The repo-side cloud-enabled alignment is fixed. Google Play and App Store Connec
 |---|---|---|---|
 | Bundle ID | DONE | `ios/URLSaveriOS.xcodeproj/project.pbxproj`: `com.mibu.codebridge.ios` | Keep stable. |
 | Share extension Bundle ID | DONE | Project has `com.mibu.codebridge.ios.share`. | Needs distribution provisioning. |
-| Display name | DONE | `ios/URLSaveriOS/Info.plist`: `CFBundleDisplayName = URL Saver` | Keep stable. |
+| Display name | DONE | `ios/URLSaveriOS/Info.plist`: `CFBundleDisplayName = りんばむ` | Keep stable. |
 | Version/build | DONE | `CFBundleShortVersionString = 1.0.11`, `CFBundleVersion = 11` in app and share extension Info.plist. | Bump only for later submissions. |
 | App icon | DONE | `ios/URLSaveriOS/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png` and required iPhone sizes exist. | Final visual approval still owner decision. |
 | Privacy manifest | DONE | `ios/URLSaveriOS/PrivacyInfo.xcprivacy` and extension manifest exist. | Recheck if SDKs/data collection change. |
 | App Privacy draft | DONE | `docs/release/privacy-data-safety-draft.md`; iOS privacy manifests parsed successfully. | Copy cloud-sharing answers into App Store Connect. |
-| Privacy policy URL | BLOCKED_PUBLIC_DEPLOY_STALE | `https://miyamibu.xyz/privacy/` returned HTTP 200 on 2026-06-29, but the live page still says `本物の課金も行いません` while repo source now discloses Standard / Pro subscriptions. | Redeploy the privacy page and reverify before relying on this URL for App Store Connect metadata. |
+| Privacy policy URL | DONE_PUBLIC_VERIFIED | `./scripts/verify_public_web_release.sh` passed on 2026-06-29: `https://miyamibu.xyz/privacy/` returned HTTP 200 and matches billing-enabled `1.0.11` privacy wording. | Re-run verifier before changing App Store Connect metadata or release mode. |
 | Account deletion | DONE | `https://miyamibu.xyz/account-deletion/` returned HTTP 200 on 2026-06-27. | Enter this URL in App Store Connect review/privacy metadata. |
 | Test account | NEEDS_USER_ACTION | Store review may need cloud-sharing sign-in access. | Provide a review test account or review notes that allow account flow verification. |
 | Associated Domains entitlement | DONE | `ios/URLSaveriOS/URLSaveriOS.entitlements` has `applinks:miyamibu.xyz`. | Reverify with final Team ID/deployment. |
@@ -83,7 +83,7 @@ The repo-side cloud-enabled alignment is fixed. Google Play and App Store Connec
 | Screenshot plan | PARTIAL | Existing Android screenshot candidates are under `artifacts/store-assets/screenshots/2026-05-13/android/`; the temporary iOS cloud-enabled `1.0.11` home screenshot was not retained in git. | Capture/approve final Android/iOS store-size screenshots if replacing screenshots. |
 | Feature graphic | DONE | `artifacts/store-assets/google-play-feature-graphic-1024x500.png` | Owner approve/replace. |
 | App Links / Universal Links placeholders | DONE | `docs/release/link-and-signing-placeholders.md` | Replace only issued external IDs after account setup. |
-| Public web privacy page | BLOCKED_PUBLIC_DEPLOY_STALE | Source is updated for billing-enabled `1.0.11`, but live `https://miyamibu.xyz/privacy/` on 2026-06-29 still serves stale no-real-billing wording. | Redeploy and reverify live text. |
+| Public web privacy page | DONE_PUBLIC_VERIFIED | `./scripts/verify_public_web_release.sh` passed on 2026-06-29; live `https://miyamibu.xyz/privacy/` matches billing-enabled `1.0.11` wording. | Re-run verifier after any privacy or billing copy change. |
 | Public account deletion page | DONE | Source added and `https://miyamibu.xyz/account-deletion/` returned HTTP 200 on 2026-06-27. | Use this URL in store consoles. |
 | Android screenshot evidence | BLOCKED_INTERNAL | Older local-only screenshot evidence exists but does not prove cloud-enabled `1.0.11`; local AVD startup failed before adb registration. | Capture later on a working emulator/device if replacing Play screenshots. |
 | iOS screenshot evidence | PARTIAL | Cloud-enabled `1.0.11` simulator screenshot was captured during review, but the temporary artifact was intentionally left out of git. | Capture remaining store-size screenshots if replacing App Store screenshots. |
@@ -98,7 +98,7 @@ The repo-side cloud-enabled alignment is fixed. Google Play and App Store Connec
 | Apple Developer Program / Team | DONE | Updated Apple Developer agreement was accepted by the account holder; App Store Connect accepted the `1.0.11 (11)` submission under Team ID `8R3B5675ZJ`. | Monitor App Review result. |
 | App Store Connect record/SKU | DONE | App Store Connect shows `りんばむ` app record, Apple ID `6771251450`; submission ID `428bdf26-5233-47e2-89a2-c3925f32994b` is `審査待ち`. | Monitor App Review result. |
 | Production Supabase | DONE | Android/iOS local release settings contain production Supabase values; values are intentionally not printed in this doc. | Reverify linked project/migrations before final submission if backend changed. |
-| Public HTTPS deployment | PARTIAL_PUBLIC_PRIVACY_STALE | Vercel serves `https://miyamibu.xyz`; account-deletion and `.well-known` checks pass, but privacy page is stale relative to the billing-enabled repo source as of 2026-06-29. | Redeploy privacy page and re-run public URL verification. |
+| Public HTTPS deployment | DONE_PUBLIC_VERIFIED | Vercel serves `https://miyamibu.xyz`; account-deletion, privacy, and `.well-known` checks pass in `./scripts/verify_public_web_release.sh` on 2026-06-29. | Re-run public URL verification after deployment or release-copy changes. |
 | Final release screenshots | PARTIAL | iOS cloud-enabled screenshot captured; Android AVD capture blocked internally. | Decide whether existing Play screenshots can remain or capture later on a working emulator/device. |
 | Chrome console automation | DONE | Chrome launched and Play Console/App Store Connect were reachable. Play production release `11 (1.0.11)` was submitted for review on 2026-06-27. App Store Connect `1.0.11 (11)` was submitted on 2026-06-28. | Monitor both store review results. |
 
@@ -121,7 +121,7 @@ The repo-side cloud-enabled alignment is fixed. Google Play and App Store Connec
 | iOS screenshot | PARTIAL | A simulator screenshot was captured from a build with `SharedTagCloudEnabled=true`; the temporary artifact was intentionally left out of git. Full store screenshot set still needs approval if replacing screenshots. |
 | Web/static/store files | DONE | Privacy manifests parsed, feature graphic verified 1024 x 500, `.well-known` JSON parsed, and live privacy/account-deletion pages verified on 2026-06-27. |
 | Final release-mode scan | DONE | Release config scan is aligned to cloud-enabled `1.0.11`; privacy/store docs disclose cloud sync, contact support, account deletion, and paid subscriptions. |
-| Public URL live verification | PARTIAL_PUBLIC_PRIVACY_STALE | 2026-06-29: `privacy/` and `account-deletion/` return HTTP 200; `assetlinks.json` and AASA parse as JSON and include the expected package/bundle. However, live privacy text is stale and still says real billing is not offered. |
+| Public URL live verification | DONE_PUBLIC_VERIFIED | 2026-06-29: `./scripts/verify_public_web_release.sh` passed; `privacy/` and `account-deletion/` return HTTP 200, `assetlinks.json` and AASA parse as JSON and include the expected package/bundle, and privacy no longer contains stale no-real-billing wording. |
 
 ## Repo-Internal Unresolved Checklist
 
@@ -136,4 +136,4 @@ The repo-side cloud-enabled alignment is fixed. Google Play and App Store Connec
 ## Submission Readiness Verdict
 Submitted to both stores.
 
-Google Play production release `11 (1.0.11)` is in review. App Store Connect iOS `1.0.11 (11)` is `審査待ち` under submission ID `428bdf26-5233-47e2-89a2-c3925f32994b`. Public account-deletion and `.well-known` verification pass, but the live privacy page is stale as of 2026-06-29 and must be redeployed before treating the public privacy URL as aligned with billing-enabled `1.0.11`. Remaining risks are reviewer feedback, Play 16 KB memory page size compliance warning for future enforcement, Play App Signing SHA-256 replacement for final App Links, privacy redeploy, and any reviewer-requested test-account details.
+Google Play production release `11 (1.0.11)` is in review. App Store Connect iOS `1.0.11 (11)` is `審査待ち` under submission ID `428bdf26-5233-47e2-89a2-c3925f32994b`. Public account-deletion, privacy, and `.well-known` verification pass as of 2026-06-29. Remaining risks are reviewer feedback, Play 16 KB memory page size compliance warning for future enforcement, Play App Signing SHA-256 replacement for final App Links, and any reviewer-requested test-account details.
