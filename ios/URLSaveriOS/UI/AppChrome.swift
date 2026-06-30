@@ -1007,7 +1007,7 @@ struct ServiceFilterRow: View {
             HStack(spacing: 8) {
                 if showsCreateChip {
                     FilterChipButton(
-                        label: "+タグ",
+                        label: "+",
                         selected: false,
                         action: createAction
                     )

@@ -52,8 +52,8 @@ def main() -> int:
         ),
         lambda: require(
             "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
-            'Text("+タグ")',
-            "home local-tag creation/management route must remain visible",
+            'Text("+")',
+            "home local-tag creation/management route must remain visible as + only",
         ),
         lambda: require(
             "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",

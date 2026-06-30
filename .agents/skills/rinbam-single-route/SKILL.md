@@ -50,7 +50,7 @@ If it fails before editing, report that the baseline is already dirty and fix th
 
 ## Must Preserve
 - Home should not regain the removed Info/privacy top-bar icon.
-- Home must keep a local tag row with `+タグ` and a shared-tag `+` route.
+- Home must keep a local tag row with `+` and a shared-tag `+` route.
 - Entry cards must receive local tag names and show them instead of service/time when present.
 - Detail local-tag heading must be `自作タグ`; shared-tag heading must be `共有タグ`.
 - Local tag management must not show `リンク` / `JSON` share controls or the old large text `削除` label.

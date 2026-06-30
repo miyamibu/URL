@@ -7,7 +7,10 @@ import jp.mimac.urlsaver.data.CreateCollectionResult
 import jp.mimac.urlsaver.data.EntryCardDisplayModeStore
 import jp.mimac.urlsaver.data.MainListRepository
 import jp.mimac.urlsaver.data.ServiceFilterOrderStore
+import jp.mimac.urlsaver.data.TagRepository
 import jp.mimac.urlsaver.data.TopFilterOrderStore
+import jp.mimac.urlsaver.domain.AssignTagResult
+import jp.mimac.urlsaver.domain.CreateTagResult
 import jp.mimac.urlsaver.domain.EntryCardDisplayMode
 import jp.mimac.urlsaver.domain.ServiceType
 import jp.mimac.urlsaver.domain.ShareSaveResult
@@ -24,6 +27,7 @@ class MainListViewModel(
     private val displayModeStore: EntryCardDisplayModeStore = InMemoryEntryCardDisplayModeStore(),
     private val serviceFilterOrderStore: ServiceFilterOrderStore = InMemoryServiceFilterOrderStore(),
     private val topFilterOrderStore: TopFilterOrderStore = InMemoryTopFilterOrderStore(),
+    private val tagRepository: TagRepository? = null,
 ) : ViewModel() {
 
     private val selectedService = MutableStateFlow(ServiceType.ALL)
@@ -118,9 +122,44 @@ class MainListViewModel(
         return deleted
     }
 
-    suspend fun submitManualInput(input: String, collectionId: Long?): Pair<ShareSaveResult, Long?> {
+    suspend fun createLocalTag(name: String): CreateTagResult {
+        return tagRepository?.createLocalTagWithResult(name) ?: CreateTagResult.Failed
+    }
+
+    suspend fun submitManualInput(
+        input: String,
+        collectionId: Long?,
+        localTagIds: Set<Long> = emptySet(),
+    ): ManualInputSubmitResult {
         val result = repository.saveFromManualInput(input, collectionId)
-        return result.result to result.entryId
+        val savedEntryId = result.entryId
+        var failedTagAssignmentCount = 0
+        if (
+            savedEntryId != null &&
+            localTagIds.isNotEmpty() &&
+            (result.result == ShareSaveResult.CREATED || result.result == ShareSaveResult.RESTORED_FROM_PENDING_DELETE)
+        ) {
+            val repository = tagRepository
+            if (repository == null) {
+                failedTagAssignmentCount = localTagIds.size
+            } else {
+                localTagIds.forEach { tagId ->
+                    when (repository.assignTagWithResult(tagId = tagId, entryId = savedEntryId)) {
+                        AssignTagResult.Success,
+                        AssignTagResult.AlreadyAssigned,
+                        -> Unit
+                        is AssignTagResult.LimitReached,
+                        AssignTagResult.Failed,
+                        -> failedTagAssignmentCount += 1
+                    }
+                }
+            }
+        }
+        return ManualInputSubmitResult(
+            saveResult = result.result,
+            entryId = result.entryId,
+            failedTagAssignmentCount = failedTagAssignmentCount,
+        )
     }
 
     suspend fun archiveEntry(entryId: Long): Boolean {
@@ -145,6 +184,12 @@ class MainListViewModel(
         }
     }
 }
+
+data class ManualInputSubmitResult(
+    val saveResult: ShareSaveResult,
+    val entryId: Long?,
+    val failedTagAssignmentCount: Int = 0,
+)
 
 private class InMemoryEntryCardDisplayModeStore : EntryCardDisplayModeStore {
     override fun observeDisplayMode() = flowOf(EntryCardDisplayMode.RICH)

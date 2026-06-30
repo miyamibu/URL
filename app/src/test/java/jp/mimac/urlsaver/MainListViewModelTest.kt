@@ -133,7 +133,9 @@ class MainListViewModelTest {
 
         val result = viewModel.submitManualInput(" https://example.com ", collectionId = 12L)
 
-        assertEquals(ShareSaveResult.CREATED to 33L, result)
+        assertEquals(ShareSaveResult.CREATED, result.saveResult)
+        assertEquals(33L, result.entryId)
+        assertEquals(0, result.failedTagAssignmentCount)
         assertEquals(listOf(" https://example.com " to 12L), repository.manualInputCalls)
     }
 

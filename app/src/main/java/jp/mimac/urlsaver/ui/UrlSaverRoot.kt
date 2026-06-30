@@ -385,6 +385,7 @@ private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
             factory = SimpleFactory {
                 MainListViewModel(
                     repository = context.appContainer().repository,
+                    tagRepository = context.appContainer().tagRepository,
                     displayModeStore = context.appContainer().entryCardDisplayModeStore,
                     serviceFilterOrderStore = context.appContainer().serviceFilterOrderStore,
                     topFilterOrderStore = context.appContainer().topFilterOrderStore,
@@ -672,7 +673,6 @@ private fun MainScreen(
                 )
             },
         )
-    val sharedTagCloudState by profileVm.cloudState.collectAsStateWithLifecycle()
     val pendingInvite by profileVm.pendingInvite.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val mainListState = rememberLazyListState()
@@ -712,7 +712,7 @@ private fun MainScreen(
             }
     }
     val showSharedTagCloudUi = shouldShowSharedTagCloudEntryPoints(
-        isConfigured = sharedTagCloudState.isConfigured,
+        isConfigured = true,
         hasSharedTags = visibleSharedTags.isNotEmpty() || sharedTagGroups.isNotEmpty(),
         hasPendingInvite = pendingInvite != null,
     )
@@ -752,6 +752,7 @@ private fun MainScreen(
     var createCollectionState by remember { mutableStateOf(CreateCollectionDialogUiState()) }
     var sharedTagDialogState by remember { mutableStateOf(SharedTagDialogUiState()) }
     var sharedTagGroupDialogState by remember { mutableStateOf(SharedTagDialogUiState()) }
+    var manualLocalTagDialogState by remember { mutableStateOf(SharedTagDialogUiState()) }
     var groupRenameDialogState by remember { mutableStateOf(SharedTagDialogUiState()) }
     var pendingGroupAction by remember { mutableStateOf<GroupActionConfirmation?>(null) }
     var mainPane by rememberSaveable { mutableStateOf(MainPane.URLS) }
@@ -838,6 +839,10 @@ private fun MainScreen(
         createCollectionState = CreateCollectionDialogUiState()
     }
 
+    fun closeCreateManualLocalTagDialog() {
+        manualLocalTagDialogState = SharedTagDialogUiState()
+    }
+
     fun closeCreateSharedTagDialog() {
         sharedTagDialogState = SharedTagDialogUiState()
     }
@@ -851,7 +856,13 @@ private fun MainScreen(
             manualInputState = manualInputState.copy(isSaving = true)
             try {
                 val targetCollectionId = if (SHOW_COLLECTION_UI) manualInputState.selectedCollectionId else null
-                val (result, entryId) = viewModel.submitManualInput(manualInputState.inputText, targetCollectionId)
+                val submitResult = viewModel.submitManualInput(
+                    input = manualInputState.inputText,
+                    collectionId = targetCollectionId,
+                    localTagIds = manualInputState.selectedLocalTagIds,
+                )
+                val result = submitResult.saveResult
+                val entryId = submitResult.entryId
                 when (result) {
                     ShareSaveResult.INPUT_TOO_LARGE,
                     ShareSaveResult.INVALID_URL,
@@ -860,6 +871,12 @@ private fun MainScreen(
                     -> manualInputState = manualInputState.copy(inputError = result)
                     else -> {
                         onManualResult(result, entryId)
+                        if (submitResult.failedTagAssignmentCount > 0) {
+                            snackbarHostState.showSnackbar(
+                                "一部のタグを追加できませんでした",
+                                duration = SnackbarDuration.Short,
+                            )
+                        }
                         if (result == ShareSaveResult.CREATED || result == ShareSaveResult.RESTORED_FROM_PENDING_DELETE) {
                             AdsManager.registerMeaningfulActionAndMaybeShow(context)
                         }
@@ -868,6 +885,43 @@ private fun MainScreen(
                 }
             } finally {
                 manualInputState = manualInputState.copy(isSaving = false)
+            }
+        }
+    }
+
+    fun confirmCreateManualLocalTag() {
+        scope.launch {
+            when (val created = viewModel.createLocalTag(manualLocalTagDialogState.name)) {
+                is CreateTagResult.Success -> {
+                    manualInputState = manualInputState.copy(
+                        selectedLocalTagIds = manualInputState.selectedLocalTagIds + created.tagId,
+                        localTagError = null,
+                    )
+                    closeCreateManualLocalTagDialog()
+                }
+                CreateTagResult.InvalidName -> {
+                    manualLocalTagDialogState = manualLocalTagDialogState.copy(error = "タグ名を入力してください")
+                }
+                CreateTagResult.Duplicate -> {
+                    val duplicateId = localSaveTags.firstOrNull {
+                        normalizeSharedTagName(it.name) == normalizeSharedTagName(manualLocalTagDialogState.name)
+                    }?.id
+                    if (duplicateId != null) {
+                        manualInputState = manualInputState.copy(
+                            selectedLocalTagIds = manualInputState.selectedLocalTagIds + duplicateId,
+                            localTagError = null,
+                        )
+                        closeCreateManualLocalTagDialog()
+                    } else {
+                        manualLocalTagDialogState = manualLocalTagDialogState.copy(error = "同じ名前のタグがあります")
+                    }
+                }
+                is CreateTagResult.LimitReached -> {
+                    manualLocalTagDialogState = manualLocalTagDialogState.copy(error = created.message)
+                }
+                CreateTagResult.Failed -> {
+                    manualLocalTagDialogState = manualLocalTagDialogState.copy(error = "タグを作成できませんでした")
+                }
             }
         }
     }
@@ -1178,8 +1232,11 @@ private fun MainScreen(
         inputText = manualInputState.inputText,
         inputError = manualInputState.inputError,
         customCollections = customCollections,
+        localTags = localSaveTags,
         selectedTargetCollectionId = manualInputState.selectedCollectionId,
+        selectedLocalTagIds = manualInputState.selectedLocalTagIds,
         manualCollectionError = manualInputState.collectionError,
+        manualLocalTagError = manualInputState.localTagError,
         isManualSaving = manualInputState.isSaving,
         onDismiss = {
             manualInputState = ManualInputUiState()
@@ -1214,6 +1271,16 @@ private fun MainScreen(
                 )
             }
         },
+        onSelectLocalTag = { tagId ->
+            manualInputState = manualInputState.copy(
+                selectedLocalTagIds = if (tagId in manualInputState.selectedLocalTagIds) {
+                    manualInputState.selectedLocalTagIds - tagId
+                } else {
+                    manualInputState.selectedLocalTagIds + tagId
+                },
+                localTagError = null,
+            )
+        },
         onRequestCreateCollection = if (SHOW_COLLECTION_UI) {
             {
                 createCollectionState = createCollectionState.copy(
@@ -1223,6 +1290,9 @@ private fun MainScreen(
             }
         } else {
             null
+        },
+        onRequestCreateLocalTag = {
+            manualLocalTagDialogState = SharedTagDialogUiState(visible = true)
         },
         onSave = { submitManualSave() },
     )
@@ -1289,6 +1359,24 @@ private fun MainScreen(
             )
         },
         onConfirm = { confirmCreateSharedTag() },
+    )
+
+    CreateSharedTagDialog(
+        visible = manualLocalTagDialogState.visible,
+        newSharedTagName = manualLocalTagDialogState.name,
+        createSharedTagError = manualLocalTagDialogState.error,
+        title = "タグを作成",
+        body = "保存時に選べる自作タグを作成します。",
+        nameLabel = "タグ名",
+        placeholder = "仕事 / 後で読む / 学習 など",
+        onDismiss = { closeCreateManualLocalTagDialog() },
+        onNameChange = {
+            manualLocalTagDialogState = manualLocalTagDialogState.copy(
+                name = it,
+                error = null,
+            )
+        },
+        onConfirm = { confirmCreateManualLocalTag() },
     )
 
     CreateSharedTagDialog(
@@ -1647,20 +1735,25 @@ private fun MainScreen(
 }
 
 @Composable
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 private fun ManualInputSheet(
     visible: Boolean,
     inputText: String,
     inputError: ShareSaveResult?,
     customCollections: List<jp.mimac.urlsaver.data.CollectionEntity>,
+    localTags: List<jp.mimac.urlsaver.domain.TagWithCount>,
     selectedTargetCollectionId: Long?,
+    selectedLocalTagIds: Set<Long>,
     manualCollectionError: String?,
+    manualLocalTagError: String?,
     isManualSaving: Boolean,
     onDismiss: () -> Unit,
     onInputChange: (String) -> Unit,
     onPaste: () -> Unit,
     onSelectCollection: (Long?) -> Unit,
+    onSelectLocalTag: (Long) -> Unit,
     onRequestCreateCollection: (() -> Unit)?,
+    onRequestCreateLocalTag: () -> Unit,
     onSave: () -> Unit,
 ) {
     if (!visible) return
@@ -1739,8 +1832,72 @@ private fun ManualInputSheet(
                     onClick = onRequestCreateCollection,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("＋ タグを作成")
+                    Text("+")
                 }
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "タグ",
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.padding(bottom = 6.dp),
+            )
+            if (localTags.isEmpty()) {
+                Text(
+                    text = "タグがまだありません。必要なら作成してください",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                )
+            } else {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    localTags.forEach { tag ->
+                        val selected = tag.id in selectedLocalTagIds
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = if (selected) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                OrbitTokens.panelStrong
+                            },
+                            contentColor = if (selected) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            },
+                            border = BorderStroke(1.dp, OrbitTokens.outline),
+                            modifier = Modifier.clickable { onSelectLocalTag(tag.id) },
+                        ) {
+                            Text(
+                                text = tag.name,
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            )
+                        }
+                    }
+                }
+            }
+            if (!manualLocalTagError.isNullOrBlank()) {
+                Text(
+                    text = manualLocalTagError,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            TextButton(
+                onClick = onRequestCreateLocalTag,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("+")
             }
             Spacer(Modifier.height(8.dp))
             Button(
@@ -2570,7 +2727,7 @@ private fun MainListContent(
         onReorderCollections = onReorderCollections,
     )
     Spacer(modifier = Modifier.height(8.dp))
-    if (localSaveTags.isNotEmpty() || !showSharedTagCloudUi) {
+    if (localSaveTags.isNotEmpty() || showSharedTagCloudUi) {
         LazyRow(
             modifier = Modifier
                 .fillMaxWidth()
@@ -2579,13 +2736,7 @@ private fun MainListContent(
         ) {
             item {
                 TextButton(onClick = onRequestCreateLocalTag) {
-                    Icon(
-                        imageVector = Icons.Outlined.Sell,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text("+タグ")
+                    Text("+")
                 }
             }
             items(localSaveTags, key = { it.id }) { tag ->
@@ -2680,7 +2831,9 @@ private data class ManualInputUiState(
     val inputText: String = "",
     val inputError: ShareSaveResult? = null,
     val selectedCollectionId: Long? = null,
+    val selectedLocalTagIds: Set<Long> = emptySet(),
     val collectionError: String? = null,
+    val localTagError: String? = null,
     val isSaving: Boolean = false,
 )
 
