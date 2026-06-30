@@ -62,7 +62,7 @@ python3 scripts/media_resolver_backend.py
 Recommended build command:
 
 ```bash
-pip install -r requirements-media-resolver.txt
+pip install --upgrade -r requirements-media-resolver.txt
 ```
 
 For Instagram posts that are not accessible anonymously, configure a Netscape

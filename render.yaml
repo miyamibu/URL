@@ -3,7 +3,7 @@ services:
     name: rinbam-media-resolver
     env: python
     plan: starter
-    buildCommand: pip install -r requirements-media-resolver.txt
+    buildCommand: pip install --upgrade -r requirements-media-resolver.txt
     startCommand: python3 scripts/media_resolver_backend.py
     healthCheckPath: /health
     envVars:
