@@ -370,6 +370,16 @@ final class URLSaverAppModel: ObservableObject {
         return tag
     }
 
+    func renameLocalTag(tagID: Int64, name: String) async -> Bool {
+        guard (try? services.repository.renameLocalTag(id: tagID, name: name)) == true else {
+            enqueueNotification(AppNotification(message: "タグ名を変更できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
+            return false
+        }
+        await reload()
+        enqueueNotification(AppNotification(message: "タグ名を変更しました", actionLabel: nil, action: nil, autoDismissAfter: 3))
+        return true
+    }
+
     func createCollection(name: String) async -> CollectionSummary? {
         guard let collection = try? services.repository.createCollection(name: name) else {
             enqueueNotification(AppNotification(message: "コレクションを作成できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))

@@ -47,6 +47,7 @@ interface TagRepository {
     suspend fun createLocalTagWithResult(name: String): CreateTagResult
     suspend fun createSyncedTagWithResult(name: String): CreateTagResult
     suspend fun findLocalTagIdByName(name: String): Long? = null
+    suspend fun renameLocalTagWithResult(tagId: Long, name: String): CreateTagResult = CreateTagResult.Failed
     suspend fun deleteTag(tagId: Long)
     suspend fun assignTag(tagId: Long, entryId: Long)
     suspend fun assignTagWithResult(tagId: Long, entryId: Long): AssignTagResult

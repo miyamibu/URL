@@ -100,6 +100,14 @@ class ArchiveViewModel(
         }
         return deleted
     }
+
+    suspend fun restoreEntry(entryId: Long): Boolean {
+        return repository.unarchive(entryId)
+    }
+
+    suspend fun markPendingDelete(entryId: Long): Long? {
+        return repository.markPendingDelete(entryId)
+    }
 }
 
 private class InMemoryArchiveEntryCardDisplayModeStore : EntryCardDisplayModeStore {

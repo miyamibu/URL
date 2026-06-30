@@ -266,6 +266,31 @@ final class URLRepository: @unchecked Sendable {
         }
     }
 
+    func renameLocalTag(id tagID: Int64, name rawName: String) throws -> Bool {
+        guard let normalized = normalizeLocalTagName(rawName),
+              try loadLocalTag(id: tagID) != nil else {
+            return false
+        }
+        if let existing = try loadLocalTagByNormalizedName(normalized.key),
+           existing.id != tagID {
+            return false
+        }
+        try execute(
+            """
+            UPDATE local_tags
+            SET name = ?, normalized_name = ?, updated_at = ?
+            WHERE id = ?;
+            """,
+            binds: [
+                sql(normalized.name),
+                sql(normalized.key),
+                sql(Date().timeIntervalSince1970),
+                sql(tagID),
+            ]
+        )
+        return true
+    }
+
     func assignLocalTag(entryID: Int64, tagID: Int64) throws -> Bool {
         guard try loadEntry(id: entryID) != nil,
               try loadLocalTag(id: tagID) != nil else {

@@ -126,6 +126,17 @@ class MainListViewModel(
         return tagRepository?.createLocalTagWithResult(name) ?: CreateTagResult.Failed
     }
 
+    suspend fun renameLocalTag(tagId: Long, name: String): CreateTagResult {
+        return tagRepository?.renameLocalTagWithResult(tagId, name) ?: CreateTagResult.Failed
+    }
+
+    suspend fun deleteLocalTag(tagId: Long): Boolean {
+        val repository = tagRepository ?: return false
+        return runCatching {
+            repository.deleteTag(tagId)
+        }.isSuccess
+    }
+
     suspend fun submitManualInput(
         input: String,
         collectionId: Long?,

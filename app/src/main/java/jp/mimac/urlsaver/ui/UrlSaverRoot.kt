@@ -8,9 +8,11 @@ import jp.mimac.urlsaver.BuildConfig
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -444,6 +446,13 @@ private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
             viewModel = vm,
             onBack = { navController.popBackStack() },
             onOpenDetail = { navController.navigate(Routes.detail(it)) },
+            onRestoreEntry = { entryId ->
+                activityViewModel.onDetailEffect(DetailEffect.NavigateBackAfterRestore(entryId))
+            },
+            onPendingDeleteEntry = { entryId, pendingUntil ->
+                activityViewModel.onBatchPendingDelete(mapOf(entryId to pendingUntil))
+            },
+            onDeleteFailed = { activityViewModel.notifyDeleteFailed() },
         )
     }
 
@@ -698,6 +707,7 @@ private fun MainScreen(
                 tag.scope == SharedTagScope.LOCAL_ONLY &&
                     normalizeSharedTagName(tag.name) !in localCollectionNameSet
             }
+            .sortedByDescending { tag -> tag.id }
             .distinctBy { normalizeSharedTagName(it.name) }
     }
     val localTagNamesByEntryId = remember(localSaveTags, localTagEntryRefs) {
@@ -753,6 +763,8 @@ private fun MainScreen(
     var sharedTagDialogState by remember { mutableStateOf(SharedTagDialogUiState()) }
     var sharedTagGroupDialogState by remember { mutableStateOf(SharedTagDialogUiState()) }
     var manualLocalTagDialogState by remember { mutableStateOf(SharedTagDialogUiState()) }
+    var renameLocalTagDialogState by remember { mutableStateOf(SharedTagDialogUiState()) }
+    var pendingRenameLocalTagId by remember { mutableStateOf<Long?>(null) }
     var groupRenameDialogState by remember { mutableStateOf(SharedTagDialogUiState()) }
     var pendingGroupAction by remember { mutableStateOf<GroupActionConfirmation?>(null) }
     var mainPane by rememberSaveable { mutableStateOf(MainPane.URLS) }
@@ -763,6 +775,7 @@ private fun MainScreen(
     val profileSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showLocalTagManagerSheet by rememberSaveable { mutableStateOf(false) }
     var pendingDeleteCollection by remember { mutableStateOf<CollectionEntity?>(null) }
+    var pendingDeleteLocalTag by remember { mutableStateOf<TagWithCount?>(null) }
     var selectedEntryIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var previousTopEntryId by remember { mutableStateOf<Long?>(null) }
     var previousVisibleEntryCount by remember { mutableStateOf(0) }
@@ -843,6 +856,11 @@ private fun MainScreen(
         manualLocalTagDialogState = SharedTagDialogUiState()
     }
 
+    fun closeRenameLocalTagDialog() {
+        renameLocalTagDialogState = SharedTagDialogUiState()
+        pendingRenameLocalTagId = null
+    }
+
     fun closeCreateSharedTagDialog() {
         sharedTagDialogState = SharedTagDialogUiState()
     }
@@ -921,6 +939,27 @@ private fun MainScreen(
                 }
                 CreateTagResult.Failed -> {
                     manualLocalTagDialogState = manualLocalTagDialogState.copy(error = "タグを作成できませんでした")
+                }
+            }
+        }
+    }
+
+    fun confirmRenameLocalTag() {
+        val tagId = pendingRenameLocalTagId ?: return
+        scope.launch {
+            when (val renamed = viewModel.renameLocalTag(tagId, renameLocalTagDialogState.name)) {
+                is CreateTagResult.Success -> closeRenameLocalTagDialog()
+                CreateTagResult.InvalidName -> {
+                    renameLocalTagDialogState = renameLocalTagDialogState.copy(error = "タグ名を入力してください")
+                }
+                CreateTagResult.Duplicate -> {
+                    renameLocalTagDialogState = renameLocalTagDialogState.copy(error = "同じ名前のタグがあります")
+                }
+                is CreateTagResult.LimitReached -> {
+                    renameLocalTagDialogState = renameLocalTagDialogState.copy(error = renamed.message)
+                }
+                CreateTagResult.Failed -> {
+                    renameLocalTagDialogState = renameLocalTagDialogState.copy(error = "タグ名を変更できませんでした")
                 }
             }
         }
@@ -1214,6 +1253,17 @@ private fun MainScreen(
         }
     }
 
+    fun deleteLocalTag(tag: TagWithCount) {
+        scope.launch {
+            val deleted = viewModel.deleteLocalTag(tag.id)
+            if (deleted) {
+                onCollectionDeleted()
+            } else {
+                onCollectionDeleteFailed()
+            }
+        }
+    }
+
     if (showPrivacyDialog) {
         AlertDialog(
             onDismissRequest = { showPrivacyDialog = false },
@@ -1299,11 +1349,11 @@ private fun MainScreen(
 
     LocalTagManagementSheet(
         visible = showLocalTagManagerSheet,
-        collections = customCollections,
+        localTags = localSaveTags,
         onDismiss = { showLocalTagManagerSheet = false },
-        onRequestDelete = { collection ->
+        onRequestDelete = { tag ->
             showLocalTagManagerSheet = false
-            pendingDeleteCollection = collection
+            pendingDeleteLocalTag = tag
         },
     )
 
@@ -1327,6 +1377,32 @@ private fun MainScreen(
             },
             dismissButton = {
                 TextButton(onClick = { pendingDeleteCollection = null }) {
+                    Text("キャンセル")
+                }
+            },
+        )
+    }
+
+    pendingDeleteLocalTag?.let { tag ->
+        AlertDialog(
+            onDismissRequest = { pendingDeleteLocalTag = null },
+            title = { Text("タグを削除") },
+            text = { Text("「${tag.name}」を削除します。URL自体は削除されません。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingDeleteLocalTag = null
+                        deleteLocalTag(tag)
+                    },
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error,
+                    ),
+                ) {
+                    Text("削除する")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteLocalTag = null }) {
                     Text("キャンセル")
                 }
             },
@@ -1377,6 +1453,24 @@ private fun MainScreen(
             )
         },
         onConfirm = { confirmCreateManualLocalTag() },
+    )
+
+    CreateSharedTagDialog(
+        visible = renameLocalTagDialogState.visible && pendingRenameLocalTagId != null,
+        newSharedTagName = renameLocalTagDialogState.name,
+        createSharedTagError = renameLocalTagDialogState.error,
+        title = "タグ名を変更",
+        body = "自作タグの名前を変更します。",
+        nameLabel = "タグ名",
+        placeholder = "新しいタグ名",
+        onDismiss = { closeRenameLocalTagDialog() },
+        onNameChange = {
+            renameLocalTagDialogState = renameLocalTagDialogState.copy(
+                name = it,
+                error = null,
+            )
+        },
+        onConfirm = { confirmRenameLocalTag() },
     )
 
     CreateSharedTagDialog(
@@ -1668,6 +1762,13 @@ private fun MainScreen(
                             if (SHOW_COLLECTION_UI) toggleSelectedCollection(targetId)
                         },
                         onRequestCreateLocalTag = { showLocalTagManagerSheet = true },
+                        onRequestRenameLocalTag = { tag ->
+                            pendingRenameLocalTagId = tag.id
+                            renameLocalTagDialogState = SharedTagDialogUiState(
+                                visible = true,
+                                name = tag.name,
+                            )
+                        },
                         onRequestCreateCollection = if (SHOW_COLLECTION_UI) {
                             {
                                 createCollectionState = createCollectionState.copy(
@@ -1878,7 +1979,9 @@ private fun ManualInputSheet(
                                 style = MaterialTheme.typography.labelMedium,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                modifier = Modifier
+                                    .widthIn(max = 180.dp)
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
                             )
                         }
                     }
@@ -1929,9 +2032,9 @@ private fun ManualInputSheet(
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 private fun LocalTagManagementSheet(
     visible: Boolean,
-    collections: List<CollectionEntity>,
+    localTags: List<TagWithCount>,
     onDismiss: () -> Unit,
-    onRequestDelete: (CollectionEntity) -> Unit,
+    onRequestDelete: (TagWithCount) -> Unit,
 ) {
     if (!visible) return
 
@@ -1958,7 +2061,7 @@ private fun LocalTagManagementSheet(
                 }
             }
 
-            if (collections.isEmpty()) {
+            if (localTags.isEmpty()) {
                 OrbitPanel(tone = OrbitPanelTone.SOFT) {
                     Text(
                         text = "削除できるタグはまだありません",
@@ -1971,7 +2074,7 @@ private fun LocalTagManagementSheet(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    collections.forEach { collection ->
+                    localTags.forEach { tag ->
                         Surface(
                             shape = RoundedCornerShape(22.dp),
                             color = MaterialTheme.colorScheme.surfaceVariant,
@@ -1984,14 +2087,14 @@ private fun LocalTagManagementSheet(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
-                                    text = collection.name,
-                                    modifier = Modifier.widthIn(max = 120.dp),
+                                    text = tag.name,
+                                    modifier = Modifier.widthIn(max = 160.dp),
                                     style = MaterialTheme.typography.titleSmall,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
                                 IconButton(
-                                    onClick = { onRequestDelete(collection) },
+                                    onClick = { onRequestDelete(tag) },
                                     modifier = Modifier.height(40.dp),
                                 ) {
                                     Icon(
@@ -2679,6 +2782,7 @@ private fun MainEntryList(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun MainListContent(
     uiState: ListFilterUiState,
     customCollections: List<jp.mimac.urlsaver.data.CollectionEntity>,
@@ -2698,6 +2802,7 @@ private fun MainListContent(
     onReorderTopFilters: (List<String>) -> Unit,
     onSelectCollection: (Long?) -> Unit,
     onRequestCreateLocalTag: () -> Unit,
+    onRequestRenameLocalTag: (TagWithCount) -> Unit,
     onRequestCreateCollection: (() -> Unit)?,
     onReorderCollections: ((List<Long>) -> Unit)?,
     onOpenTagDetail: (Long) -> Unit,
@@ -2744,6 +2849,10 @@ private fun MainListContent(
                     shape = RoundedCornerShape(999.dp),
                     color = OrbitTokens.panelStrong,
                     border = BorderStroke(1.dp, OrbitTokens.outline),
+                    modifier = Modifier.combinedClickable(
+                        onClick = {},
+                        onDoubleClick = { onRequestRenameLocalTag(tag) },
+                    ),
                 ) {
                     Text(
                         text = tag.name,
@@ -2751,7 +2860,9 @@ private fun MainListContent(
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        modifier = Modifier
+                            .widthIn(max = 160.dp)
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
                     )
                 }
             }
@@ -3663,6 +3774,11 @@ private enum class MainSwipeAction {
     PENDING_DELETE,
 }
 
+private enum class ArchiveSwipeAction {
+    RESTORE,
+    PENDING_DELETE,
+}
+
 @Composable
 private fun EntrySelectionBar(
     selectedCount: Int,
@@ -3907,10 +4023,125 @@ private fun MainSwipeBackground(
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
+private fun SwipeableArchiveEntry(
+    entry: UrlEntryEntity,
+    displayMode: EntryCardDisplayMode,
+    onClick: () -> Unit,
+    onSwipeAction: (ArchiveSwipeAction) -> Unit,
+) {
+    val dismissState = rememberSwipeToDismissBoxState(
+        positionalThreshold = { totalDistance -> totalDistance * ENTRY_CARD_SWIPE_ACTION_THRESHOLD_FRACTION },
+        confirmValueChange = { targetValue ->
+            when (targetValue) {
+                SwipeToDismissBoxValue.StartToEnd -> {
+                    onSwipeAction(ArchiveSwipeAction.RESTORE)
+                    false
+                }
+
+                SwipeToDismissBoxValue.EndToStart -> {
+                    onSwipeAction(ArchiveSwipeAction.PENDING_DELETE)
+                    false
+                }
+
+                SwipeToDismissBoxValue.Settled -> true
+            }
+        },
+    )
+
+    SwipeToDismissBox(
+        state = dismissState,
+        modifier = Modifier.testTag("archive_entry_swipe_${entry.id}"),
+        enableDismissFromStartToEnd = true,
+        enableDismissFromEndToStart = true,
+        backgroundContent = {
+            ArchiveSwipeBackground(
+                direction = dismissState.dismissDirection,
+                swipeOffsetPx = runCatching { dismissState.requireOffset() }.getOrDefault(0f),
+            )
+        },
+    ) {
+        EntryCard(
+            entry = entry,
+            timestampMillis = entry.createdAt,
+            timestampLabel = "アーカイブ",
+            displayMode = displayMode,
+            showDisplayUrl = false,
+            onClick = onClick,
+        )
+    }
+}
+
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun ArchiveSwipeBackground(
+    direction: SwipeToDismissBoxValue,
+    swipeOffsetPx: Float,
+) {
+    val isRestore = direction == SwipeToDismissBoxValue.StartToEnd
+    val isDelete = direction == SwipeToDismissBoxValue.EndToStart
+    val density = LocalDensity.current
+    val color = when {
+        isRestore -> OrbitTokens.secondarySurface
+        isDelete -> OrbitTokens.dangerSurface
+        else -> OrbitTokens.panelSoft
+    }
+    val icon = when {
+        isRestore -> Icons.AutoMirrored.Outlined.ArrowBack
+        isDelete -> Icons.Outlined.Delete
+        else -> Icons.AutoMirrored.Outlined.ArrowBack
+    }
+    val label = when {
+        isRestore -> "戻す"
+        isDelete -> "削除"
+        else -> "スワイプで操作"
+    }
+    val alignment = if (isDelete) Alignment.CenterEnd else Alignment.CenterStart
+    val revealedWidth = with(density) { abs(swipeOffsetPx).toDp() }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+    ) {
+        if ((isRestore || isDelete) && revealedWidth > 0.dp) {
+            Box(
+                modifier = Modifier
+                    .align(alignment)
+                    .fillMaxHeight()
+                    .width(revealedWidth)
+                    .background(
+                        color = color,
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(OrbitTokens.radiusPanel),
+                    )
+                    .padding(horizontal = 16.dp, vertical = 20.dp),
+                contentAlignment = alignment,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    if (isDelete) {
+                        Text(text = label, style = MaterialTheme.typography.labelLarge)
+                        Icon(imageVector = icon, contentDescription = null)
+                    } else {
+                        Icon(imageVector = icon, contentDescription = null)
+                        Text(text = label, style = MaterialTheme.typography.labelLarge)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
 private fun ArchiveScreen(
     viewModel: ArchiveViewModel,
     onBack: () -> Unit,
     onOpenDetail: (Long) -> Unit,
+    onRestoreEntry: (Long) -> Unit,
+    onPendingDeleteEntry: (Long, Long) -> Unit,
+    onDeleteFailed: () -> Unit,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val collections by viewModel.collections.collectAsStateWithLifecycle()
@@ -3970,6 +4201,25 @@ private fun ArchiveScreen(
     fun reorderCollections(collectionIds: List<Long>) {
         scope.launch {
             viewModel.reorderCollections(collectionIds)
+        }
+    }
+
+    fun restoreArchivedEntry(entryId: Long) {
+        scope.launch {
+            if (viewModel.restoreEntry(entryId)) {
+                onRestoreEntry(entryId)
+            }
+        }
+    }
+
+    fun pendingDeleteArchivedEntry(entryId: Long) {
+        scope.launch {
+            val pendingUntil = viewModel.markPendingDelete(entryId)
+            if (pendingUntil != null) {
+                onPendingDeleteEntry(entryId, pendingUntil)
+            } else {
+                onDeleteFailed()
+            }
         }
     }
 
@@ -4072,13 +4322,16 @@ private fun ArchiveScreen(
                     else -> {
                         LazyColumn(modifier = Modifier.fillMaxSize()) {
                             items(uiState.entries, key = { it.id }) { entry ->
-                                EntryCard(
+                                SwipeableArchiveEntry(
                                     entry = entry,
-                                    timestampMillis = entry.createdAt,
-                                    timestampLabel = "アーカイブ",
                                     displayMode = entryCardDisplayMode,
-                                    showDisplayUrl = false,
                                     onClick = { onOpenDetail(entry.id) },
+                                    onSwipeAction = { action ->
+                                        when (action) {
+                                            ArchiveSwipeAction.RESTORE -> restoreArchivedEntry(entry.id)
+                                            ArchiveSwipeAction.PENDING_DELETE -> pendingDeleteArchivedEntry(entry.id)
+                                        }
+                                    },
                                 )
                             }
                         }
@@ -5399,6 +5652,7 @@ private fun DetailTagAssignmentOptionRow(
     val shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
     Row(
         modifier = modifier
+            .widthIn(max = 340.dp)
             .background(
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 shape = shape,
@@ -5413,6 +5667,9 @@ private fun DetailTagAssignmentOptionRow(
     ) {
         Text(
             text = label,
+            modifier = Modifier
+                .weight(1f, fill = false)
+                .widthIn(max = 220.dp),
             style = MaterialTheme.typography.titleLarge,
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
@@ -5425,7 +5682,9 @@ private fun DetailTagAssignmentOptionRow(
                 Modifier
             } else {
                 Modifier.testTag(actionTestTag)
-            }).height(40.dp),
+            })
+                .height(40.dp)
+                .widthIn(min = 64.dp),
             shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
         ) {

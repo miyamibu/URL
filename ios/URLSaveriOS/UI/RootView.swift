@@ -46,6 +46,8 @@ struct RootView: View {
     @State private var shareItems: [Any] = []
     @State private var selectedSharedTagID: String?
     @State private var localTagPendingDeletion: LocalTagSummary?
+    @State private var localTagPendingRename: LocalTagSummary?
+    @State private var localTagRenameDraft = ""
     @State private var selectedMainEntryIDs: Set<Int64> = []
 
     private var displayMode: EntryListDisplayMode {
@@ -57,6 +59,122 @@ struct RootView: View {
             get: { EntryListDisplayMode(rawValue: displayModeRaw) ?? .compact },
             set: { displayModeRaw = $0.rawValue }
         )
+    }
+
+    @ViewBuilder
+    private func tabContent(
+        mainDisplayedEntries: [URLRecord],
+        showsSharedTagCloud: Bool
+    ) -> some View {
+        switch model.selectedTab {
+        case .main:
+            MainScreen(
+                entries: mainDisplayedEntries,
+                totalEntries: model.activeEntries,
+                pendingInviteRecord: model.pendingInviteRecord,
+                localTags: model.localTags,
+                localTagAssignments: model.localTagAssignments,
+                collections: model.collections,
+                sharedTags: model.sharedTags,
+                selectedService: $selectedMainService,
+                selectedLocalTagID: $selectedMainLocalTagID,
+                selectedCollectionID: $selectedMainCollectionID,
+                displayMode: displayModeBinding,
+                isShowingUsageGuide: $isShowingUsageGuide,
+                isShowingSearchBar: $isShowingSearchBar,
+                searchQuery: $searchQuery,
+                onOpenArchive: { model.selectedTab = .archive },
+                onOpenGroups: { model.selectedTab = .groups },
+                onOpenDetail: model.openEntry(_:),
+                onCreateLocalTag: { isShowingLocalTagCreateAlert = true },
+                onCreateCollection: { isShowingCollectionCreateAlert = true },
+                onManageCollections: { isShowingCollectionManagementSheet = true },
+                onManageLocalTags: { isShowingLocalTagManagementSheet = true },
+                onRenameLocalTag: beginRenameLocalTag,
+                onArchive: { entryID in
+                    Task { await model.archive(entryID: entryID) }
+                },
+                onDelete: { entryID in
+                    Task { await model.markPendingDelete(entryID: entryID) }
+                },
+                selectedEntryIDs: selectedMainEntryIDs,
+                onStartSelection: { entryID in
+                    selectedMainEntryIDs = [entryID]
+                },
+                onToggleSelection: { entryID in
+                    toggleMainSelection(entryID)
+                },
+                onSelectAll: {
+                    selectedMainEntryIDs = Set(mainDisplayedEntries.map(\.id))
+                },
+                onCancelSelection: {
+                    selectedMainEntryIDs = []
+                },
+                onArchiveSelection: {
+                    let ids = selectedMainEntryIDs
+                    selectedMainEntryIDs = []
+                    Task { await model.archive(entryIDs: ids) }
+                },
+                onDeleteSelection: {
+                    let ids = selectedMainEntryIDs
+                    selectedMainEntryIDs = []
+                    Task { await model.markPendingDelete(entryIDs: ids) }
+                },
+                onOpenManualInput: { isShowingManualSheet = true },
+                onOpenShare: { isShowingExportSheet = true },
+                onOpenUsageGuide: {
+                    selectedMainEntryIDs = []
+                    searchQuery = ""
+                    isShowingSearchBar = false
+                    isShowingUsageGuide = true
+                },
+                onOpenPrivacyInfo: { isShowingPrivacyInfoSheet = true },
+                onOpenSharedTagCloud: { isShowingSharedTagCloudSheet = true },
+                onCreateSharedTag: { isShowingSharedTagCreateSheet = true },
+                onOpenSharedTag: { selectedSharedTagID = $0 },
+                showsSharedTagCloud: showsSharedTagCloud
+            )
+        case .archive:
+            ArchiveScreen(
+                entries: filteredEntries(
+                    model.archivedEntries,
+                    selectedService: selectedArchiveService,
+                    selectedLocalTagID: selectedArchiveLocalTagID,
+                    selectedCollectionID: selectedArchiveCollectionID,
+                    localTagAssignments: model.localTagAssignments,
+                    localTags: model.localTags,
+                    collections: model.collections
+                ),
+                totalEntries: model.archivedEntries,
+                localTags: model.localTags,
+                localTagAssignments: model.localTagAssignments,
+                collections: model.collections,
+                selectedService: $selectedArchiveService,
+                selectedLocalTagID: $selectedArchiveLocalTagID,
+                selectedCollectionID: $selectedArchiveCollectionID,
+                displayMode: displayModeBinding,
+                onBack: { model.selectedTab = .main },
+                onCreateLocalTag: { isShowingLocalTagCreateAlert = true },
+                onCreateCollection: { isShowingCollectionCreateAlert = true },
+                onManageCollections: { isShowingCollectionManagementSheet = true },
+                onManageLocalTags: { isShowingLocalTagManagementSheet = true },
+                onRenameLocalTag: beginRenameLocalTag,
+                onOpenDetail: model.openEntry(_:)
+            )
+        case .groups:
+            SharedTagGroupScreen(
+                model: model,
+                groups: model.sharedTagGroups,
+                sharedTags: model.sharedTags,
+                onBack: { model.selectedTab = .main },
+                onCreateGroup: { isShowingSharedTagGroupCreateSheet = true },
+                onOpenSharedTag: { selectedSharedTagID = $0 },
+                onShareInvite: { inviteURL in
+                    shareItems = [inviteURL]
+                    isShowingShareSheet = true
+                }
+            )
+        }
     }
 
     var body: some View {
@@ -84,115 +202,10 @@ struct RootView: View {
             )
             NavigationStack(path: $model.navigationPath) {
                 ScreenContainer {
-                    Group {
-                        switch model.selectedTab {
-                        case .main:
-                            MainScreen(
-                                entries: mainDisplayedEntries,
-                                totalEntries: model.activeEntries,
-                                pendingInviteRecord: model.pendingInviteRecord,
-                                localTags: model.localTags,
-                                localTagAssignments: model.localTagAssignments,
-                                collections: model.collections,
-                                sharedTags: model.sharedTags,
-                                selectedService: $selectedMainService,
-                                selectedLocalTagID: $selectedMainLocalTagID,
-                                selectedCollectionID: $selectedMainCollectionID,
-                                displayMode: displayModeBinding,
-                                isShowingUsageGuide: $isShowingUsageGuide,
-                                isShowingSearchBar: $isShowingSearchBar,
-                                searchQuery: $searchQuery,
-                                onOpenArchive: { model.selectedTab = .archive },
-                                onOpenGroups: { model.selectedTab = .groups },
-                                onOpenDetail: model.openEntry(_:),
-                                onCreateLocalTag: { isShowingLocalTagCreateAlert = true },
-                                onCreateCollection: { isShowingCollectionCreateAlert = true },
-                                onManageCollections: { isShowingCollectionManagementSheet = true },
-                                onManageLocalTags: { isShowingLocalTagManagementSheet = true },
-                                onArchive: { entryID in
-                                    Task { await model.archive(entryID: entryID) }
-                                },
-                                onDelete: { entryID in
-                                    Task { await model.markPendingDelete(entryID: entryID) }
-                                },
-                                selectedEntryIDs: selectedMainEntryIDs,
-                                onStartSelection: { entryID in
-                                    selectedMainEntryIDs = [entryID]
-                                },
-                                onToggleSelection: { entryID in
-                                    toggleMainSelection(entryID)
-                                },
-                                onSelectAll: {
-                                    selectedMainEntryIDs = Set(mainDisplayedEntries.map(\.id))
-                                },
-                                onCancelSelection: {
-                                    selectedMainEntryIDs = []
-                                },
-                                onArchiveSelection: {
-                                    let ids = selectedMainEntryIDs
-                                    selectedMainEntryIDs = []
-                                    Task { await model.archive(entryIDs: ids) }
-                                },
-                                onDeleteSelection: {
-                                    let ids = selectedMainEntryIDs
-                                    selectedMainEntryIDs = []
-                                    Task { await model.markPendingDelete(entryIDs: ids) }
-                                },
-                                onOpenManualInput: { isShowingManualSheet = true },
-                                onOpenShare: { isShowingExportSheet = true },
-                                onOpenUsageGuide: {
-                                    selectedMainEntryIDs = []
-                                    searchQuery = ""
-                                    isShowingSearchBar = false
-                                    isShowingUsageGuide = true
-                                },
-                                onOpenPrivacyInfo: { isShowingPrivacyInfoSheet = true },
-                                onOpenSharedTagCloud: { isShowingSharedTagCloudSheet = true },
-                                onCreateSharedTag: { isShowingSharedTagCreateSheet = true },
-                                onOpenSharedTag: { selectedSharedTagID = $0 },
-                                showsSharedTagCloud: showsSharedTagCloud
-                            )
-                        case .archive:
-                            ArchiveScreen(
-                                entries: filteredEntries(
-                                    model.archivedEntries,
-                                    selectedService: selectedArchiveService,
-                                    selectedLocalTagID: selectedArchiveLocalTagID,
-                                    selectedCollectionID: selectedArchiveCollectionID,
-                                    localTagAssignments: model.localTagAssignments,
-                                    localTags: model.localTags,
-                                    collections: model.collections
-                                ),
-                                totalEntries: model.archivedEntries,
-                                localTags: model.localTags,
-                                localTagAssignments: model.localTagAssignments,
-                                collections: model.collections,
-                                selectedService: $selectedArchiveService,
-                                selectedLocalTagID: $selectedArchiveLocalTagID,
-                                selectedCollectionID: $selectedArchiveCollectionID,
-                                displayMode: displayModeBinding,
-                                onBack: { model.selectedTab = .main },
-                                onCreateLocalTag: { isShowingLocalTagCreateAlert = true },
-                                onCreateCollection: { isShowingCollectionCreateAlert = true },
-                                onManageCollections: { isShowingCollectionManagementSheet = true },
-                                onManageLocalTags: { isShowingLocalTagManagementSheet = true },
-                                onOpenDetail: model.openEntry(_:)
-                            )
-                        case .groups:
-                            SharedTagGroupScreen(
-                                model: model,
-                                groups: model.sharedTagGroups,
-                                sharedTags: model.sharedTags,
-                                onBack: { model.selectedTab = .main },
-                                onCreateGroup: { isShowingSharedTagGroupCreateSheet = true },
-                                onOpenSharedTag: { selectedSharedTagID = $0 },
-                                onShareInvite: { inviteURL in
-                                    shareItems = [inviteURL]
-                                    isShowingShareSheet = true
-                                }
-                            )
-                        }
-                    }
+                    tabContent(
+                        mainDisplayedEntries: mainDisplayedEntries,
+                        showsSharedTagCloud: showsSharedTagCloud
+                    )
                     .overlay(alignment: .bottom) {
                         if model.selectedTab == .main && selectedMainEntryIDs.isEmpty && !isShowingUsageGuide {
                             BottomHomeActionBar(
@@ -421,8 +434,24 @@ struct RootView: View {
             } message: {
                 Text(localTagDeleteMessage(localTagPendingDeletion))
             }
+            .modifier(
+                LocalTagRenameAlertModifier(
+                    pendingTag: $localTagPendingRename,
+                    nameDraft: $localTagRenameDraft,
+                    onRename: renameLocalTagFromAlert(tagID:name:)
+                )
+            )
         }
         .background(AppPalette.background.ignoresSafeArea())
+    }
+
+    private func beginRenameLocalTag(_ tag: LocalTagSummary) {
+        localTagPendingRename = tag
+        localTagRenameDraft = tag.name
+    }
+
+    private func renameLocalTagFromAlert(tagID: Int64, name: String) {
+        Task { _ = await model.renameLocalTag(tagID: tagID, name: name) }
     }
 
     private var isShowingLocalTagDeleteAlert: Binding<Bool> {
@@ -474,6 +503,44 @@ struct RootView: View {
     }
 }
 
+private struct LocalTagRenameAlertModifier: ViewModifier {
+    @Binding var pendingTag: LocalTagSummary?
+    @Binding var nameDraft: String
+    let onRename: (Int64, String) -> Void
+
+    private var isPresented: Binding<Bool> {
+        Binding(
+            get: { pendingTag != nil },
+            set: { presented in
+                if !presented {
+                    pendingTag = nil
+                    nameDraft = ""
+                }
+            }
+        )
+    }
+
+    func body(content: Content) -> some View {
+        content.alert("タグ名を変更", isPresented: isPresented) {
+            TextField("タグ名", text: $nameDraft)
+            Button("変更") {
+                guard let tag = pendingTag else { return }
+                let tagID = tag.id
+                let name = nameDraft
+                pendingTag = nil
+                nameDraft = ""
+                onRename(tagID, name)
+            }
+            Button("キャンセル", role: .cancel) {
+                pendingTag = nil
+                nameDraft = ""
+            }
+        } message: {
+            Text("自作タグの名前を変更します。")
+        }
+    }
+}
+
 private struct MainScreen: View {
     let entries: [URLRecord]
     let totalEntries: [URLRecord]
@@ -496,6 +563,7 @@ private struct MainScreen: View {
     let onCreateCollection: () -> Void
     let onManageCollections: () -> Void
     let onManageLocalTags: () -> Void
+    let onRenameLocalTag: (LocalTagSummary) -> Void
     let onArchive: (Int64) -> Void
     let onDelete: (Int64) -> Void
     let selectedEntryIDs: Set<Int64>
@@ -562,7 +630,8 @@ private struct MainScreen: View {
                 collectionCreateAction: showsCollectionUI ? onCreateCollection : nil,
                 collectionManageAction: showsCollectionUI ? onManageCollections : nil,
                 localTags: localTags,
-                collections: showsCollectionUI ? collections : []
+                collections: showsCollectionUI ? collections : [],
+                onRenameLocalTag: onRenameLocalTag
             )
 
             if showsSharedTagCloud {
@@ -1911,6 +1980,7 @@ private struct ArchiveScreen: View {
     let onCreateCollection: () -> Void
     let onManageCollections: () -> Void
     let onManageLocalTags: () -> Void
+    let onRenameLocalTag: (LocalTagSummary) -> Void
     let onOpenDetail: (Int64) -> Void
 
     var body: some View {
@@ -1940,7 +2010,8 @@ private struct ArchiveScreen: View {
                 collectionCreateAction: showsCollectionUI ? onCreateCollection : nil,
                 collectionManageAction: showsCollectionUI ? onManageCollections : nil,
                 localTags: localTags,
-                collections: showsCollectionUI ? collections : []
+                collections: showsCollectionUI ? collections : [],
+                onRenameLocalTag: onRenameLocalTag
             )
                 .padding(.bottom, 10)
 
@@ -3139,7 +3210,7 @@ private struct ManualInputSheet: View {
     @State private var input = ""
     @State private var inputError: ShareSaveResult?
     @State private var isSaving = false
-    @State private var selectedLocalTagID: Int64?
+    @State private var selectedLocalTagIDs: Set<Int64> = []
     @State private var selectedSaveCollectionID: Int64?
     @State private var isShowingCreateTagAlert = false
     @State private var isShowingCreateCollectionAlert = false
@@ -3231,22 +3302,27 @@ private struct ManualInputSheet: View {
                         .font(.system(size: 17, weight: .medium))
                         .foregroundStyle(AppPalette.textSecondary)
                 } else {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
+                    ScrollView(showsIndicators: false) {
+                        LocalTagManagementFlowLayout(horizontalSpacing: 8, verticalSpacing: 8) {
                             ForEach(model.localTags) { tag in
                                 FilterChipButton(
                                     label: tag.name,
-                                    selected: selectedLocalTagID == tag.id
+                                    selected: selectedLocalTagIDs.contains(tag.id)
                                 ) {
-                                    selectedLocalTagID = selectedLocalTagID == tag.id ? nil : tag.id
+                                    if selectedLocalTagIDs.contains(tag.id) {
+                                        selectedLocalTagIDs.remove(tag.id)
+                                    } else {
+                                        selectedLocalTagIDs.insert(tag.id)
+                                    }
                                 }
                             }
                         }
                         .padding(.vertical, 2)
                     }
+                    .frame(maxHeight: 180, alignment: .top)
                 }
 
-                Button("＋ タグを作成") {
+                Button("+") {
                     isShowingCreateTagAlert = true
                 }
                     .font(.system(size: 21, weight: .heavy))
@@ -3262,9 +3338,8 @@ private struct ManualInputSheet: View {
                 ) {
                     Task {
                         isSaving = true
-                        let localTagIDs: Set<Int64> = selectedLocalTagID.map { Set([$0]) } ?? []
                         let collectionID = showsCollectionUI ? (selectedSaveCollectionID ?? selectedCollectionID) : nil
-                        let error = await model.manualSave(input: input, localTagIDs: localTagIDs, collectionID: collectionID)
+                        let error = await model.manualSave(input: input, localTagIDs: selectedLocalTagIDs, collectionID: collectionID)
                         isSaving = false
                         if let error {
                             inputError = error
@@ -3296,7 +3371,7 @@ private struct ManualInputSheet: View {
                 newTagName = ""
                 Task {
                     if let tag = await model.createLocalTag(name: name) {
-                        selectedLocalTagID = tag.id
+                        selectedLocalTagIDs.insert(tag.id)
                     }
                 }
             }

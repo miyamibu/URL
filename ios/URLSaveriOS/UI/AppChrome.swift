@@ -975,6 +975,7 @@ struct ServiceFilterRow: View {
     let collections: [CollectionSummary]
     let onSelectLocalTag: (Int64?) -> Void
     let onSelectCollection: (Int64?) -> Void
+    let onRenameLocalTag: (LocalTagSummary) -> Void
 
     init(
         selectedService: Binding<ServiceType>,
@@ -987,7 +988,8 @@ struct ServiceFilterRow: View {
         localTags: [LocalTagSummary] = [],
         collections: [CollectionSummary] = [],
         onSelectLocalTag: @escaping (Int64?) -> Void = { _ in },
-        onSelectCollection: @escaping (Int64?) -> Void = { _ in }
+        onSelectCollection: @escaping (Int64?) -> Void = { _ in },
+        onRenameLocalTag: @escaping (LocalTagSummary) -> Void = { _ in }
     ) {
         _selectedService = selectedService
         _selectedLocalTagID = selectedLocalTagID
@@ -1000,6 +1002,7 @@ struct ServiceFilterRow: View {
         self.collections = collections
         self.onSelectLocalTag = onSelectLocalTag
         self.onSelectCollection = onSelectCollection
+        self.onRenameLocalTag = onRenameLocalTag
     }
 
     var body: some View {
@@ -1066,6 +1069,11 @@ struct ServiceFilterRow: View {
                         onSelectCollection(nil)
                         onSelectLocalTag(tag.id)
                     }
+                    .simultaneousGesture(
+                        TapGesture(count: 2).onEnded {
+                            onRenameLocalTag(tag)
+                        }
+                    )
                 }
             }
             .padding(.horizontal, 14)

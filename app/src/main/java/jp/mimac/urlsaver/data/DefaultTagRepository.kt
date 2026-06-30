@@ -201,6 +201,28 @@ class DefaultTagRepository(
         return tagDao.findLocalTagByName(normalizeSharedTagName(name))?.id
     }
 
+    override suspend fun renameLocalTagWithResult(tagId: Long, name: String): CreateTagResult {
+        val normalized = normalizeSharedTagName(name)
+        if (validateSharedTagName(normalized) != null) {
+            return CreateTagResult.InvalidName
+        }
+        return database.withTransaction {
+            val tag = tagDao.findTagById(tagId)
+                ?: return@withTransaction CreateTagResult.Failed
+            if (tag.scope != SharedTagScope.LOCAL_ONLY || tag.deletedAt != null) {
+                return@withTransaction CreateTagResult.Failed
+            }
+            val existing = tagDao.findLocalTagByName(normalized)
+            if (existing != null && existing.id != tagId) {
+                return@withTransaction CreateTagResult.Duplicate
+            }
+            val updated = runCatching {
+                tagDao.upsertTags(listOf(tag.copy(name = normalized)))
+            }.isSuccess
+            if (updated) CreateTagResult.Success(tagId) else CreateTagResult.Failed
+        }
+    }
+
     override suspend fun deleteTag(tagId: Long) {
         val tag = tagDao.findTagById(tagId) ?: return
         if (tag.scope == SharedTagScope.LOCAL_ONLY) {

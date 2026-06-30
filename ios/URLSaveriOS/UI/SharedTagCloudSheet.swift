@@ -67,7 +67,6 @@ struct SharedTagCloudSheet: View {
 
                     profileSection
                     usageSummarySection
-                    chatGptSyncSection
                     accountActionsSection
                     paidCourseSection
 
@@ -569,85 +568,6 @@ struct SharedTagCloudSheet: View {
                 Text(promoMessage)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(AppPalette.textSecondary)
-            }
-        }
-    }
-
-    private var chatGptSyncSection: some View {
-        AppPanel {
-            HStack(alignment: .center, spacing: 12) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("ChatGPT連携")
-                        .font(.system(size: 20, weight: .heavy, design: .rounded))
-                        .foregroundStyle(AppPalette.textPrimary)
-                    Text(model.sharedTagCloudState.isSignedIn ? "保存中とアーカイブのリンクをChatGPT提案対象にします" : "サインイン後に利用できます")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(AppPalette.textSecondary)
-                }
-                Spacer(minLength: 0)
-                Toggle(
-                    "",
-                    isOn: Binding(
-                        get: { model.chatGptPersonalLinkSettings.enabled },
-                        set: { enabled in
-                            Task {
-                                await model.setChatGptPersonalLinkSync(
-                                    enabled: enabled,
-                                    contentFetchEnabled: model.chatGptPersonalLinkSettings.contentFetchEnabled
-                                )
-                            }
-                        }
-                    )
-                )
-                .labelsHidden()
-                .disabled(!model.sharedTagCloudState.isSignedIn || model.isUpdatingChatGptPersonalLinkSync)
-                .accessibilityLabel("ChatGPT連携")
-            }
-
-            HStack(alignment: .center, spacing: 12) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("公開ページ本文も同期")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(AppPalette.textPrimary)
-                    Text("取得済み本文があるリンクだけ同期します")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(AppPalette.textSecondary)
-                }
-                Spacer(minLength: 0)
-                Toggle(
-                    "",
-                    isOn: Binding(
-                        get: { model.chatGptPersonalLinkSettings.contentFetchEnabled },
-                        set: { enabled in
-                            Task {
-                                await model.setChatGptPersonalLinkSync(enabled: true, contentFetchEnabled: enabled)
-                            }
-                        }
-                    )
-                )
-                .labelsHidden()
-                .disabled(!model.sharedTagCloudState.isSignedIn || !model.chatGptPersonalLinkSettings.enabled || model.isUpdatingChatGptPersonalLinkSync)
-                .accessibilityLabel("公開ページ本文を同期")
-            }
-
-            if model.isUpdatingChatGptPersonalLinkSync {
-                HStack(spacing: 8) {
-                    ProgressView()
-                    Text("同期中")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(AppPalette.textSecondary)
-                }
-            }
-            if let lastSyncedAt = model.chatGptPersonalLinkSettings.lastSyncedAt {
-                Text("最終同期: \(DateFormatters.detailTimestamp.string(from: lastSyncedAt))")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(AppPalette.textSecondary)
-            }
-            if let message = model.chatGptPersonalLinkSettings.lastErrorMessage {
-                Text(message)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(AppPalette.danger)
-                    .textSelection(.enabled)
             }
         }
     }

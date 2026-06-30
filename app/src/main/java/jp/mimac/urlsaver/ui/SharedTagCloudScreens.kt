@@ -46,7 +46,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -80,8 +79,6 @@ import jp.mimac.urlsaver.domain.SharedTagAuthResult
 import jp.mimac.urlsaver.domain.BillingPeriod
 import jp.mimac.urlsaver.domain.FeatureEntitlements
 import jp.mimac.urlsaver.domain.PlanType
-import jp.mimac.urlsaver.data.ChatGptPersonalLinkSyncSettings
-import jp.mimac.urlsaver.data.ChatGptSyncResult
 import jp.mimac.urlsaver.domain.SharedTagInviteAcceptanceResult
 import jp.mimac.urlsaver.domain.SharedTagInvitePreviewResult
 import jp.mimac.urlsaver.domain.UsageSummary
@@ -105,7 +102,6 @@ fun SharedTagCloudAuthScreen(
     val cloudState by viewModel.cloudState.collectAsStateWithLifecycle()
     val profile by viewModel.profile.collectAsStateWithLifecycle()
     val usageSummary by viewModel.usageSummary.collectAsStateWithLifecycle()
-    val chatGptSyncSettings by viewModel.chatGptSyncSettings.collectAsStateWithLifecycle()
     val pendingInvite by viewModel.pendingInvite.collectAsStateWithLifecycle()
     val entitlements = viewModel.entitlements
     val scope = rememberCoroutineScope()
@@ -126,7 +122,6 @@ fun SharedTagCloudAuthScreen(
     var promoMessage by remember { mutableStateOf<String?>(null) }
     var isRedeemingPromoCode by remember { mutableStateOf(false) }
     var isPurchasing by remember { mutableStateOf(false) }
-    var isUpdatingChatGptSync by remember { mutableStateOf(false) }
     var draftAvatarBase64 by remember { mutableStateOf<String?>(null) }
     val avatarBitmap = remember(draftAvatarBase64) { draftAvatarBase64.toImageBitmapOrNull() }
     val isAvatarChanged = draftAvatarBase64 != profile.avatarBase64
@@ -342,28 +337,6 @@ fun SharedTagCloudAuthScreen(
                 }
                 UsageSummaryCard(
                     usageSummary = usageSummary,
-                )
-                ChatGptSyncCard(
-                    isSignedIn = cloudState.isSignedIn,
-                    settings = chatGptSyncSettings,
-                    isUpdating = isUpdatingChatGptSync,
-                    onSetEnabled = { enabled, contentFetchEnabled ->
-                        scope.launch {
-                            isUpdatingChatGptSync = true
-                            message = when (
-                                val result = viewModel.setChatGptPersonalLinkSync(
-                                    enabled = enabled,
-                                    contentFetchEnabled = contentFetchEnabled,
-                                )
-                            ) {
-                                ChatGptSyncResult.Success ->
-                                    if (enabled) "ChatGPT連携を有効にしました" else "ChatGPT連携を無効にしました"
-                                ChatGptSyncResult.AuthRequired -> "ChatGPT連携にはサインインが必要です"
-                                is ChatGptSyncResult.Failure -> result.message
-                            }
-                            isUpdatingChatGptSync = false
-                        }
-                    },
                 )
                 if (entitlements.subscriptionEnabled) {
                     OutlinedButton(
@@ -1437,78 +1410,6 @@ private fun SharedTagAuthForm(
             text = it,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-    }
-}
-
-@Composable
-private fun ChatGptSyncCard(
-    isSignedIn: Boolean,
-    settings: ChatGptPersonalLinkSyncSettings,
-    isUpdating: Boolean,
-    onSetEnabled: (enabled: Boolean, contentFetchEnabled: Boolean) -> Unit,
-) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        tonalElevation = 1.dp,
-        shape = MaterialTheme.shapes.medium,
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("ChatGPT連携", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        text = if (isSignedIn) {
-                            "保存中とアーカイブのリンクをChatGPT提案対象にします"
-                        } else {
-                            "サインイン後に利用できます"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Switch(
-                    checked = settings.enabled,
-                    onCheckedChange = { onSetEnabled(it, settings.contentFetchEnabled) },
-                    enabled = isSignedIn && !isUpdating,
-                )
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Text(
-                    text = "公開ページ本文も同期",
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                Switch(
-                    checked = settings.contentFetchEnabled,
-                    onCheckedChange = { onSetEnabled(true, it) },
-                    enabled = isSignedIn && settings.enabled && !isUpdating,
-                )
-            }
-            if (isUpdating) {
-                Text("同期中", style = MaterialTheme.typography.bodySmall)
-            }
-            settings.lastSyncedAt?.let {
-                Text("最終同期: $it", style = MaterialTheme.typography.bodySmall)
-            }
-            settings.lastErrorMessage?.let {
-                Text(
-                    text = it,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                )
-            }
-        }
     }
 }
 
