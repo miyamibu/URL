@@ -737,6 +737,7 @@ private fun MainScreen(
         profileVm.refreshPendingInvite()
     }
     var selectionModeActive by rememberSaveable { mutableStateOf(false) }
+    var batchLocalTagSheetVisible by rememberSaveable { mutableStateOf(false) }
     var searchBarVisible by rememberSaveable { mutableStateOf(false) }
     var searchQueryLocal by rememberSaveable { mutableStateOf("") }
     val searchFilteredEntries = remember(uiState.entries, searchQueryLocal, customCollections, sharedTags, localTagEntryRefs) {
@@ -1223,6 +1224,7 @@ private fun MainScreen(
             val archivedIds = viewModel.archiveEntries(selectedEntryIds)
             if (archivedIds.isNotEmpty()) {
                 selectedEntryIds = emptySet()
+                selectionModeActive = false
                 onBatchArchiveEntries(archivedIds)
             } else {
                 onArchiveFailed()
@@ -1235,9 +1237,26 @@ private fun MainScreen(
             val pendingDeletions = viewModel.markPendingDeleteEntries(selectedEntryIds)
             if (pendingDeletions.isNotEmpty()) {
                 selectedEntryIds = emptySet()
+                selectionModeActive = false
                 onBatchPendingDeleteEntries(pendingDeletions)
             } else {
                 onDeleteFailed()
+            }
+        }
+    }
+
+    fun assignSelectedEntriesToLocalTag(tag: TagWithCount) {
+        val entryIds = selectedEntryIds
+        if (entryIds.isEmpty()) return
+        scope.launch {
+            val assignedCount = viewModel.assignTagToEntries(tag.id, entryIds)
+            if (assignedCount > 0) {
+                batchLocalTagSheetVisible = false
+                selectedEntryIds = emptySet()
+                selectionModeActive = false
+                snackbarHostState.showSnackbar("タグを追加しました", duration = SnackbarDuration.Short)
+            } else {
+                snackbarHostState.showSnackbar("タグを追加できませんでした", duration = SnackbarDuration.Short)
             }
         }
     }
@@ -1355,6 +1374,14 @@ private fun MainScreen(
             showLocalTagManagerSheet = false
             pendingDeleteLocalTag = tag
         },
+    )
+
+    BatchLocalTagAssignmentSheet(
+        visible = batchLocalTagSheetVisible,
+        localTags = localSaveTags,
+        selectedCount = selectedEntryIds.size,
+        onDismiss = { batchLocalTagSheetVisible = false },
+        onSelectTag = { tag -> assignSelectedEntriesToLocalTag(tag) },
     )
 
     pendingDeleteCollection?.let { collection ->
@@ -1748,6 +1775,7 @@ private fun MainScreen(
                         selectedCollectionId = selectedCollectionId,
                         serviceFilterOrder = serviceFilterOrder,
                         topFilterOrderTokens = topFilterOrderTokens,
+                        selectionModeActive = selectionModeActive,
                         selectedEntryIds = selectedEntryIds,
                         entryCardDisplayMode = entryCardDisplayMode,
                         mainListState = mainListState,
@@ -1808,6 +1836,11 @@ private fun MainScreen(
                             selectionModeActive = false
                         },
                         onArchiveSelectedEntries = { archiveSelectedEntries() },
+                        onRequestTagSelectedEntries = {
+                            if (selectedEntryIds.isNotEmpty()) {
+                                batchLocalTagSheetVisible = true
+                            }
+                        },
                         onDeleteSelectedEntries = { deleteSelectedEntries() },
                         onOpenDetail = onOpenDetail,
                         onArchiveActiveEntry = { entryId -> archiveActiveEntry(entryId) },
@@ -2729,6 +2762,7 @@ private fun MiniOutlinedPanel(modifier: Modifier = Modifier, content: @Composabl
 private fun MainEntryList(
     entries: List<UrlEntryEntity>,
     listState: androidx.compose.foundation.lazy.LazyListState,
+    selectionModeActive: Boolean,
     selectedEntryIds: Set<Long>,
     entryCardDisplayMode: EntryCardDisplayMode,
     localTagNamesByEntryId: Map<Long, List<String>>,
@@ -2743,7 +2777,7 @@ private fun MainEntryList(
         modifier = Modifier.fillMaxSize(),
     ) {
         items(entries, key = { it.id }) { entry ->
-            val selectionMode = selectedEntryIds.isNotEmpty()
+            val selectionMode = selectionModeActive || selectedEntryIds.isNotEmpty()
             val selected = entry.id in selectedEntryIds
             if (entry.recordState == RecordState.ACTIVE && !selectionMode) {
                 SwipeableMainEntry(
@@ -2794,6 +2828,7 @@ private fun MainListContent(
     selectedCollectionId: Long?,
     serviceFilterOrder: List<ServiceType>,
     topFilterOrderTokens: List<String>,
+    selectionModeActive: Boolean,
     selectedEntryIds: Set<Long>,
     entryCardDisplayMode: EntryCardDisplayMode,
     mainListState: androidx.compose.foundation.lazy.LazyListState,
@@ -2813,6 +2848,7 @@ private fun MainListContent(
     onSelectAllEntries: () -> Unit,
     onClearEntrySelection: () -> Unit,
     onArchiveSelectedEntries: () -> Unit,
+    onRequestTagSelectedEntries: () -> Unit,
     onDeleteSelectedEntries: () -> Unit,
     onOpenDetail: (Long) -> Unit,
     onArchiveActiveEntry: (Long) -> Unit,
@@ -2895,12 +2931,13 @@ private fun MainListContent(
         }
         Spacer(modifier = Modifier.height(8.dp))
     }
-    if (selectedEntryIds.isNotEmpty()) {
+    if (selectionModeActive || selectedEntryIds.isNotEmpty()) {
         EntrySelectionBar(
             selectedCount = selectedEntryIds.size,
             allSelected = uiState.entries.isNotEmpty() && selectedEntryIds.size == uiState.entries.size,
             onSelectAll = onSelectAllEntries,
             onArchive = onArchiveSelectedEntries,
+            onTag = onRequestTagSelectedEntries,
             onDelete = onDeleteSelectedEntries,
             onCancel = onClearEntrySelection,
         )
@@ -2924,6 +2961,7 @@ private fun MainListContent(
             MainEntryList(
                 entries = uiState.entries,
                 listState = mainListState,
+                selectionModeActive = selectionModeActive,
                 selectedEntryIds = selectedEntryIds,
                 entryCardDisplayMode = entryCardDisplayMode,
                 localTagNamesByEntryId = localTagNamesByEntryId,
@@ -3785,6 +3823,7 @@ private fun EntrySelectionBar(
     allSelected: Boolean,
     onSelectAll: () -> Unit,
     onArchive: () -> Unit,
+    onTag: () -> Unit,
     onDelete: () -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -3807,7 +3846,7 @@ private fun EntrySelectionBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = "${selectedCount}件選択",
+            text = "${selectedCount}件",
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
@@ -3820,17 +3859,11 @@ private fun EntrySelectionBar(
                 .height(36.dp)
                 .background(OrbitTokens.panelStrong, buttonShape)
                 .clickable(enabled = !allSelected, onClick = onSelectAll)
-                .padding(horizontal = 10.dp)
+                .padding(horizontal = 12.dp)
                 .semantics { contentDescription = "すべて選択" },
-            horizontalArrangement = Arrangement.spacedBy(7.dp),
+            horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                imageVector = Icons.Outlined.Check,
-                contentDescription = null,
-                tint = Color.White.copy(alpha = 0.95f),
-                modifier = Modifier.size(23.dp),
-            )
             Text(
                 text = "すべて選択",
                 style = MaterialTheme.typography.labelLarge,
@@ -3844,25 +3877,40 @@ private fun EntrySelectionBar(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             SelectionIconButton(
+                contentDescription = "タグ",
+                enabled = selectedCount > 0,
+                onClick = onTag,
+                icon = {
+                    Icon(
+                        imageVector = Icons.Outlined.Sell,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = if (selectedCount > 0) 0.95f else 0.35f),
+                        modifier = Modifier.size(28.dp),
+                    )
+                },
+            )
+            SelectionIconButton(
                 contentDescription = "アーカイブ",
+                enabled = selectedCount > 0,
                 onClick = onArchive,
                 icon = {
                     Icon(
                         imageVector = Icons.Outlined.Archive,
                         contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.95f),
+                        tint = Color.White.copy(alpha = if (selectedCount > 0) 0.95f else 0.35f),
                         modifier = Modifier.size(30.dp),
                     )
                 },
             )
             SelectionIconButton(
                 contentDescription = "削除",
+                enabled = selectedCount > 0,
                 onClick = onDelete,
                 icon = {
                     Icon(
                         imageVector = Icons.Outlined.Delete,
                         contentDescription = null,
-                        tint = OrbitTokens.danger,
+                        tint = if (selectedCount > 0) OrbitTokens.danger else Color.White.copy(alpha = 0.35f),
                         modifier = Modifier.size(30.dp),
                     )
                 },
@@ -3884,8 +3932,72 @@ private fun EntrySelectionBar(
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
+private fun BatchLocalTagAssignmentSheet(
+    visible: Boolean,
+    localTags: List<TagWithCount>,
+    selectedCount: Int,
+    onDismiss: () -> Unit,
+    onSelectTag: (TagWithCount) -> Unit,
+) {
+    if (!visible) return
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("タグを追加") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = "${selectedCount}件に追加する自作タグを選びます。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (localTags.isEmpty()) {
+                    Text(
+                        text = "自作タグがまだありません。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        localTags.forEach { tag ->
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = OrbitTokens.panelSoft,
+                                border = BorderStroke(1.dp, OrbitTokens.outline),
+                                modifier = Modifier.clickable { onSelectTag(tag) },
+                            ) {
+                                Text(
+                                    text = tag.name,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier
+                                        .widthIn(max = 180.dp)
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("キャンセル")
+            }
+        },
+    )
+}
+
+@Composable
 private fun SelectionIconButton(
     contentDescription: String,
+    enabled: Boolean = true,
     onClick: () -> Unit,
     icon: @Composable () -> Unit,
 ) {
@@ -3897,7 +4009,7 @@ private fun SelectionIconButton(
                 color = OrbitTokens.panelStrong,
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(50),
             )
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .semantics { this.contentDescription = contentDescription },
         contentAlignment = Alignment.Center,
     ) {

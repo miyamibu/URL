@@ -48,6 +48,7 @@ struct RootView: View {
     @State private var localTagPendingDeletion: LocalTagSummary?
     @State private var localTagPendingRename: LocalTagSummary?
     @State private var localTagRenameDraft = ""
+    @State private var isShowingBatchLocalTagSheet = false
     @State private var selectedMainEntryIDs: Set<Int64> = []
 
     private var displayMode: EntryListDisplayMode {
@@ -114,6 +115,11 @@ struct RootView: View {
                     let ids = selectedMainEntryIDs
                     selectedMainEntryIDs = []
                     Task { await model.archive(entryIDs: ids) }
+                },
+                onTagSelection: {
+                    if !selectedMainEntryIDs.isEmpty {
+                        isShowingBatchLocalTagSheet = true
+                    }
                 },
                 onDeleteSelection: {
                     let ids = selectedMainEntryIDs
@@ -229,6 +235,7 @@ struct RootView: View {
             .onChange(of: model.selectedTab) { _, tab in
                 if tab != .main {
                     selectedMainEntryIDs = []
+                    isShowingBatchLocalTagSheet = false
                     searchQuery = ""
                     isShowingSearchBar = false
                     isShowingUsageGuide = false
@@ -310,6 +317,17 @@ struct RootView: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
                 .presentationCornerRadius(32)
+            }
+            .sheet(isPresented: $isShowingBatchLocalTagSheet) {
+                BatchLocalTagAssignmentSheet(
+                    localTags: model.localTags,
+                    selectedCount: selectedMainEntryIDs.count,
+                    onSelect: assignSelectedEntries(to:),
+                    onClose: { isShowingBatchLocalTagSheet = false }
+                )
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+                .presentationCornerRadius(28)
             }
             .sheet(isPresented: $isShowingCollectionManagementSheet) {
                 CollectionManagementSheet(
@@ -454,6 +472,18 @@ struct RootView: View {
         Task { _ = await model.renameLocalTag(tagID: tagID, name: name) }
     }
 
+    private func assignSelectedEntries(to tag: LocalTagSummary) {
+        let ids = selectedMainEntryIDs
+        guard !ids.isEmpty else { return }
+        selectedMainEntryIDs = []
+        isShowingBatchLocalTagSheet = false
+        Task {
+            for entryID in ids {
+                _ = await model.addEntry(entryID, toLocalTag: tag.id)
+            }
+        }
+    }
+
     private var isShowingLocalTagDeleteAlert: Binding<Bool> {
         Binding(
             get: { localTagPendingDeletion != nil },
@@ -572,6 +602,7 @@ private struct MainScreen: View {
     let onSelectAll: () -> Void
     let onCancelSelection: () -> Void
     let onArchiveSelection: () -> Void
+    let onTagSelection: () -> Void
     let onDeleteSelection: () -> Void
     let onOpenManualInput: () -> Void
     let onOpenShare: () -> Void
@@ -649,6 +680,7 @@ private struct MainScreen: View {
                     allSelected: !entries.isEmpty && selectedEntryIDs.count == entries.count,
                     onSelectAll: onSelectAll,
                     onArchive: onArchiveSelection,
+                    onTag: onTagSelection,
                     onDelete: onDeleteSelection,
                     onCancel: onCancelSelection
                 )
@@ -1470,12 +1502,13 @@ private struct EntrySelectionBar: View {
     let allSelected: Bool
     let onSelectAll: () -> Void
     let onArchive: () -> Void
+    let onTag: () -> Void
     let onDelete: () -> Void
     let onCancel: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
-            Text("\(selectedCount)件選択")
+            Text("\(selectedCount)件")
                 .font(.system(size: 15, weight: .heavy, design: .rounded))
                 .foregroundStyle(AppPalette.textSecondary)
                 .lineLimit(1)
@@ -1484,6 +1517,7 @@ private struct EntrySelectionBar: View {
             Spacer(minLength: 0)
 
             selectAllButton
+            selectionIconButton("タグ", systemImage: "tag", enabled: selectedCount > 0, action: onTag)
             selectionIconButton("アーカイブ", systemImage: "archivebox", action: onArchive)
             selectionIconButton("削除", systemImage: "trash", role: .destructive, action: onDelete)
             selectionIconButton("キャンセル", systemImage: "xmark", action: onCancel)
@@ -1500,7 +1534,7 @@ private struct EntrySelectionBar: View {
 
     private var selectAllButton: some View {
         Button(action: onSelectAll) {
-            Label("すべて選択", systemImage: "checklist")
+            Text("すべて選択")
                 .font(.system(size: 14, weight: .bold))
                 .lineLimit(1)
                 .padding(.horizontal, 10)
@@ -1517,6 +1551,7 @@ private struct EntrySelectionBar: View {
         _ title: String,
         systemImage: String,
         role: ButtonRole? = nil,
+        enabled: Bool = true,
         action: @escaping () -> Void
     ) -> some View {
         Button(role: role, action: action) {
@@ -1524,9 +1559,10 @@ private struct EntrySelectionBar: View {
                 .font(.system(size: 17, weight: .heavy))
                 .frame(width: 38, height: 36)
                 .background(AppPalette.panelStrong, in: Capsule())
-                .foregroundStyle(role == .destructive ? AppPalette.warning : Color.white.opacity(0.95))
+                .foregroundStyle(enabled ? (role == .destructive ? AppPalette.warning : Color.white.opacity(0.95)) : Color.white.opacity(0.35))
         }
         .buttonStyle(.plain)
+        .disabled(!enabled)
         .accessibilityLabel(title)
     }
 }
@@ -2903,6 +2939,72 @@ private struct SharedTagGroupCreateSheet: View {
             } label: {
                 Text("サインインへ")
             }
+        }
+    }
+}
+
+private struct BatchLocalTagAssignmentSheet: View {
+    let localTags: [LocalTagSummary]
+    let selectedCount: Int
+    let onSelect: (LocalTagSummary) -> Void
+    let onClose: () -> Void
+
+    var body: some View {
+        ZStack {
+            AppPalette.background.ignoresSafeArea()
+
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Text("タグを追加")
+                        .font(.system(size: 24, weight: .heavy, design: .rounded))
+                        .foregroundStyle(AppPalette.textPrimary)
+                    Spacer()
+                    Button("閉じる", action: onClose)
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(AppPalette.primaryStrong)
+                }
+
+                Text("\(selectedCount)件に追加する自作タグを選びます。")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(AppPalette.textSecondary)
+
+                if localTags.isEmpty {
+                    AppPanel {
+                        Text("自作タグがまだありません。")
+                            .font(.system(size: 16, weight: .heavy, design: .rounded))
+                            .foregroundStyle(AppPalette.textSecondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } else {
+                    ScrollView(showsIndicators: false) {
+                        LocalTagManagementFlowLayout(horizontalSpacing: 8, verticalSpacing: 8) {
+                            ForEach(localTags) { tag in
+                                Button {
+                                    onSelect(tag)
+                                } label: {
+                                    Text(tag.name)
+                                        .font(.system(size: 14, weight: .heavy, design: .rounded))
+                                        .foregroundStyle(AppPalette.textPrimary)
+                                        .lineLimit(1)
+                                        .truncationMode(.tail)
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 8)
+                                        .background(AppPalette.surfaceSoft, in: Capsule())
+                                        .overlay(
+                                            Capsule()
+                                                .stroke(AppPalette.outlineSoft, lineWidth: 1)
+                                        )
+                                        .frame(maxWidth: 190, alignment: .leading)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 2)
+                    }
+                }
+            }
+            .padding(20)
         }
     }
 }

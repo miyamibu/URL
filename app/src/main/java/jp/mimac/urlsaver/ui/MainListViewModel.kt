@@ -137,6 +137,22 @@ class MainListViewModel(
         }.isSuccess
     }
 
+    suspend fun assignTagToEntries(tagId: Long, entryIds: Collection<Long>): Int {
+        val repository = tagRepository ?: return 0
+        var assignedCount = 0
+        entryIds.forEach { entryId ->
+            when (repository.assignTagWithResult(tagId = tagId, entryId = entryId)) {
+                AssignTagResult.Success,
+                AssignTagResult.AlreadyAssigned,
+                -> assignedCount += 1
+                is AssignTagResult.LimitReached,
+                AssignTagResult.Failed,
+                -> Unit
+            }
+        }
+        return assignedCount
+    }
+
     suspend fun submitManualInput(
         input: String,
         collectionId: Long?,
