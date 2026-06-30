@@ -17,6 +17,9 @@ artifacts/compile*.txt
 artifacts/*.log
 artifacts/*classpath*.txt
 artifacts/device-backups/
+artifacts/device-verification/
+artifacts/recovery/
+artifacts/ui-review/2026-06-30/
 artifacts/tiktok-live/
 tmp_main.png
 
