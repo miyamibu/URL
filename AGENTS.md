@@ -108,6 +108,7 @@ Phase 1a/1b の URL 保存契約をコア不変条件として守りつつ、承
 ## UI / UX work
 
 - For UI/UX tasks, read `DESIGN.md` before editing code and keep long repeatable procedures in `.agents/skills/`.
+- For Android/iOS home, card list, tag management, detail tag sections, physical-device UI regression, or rollback/restoration work, first read `.agents/skills/rinbam-single-route/SKILL.md` and `docs/mobile-ui-regression-contract.md`, then run `python3 scripts/verify_mobile_ui_contract.py` before and after the change when those surfaces are in scope.
 - Source of truth priority: current explicit user instruction, existing Compose/SwiftUI code and domain contracts, `DESIGN.md`, approved Figma/design files, screenshots or `gpt-image-2` images, then ambiguous natural-language preferences.
 - The top bookmark/book "使い方" button must open the rich illustrated usage-list page with sections such as "まず覚える", "便利な操作", and "共有とAI"; it must not open or replace that page with the first-run onboarding/spotlight overlay.
 - First-run onboarding and the manual "使い方" list are separate UI surfaces. After UI changes, verify the bookmark/book button on both canonical iOS and Android apps before reporting completion.

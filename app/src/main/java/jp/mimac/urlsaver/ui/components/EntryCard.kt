@@ -54,6 +54,7 @@ fun EntryCard(
     displayMode: EntryCardDisplayMode = EntryCardDisplayMode.RICH,
     showDisplayUrl: Boolean = true,
     selected: Boolean = false,
+    localTagNames: List<String> = emptyList(),
     onLongClick: (() -> Unit)? = null,
     footerContent: (@Composable ColumnScope.() -> Unit)? = null,
     onClick: () -> Unit,
@@ -68,6 +69,7 @@ fun EntryCard(
         MaterialTheme.typography.titleSmall
     }
     val titleMaxLines = if (displayMode == EntryCardDisplayMode.COMPACT) 2 else 3
+    val visibleLocalTagNames = entryCardVisibleLocalTagNames(localTagNames)
 
     Surface(
         modifier = Modifier
@@ -128,51 +130,76 @@ fun EntryCard(
                             ),
                     )
                     Column(modifier = Modifier.weight(1f)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
+                        if (visibleLocalTagNames.isEmpty()) {
                             Row(
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                             ) {
-                                ServiceBadge(
-                                    serviceType = serviceTypeForUi(entry.serviceType),
-                                    badgeImageUrl = entry.badgeImageUrl,
-                                )
-                                Text(
-                                    text = serviceLabelForList(entry.serviceType, entry.normalizedHost),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.weight(1f, fill = false),
-                                )
-                                if (entry.contentContext != ContentContext.STANDARD) {
+                                Row(
+                                    modifier = Modifier.weight(1f),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    ServiceBadge(
+                                        serviceType = serviceTypeForUi(entry.serviceType),
+                                        badgeImageUrl = entry.badgeImageUrl,
+                                    )
+                                    Text(
+                                        text = serviceLabelForList(entry.serviceType, entry.normalizedHost),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.weight(1f, fill = false),
+                                    )
+                                    if (entry.contentContext != ContentContext.STANDARD) {
+                                        Surface(
+                                            shape = RoundedCornerShape(999.dp),
+                                            color = OrbitTokens.panelStrong,
+                                            border = BorderStroke(1.dp, OrbitTokens.outline),
+                                        ) {
+                                            Text(
+                                                text = entry.contentContext.label,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                            )
+                                        }
+                                    }
+                                }
+                                Column(horizontalAlignment = Alignment.End) {
+                                    MetadataStatusDot(entry.metadataState)
+                                    Text(
+                                        text = "$timestampLabel ${formatTimestamp(timestampMillis, ZoneId.of("Asia/Tokyo"))}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(top = 10.dp),
+                                    )
+                                }
+                            }
+                        } else {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                visibleLocalTagNames.take(3).forEach { tagName ->
                                     Surface(
                                         shape = RoundedCornerShape(999.dp),
                                         color = OrbitTokens.panelStrong,
                                         border = BorderStroke(1.dp, OrbitTokens.outline),
                                     ) {
                                         Text(
-                                            text = entry.contentContext.label,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            text = tagName,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
                                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                                         )
                                     }
                                 }
-                            }
-                            Column(horizontalAlignment = Alignment.End) {
-                                MetadataStatusDot(entry.metadataState)
-                                Text(
-                                    text = "$timestampLabel ${formatTimestamp(timestampMillis, ZoneId.of("Asia/Tokyo"))}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(top = 10.dp),
-                                )
                             }
                         }
                         Text(
@@ -234,6 +261,17 @@ fun EntryCard(
             }
         }
     }
+}
+
+internal fun entryCardVisibleLocalTagNames(localTagNames: List<String>): List<String> {
+    return localTagNames
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .distinctBy { it.lowercase() }
+}
+
+internal fun entryCardUsesLocalTagHeader(localTagNames: List<String>): Boolean {
+    return entryCardVisibleLocalTagNames(localTagNames).isNotEmpty()
 }
 
 @OptIn(ExperimentalFoundationApi::class)

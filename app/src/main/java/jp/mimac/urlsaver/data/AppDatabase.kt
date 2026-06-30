@@ -53,6 +53,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_14_15,
                     MIGRATION_15_16,
                     MIGRATION_16_17,
+                    MIGRATION_18_17,
+                    MIGRATION_19_17,
                 )
                 .addCallback(
                     object : Callback() {
@@ -389,6 +391,22 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_18_17 = object : Migration(18, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                downgradePostPlanSchemaTo17(db)
+            }
+        }
+
+        val MIGRATION_19_17 = object : Migration(19, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                downgradePostPlanSchemaTo17(db)
+            }
+        }
+
+        private fun downgradePostPlanSchemaTo17(db: SupportSQLiteDatabase) {
+            dropColumnIfPresent(db, "url_entries", "pendingDeleteOriginState")
+        }
+
         private fun ensureSharedTagGroupTables(db: SupportSQLiteDatabase) {
             dropTableIfColumnless(db, "shared_tag_groups")
             dropTableIfColumnless(db, "shared_tag_group_members")
@@ -479,6 +497,27 @@ abstract class AppDatabase : RoomDatabase() {
             }
             if (!hasColumn) {
                 db.execSQL("ALTER TABLE `$tableName` ADD COLUMN `$columnName` $columnDefinition")
+            }
+        }
+
+        private fun dropColumnIfPresent(
+            db: SupportSQLiteDatabase,
+            tableName: String,
+            columnName: String,
+        ) {
+            val hasColumn = db.query("PRAGMA table_info(`$tableName`)").use { cursor ->
+                val nameIndex = cursor.getColumnIndex("name")
+                var found = false
+                while (cursor.moveToNext()) {
+                    if (cursor.getString(nameIndex) == columnName) {
+                        found = true
+                        break
+                    }
+                }
+                found
+            }
+            if (hasColumn) {
+                db.execSQL("ALTER TABLE `$tableName` DROP COLUMN `$columnName`")
             }
         }
     }

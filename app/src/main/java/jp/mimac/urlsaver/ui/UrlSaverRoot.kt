@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -56,7 +57,6 @@ import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.IosShare
-import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.LinkOff
 import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.outlined.Groups
@@ -691,6 +691,25 @@ private fun MainScreen(
             tag.scope == SharedTagScope.SYNCED &&
                 normalizeSharedTagName(tag.name) !in localCollectionNameSet
         }
+    }
+    val localSaveTags = remember(sharedTags, localCollectionNameSet) {
+        sharedTags
+            .filter { tag ->
+                tag.scope == SharedTagScope.LOCAL_ONLY &&
+                    normalizeSharedTagName(tag.name) !in localCollectionNameSet
+            }
+            .distinctBy { normalizeSharedTagName(it.name) }
+    }
+    val localTagNamesByEntryId = remember(localSaveTags, localTagEntryRefs) {
+        val namesById = localSaveTags.associate { it.id to it.name }
+        localTagEntryRefs
+            .groupBy(
+                keySelector = { it.entryId },
+                valueTransform = { namesById[it.tagId] },
+            )
+            .mapValues { (_, names) ->
+                names.filterNotNull().distinctBy { it.lowercase() }.sorted()
+            }
     }
     val showSharedTagCloudUi = shouldShowSharedTagCloudEntryPoints(
         isConfigured = sharedTagCloudState.isConfigured,
@@ -1400,13 +1419,6 @@ private fun MainScreen(
                                     modifier = Modifier.size(MainTopBarActionIconSize),
                                 )
                             }
-                            IconButton(onClick = { showPrivacyDialog = true }) {
-                                Icon(
-                                    Icons.Outlined.Info,
-                                    contentDescription = stringResource(R.string.main_privacy_info),
-                                    modifier = Modifier.size(MainTopBarActionIconSize),
-                                )
-                            }
                             IconButton(onClick = {
                                 if (!selectionModeActive) {
                                     selectionModeActive = true
@@ -1546,6 +1558,8 @@ private fun MainScreen(
                     MainListContent(
                         uiState = displayedUiState,
                         customCollections = customCollections,
+                        localSaveTags = localSaveTags,
+                        localTagNamesByEntryId = localTagNamesByEntryId,
                         sharedTags = visibleSharedTags,
                         showSharedTagCloudUi = showSharedTagCloudUi,
                         selectedService = selectedService,
@@ -1565,6 +1579,7 @@ private fun MainScreen(
                         onSelectCollection = { targetId ->
                             if (SHOW_COLLECTION_UI) toggleSelectedCollection(targetId)
                         },
+                        onRequestCreateLocalTag = { showLocalTagManagerSheet = true },
                         onRequestCreateCollection = if (SHOW_COLLECTION_UI) {
                             {
                                 createCollectionState = createCollectionState.copy(
@@ -1818,23 +1833,15 @@ private fun LocalTagManagementSheet(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
-                                TextButton(
+                                IconButton(
                                     onClick = { onRequestDelete(collection) },
                                     modifier = Modifier.height(40.dp),
-                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
-                                    colors = ButtonDefaults.textButtonColors(
-                                        contentColor = MaterialTheme.colorScheme.error,
-                                    ),
                                 ) {
                                     Icon(
                                         imageVector = Icons.Outlined.Delete,
-                                        contentDescription = null,
+                                        contentDescription = "削除",
+                                        tint = MaterialTheme.colorScheme.error,
                                         modifier = Modifier.size(18.dp),
-                                    )
-                                    Spacer(Modifier.width(4.dp))
-                                    Text(
-                                        text = "削除",
-                                        style = MaterialTheme.typography.titleSmall,
                                     )
                                 }
                             }
@@ -2464,6 +2471,7 @@ private fun MainEntryList(
     listState: androidx.compose.foundation.lazy.LazyListState,
     selectedEntryIds: Set<Long>,
     entryCardDisplayMode: EntryCardDisplayMode,
+    localTagNamesByEntryId: Map<Long, List<String>>,
     onStartSelection: (Long) -> Unit,
     onToggleSelection: (Long) -> Unit,
     onOpenDetail: (Long) -> Unit,
@@ -2481,6 +2489,7 @@ private fun MainEntryList(
                 SwipeableMainEntry(
                     entry = entry,
                     displayMode = entryCardDisplayMode,
+                    localTagNames = localTagNamesByEntryId[entry.id].orEmpty(),
                     onClick = { onOpenDetail(entry.id) },
                     onLongClick = { onStartSelection(entry.id) },
                     onSwipeAction = { action ->
@@ -2497,6 +2506,7 @@ private fun MainEntryList(
                     displayMode = entryCardDisplayMode,
                     showDisplayUrl = false,
                     selected = selected,
+                    localTagNames = localTagNamesByEntryId[entry.id].orEmpty(),
                     onLongClick = { onStartSelection(entry.id) },
                     onClick = {
                         if (selectionMode) {
@@ -2515,6 +2525,8 @@ private fun MainEntryList(
 private fun MainListContent(
     uiState: ListFilterUiState,
     customCollections: List<jp.mimac.urlsaver.data.CollectionEntity>,
+    localSaveTags: List<jp.mimac.urlsaver.domain.TagWithCount>,
+    localTagNamesByEntryId: Map<Long, List<String>>,
     sharedTags: List<jp.mimac.urlsaver.domain.TagWithCount>,
     showSharedTagCloudUi: Boolean,
     selectedService: ServiceType,
@@ -2528,6 +2540,7 @@ private fun MainListContent(
     onReorderServices: (List<ServiceType>) -> Unit,
     onReorderTopFilters: (List<String>) -> Unit,
     onSelectCollection: (Long?) -> Unit,
+    onRequestCreateLocalTag: () -> Unit,
     onRequestCreateCollection: (() -> Unit)?,
     onReorderCollections: ((List<Long>) -> Unit)?,
     onOpenTagDetail: (Long) -> Unit,
@@ -2557,6 +2570,43 @@ private fun MainListContent(
         onReorderCollections = onReorderCollections,
     )
     Spacer(modifier = Modifier.height(8.dp))
+    if (localSaveTags.isNotEmpty() || !showSharedTagCloudUi) {
+        LazyRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = OrbitTokens.screenHorizontalPadding),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            item {
+                TextButton(onClick = onRequestCreateLocalTag) {
+                    Icon(
+                        imageVector = Icons.Outlined.Sell,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text("+タグ")
+                }
+            }
+            items(localSaveTags, key = { it.id }) { tag ->
+                Surface(
+                    shape = RoundedCornerShape(999.dp),
+                    color = OrbitTokens.panelStrong,
+                    border = BorderStroke(1.dp, OrbitTokens.outline),
+                ) {
+                    Text(
+                        text = tag.name,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    )
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+    }
     if (showSharedTagCloudUi) {
         TagFilterRow(
             tags = sharedTags,
@@ -2614,6 +2664,7 @@ private fun MainListContent(
                 listState = mainListState,
                 selectedEntryIds = selectedEntryIds,
                 entryCardDisplayMode = entryCardDisplayMode,
+                localTagNamesByEntryId = localTagNamesByEntryId,
                 onStartSelection = onStartEntrySelection,
                 onToggleSelection = onToggleEntrySelection,
                 onOpenDetail = onOpenDetail,
@@ -3590,6 +3641,7 @@ private fun SelectionIconButton(
 private fun SwipeableMainEntry(
     entry: UrlEntryEntity,
     displayMode: EntryCardDisplayMode,
+    localTagNames: List<String>,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onSwipeAction: (MainSwipeAction) -> Unit,
@@ -3630,6 +3682,7 @@ private fun SwipeableMainEntry(
             timestampMillis = entry.createdAt,
             displayMode = displayMode,
             showDisplayUrl = false,
+            localTagNames = localTagNames,
             onLongClick = onLongClick,
             onClick = onClick,
         )
@@ -4948,8 +5001,8 @@ private fun DetailScreen(
                     verticalAlignment = Alignment.Top,
                 ) {
                     DetailTagSummaryPanel(
-                        title = "タグ",
-                        emptyText = "まだタグは付いていません",
+                        title = "自作タグ",
+                        emptyText = "まだ自作タグは付いていません",
                         tags = assignedLocalTagItems,
                         onEdit = { showAddLocalTagSheet = true },
                         editButtonTestTag = "detail_local_tags_edit",

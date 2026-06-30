@@ -274,8 +274,8 @@ struct DetailView: View {
 
                                 HStack(alignment: .top, spacing: 10) {
                                     DetailTagSummaryPanel(
-                                        title: "タグ",
-                                        emptyText: "まだタグは付いていません",
+                                        title: "自作タグ",
+                                        emptyText: "まだ自作タグは付いていません",
                                         tags: assignedLocalTags.map { tag in
                                             DetailTagSummaryItem(
                                                 id: "local-\(tag.id)",

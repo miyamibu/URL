@@ -295,6 +295,7 @@ struct EntryCardView: View {
     let displayMode: EntryListDisplayMode
     let cardWidth: CGFloat?
     let selected: Bool
+    let localTagNames: [String]
     let footerContent: (() -> AnyView)?
 
     init(
@@ -303,6 +304,7 @@ struct EntryCardView: View {
         displayMode: EntryListDisplayMode,
         cardWidth: CGFloat? = nil,
         selected: Bool = false,
+        localTagNames: [String] = [],
         footerContent: (() -> AnyView)? = nil
     ) {
         self.entry = entry
@@ -310,10 +312,12 @@ struct EntryCardView: View {
         self.displayMode = displayMode
         self.cardWidth = cardWidth
         self.selected = selected
+        self.localTagNames = localTagNames
         self.footerContent = footerContent
     }
 
     var body: some View {
+        let visibleLocalTagNames = entryCardVisibleLocalTagNames(localTagNames)
         AppPanel(padded: false) {
             VStack(alignment: .leading, spacing: 0) {
                 if displayMode == .rich, let thumbnailURL = entry.thumbnailURL, let url = URL(string: thumbnailURL) {
@@ -343,38 +347,58 @@ struct EntryCardView: View {
                         .padding(.top, 4)
 
                     VStack(alignment: .leading, spacing: 10) {
-                        HStack(spacing: 10) {
-                            ServiceBadgeView(serviceType: entry.serviceType, badgeImageURL: entry.badgeImageURL)
+                        if visibleLocalTagNames.isEmpty {
+                            HStack(spacing: 10) {
+                                ServiceBadgeView(serviceType: entry.serviceType, badgeImageURL: entry.badgeImageURL)
 
-                            Text(serviceLabel(for: entry))
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundStyle(AppPalette.textSecondary)
-                                .lineLimit(1)
-
-                            if entry.contentContext != .standard {
-                                Text(contentContextLabel(for: entry.contentContext))
-                                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                                Text(serviceLabel(for: entry))
+                                    .font(.system(size: 16, weight: .medium))
                                     .foregroundStyle(AppPalette.textSecondary)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 6)
-                                    .background(AppPalette.panelStrong, in: Capsule())
-                                    .overlay(
-                                        Capsule()
-                                            .stroke(AppPalette.outline, lineWidth: 1.5)
-                                    )
+                                    .lineLimit(1)
+
+                                if entry.contentContext != .standard {
+                                    Text(contentContextLabel(for: entry.contentContext))
+                                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                                        .foregroundStyle(AppPalette.textSecondary)
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 6)
+                                        .background(AppPalette.panelStrong, in: Capsule())
+                                        .overlay(
+                                            Capsule()
+                                                .stroke(AppPalette.outline, lineWidth: 1.5)
+                                        )
+                                }
+
+                                Spacer(minLength: 8)
+
+                                Circle()
+                                    .fill(metadataDotColor(for: entry.metadataState))
+                                    .frame(width: 10, height: 10)
+                                    .overlay(Circle().stroke(AppPalette.background, lineWidth: 1.2))
+
+                                Text("\(timestampLabel) \(DateFormatters.listTimestamp.string(from: timestampDate(for: entry)))")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundStyle(AppPalette.textSecondary)
+                                    .lineLimit(1)
                             }
-
-                            Spacer(minLength: 8)
-
-                            Circle()
-                                .fill(metadataDotColor(for: entry.metadataState))
-                                .frame(width: 10, height: 10)
-                                .overlay(Circle().stroke(AppPalette.background, lineWidth: 1.2))
-
-                            Text("\(timestampLabel) \(DateFormatters.listTimestamp.string(from: timestampDate(for: entry)))")
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(AppPalette.textSecondary)
-                                .lineLimit(1)
+                        } else {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    ForEach(visibleLocalTagNames, id: \.self) { tagName in
+                                        Text(tagName)
+                                            .font(.system(size: 13, weight: .bold, design: .rounded))
+                                            .foregroundStyle(AppPalette.primaryStrong)
+                                            .lineLimit(1)
+                                            .padding(.horizontal, 12)
+                                            .padding(.vertical, 6)
+                                            .background(AppPalette.primarySurface, in: Capsule())
+                                            .overlay(
+                                                Capsule()
+                                                    .stroke(AppPalette.primaryStrong.opacity(0.45), lineWidth: 1)
+                                            )
+                                    }
+                                }
+                            }
                         }
 
                         Text(preferredDisplayTitle(for: entry))
@@ -439,10 +463,26 @@ struct EntryCardView: View {
     }
 }
 
+func entryCardVisibleLocalTagNames(_ localTagNames: [String]) -> [String] {
+    localTagNames
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+        .reduce(into: [String]()) { result, tagName in
+            if !result.contains(where: { $0.caseInsensitiveCompare(tagName) == .orderedSame }) {
+                result.append(tagName)
+            }
+        }
+}
+
+func entryCardUsesLocalTagHeader(_ localTagNames: [String]) -> Bool {
+    !entryCardVisibleLocalTagNames(localTagNames).isEmpty
+}
+
 struct SwipeableEntryCard: View {
     let entry: URLRecord
     let displayMode: EntryListDisplayMode
     let cardWidth: CGFloat
+    let localTagNames: [String]
     let onTap: () -> Void
     let onArchive: () -> Void
     let onDelete: () -> Void
@@ -476,7 +516,8 @@ struct SwipeableEntryCard: View {
                 entry: entry,
                 timestampLabel: "保存",
                 displayMode: displayMode,
-                cardWidth: cardWidth
+                cardWidth: cardWidth,
+                localTagNames: localTagNames
             )
             .offset(x: dragOffset)
             .contentShape(Rectangle())

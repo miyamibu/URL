@@ -92,6 +92,7 @@ struct RootView: View {
                                 totalEntries: model.activeEntries,
                                 pendingInviteRecord: model.pendingInviteRecord,
                                 localTags: model.localTags,
+                                localTagAssignments: model.localTagAssignments,
                                 collections: model.collections,
                                 sharedTags: model.sharedTags,
                                 selectedService: $selectedMainService,
@@ -164,6 +165,7 @@ struct RootView: View {
                                 ),
                                 totalEntries: model.archivedEntries,
                                 localTags: model.localTags,
+                                localTagAssignments: model.localTagAssignments,
                                 collections: model.collections,
                                 selectedService: $selectedArchiveService,
                                 selectedLocalTagID: $selectedArchiveLocalTagID,
@@ -286,8 +288,6 @@ struct RootView: View {
             .sheet(isPresented: $isShowingLocalTagManagementSheet) {
                 LocalTagManagementSheet(
                     localTags: model.localTags,
-                    localLinkText: { model.localTagShareText(for: $0) },
-                    payloadText: { model.localTagPayloadText(tagID: $0.id) },
                     onDelete: { tag in
                         isShowingLocalTagManagementSheet = false
                         localTagPendingDeletion = tag
@@ -479,6 +479,7 @@ private struct MainScreen: View {
     let totalEntries: [URLRecord]
     let pendingInviteRecord: PendingInviteRecord?
     let localTags: [LocalTagSummary]
+    let localTagAssignments: [Int64: Set<Int64>]
     let collections: [CollectionSummary]
     let sharedTags: [SharedTagSummary]
     @Binding var selectedService: ServiceType
@@ -624,7 +625,8 @@ private struct MainScreen: View {
                                             timestampLabel: "保存",
                                             displayMode: displayMode,
                                             cardWidth: cardWidth,
-                                            selected: selectedEntryIDs.contains(entry.id)
+                                            selected: selectedEntryIDs.contains(entry.id),
+                                            localTagNames: localTagNames(for: entry)
                                         )
                                         .frame(width: cardWidth)
                                     }
@@ -636,6 +638,7 @@ private struct MainScreen: View {
                                         entry: entry,
                                         displayMode: displayMode,
                                         cardWidth: cardWidth,
+                                        localTagNames: localTagNames(for: entry),
                                         onTap: { onOpenDetail(entry.id) },
                                         onArchive: { onArchive(entry.id) },
                                         onDelete: { onDelete(entry.id) },
@@ -665,13 +668,6 @@ private struct MainScreen: View {
                 action: { displayMode = displayMode == .rich ? .compact : .rich }
             ),
         ]
-        buttons.append(
-            ScreenHeaderButton(
-                icon: "info.circle",
-                accessibilityLabel: "データの取り扱い",
-                action: onOpenPrivacyInfo
-            )
-        )
         buttons.append(
             ScreenHeaderButton(
                 icon: "person.crop.circle",
@@ -712,6 +708,14 @@ private struct MainScreen: View {
         )
         return buttons
     }
+
+    private func localTagNames(for entry: URLRecord) -> [String] {
+        let namesByID = Dictionary(uniqueKeysWithValues: localTags.map { ($0.id, $0.name) })
+        return (localTagAssignments[entry.id] ?? [])
+            .compactMap { namesByID[$0] }
+            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+
 }
 
 private struct BottomHomeActionBar: View {
@@ -906,6 +910,7 @@ private struct UsageGuideView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
+
 }
 
 private struct UsageGuideSectionHeader: View {
@@ -1895,6 +1900,7 @@ private struct ArchiveScreen: View {
     let entries: [URLRecord]
     let totalEntries: [URLRecord]
     let localTags: [LocalTagSummary]
+    let localTagAssignments: [Int64: Set<Int64>]
     let collections: [CollectionSummary]
     @Binding var selectedService: ServiceType
     @Binding var selectedLocalTagID: Int64?
@@ -1970,7 +1976,8 @@ private struct ArchiveScreen: View {
                                         entry: entry,
                                         timestampLabel: "アーカイブ",
                                         displayMode: displayMode,
-                                        cardWidth: cardWidth
+                                        cardWidth: cardWidth,
+                                        localTagNames: localTagNames(for: entry)
                                     )
                                     .frame(width: cardWidth)
                                 }
@@ -1986,6 +1993,13 @@ private struct ArchiveScreen: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private func localTagNames(for entry: URLRecord) -> [String] {
+        let namesByID = Dictionary(uniqueKeysWithValues: localTags.map { ($0.id, $0.name) })
+        return (localTagAssignments[entry.id] ?? [])
+            .compactMap { namesByID[$0] }
+            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
 }
 
@@ -2824,8 +2838,6 @@ private struct SharedTagGroupCreateSheet: View {
 
 private struct LocalTagManagementSheet: View {
     let localTags: [LocalTagSummary]
-    let localLinkText: (LocalTagSummary) -> String
-    let payloadText: (LocalTagSummary) -> String?
     let onDelete: (LocalTagSummary) -> Void
     let onClose: () -> Void
 
@@ -2857,8 +2869,6 @@ private struct LocalTagManagementSheet: View {
                             ForEach(localTags) { tag in
                                 LocalTagManagementPill(
                                     tag: tag,
-                                    localLinkText: localLinkText(tag),
-                                    payloadText: payloadText(tag),
                                     onDelete: onDelete
                                 )
                             }
@@ -3088,8 +3098,6 @@ private struct CollectionManagementSheet: View {
 
 private struct LocalTagManagementPill: View {
     let tag: LocalTagSummary
-    let localLinkText: String
-    let payloadText: String?
     let onDelete: (LocalTagSummary) -> Void
 
     var body: some View {
@@ -3100,33 +3108,16 @@ private struct LocalTagManagementPill: View {
                 .lineLimit(1)
                 .frame(maxWidth: 104, alignment: .leading)
 
-            ShareLink(item: localLinkText) {
-                Label("リンク", systemImage: "link")
-                    .font(.system(size: 18, weight: .heavy))
-                    .lineLimit(1)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(AppPalette.primaryStrong)
-
-            if let payloadText {
-                ShareLink(item: payloadText) {
-                    Label("JSON", systemImage: "square.and.arrow.up")
-                        .font(.system(size: 18, weight: .heavy))
-                        .lineLimit(1)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(AppPalette.primaryStrong)
-            }
-
             Button(role: .destructive) {
                 onDelete(tag)
             } label: {
-                Label("削除", systemImage: "trash")
+                Image(systemName: "trash")
                     .font(.system(size: 18, weight: .heavy))
-                    .lineLimit(1)
+                    .frame(width: 34, height: 34)
             }
             .buttonStyle(.plain)
             .foregroundStyle(AppPalette.danger)
+            .accessibilityLabel("削除")
         }
         .padding(.leading, 16)
         .padding(.trailing, 12)
