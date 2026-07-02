@@ -28,7 +28,7 @@ VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".webm"}
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic"}
 AUDIO_EXTENSIONS = {".m4a", ".mp3", ".aac", ".opus", ".ogg", ".wav"}
 SUPPORTED_HOST_RE = re.compile(
-    r"(^|\.)youtube\.com$|^youtu\.be$|(^|\.)instagram\.com$|(^|\.)tiktok\.com$|(^|\.)x\.com$|(^|\.)twitter\.com$"
+    r"(^|\.)youtube\.com$|^youtu\.be$|(^|\.)instagram\.com$|(^|\.)tiktok\.com$"
 )
 
 
@@ -183,7 +183,7 @@ def _quality_label(info: dict, path: pathlib.Path) -> str | None:
 
 
 def _yt_dlp_format(provider: str) -> str:
-    if provider in {"youtube", "x", "twitter"}:
+    if provider == "youtube":
         return "best[ext=mp4]/best"
     return "18/b[ext=mp4]/bv*[ext=mp4]+ba[ext=m4a]/best[ext=mp4]/best"
 
@@ -611,8 +611,6 @@ class MediaResolver:
             return "instagram"
         if "tiktok" in host:
             return "tiktok"
-        if host in {"x.com", "twitter.com"}:
-            return "x"
         return "web"
 
 
