@@ -184,7 +184,7 @@ def _quality_label(info: dict, path: pathlib.Path) -> str | None:
 
 def _yt_dlp_format(provider: str) -> str:
     if provider == "youtube":
-        return "best[ext=mp4]/best"
+        return "bv*[vcodec^=avc1][ext=mp4]+ba[ext=m4a]/bv*[ext=mp4]+ba[ext=m4a]/bv*[ext=mp4]+ba/b[ext=mp4]/best[ext=mp4]/best"
     return "18/b[ext=mp4]/bv*[ext=mp4]+ba[ext=m4a]/best[ext=mp4]/best"
 
 
