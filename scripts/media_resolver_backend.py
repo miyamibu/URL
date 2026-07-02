@@ -182,6 +182,28 @@ def _quality_label(info: dict, path: pathlib.Path) -> str | None:
     return None
 
 
+def _yt_dlp_format(provider: str) -> str:
+    if provider in {"youtube", "x", "twitter"}:
+        return "best[ext=mp4]/best"
+    return "18/b[ext=mp4]/bv*[ext=mp4]+ba[ext=m4a]/best[ext=mp4]/best"
+
+
+def _resolver_error(provider: str, exc: Exception) -> dict:
+    message = str(exc)
+    lowered = message.lower()
+    if provider == "instagram" and ("empty media response" in lowered or "login" in lowered or "cookies" in lowered):
+        code = "AUTH_REQUIRED"
+    elif "requested format is not available" in lowered:
+        code = "FORMAT_UNAVAILABLE"
+    elif "no video could be found" in lowered:
+        code = "MEDIA_NOT_FOUND"
+    elif "private" in lowered or "sign in" in lowered or "cookies" in lowered:
+        code = "AUTH_REQUIRED"
+    else:
+        code = "RESOLVE_FAILED"
+    return {"ok": False, "provider": provider, "error": code, "message": message, "assets": []}
+
+
 class MediaResolver:
     def __init__(self, cache_dir: pathlib.Path, public_base_url: str) -> None:
         self.cache_dir = cache_dir
@@ -201,7 +223,10 @@ class MediaResolver:
             instagram_assets = self._resolve_instagram_embed(url)
             if instagram_assets:
                 return {"ok": True, "provider": "instagram", "assets": instagram_assets}
-            instagram_assets = self._resolve_instagram_ytdlp(url)
+            try:
+                instagram_assets = self._resolve_instagram_ytdlp(url)
+            except Exception as exc:
+                return _resolver_error(provider, exc)
             if instagram_assets:
                 return {"ok": True, "provider": "instagram", "assets": instagram_assets}
 
@@ -212,7 +237,7 @@ class MediaResolver:
         if existing is None:
             outtmpl = str(self.cache_dir / f"{stable}.%(ext)s")
             options = {
-                "format": "18/b[ext=mp4]/bv*[ext=mp4]+ba[ext=m4a]/best[ext=mp4]/best",
+                "format": _yt_dlp_format(provider),
                 "merge_output_format": "mp4",
                 "outtmpl": outtmpl,
                 "quiet": True,
@@ -226,8 +251,11 @@ class MediaResolver:
             }
             if ffmpeg_location:
                 options["ffmpeg_location"] = ffmpeg_location
-            with yt_dlp.YoutubeDL(options) as ydl:  # type: ignore[attr-defined]
-                info = ydl.extract_info(url, download=True) or {}
+            try:
+                with yt_dlp.YoutubeDL(options) as ydl:  # type: ignore[attr-defined]
+                    info = ydl.extract_info(url, download=True) or {}
+            except Exception as exc:
+                return _resolver_error(provider, exc)
             existing = self._find_existing(stable)
         else:
             with yt_dlp.YoutubeDL({
@@ -244,6 +272,8 @@ class MediaResolver:
 
         if existing is None:
             return {"ok": False, "error": "MEDIA_NOT_CREATED", "assets": []}
+        if existing.suffix.lower() not in IMAGE_EXTENSIONS and ffmpeg_location:
+            existing = self._ensure_mobile_mp4(existing, ffmpeg_location)
 
         duration = info.get("duration")
         duration_ms = int(duration * 1000) if isinstance(duration, (int, float)) and duration > 0 else None
