@@ -24,7 +24,7 @@ GET /files/{name}
 ```
 
 It uses `yt-dlp` and `imageio-ffmpeg` to resolve public YouTube, Instagram,
-TikTok, and X/Twitter URLs into downloadable media candidates.
+and TikTok URLs into downloadable media candidates.
 
 ## Constraints
 

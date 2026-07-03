@@ -184,8 +184,18 @@ def _quality_label(info: dict, path: pathlib.Path) -> str | None:
 
 def _yt_dlp_format(provider: str) -> str:
     if provider == "youtube":
-        return "bv*[vcodec^=avc1][ext=mp4]+ba[ext=m4a]/bv*[ext=mp4]+ba[ext=m4a]/bv*[ext=mp4]+ba/b[ext=mp4]/best[ext=mp4]/best"
+        return "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/best[ext=mp4]/best"
     return "18/b[ext=mp4]/bv*[ext=mp4]+ba[ext=m4a]/best[ext=mp4]/best"
+
+
+def _youtube_fallback_formats() -> list[str | None]:
+    return [
+        "bv*+ba/b",
+        "bestvideo*+bestaudio/best",
+        "best[ext=mp4]/best",
+        "best",
+        None,
+    ]
 
 
 def _resolver_error(provider: str, exc: Exception) -> dict:
@@ -246,7 +256,6 @@ class MediaResolver:
                 "retries": 2,
                 "fragment_retries": 2,
                 "socket_timeout": 30,
-                "extractor_args": {"youtube": {"player_client": ["android"]}},
                 **_yt_dlp_cookie_options(provider),
             }
             if ffmpeg_location:
@@ -255,14 +264,33 @@ class MediaResolver:
                 with yt_dlp.YoutubeDL(options) as ydl:  # type: ignore[attr-defined]
                     info = ydl.extract_info(url, download=True) or {}
             except Exception as exc:
-                return _resolver_error(provider, exc)
+                if provider != "youtube" or "requested format is not available" not in str(exc).lower():
+                    return _resolver_error(provider, exc)
+                last_error: Exception = exc
+                for fallback_format in _youtube_fallback_formats():
+                    fallback_options = dict(options)
+                    if fallback_format is None:
+                        fallback_options.pop("format", None)
+                    else:
+                        fallback_options["format"] = fallback_format
+                    try:
+                        with yt_dlp.YoutubeDL(fallback_options) as ydl:  # type: ignore[attr-defined]
+                            info = ydl.extract_info(url, download=True) or {}
+                        last_error = None  # type: ignore[assignment]
+                        break
+                    except Exception as fallback_exc:
+                        last_error = fallback_exc
+                if last_error is not None:
+                    direct_result = self._resolve_youtube_direct_asset(yt_dlp, url, stable)
+                    if direct_result is not None:
+                        return direct_result
+                    return _resolver_error(provider, last_error)
             existing = self._find_existing(stable)
         else:
             with yt_dlp.YoutubeDL({
                 "quiet": True,
                 "no_warnings": True,
                 "noplaylist": True,
-                "extractor_args": {"youtube": {"player_client": ["android"]}},
                 **_yt_dlp_cookie_options(provider),
             }) as ydl:  # type: ignore[attr-defined]
                 try:
@@ -407,6 +435,74 @@ class MediaResolver:
                 }
             )
         return assets
+
+    def _resolve_youtube_direct_asset(self, yt_dlp, url: str, stable: str) -> dict | None:
+        options = {
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+            "socket_timeout": 30,
+        }
+        try:
+            with yt_dlp.YoutubeDL(options) as ydl:  # type: ignore[attr-defined]
+                info = ydl.extract_info(url, download=False) or {}
+        except Exception:
+            return None
+        formats = info.get("formats")
+        if not isinstance(formats, list):
+            return None
+
+        def score(candidate: dict) -> tuple[int, int, int, int]:
+            format_id = str(candidate.get("format_id") or "")
+            ext = str(candidate.get("ext") or "").lower()
+            vcodec = str(candidate.get("vcodec") or "").lower()
+            acodec = str(candidate.get("acodec") or "").lower()
+            height = candidate.get("height")
+            has_audio_video = int(vcodec not in {"", "none"} and acodec not in {"", "none"})
+            is_mp4 = int(ext == "mp4")
+            is_18 = int(format_id == "18")
+            normalized_height = height if isinstance(height, int) else 0
+            return (has_audio_video, is_mp4, is_18, normalized_height)
+
+        candidates = [
+            candidate
+            for candidate in formats
+            if isinstance(candidate, dict)
+            and isinstance(candidate.get("url"), str)
+            and str(candidate.get("url")).startswith(("http://", "https://"))
+            and str(candidate.get("vcodec") or "").lower() not in {"", "none"}
+            and str(candidate.get("acodec") or "").lower() not in {"", "none"}
+        ]
+        if not candidates:
+            return None
+        selected = max(candidates, key=score)
+        duration = info.get("duration")
+        duration_ms = int(duration * 1000) if isinstance(duration, (int, float)) and duration > 0 else None
+        ext = str(selected.get("ext") or "mp4").lower()
+        mime_type = "video/mp4" if ext == "mp4" else f"video/{ext}"
+        return {
+            "ok": True,
+            "provider": "youtube",
+            "assets": [
+                {
+                    "provider": "youtube",
+                    "providerAssetId": f"{info.get('id') or stable}:direct:{selected.get('format_id') or ext}",
+                    "canonicalPostUrl": info.get("webpage_url") or url,
+                    "authorName": info.get("uploader") or info.get("channel"),
+                    "title": info.get("title"),
+                    "thumbnailUrl": info.get("thumbnail"),
+                    "durationMs": duration_ms,
+                    "mediaType": "VIDEO",
+                    "downloadUrl": selected["url"],
+                    "mimeType": mime_type,
+                    "qualityLabel": f"{selected.get('height')}p" if isinstance(selected.get("height"), int) else None,
+                    "width": selected.get("width"),
+                    "height": selected.get("height"),
+                    "bitrate": selected.get("tbr"),
+                    "isPreferred": True,
+                }
+            ],
+        }
 
     def _resolve_instagram_embed(self, url: str) -> list[dict]:
         parsed = urlparse(url)
