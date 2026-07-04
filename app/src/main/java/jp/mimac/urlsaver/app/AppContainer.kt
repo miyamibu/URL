@@ -47,11 +47,13 @@ import jp.mimac.urlsaver.data.UserProfileStore
 import jp.mimac.urlsaver.data.UrlRepository
 import jp.mimac.urlsaver.data.DataStoreUserProfileStore
 import jp.mimac.urlsaver.data.DefaultUsageSummaryDataSource
+import jp.mimac.urlsaver.data.DefaultVideoRepository
 import jp.mimac.urlsaver.data.UsageSummaryDataSource
 import jp.mimac.urlsaver.domain.DefaultEntitlementResolver
 import jp.mimac.urlsaver.domain.BuildVariantEntitlementOverrides
 import jp.mimac.urlsaver.util.AppClock
 import jp.mimac.urlsaver.util.SystemAppClock
+import jp.mimac.urlsaver.video.BackendVideoResolver
 import jp.mimac.urlsaver.worker.MetadataFetcher
 import jp.mimac.urlsaver.worker.UrlSaverWorkerFactory
 import kotlinx.coroutines.CoroutineScope
@@ -215,6 +217,21 @@ class AppContainer(context: Context) {
     val contactSupportClient: ContactSupportClient by lazy {
         ConfiguredContactSupportClient(BuildConfig.CONTACT_SUPPORT_ENDPOINT_URL)
     }
+    private val workManager: WorkManager by lazy {
+        WorkManager.getInstance(appContext)
+    }
+    val videoRepository: DefaultVideoRepository by lazy {
+        DefaultVideoRepository(
+            appContext = appContext,
+            videoAssetDao = database.videoAssetDao(),
+            videoDownloadDao = database.videoDownloadDao(),
+            workManager = workManager,
+            clock = clock,
+        )
+    }
+    private val videoResolver: BackendVideoResolver by lazy {
+        BackendVideoResolver(BuildConfig.MEDIA_RESOLVER_BACKEND_URL)
+    }
 
     init {
         entitlementRefreshScope.launch {
@@ -275,6 +292,10 @@ class AppContainer(context: Context) {
             metadataFetcherProvider = { metadataFetcher },
             clockProvider = { clock },
             sharedTagSyncCoordinatorProvider = { sharedTagSyncCoordinator },
+            urlEntryDaoProvider = { database.urlEntryDao() },
+            videoAssetDaoProvider = { database.videoAssetDao() },
+            videoDownloadDaoProvider = { database.videoDownloadDao() },
+            videoResolverProvider = { videoResolver },
         )
     }
 

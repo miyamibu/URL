@@ -157,6 +157,15 @@ fun preferredDisplayTitle(
     description: String?,
 ): String {
     if (!userTitle.isNullOrBlank()) return userTitle
+    if (UrlRules.isTextCardHost(normalizedHost)) {
+        return fetchedTitle?.takeIf { it.isNotBlank() }
+            ?: preferredMetadataContentText(
+                fetchedBody = fetchedBody,
+                bodySummary = bodySummary,
+                description = description,
+            )?.let(UrlRules::textCardTitle)
+            ?: "テキスト"
+    }
 
     if (serviceType == ServiceType.X || serviceType == ServiceType.INSTAGRAM || serviceType == ServiceType.TIKTOK) {
         preferredMetadataContentText(

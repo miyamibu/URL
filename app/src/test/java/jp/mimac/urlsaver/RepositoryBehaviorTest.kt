@@ -16,6 +16,7 @@ import jp.mimac.urlsaver.data.TagUrlCrossRef
 import jp.mimac.urlsaver.data.UrlEntryEntity
 import jp.mimac.urlsaver.domain.ContentContext
 import jp.mimac.urlsaver.domain.MetadataError
+import jp.mimac.urlsaver.domain.MetadataBodyKind
 import jp.mimac.urlsaver.domain.MetadataState
 import jp.mimac.urlsaver.domain.RecordState
 import jp.mimac.urlsaver.domain.ServiceType
@@ -101,6 +102,46 @@ class RepositoryBehaviorTest {
     }
 
     @Test
+    fun saveFromManualInput_uppercaseSchemeAndDefaultPortDeduplicates() = runBlocking {
+        val first = repository.saveFromManualInput("HTTPS://Example.COM:443/manual-normalize/#frag")
+        assertEquals(ShareSaveResult.CREATED, first.result)
+
+        val duplicate = repository.saveFromManualInput("https://example.com/manual-normalize")
+        assertEquals(ShareSaveResult.DUPLICATE_ACTIVE, duplicate.result)
+        assertEquals(first.entryId, duplicate.entryId)
+
+        val rows = db.urlEntryDao().loadAllEntries()
+            .filter { it.normalizedUrl == "https://example.com/manual-normalize" }
+        assertEquals(1, rows.size)
+        assertEquals("https://example.com/manual-normalize", rows.single().normalizedUrl)
+    }
+
+    @Test
+    fun markPendingDelete_acceptsArchivedEntry_andRestoreReturnsToArchive() = runBlocking {
+        val created = repository.saveFromManualInput("https://example.com/archive-delete")
+        val entryId = created.entryId!!
+
+        clock.now = 2_000L
+        assertTrue(repository.archive(entryId))
+        val archivedAt = db.urlEntryDao().findById(entryId)!!.archivedAt
+        assertEquals(2_000L, archivedAt)
+
+        clock.now = 3_000L
+        val pendingUntil = repository.markPendingDelete(entryId)
+        assertEquals(8_000L, pendingUntil)
+        val pending = db.urlEntryDao().findById(entryId)!!
+        assertEquals(RecordState.PENDING_DELETE, pending.recordState)
+        assertEquals(archivedAt, pending.archivedAt)
+
+        clock.now = 4_000L
+        assertTrue(repository.restore(entryId))
+        val restored = db.urlEntryDao().findById(entryId)!!
+        assertEquals(RecordState.ARCHIVED, restored.recordState)
+        assertEquals(archivedAt, restored.archivedAt)
+        assertEquals(null, restored.pendingDeletionUntil)
+    }
+
+    @Test
     fun deleteCollection_removesSameNameLocalTagAndRefs() = runBlocking {
         db.collectionDao().insert(
             CollectionEntity(
@@ -182,6 +223,43 @@ class RepositoryBehaviorTest {
 
         val saved = db.urlEntryDao().findById(created.entryId!!)!!
         assertEquals(4_000L, saved.metadataRequestedAt)
+    }
+
+    @Test
+    fun saveFromManualInput_urlWithTextStoresTextAsMemo() = runBlocking {
+        val created = repository.saveFromManualInput(
+            """
+            あとで読む
+            https://example.com/with-memo
+            メモ本文
+            """.trimIndent(),
+        )
+
+        assertEquals(ShareSaveResult.CREATED, created.result)
+        val saved = db.urlEntryDao().findById(created.entryId!!)!!
+        assertEquals("https://example.com/with-memo", saved.normalizedUrl)
+        assertEquals("あとで読む\nメモ本文", saved.memo)
+    }
+
+    @Test
+    fun saveFromManualInput_withoutUrlCreatesTextCard() = runBlocking {
+        val body = """
+            投稿メモのタイトル
+            これはURLなしで保存する本文です。
+            あとでカードとして読み返します。
+        """.trimIndent()
+
+        val created = repository.saveFromManualInput(body)
+        assertEquals(ShareSaveResult.CREATED, created.result)
+
+        val saved = db.urlEntryDao().findById(created.entryId!!)!!
+        assertTrue(saved.normalizedUrl.startsWith("https://text.rinbam.local/note/"))
+        assertEquals("テキスト", saved.displayUrl)
+        assertEquals("投稿メモのタイトル", saved.fetchedTitle)
+        assertEquals(body, saved.fetchedBody)
+        assertEquals(MetadataBodyKind.WEB_EXCERPT, saved.fetchedBodyKind)
+        assertEquals("投稿メモのタイトル", saved.bodySummary)
+        assertEquals(MetadataState.READY, saved.metadataState)
     }
 
     @Test

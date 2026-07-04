@@ -59,16 +59,15 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import jp.mimac.urlsaver.ads.AdsManager
 import jp.mimac.urlsaver.app.AppContainer
-import jp.mimac.urlsaver.data.CollectionEntity
-import jp.mimac.urlsaver.data.CreateCollectionResult
-import jp.mimac.urlsaver.data.DEFAULT_COLLECTION_ID
 import jp.mimac.urlsaver.data.SHARE_DEGRADATION_TRUNCATED_TO_FIRST_URL
 import jp.mimac.urlsaver.data.SHARE_DEGRADATION_TRUNCATED_TO_MAX_URLS
 import jp.mimac.urlsaver.domain.AssignTagResult
 import jp.mimac.urlsaver.domain.CreateTagResult
 import jp.mimac.urlsaver.domain.SaveResult
+import jp.mimac.urlsaver.domain.SharedTagScope
 import jp.mimac.urlsaver.domain.ShareExtractionResult
 import jp.mimac.urlsaver.domain.ShareSaveResult
+import jp.mimac.urlsaver.domain.TagWithCount
 import jp.mimac.urlsaver.domain.UrlRules
 import jp.mimac.urlsaver.domain.normalizeSharedTagName
 import jp.mimac.urlsaver.ui.theme.UrlSaverTheme
@@ -113,15 +112,39 @@ class ShareReceiverActivity : ComponentActivity() {
         if (isSendMultiple) {
             val extractedBatch = UrlRules.extractAllFromIntent(sourceIntent)
             val extractedUrls = extractedBatch.urls
+            val sharedMemo = UrlRules.extractMemoWithoutUrlsFromIntent(sourceIntent)
             return when {
                 extractedUrls.isEmpty() -> {
                     when (val extracted = UrlRules.extractFromIntent(sourceIntent)) {
                         ShareExtractionResult.InputTooLarge -> ShareReceiverPayload.Error(ShareSaveResult.INPUT_TOO_LARGE)
-                        ShareExtractionResult.InvalidUrl -> ShareReceiverPayload.Error(ShareSaveResult.INVALID_URL)
-                        ShareExtractionResult.NoUrlFound -> ShareReceiverPayload.Error(ShareSaveResult.NO_URL_FOUND)
+                        ShareExtractionResult.InvalidUrl -> {
+                            val text = UrlRules.extractTextFallbackFromIntent(sourceIntent)
+                            if (text == null) {
+                                ShareReceiverPayload.Error(ShareSaveResult.INVALID_URL)
+                            } else {
+                                ShareReceiverPayload.Pending(
+                                    urls = listOf(text),
+                                    isBatch = false,
+                                    degradationNotice = null,
+                                )
+                            }
+                        }
+                        ShareExtractionResult.NoUrlFound -> {
+                            val text = UrlRules.extractTextFallbackFromIntent(sourceIntent)
+                            if (text == null) {
+                                ShareReceiverPayload.Error(ShareSaveResult.NO_URL_FOUND)
+                            } else {
+                                ShareReceiverPayload.Pending(
+                                    urls = listOf(text),
+                                    isBatch = false,
+                                    degradationNotice = null,
+                                )
+                            }
+                        }
                         is ShareExtractionResult.Found -> ShareReceiverPayload.Pending(
                             urls = listOf(extracted.url),
                             isBatch = false,
+                            memo = sharedMemo,
                             degradationNotice = null,
                         )
                     }
@@ -129,6 +152,7 @@ class ShareReceiverActivity : ComponentActivity() {
                 extractedUrls.size == 1 -> ShareReceiverPayload.Pending(
                     urls = extractedUrls,
                     isBatch = false,
+                    memo = sharedMemo,
                     degradationNotice = null,
                 )
                 else -> {
@@ -138,6 +162,7 @@ class ShareReceiverActivity : ComponentActivity() {
                     ShareReceiverPayload.Pending(
                         urls = extractedUrls,
                         isBatch = true,
+                        memo = sharedMemo,
                         degradationNotice = degradationNotice,
                     )
                 }
@@ -149,11 +174,34 @@ class ShareReceiverActivity : ComponentActivity() {
         }
         return when (val extracted = UrlRules.extractFromIntent(sourceIntent)) {
             ShareExtractionResult.InputTooLarge -> ShareReceiverPayload.Error(ShareSaveResult.INPUT_TOO_LARGE)
-            ShareExtractionResult.InvalidUrl -> ShareReceiverPayload.Error(ShareSaveResult.INVALID_URL)
-            ShareExtractionResult.NoUrlFound -> ShareReceiverPayload.Error(ShareSaveResult.NO_URL_FOUND)
+            ShareExtractionResult.InvalidUrl -> {
+                val text = UrlRules.extractTextFallbackFromIntent(sourceIntent)
+                if (text == null) {
+                    ShareReceiverPayload.Error(ShareSaveResult.INVALID_URL)
+                } else {
+                    ShareReceiverPayload.Pending(
+                        urls = listOf(text),
+                        isBatch = false,
+                        degradationNotice = null,
+                    )
+                }
+            }
+            ShareExtractionResult.NoUrlFound -> {
+                val text = UrlRules.extractTextFallbackFromIntent(sourceIntent)
+                if (text == null) {
+                    ShareReceiverPayload.Error(ShareSaveResult.NO_URL_FOUND)
+                } else {
+                    ShareReceiverPayload.Pending(
+                        urls = listOf(text),
+                        isBatch = false,
+                        degradationNotice = null,
+                    )
+                }
+            }
             is ShareExtractionResult.Found -> ShareReceiverPayload.Pending(
                 urls = listOf(extracted.url),
                 isBatch = false,
+                memo = UrlRules.extractMemoWithoutUrlsFromIntent(sourceIntent),
                 degradationNotice = degradationNotice,
             )
         }
@@ -167,12 +215,14 @@ private fun ShareReceiverContent(
     onFinish: () -> Unit,
 ) {
     val context = LocalContext.current
-    val collections by container.repository.observeCollections().collectAsState(initial = emptyList())
-    val customCollections = remember(collections) {
-        collections.filter { it.id != DEFAULT_COLLECTION_ID }
+    val allTags by container.tagRepository.observeAllTagsWithCount().collectAsState(initial = emptyList())
+    val localTags = remember(allTags) {
+        allTags
+            .filter { tag -> tag.scope == SharedTagScope.LOCAL_ONLY }
+            .sortedByDescending { tag -> tag.id }
+            .distinctBy { tag -> normalizeSharedTagName(tag.name) }
     }
-    var selectedCollectionIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
-    var createdCollectionNamesById by remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
+    var selectedLocalTagIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var newTagName by remember { mutableStateOf("") }
     var tagCreateError by remember { mutableStateOf<String?>(null) }
     var isSaving by remember { mutableStateOf(false) }
@@ -213,16 +263,16 @@ private fun ShareReceiverContent(
                     }
                     payload is ShareReceiverPayload.Pending -> {
                         ShareReceiverPendingContent(
-                            collections = customCollections,
-                            selectedCollectionIds = selectedCollectionIds,
+                            localTags = localTags,
+                            selectedLocalTagIds = selectedLocalTagIds,
                             newTagName = newTagName,
                             tagCreateError = tagCreateError,
                             isSaving = isSaving,
-                            onToggleCollection = { collectionId ->
-                                selectedCollectionIds = if (collectionId in selectedCollectionIds) {
-                                    selectedCollectionIds - collectionId
+                            onToggleLocalTag = { tagId ->
+                                selectedLocalTagIds = if (tagId in selectedLocalTagIds) {
+                                    selectedLocalTagIds - tagId
                                 } else {
-                                    selectedCollectionIds + collectionId
+                                    selectedLocalTagIds + tagId
                                 }
                             },
                             onNewTagNameChange = {
@@ -231,26 +281,26 @@ private fun ShareReceiverContent(
                             },
                             onCreateTag = {
                                 scope.launch {
-                                    val rawName = newTagName
-                                    val result: CreateCollectionResult = container.repository.createCollection(rawName)
-                                    val collectionId = result.collectionId
-                                    when {
-                                        result.success && collectionId != null -> {
-                                            selectedCollectionIds = selectedCollectionIds + collectionId
-                                            createdCollectionNamesById = createdCollectionNamesById +
-                                                (collectionId to rawName.trim())
+                                    val normalizedName = normalizeSharedTagName(newTagName)
+                                    when (val result = container.tagRepository.createLocalTagWithResult(normalizedName)) {
+                                        is CreateTagResult.Success -> {
+                                            selectedLocalTagIds = selectedLocalTagIds + result.tagId
                                             newTagName = ""
                                             tagCreateError = null
                                         }
-                                        result.duplicateName && collectionId != null -> {
-                                            selectedCollectionIds = selectedCollectionIds + collectionId
-                                            createdCollectionNamesById = createdCollectionNamesById +
-                                                (collectionId to rawName.trim())
-                                            newTagName = ""
-                                            tagCreateError = null
+                                        CreateTagResult.Duplicate -> {
+                                            val duplicateId = container.tagRepository.findLocalTagIdByName(normalizedName)
+                                            if (duplicateId != null) {
+                                                selectedLocalTagIds = selectedLocalTagIds + duplicateId
+                                                newTagName = ""
+                                                tagCreateError = null
+                                            } else {
+                                                tagCreateError = "同じ名前のタグがあります"
+                                            }
                                         }
-                                        result.invalidName -> tagCreateError = "タグ名を入力してください"
-                                        else -> tagCreateError = "タグを作成できませんでした"
+                                        CreateTagResult.InvalidName -> tagCreateError = "タグ名を入力してください"
+                                        is CreateTagResult.LimitReached -> tagCreateError = result.message
+                                        CreateTagResult.Failed -> tagCreateError = "タグを作成できませんでした"
                                     }
                                 }
                             },
@@ -258,22 +308,10 @@ private fun ShareReceiverContent(
                             onSave = {
                                 scope.launch {
                                     isSaving = true
-                                    val selectedCollections = selectedCollectionIds.mapNotNull { selectedId ->
-                                        customCollections.firstOrNull { it.id == selectedId }
-                                            ?: createdCollectionNamesById[selectedId]?.let { name ->
-                                                CollectionEntity(
-                                                    id = selectedId,
-                                                    name = name,
-                                                    sortOrder = 0,
-                                                    createdAt = 0,
-                                                    updatedAt = 0,
-                                                )
-                                            }
-                                    }
                                     val saveResult = savePendingShare(
                                         payload = payload,
                                         container = container,
-                                        selectedCollections = selectedCollections,
+                                        selectedLocalTagIds = selectedLocalTagIds,
                                     )
                                     if (saveResult.meaningfulAction) {
                                         AdsManager.registerMeaningfulActionAndMaybeShow(context)
@@ -293,12 +331,12 @@ private fun ShareReceiverContent(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ShareReceiverPendingContent(
-    collections: List<CollectionEntity>,
-    selectedCollectionIds: Set<Long>,
+    localTags: List<TagWithCount>,
+    selectedLocalTagIds: Set<Long>,
     newTagName: String,
     tagCreateError: String?,
     isSaving: Boolean,
-    onToggleCollection: (Long) -> Unit,
+    onToggleLocalTag: (Long) -> Unit,
     onNewTagNameChange: (String) -> Unit,
     onCreateTag: () -> Unit,
     onCancel: () -> Unit,
@@ -311,7 +349,7 @@ private fun ShareReceiverPendingContent(
     )
     Spacer(Modifier.height(18.dp))
 
-    if (collections.isEmpty()) {
+    if (localTags.isEmpty()) {
         Surface(
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
             shape = RoundedCornerShape(12.dp),
@@ -329,11 +367,11 @@ private fun ShareReceiverPendingContent(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            collections.forEach { collection ->
+            localTags.forEach { tag ->
                 ShareReceiverTagRow(
-                    collection = collection,
-                    selected = collection.id in selectedCollectionIds,
-                    onClick = { onToggleCollection(collection.id) },
+                    tag = tag,
+                    selected = tag.id in selectedLocalTagIds,
+                    onClick = { onToggleLocalTag(tag.id) },
                 )
             }
         }
@@ -362,7 +400,7 @@ private fun ShareReceiverPendingContent(
             .fillMaxWidth()
             .heightIn(min = 54.dp),
     ) {
-        Text("＋ タグを作成", style = MaterialTheme.typography.titleLarge)
+        Text("＋", style = MaterialTheme.typography.titleLarge)
     }
     Spacer(Modifier.height(8.dp))
     Row(
@@ -403,7 +441,7 @@ private fun ShareReceiverPendingContent(
 
 @Composable
 private fun ShareReceiverTagRow(
-    collection: CollectionEntity,
+    tag: TagWithCount,
     selected: Boolean,
     onClick: () -> Unit,
 ) {
@@ -450,7 +488,7 @@ private fun ShareReceiverTagRow(
             }
             Spacer(Modifier.width(12.dp))
             Text(
-                text = collection.name,
+                text = tag.name,
                 modifier = Modifier.widthIn(max = 184.dp),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
@@ -514,17 +552,21 @@ private fun ShareReceiverErrorContent(
 private suspend fun savePendingShare(
     payload: ShareReceiverPayload.Pending,
     container: AppContainer,
-    selectedCollections: List<CollectionEntity>,
+    selectedLocalTagIds: Set<Long>,
 ): ShareReceiverSaveOutcome {
     var tagAssignmentFailed = false
 
     if (payload.urls.size <= 1 && !payload.isBatch) {
-        val result = container.repository.saveFromManualInput(payload.urls.first(), collectionId = null)
-        if (shouldAssignShareTags(result.result, result.entryId) && selectedCollections.isNotEmpty()) {
-            val assigned = assignLocalCollectionTags(
+        val result = container.repository.saveFromManualInput(
+            payload.urls.first(),
+            collectionId = null,
+            initialMemo = payload.memo,
+        )
+        if (shouldAssignShareTags(result.result, result.entryId) && selectedLocalTagIds.isNotEmpty()) {
+            val assigned = assignLocalTags(
                 entryId = requireNotNull(result.entryId),
                 container = container,
-                collections = selectedCollections,
+                tagIds = selectedLocalTagIds,
             )
             tagAssignmentFailed = !assigned
         }
@@ -540,12 +582,16 @@ private suspend fun savePendingShare(
     var restored = 0
     var failed = 0
     payload.urls.forEach { url ->
-        val result = container.repository.saveFromManualInput(url, collectionId = null)
-        if (shouldAssignShareTags(result.result, result.entryId) && selectedCollections.isNotEmpty()) {
-            val assigned = assignLocalCollectionTags(
+        val result = container.repository.saveFromManualInput(
+            url,
+            collectionId = null,
+            initialMemo = payload.memo,
+        )
+        if (shouldAssignShareTags(result.result, result.entryId) && selectedLocalTagIds.isNotEmpty()) {
+            val assigned = assignLocalTags(
                 entryId = requireNotNull(result.entryId),
                 container = container,
-                collections = selectedCollections,
+                tagIds = selectedLocalTagIds,
             )
             if (!assigned) tagAssignmentFailed = true
         }
@@ -572,21 +618,13 @@ private suspend fun savePendingShare(
     return ShareReceiverSaveOutcome(message = message, meaningfulAction = created > 0 || restored > 0)
 }
 
-private suspend fun assignLocalCollectionTags(
+private suspend fun assignLocalTags(
     entryId: Long,
     container: AppContainer,
-    collections: List<CollectionEntity>,
+    tagIds: Set<Long>,
 ): Boolean {
     var allSucceeded = true
-    collections
-        .map { it.name }
-        .distinctBy { normalizeSharedTagName(it) }
-        .forEach { name ->
-            val tagId = resolveLocalTagId(container, name)
-            if (tagId == null) {
-                allSucceeded = false
-                return@forEach
-            }
+    tagIds.forEach { tagId ->
             when (container.tagRepository.assignTagWithResult(tagId = tagId, entryId = entryId)) {
                 AssignTagResult.Success,
                 AssignTagResult.AlreadyAssigned,
@@ -595,21 +633,8 @@ private suspend fun assignLocalCollectionTags(
                 AssignTagResult.Failed,
                 -> allSucceeded = false
             }
-        }
-    return allSucceeded
-}
-
-private suspend fun resolveLocalTagId(container: AppContainer, name: String): Long? {
-    val normalized = normalizeSharedTagName(name)
-    container.tagRepository.findLocalTagIdByName(normalized)?.let { return it }
-    return when (val created = container.tagRepository.createLocalTagWithResult(normalized)) {
-        is CreateTagResult.Success -> created.tagId
-        CreateTagResult.Duplicate -> container.tagRepository.findLocalTagIdByName(normalized)
-        CreateTagResult.InvalidName,
-        is CreateTagResult.LimitReached,
-        CreateTagResult.Failed,
-        -> null
     }
+    return allSucceeded
 }
 
 private fun shouldAssignShareTags(result: ShareSaveResult, entryId: Long?): Boolean {
@@ -645,7 +670,7 @@ private fun shareReceiverResultMessage(
                 ShareSaveResult.SAVE_FAILED -> "保存できませんでした"
                 ShareSaveResult.INPUT_TOO_LARGE -> "共有内容が長すぎるため処理できませんでした"
                 ShareSaveResult.INVALID_URL -> "有効なURLではありませんでした"
-                ShareSaveResult.NO_URL_FOUND -> "URLが見つかりませんでした"
+                ShareSaveResult.NO_URL_FOUND -> "保存できる内容が見つかりませんでした"
                 ShareSaveResult.BATCH_PROCESSED -> "保存しました"
             },
         )
@@ -658,7 +683,7 @@ private fun shareReceiverErrorMessage(result: ShareSaveResult): String {
     return when (result) {
         ShareSaveResult.INPUT_TOO_LARGE -> "共有内容が長すぎるため処理できませんでした"
         ShareSaveResult.INVALID_URL -> "有効なURLではありませんでした"
-        ShareSaveResult.NO_URL_FOUND -> "URLが見つかりませんでした"
+        ShareSaveResult.NO_URL_FOUND -> "保存できる内容が見つかりませんでした"
         else -> "保存できませんでした"
     }
 }
@@ -675,6 +700,7 @@ private sealed interface ShareReceiverPayload {
     data class Pending(
         val urls: List<String>,
         val isBatch: Boolean,
+        val memo: String? = null,
         val degradationNotice: String?,
     ) : ShareReceiverPayload
 

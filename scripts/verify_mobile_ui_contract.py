@@ -23,6 +23,14 @@ def forbid(rel_path: str, needle: str, reason: str) -> None:
         raise AssertionError(f"{rel_path}: forbidden {needle!r} ({reason})")
 
 
+def require_order(rel_path: str, first: str, second: str, reason: str) -> None:
+    haystack = read(rel_path)
+    first_index = haystack.find(first)
+    second_index = haystack.find(second)
+    if first_index == -1 or second_index == -1 or first_index >= second_index:
+        raise AssertionError(f"{rel_path}: expected {first!r} before {second!r} ({reason})")
+
+
 def main() -> int:
     checks = [
         lambda: require(
@@ -32,13 +40,13 @@ def main() -> int:
         ),
         lambda: require(
             "app/src/main/java/jp/mimac/urlsaver/data/AppDatabase.kt",
-            "MIGRATION_19_17",
-            "Android real-device schema 19 must open safely after restoring schema 17 code",
+            "MIGRATION_19_20",
+            "Android real-device schema 19 must migrate forward without data loss",
         ),
         lambda: require(
             "app/src/main/java/jp/mimac/urlsaver/data/AppDatabase.kt",
             'dropColumnIfPresent(db, "url_entries", "pendingDeleteOriginState")',
-            "schema downgrade must preserve URL/tag data and only remove the post-plan extra column",
+            "schema migration must preserve URL/tag data and only remove the post-plan extra column",
         ),
         lambda: forbid(
             "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
@@ -54,6 +62,52 @@ def main() -> int:
             "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
             'Text("+")',
             "home local-tag creation/management route must remain visible as + only",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
+            "selectedMainLocalTagId",
+            "Android home must track local tag filter selection in the main top row",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
+            "localTags = localSaveTags",
+            "Android home must pass local tags into the service filter row",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/components/ServiceFilterRow.kt",
+            "localTags: List<TagWithCount>",
+            "Android service filter row must own local tag chips in the same row",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/components/ServiceFilterRow.kt",
+            "onCreateLocalTag",
+            "Android service filter row must keep local tag + in the same row",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/components/ServiceFilterRow.kt",
+            "TopFilterItem.LocalTag",
+            "Android local tags must be part of the same top-row movable chip model",
+        ),
+        lambda: require_order(
+            "app/src/main/java/jp/mimac/urlsaver/ui/components/ServiceFilterRow.kt",
+            "localTags.forEach",
+            "add(TopFilterItem.All)",
+            "Android local tags must be inserted before service filters in the same top row",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/components/ServiceFilterRow.kt",
+            "missingLocalTags + currentItems",
+            "new Android local tags must appear before existing service filters even when a saved order exists",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
+            "viewModel.selectedLocalTagIdFlow.collectAsStateWithLifecycle()",
+            "Android archive screen must also track local tag filter selection",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
+            "localTags = localSaveTags",
+            "Android archive screen must pass local tags into the same top service filter row",
         ),
         lambda: require(
             "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
@@ -129,6 +183,12 @@ def main() -> int:
             "ios/URLSaveriOS/UI/AppChrome.swift",
             "entryCardVisibleLocalTagNames",
             "iPhone entry cards must normalize visible local tag chips",
+        ),
+        lambda: require_order(
+            "ios/URLSaveriOS/UI/AppChrome.swift",
+            "ForEach(localTags)",
+            "ForEach(serviceFilterOrder",
+            "iPhone local tags must appear in the same top row immediately after the + chip, not be pushed behind service filters",
         ),
         lambda: require(
             "ios/URLSaveriOS/UI/AppChrome.swift",

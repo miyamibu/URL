@@ -1,6 +1,7 @@
 package jp.mimac.urlsaver.ui
 
 import jp.mimac.urlsaver.domain.ServiceType
+import jp.mimac.urlsaver.domain.UrlRules
 
 fun serviceTypeForUi(serviceType: ServiceType): ServiceType {
     return serviceType
@@ -8,6 +9,7 @@ fun serviceTypeForUi(serviceType: ServiceType): ServiceType {
 
 fun serviceLabelForList(serviceType: ServiceType, normalizedHost: String): String {
     val uiType = serviceTypeForUi(serviceType)
+    if (UrlRules.isTextCardHost(normalizedHost)) return "テキスト"
     return when (uiType) {
         ServiceType.WEB -> normalizedHost
         ServiceType.TIKTOK -> "TikTok"

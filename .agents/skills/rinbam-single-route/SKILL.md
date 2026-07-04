@@ -50,7 +50,7 @@ If it fails before editing, report that the baseline is already dirty and fix th
 
 ## Must Preserve
 - Home should not regain the removed Info/privacy top-bar icon.
-- Home must keep a local tag row with `+` and a shared-tag `+` route.
+- Home must keep local tag chips and the local `+` in the same top horizontal row as service filters, while keeping the shared-tag `+` route separate.
 - Entry cards must receive local tag names and show them instead of service/time when present.
 - Detail local-tag heading must be `自作タグ`; shared-tag heading must be `共有タグ`.
 - Local tag management must not show `リンク` / `JSON` share controls or the old large text `削除` label.
@@ -65,4 +65,4 @@ If it fails before editing, report that the baseline is already dirty and fix th
 ## Failure Handling
 - If old UI returns, stop adding features and restore the contract first.
 - If code and contract disagree, update the contract only when the user's current instruction explicitly changes the desired behavior.
-- If schema downgrade is needed, add a preserving migration or stop and report why it cannot be made safe.
+- If schema drift is found, add a preserving forward migration or stop and report why it cannot be made safe.

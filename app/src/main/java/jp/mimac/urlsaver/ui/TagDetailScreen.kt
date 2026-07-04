@@ -34,7 +34,6 @@ import androidx.compose.material.icons.automirrored.outlined.ExitToApp
 import androidx.compose.material.icons.automirrored.outlined.ViewList
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.IosShare
 import androidx.compose.material.icons.outlined.LinkOff
 import androidx.compose.material.icons.outlined.Refresh
@@ -117,7 +116,6 @@ fun TagDetailScreen(
     var showAddEntrySheet by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showLeaveDialog by remember { mutableStateOf(false) }
-    var showInfoDialog by remember { mutableStateOf(false) }
     var showShareOptionsDialog by remember { mutableStateOf(false) }
     var pendingOwnershipTransferMember by remember { mutableStateOf<SharedTagMemberRecord?>(null) }
     var shareError by remember { mutableStateOf<String?>(null) }
@@ -195,13 +193,15 @@ fun TagDetailScreen(
         }
     }
 
-    val canEditEntries = currentTag.scope == SharedTagScope.LOCAL_ONLY ||
+    val isLocalTag = currentTag.scope == SharedTagScope.LOCAL_ONLY
+    val tagKindLabel = if (isLocalTag) "自作タグ" else "共有タグ"
+    val canEditEntries = isLocalTag ||
         currentTag.currentUserRole == SharedTagMemberRole.OWNER ||
         currentTag.currentUserRole == SharedTagMemberRole.EDITOR
     val canShareInvite = currentTag.scope == SharedTagScope.SYNCED &&
         currentTag.currentUserRole == SharedTagMemberRole.OWNER
-    val canShareTag = currentTag.scope == SharedTagScope.LOCAL_ONLY || canShareInvite
-    val canDeleteSharedTag = currentTag.scope == SharedTagScope.LOCAL_ONLY ||
+    val canShareTag = currentTag.scope == SharedTagScope.SYNCED && canShareInvite
+    val canDeleteTag = isLocalTag ||
         (currentTag.scope == SharedTagScope.SYNCED && currentTag.currentUserRole == SharedTagMemberRole.OWNER)
     val canLeaveSharedTag = currentTag.scope == SharedTagScope.SYNCED &&
         currentTag.currentUserRole != null &&
@@ -222,7 +222,7 @@ fun TagDetailScreen(
         scope.launch {
             val result = withTimeoutOrNull(5_000L) {
                 snackbarHostState.showSnackbar(
-                    message = "共有タグから外しました",
+                    message = "${tagKindLabel}から外しました",
                     actionLabel = "元に戻す",
                     duration = SnackbarDuration.Indefinite,
                 )
@@ -234,7 +234,7 @@ fun TagDetailScreen(
             val removed = viewModel.removeEntryFromTag(entryId)
             pendingRemovedEntryIds = pendingRemovedEntryIds - entryId
             if (!removed) {
-                entryRemoveError = "共有タグから外せませんでした"
+                entryRemoveError = "${tagKindLabel}から外せませんでした"
             }
         }
     }
@@ -251,13 +251,6 @@ fun TagDetailScreen(
                     }
                 },
                 actions = {
-                    SharedTagHeaderIconButton(onClick = { showInfoDialog = true }) {
-                        Icon(
-                            Icons.Outlined.Info,
-                            contentDescription = "共有タグの説明",
-                            modifier = Modifier.size(SharedTagHeaderIconSize),
-                        )
-                    }
                     SharedTagHeaderIconButton(onClick = { viewModel.toggleEntryCardDisplayMode() }) {
                         Icon(
                             imageVector = if (entryCardDisplayMode == EntryCardDisplayMode.RICH) {
@@ -321,11 +314,11 @@ fun TagDetailScreen(
                             )
                         }
                     }
-                    if (canDeleteSharedTag) {
+                    if (canDeleteTag) {
                         SharedTagHeaderIconButton(onClick = { showDeleteDialog = true }) {
                             Icon(
                                 Icons.Outlined.Delete,
-                                contentDescription = "共有タグを削除",
+                                contentDescription = "${tagKindLabel}を削除",
                                 modifier = Modifier.size(SharedTagHeaderIconSize),
                             )
                         }
@@ -354,7 +347,7 @@ fun TagDetailScreen(
                         syncNoticeIsError = syncNoticeIsError,
                     )
                 }
-                if (currentTag.scope == SharedTagScope.LOCAL_ONLY && cloudState.isConfigured && !cloudState.isSignedIn) {
+                if (currentTag.scope == SharedTagScope.SYNCED && cloudState.isConfigured && !cloudState.isSignedIn) {
                     item {
                         CloudSignInBanner(onOpenCloudAuth = onOpenCloudAuth)
                     }
@@ -404,7 +397,7 @@ fun TagDetailScreen(
                 }
                 if (visibleEntries.isEmpty()) {
                     item {
-                        SharedTagEmptyPlaceholder()
+                        TagEmptyPlaceholder(isLocalTag = isLocalTag)
                     }
                 } else {
                     items(visibleEntries, key = { it.id }) { entry ->
@@ -417,13 +410,13 @@ fun TagDetailScreen(
                         )
                     }
                 }
-                if (canDeleteSharedTag) {
+                if (canDeleteTag) {
                     item {
                         TextButton(
                             onClick = { showDeleteDialog = true },
                             modifier = Modifier.padding(horizontal = 8.dp),
                         ) {
-                            Text("この共有タグを削除")
+                            Text("この${tagKindLabel}を削除")
                         }
                     }
                 }
@@ -487,37 +480,6 @@ fun TagDetailScreen(
                             Text("クラウド招待リンクを共有")
                         }
                     }
-                    TextButton(
-                        onClick = {
-                            showShareOptionsDialog = false
-                            shareError = null
-                            launchShare(
-                                text = localTagShareText(currentTag.name, viewModel.buildLocalShareLink()),
-                                chooserTitle = "同じ端末用タグリンクを共有",
-                            )
-                        },
-                    ) {
-                        Text("この端末用リンクを共有")
-                    }
-                    TextButton(
-                        onClick = {
-                            showShareOptionsDialog = false
-                            scope.launch {
-                                val payloadText = viewModel.buildTagSharePayloadText()
-                                if (payloadText == null) {
-                                    shareError = "タグデータを書き出せませんでした"
-                                } else {
-                                    shareError = null
-                                    launchShare(
-                                        text = payloadText,
-                                        chooserTitle = "タグデータを共有",
-                                    )
-                                }
-                            }
-                        },
-                    ) {
-                        Text("タグデータ(JSON)を共有")
-                    }
                 }
             },
             confirmButton = {
@@ -528,27 +490,14 @@ fun TagDetailScreen(
         )
     }
 
-    if (showInfoDialog) {
-        AlertDialog(
-            onDismissRequest = { showInfoDialog = false },
-            title = { Text("共有タグについて") },
-            text = { Text(sharedTagInfoMessage(currentTag.currentUserRole)) },
-            confirmButton = {
-                TextButton(onClick = { showInfoDialog = false }) {
-                    Text("閉じる")
-                }
-            },
-        )
-    }
-
     if (showDeleteDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
-            title = { Text("共有タグを削除") },
+            title = { Text("${tagKindLabel}を削除") },
             text = {
                 Text(
-                    if (currentTag.scope == SharedTagScope.LOCAL_ONLY) {
-                        "この共有タグをこの端末から削除します。タグ内のURL自体は削除されません。"
+                    if (isLocalTag) {
+                        "この自作タグをこの端末から削除します。タグ内のURL自体は削除されません。"
                     } else {
                         "この共有タグを削除すると、参加中メンバーの一覧からも外れます。タグ内のURL自体は削除されません。"
                     },
@@ -701,7 +650,7 @@ fun TagDetailScreen(
                 Spacer(Modifier.height(16.dp))
                 if (!canEditEntries) {
                     Text(
-                        text = "この共有タグでは URL を追加できません",
+                        text = "この${tagKindLabel}では URL を追加できません",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -723,6 +672,7 @@ fun TagDetailScreen(
                                 entry = entry,
                                 displayMode = entryCardDisplayMode,
                                 enabled = canEditEntries,
+                                tagKindLabel = tagKindLabel,
                                 onClick = { onOpenDetail(entry.id) },
                                 onAdd = {
                                     scope.launch {
@@ -737,7 +687,7 @@ fun TagDetailScreen(
                                                 entryAddError = result.message
                                             }
                                             AssignTagResult.Failed -> {
-                                                entryAddError = "この共有タグにはURLを追加できませんでした"
+                                                entryAddError = "この${tagKindLabel}にはURLを追加できませんでした"
                                             }
                                         }
                                     }
@@ -915,7 +865,9 @@ private fun SharedTagEntryCountRow(
 }
 
 @Composable
-private fun SharedTagEmptyPlaceholder() {
+private fun TagEmptyPlaceholder(
+    isLocalTag: Boolean,
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -930,7 +882,11 @@ private fun SharedTagEmptyPlaceholder() {
         )
         Spacer(Modifier.height(12.dp))
         Text(
-            text = "この共有タグにはまだURLがありません",
+            text = if (isLocalTag) {
+                "この自作タグにはまだURLがありません"
+            } else {
+                "この共有タグにはまだURLがありません"
+            },
             style = MaterialTheme.typography.titleMedium,
             textAlign = TextAlign.Center,
             maxLines = 1,
@@ -939,7 +895,11 @@ private fun SharedTagEmptyPlaceholder() {
         )
         Spacer(Modifier.height(6.dp))
         Text(
-            text = "詳細画面からURLに共有タグを追加すると、ここにまとまって表示されます",
+            text = if (isLocalTag) {
+                "詳細画面からURLに自作タグを追加すると、ここにまとまって表示されます"
+            } else {
+                "詳細画面からURLに共有タグを追加すると、ここにまとまって表示されます"
+            },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -968,16 +928,6 @@ private fun SyncedTagInfo(
     }
 }
 
-private fun sharedTagInfoMessage(role: SharedTagMemberRole?): String {
-    val roleText = when (role) {
-        SharedTagMemberRole.OWNER -> "あなたはオーナーです。招待リンクの共有、参加者の削除、タグ削除ができます。"
-        SharedTagMemberRole.EDITOR -> "あなたは編集者です。URL の追加と削除、共有タグから抜ける操作ができます。"
-        SharedTagMemberRole.VIEWER -> "あなたは閲覧者です。URL の閲覧と共有タグから抜ける操作ができます。"
-        null -> "同期が完了すると権限情報が表示されます。"
-    }
-    return "この共有タグでは URL 一覧だけを同期します。\n\n$roleText"
-}
-
 private fun inviteShareText(inviteUrl: String): String {
     val token = runCatching { Uri.parse(inviteUrl).lastPathSegment.orEmpty() }.getOrDefault("")
     if (token.isBlank()) return inviteUrl
@@ -990,22 +940,12 @@ private fun inviteShareText(inviteUrl: String): String {
     """.trimIndent()
 }
 
-private fun localTagShareText(tagName: String, localLink: String): String {
-    return """
-        URL Saverの端末内タグ:
-        $tagName
-
-        $localLink
-
-        このリンクは同じ端末内のタグを開くためのものです。
-    """.trimIndent()
-}
-
 @Composable
 private fun AddEntryCandidateCard(
     entry: jp.mimac.urlsaver.data.UrlEntryEntity,
     displayMode: EntryCardDisplayMode,
     enabled: Boolean,
+    tagKindLabel: String,
     onClick: () -> Unit,
     onAdd: () -> Unit,
 ) {
@@ -1024,7 +964,7 @@ private fun AddEntryCandidateCard(
                     .padding(top = 6.dp),
                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
             ) {
-                Text("この共有タグに追加")
+                Text("この${tagKindLabel}に追加")
             }
         },
         onClick = onClick,

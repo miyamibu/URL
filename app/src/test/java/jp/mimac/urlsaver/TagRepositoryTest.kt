@@ -25,6 +25,9 @@ import jp.mimac.urlsaver.data.TagEntity
 import jp.mimac.urlsaver.data.TagUrlCrossRef
 import jp.mimac.urlsaver.data.UrlEntryEntity
 import jp.mimac.urlsaver.data.UrlRepository
+import jp.mimac.urlsaver.data.VideoAssetEntity
+import jp.mimac.urlsaver.data.VideoDownloadEntity
+import jp.mimac.urlsaver.data.VideoRepository
 import jp.mimac.urlsaver.domain.AcceptSharedTagInviteResponse
 import jp.mimac.urlsaver.domain.ApplySharedTagOpsResponse
 import jp.mimac.urlsaver.domain.ContentContext
@@ -221,6 +224,7 @@ class TagRepositoryTest {
             entryId = entryId,
             repository = FakeUrlRepository(),
             tagRepository = repository,
+            videoRepository = FakeVideoRepository(),
         )
 
         val result = viewModel.createLocalAndAssignTag("local-from-detail")
@@ -233,6 +237,26 @@ class TagRepositoryTest {
         assertNull(created?.remoteTagId)
         assertNull(created?.authUserId)
         assertTrue(syncScheduler.enqueued.isEmpty())
+    }
+
+    @Test
+    fun localTagDuplicateAndAlreadyAssignedResults_areExplicit() = runBlocking {
+        val entryId = insertEntry(
+            url = "https://example.com/detail-existing-local",
+            createdAt = 2_100L,
+        )
+        val existing = repository.createLocalTagWithResult("existing-detail-tag")
+        assertTrue(existing is CreateTagResult.Success)
+        val existingTagId = (existing as CreateTagResult.Success).tagId
+
+        val duplicateCreate = repository.createLocalTagWithResult("existing-detail-tag")
+        val firstAssign = repository.assignTagWithResult(existingTagId, entryId)
+        val secondAssign = repository.assignTagWithResult(existingTagId, entryId)
+
+        assertEquals(CreateTagResult.Duplicate, duplicateCreate)
+        assertEquals(AssignTagResult.Success, firstAssign)
+        assertEquals(AssignTagResult.AlreadyAssigned, secondAssign)
+        assertEquals(listOf("existing-detail-tag"), db.tagDao().getVisibleTagsForEntry(entryId, authUserId = null).map { it.name })
     }
 
     @Test
@@ -619,6 +643,16 @@ class TagRepositoryTest {
         override suspend fun applyMetadataUpdate(entryId: Long, metadata: MetadataUpdate) = Unit
         override suspend fun retryMetadata(entryId: Long): Boolean = false
         override suspend fun loadEntry(entryId: Long): UrlEntryEntity? = null
+    }
+
+    private class FakeVideoRepository : VideoRepository {
+        override fun observeAssetsForEntry(entryId: Long) = flowOf(emptyList<VideoAssetEntity>())
+        override fun observePreferredAssetForEntry(entryId: Long) = flowOf<VideoAssetEntity?>(null)
+        override fun observeLatestDownloadForEntry(entryId: Long) = flowOf<VideoDownloadEntity?>(null)
+        override fun observeSavedDownloadsForEntry(entryId: Long) = flowOf(emptyList<VideoDownloadEntity>())
+        override fun enqueueResolve(entryId: Long, autoDownload: Boolean) = Unit
+        override fun enqueueDownloads(videoAssetIds: List<Long>) = Unit
+        override suspend fun repairSavedDownloadsForEntry(entryId: Long): Int = 0
     }
 
     private class FakeAuthSessionProvider : SharedTagAuthSessionProvider {

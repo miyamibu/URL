@@ -241,10 +241,11 @@ interface UrlEntryDao {
 
     @Transaction
     suspend fun restoreFromPending(entry: UrlEntryEntity, now: Long): UrlEntryEntity {
+        val restoreAsArchived = entry.archivedAt != null
         val updated = entry.copy(
-            recordState = RecordState.ACTIVE,
+            recordState = if (restoreAsArchived) RecordState.ARCHIVED else RecordState.ACTIVE,
             pendingDeletionUntil = null,
-            archivedAt = null,
+            archivedAt = if (restoreAsArchived) entry.archivedAt else null,
             updatedAt = now,
         )
         update(updated)

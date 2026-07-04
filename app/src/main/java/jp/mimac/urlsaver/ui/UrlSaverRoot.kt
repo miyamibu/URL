@@ -4,6 +4,12 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Matrix
+import android.graphics.SurfaceTexture
+import android.media.MediaPlayer
+import android.net.Uri
+import android.view.Surface
+import android.view.TextureView
 import jp.mimac.urlsaver.BuildConfig
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
@@ -29,12 +35,16 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -123,16 +133,21 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
-import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
@@ -148,6 +163,7 @@ import jp.mimac.urlsaver.data.CollectionEntity
 import jp.mimac.urlsaver.data.DEFAULT_COLLECTION_ID
 import jp.mimac.urlsaver.data.LocalTagEntryRef
 import jp.mimac.urlsaver.data.UrlEntryEntity
+import jp.mimac.urlsaver.data.VideoDownloadEntity
 import jp.mimac.urlsaver.domain.DetailEffect
 import jp.mimac.urlsaver.domain.EntryCardDisplayMode
 import jp.mimac.urlsaver.domain.MainNavigationEvent
@@ -172,11 +188,14 @@ import jp.mimac.urlsaver.domain.SnackbarEvent
 import jp.mimac.urlsaver.domain.SnackbarEventKind
 import jp.mimac.urlsaver.domain.TagWithCount
 import jp.mimac.urlsaver.domain.UrlRules
+import jp.mimac.urlsaver.video.AppMediaStore
+import java.io.File
 import jp.mimac.urlsaver.domain.normalizeSharedTagName
 import jp.mimac.urlsaver.domain.validateSharedTagName
 import jp.mimac.urlsaver.ui.components.OrbitActionButton
 import jp.mimac.urlsaver.ui.components.OrbitActionStyle
 import jp.mimac.urlsaver.ui.components.OrbitActionText
+import jp.mimac.urlsaver.ui.components.OrbitFilterChip
 import jp.mimac.urlsaver.ui.components.OrbitPanel
 import jp.mimac.urlsaver.ui.components.OrbitPanelTone
 import jp.mimac.urlsaver.ui.components.OrbitSectionLabel
@@ -193,6 +212,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import java.time.ZoneId
 import kotlin.math.abs
+import kotlin.math.min
 
 private const val SHOW_COLLECTION_UI = false
 
@@ -439,6 +459,7 @@ private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
                     displayModeStore = context.appContainer().entryCardDisplayModeStore,
                     serviceFilterOrderStore = context.appContainer().serviceFilterOrderStore,
                     topFilterOrderStore = context.appContainer().topFilterOrderStore,
+                    tagRepository = context.appContainer().tagRepository,
                 )
             },
         )
@@ -468,6 +489,7 @@ private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
                     entryId = entryId,
                     repository = context.appContainer().repository,
                     tagRepository = context.appContainer().tagRepository,
+                    videoRepository = context.appContainer().videoRepository,
                 )
             },
         )
@@ -683,6 +705,7 @@ private fun MainScreen(
             },
         )
     val pendingInvite by profileVm.pendingInvite.collectAsStateWithLifecycle()
+    val profileCloudState by profileVm.cloudState.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val mainListState = rememberLazyListState()
     val customCollections = remember(collections) {
@@ -738,19 +761,37 @@ private fun MainScreen(
     }
     var selectionModeActive by rememberSaveable { mutableStateOf(false) }
     var batchLocalTagSheetVisible by rememberSaveable { mutableStateOf(false) }
+    var selectedMainLocalTagId by rememberSaveable { mutableStateOf<Long?>(null) }
     var searchBarVisible by rememberSaveable { mutableStateOf(false) }
     var searchQueryLocal by rememberSaveable { mutableStateOf("") }
-    val searchFilteredEntries = remember(uiState.entries, searchQueryLocal, customCollections, sharedTags, localTagEntryRefs) {
+    LaunchedEffect(localSaveTags, selectedMainLocalTagId) {
+        val selectedTagId = selectedMainLocalTagId ?: return@LaunchedEffect
+        if (localSaveTags.none { it.id == selectedTagId }) {
+            selectedMainLocalTagId = null
+        }
+    }
+    val localTagFilteredEntries = remember(uiState.entries, localTagEntryRefs, selectedMainLocalTagId) {
+        val selectedTagId = selectedMainLocalTagId
+        if (selectedTagId == null) {
+            uiState.entries
+        } else {
+            val matchingEntryIds = localTagEntryRefs
+                .filter { it.tagId == selectedTagId }
+                .mapTo(mutableSetOf()) { it.entryId }
+            uiState.entries.filter { it.id in matchingEntryIds }
+        }
+    }
+    val searchFilteredEntries = remember(localTagFilteredEntries, searchQueryLocal, customCollections, sharedTags, localTagEntryRefs) {
         filterEntriesBySearch(
-            entries = uiState.entries,
+            entries = localTagFilteredEntries,
             query = searchQueryLocal,
             collections = customCollections,
             tags = sharedTags,
             localTagEntryRefs = localTagEntryRefs,
         )
     }
-    val displayedUiState = remember(uiState, searchQueryLocal, searchFilteredEntries) {
-        if (searchQueryLocal.isBlank()) {
+    val displayedUiState = remember(uiState, searchQueryLocal, selectedMainLocalTagId, searchFilteredEntries) {
+        if (searchQueryLocal.isBlank() && selectedMainLocalTagId == null) {
             uiState
         } else {
             uiState.copy(entries = searchFilteredEntries, scopeCount = searchFilteredEntries.size)
@@ -764,6 +805,7 @@ private fun MainScreen(
     var sharedTagDialogState by remember { mutableStateOf(SharedTagDialogUiState()) }
     var sharedTagGroupDialogState by remember { mutableStateOf(SharedTagDialogUiState()) }
     var manualLocalTagDialogState by remember { mutableStateOf(SharedTagDialogUiState()) }
+    var createLocalTagForMainFilter by remember { mutableStateOf(false) }
     var renameLocalTagDialogState by remember { mutableStateOf(SharedTagDialogUiState()) }
     var pendingRenameLocalTagId by remember { mutableStateOf<Long?>(null) }
     var groupRenameDialogState by remember { mutableStateOf(SharedTagDialogUiState()) }
@@ -855,6 +897,7 @@ private fun MainScreen(
 
     fun closeCreateManualLocalTagDialog() {
         manualLocalTagDialogState = SharedTagDialogUiState()
+        createLocalTagForMainFilter = false
     }
 
     fun closeRenameLocalTagDialog() {
@@ -912,10 +955,15 @@ private fun MainScreen(
         scope.launch {
             when (val created = viewModel.createLocalTag(manualLocalTagDialogState.name)) {
                 is CreateTagResult.Success -> {
-                    manualInputState = manualInputState.copy(
-                        selectedLocalTagIds = manualInputState.selectedLocalTagIds + created.tagId,
-                        localTagError = null,
-                    )
+                    if (createLocalTagForMainFilter) {
+                        selectedMainLocalTagId = created.tagId
+                        viewModel.selectService(ServiceType.ALL)
+                    } else {
+                        manualInputState = manualInputState.copy(
+                            selectedLocalTagIds = manualInputState.selectedLocalTagIds + created.tagId,
+                            localTagError = null,
+                        )
+                    }
                     closeCreateManualLocalTagDialog()
                 }
                 CreateTagResult.InvalidName -> {
@@ -926,10 +974,15 @@ private fun MainScreen(
                         normalizeSharedTagName(it.name) == normalizeSharedTagName(manualLocalTagDialogState.name)
                     }?.id
                     if (duplicateId != null) {
-                        manualInputState = manualInputState.copy(
-                            selectedLocalTagIds = manualInputState.selectedLocalTagIds + duplicateId,
-                            localTagError = null,
-                        )
+                        if (createLocalTagForMainFilter) {
+                            selectedMainLocalTagId = duplicateId
+                            viewModel.selectService(ServiceType.ALL)
+                        } else {
+                            manualInputState = manualInputState.copy(
+                                selectedLocalTagIds = manualInputState.selectedLocalTagIds + duplicateId,
+                                localTagError = null,
+                            )
+                        }
                         closeCreateManualLocalTagDialog()
                     } else {
                         manualLocalTagDialogState = manualLocalTagDialogState.copy(error = "同じ名前のタグがあります")
@@ -1245,11 +1298,14 @@ private fun MainScreen(
         }
     }
 
-    fun assignSelectedEntriesToLocalTag(tag: TagWithCount) {
+    fun assignSelectedEntriesToLocalTags(tags: Collection<TagWithCount>) {
         val entryIds = selectedEntryIds
-        if (entryIds.isEmpty()) return
+        if (entryIds.isEmpty() || tags.isEmpty()) return
         scope.launch {
-            val assignedCount = viewModel.assignTagToEntries(tag.id, entryIds)
+            var assignedCount = 0
+            tags.forEach { tag ->
+                assignedCount += viewModel.assignTagToEntries(tag.id, entryIds)
+            }
             if (assignedCount > 0) {
                 batchLocalTagSheetVisible = false
                 selectedEntryIds = emptySet()
@@ -1259,6 +1315,28 @@ private fun MainScreen(
                 snackbarHostState.showSnackbar("タグを追加できませんでした", duration = SnackbarDuration.Short)
             }
         }
+    }
+
+    fun returnToMainHome() {
+        selectedEntryIds = emptySet()
+        selectionModeActive = false
+        batchLocalTagSheetVisible = false
+        selectedMainLocalTagId = null
+        searchQueryLocal = ""
+        searchBarVisible = false
+        mainPane = MainPane.URLS
+        showUsageGuide = false
+        viewModel.selectService(ServiceType.ALL)
+        viewModel.selectCollection(null)
+        scope.launch {
+            mainListState.animateScrollToItem(0)
+        }
+    }
+
+    fun startSelectionFromVisibleEntries() {
+        val visibleEntryIds = displayedUiState.entries.map { it.id }.toSet()
+        selectedEntryIds = visibleEntryIds
+        selectionModeActive = visibleEntryIds.isNotEmpty()
     }
 
     fun deleteCollection(collection: CollectionEntity) {
@@ -1361,6 +1439,7 @@ private fun MainScreen(
             null
         },
         onRequestCreateLocalTag = {
+            createLocalTagForMainFilter = false
             manualLocalTagDialogState = SharedTagDialogUiState(visible = true)
         },
         onSave = { submitManualSave() },
@@ -1370,6 +1449,14 @@ private fun MainScreen(
         visible = showLocalTagManagerSheet,
         localTags = localSaveTags,
         onDismiss = { showLocalTagManagerSheet = false },
+        onRequestRename = { tag ->
+            showLocalTagManagerSheet = false
+            pendingRenameLocalTagId = tag.id
+            renameLocalTagDialogState = SharedTagDialogUiState(
+                visible = true,
+                name = tag.name,
+            )
+        },
         onRequestDelete = { tag ->
             showLocalTagManagerSheet = false
             pendingDeleteLocalTag = tag
@@ -1381,7 +1468,7 @@ private fun MainScreen(
         localTags = localSaveTags,
         selectedCount = selectedEntryIds.size,
         onDismiss = { batchLocalTagSheetVisible = false },
-        onSelectTag = { tag -> assignSelectedEntriesToLocalTag(tag) },
+        onApply = { tags -> assignSelectedEntriesToLocalTags(tags) },
     )
 
     pendingDeleteCollection?.let { collection ->
@@ -1490,6 +1577,7 @@ private fun MainScreen(
         body = "自作タグの名前を変更します。",
         nameLabel = "タグ名",
         placeholder = "新しいタグ名",
+        confirmLabel = "変更",
         onDismiss = { closeRenameLocalTagDialog() },
         onNameChange = {
             renameLocalTagDialogState = renameLocalTagDialogState.copy(
@@ -1590,7 +1678,8 @@ private fun MainScreen(
     }
 
     val isGroupPane = mainPane == MainPane.GROUPS && showSharedTagCloudUi && !showUsageGuide
-    val showMainBottomBar = !selectionModeActive && selectedEntryIds.isEmpty() && !showUsageGuide && !isGroupPane
+    val isSearchActive = searchBarVisible || searchQueryLocal.isNotBlank()
+    val showMainBottomBar = !selectionModeActive && selectedEntryIds.isEmpty() && !showUsageGuide && !isGroupPane && !isSearchActive
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             containerColor = MaterialTheme.colorScheme.background,
@@ -1602,7 +1691,12 @@ private fun MainScreen(
             topBar = {
                 if (!isGroupPane) {
                     TopAppBar(
-                        title = { Text("りんばむ") },
+                        title = {
+                            Text(
+                                text = "りんばむ",
+                                modifier = Modifier.clickable { returnToMainHome() },
+                            )
+                        },
                         colors = orbitTopAppBarColors(),
                         windowInsets = compactTopAppBarInsets(),
                         actions = {
@@ -1621,17 +1715,9 @@ private fun MainScreen(
                                     modifier = Modifier.size(MainTopBarActionIconSize),
                                 )
                             }
-                            IconButton(onClick = { showProfileSheet = true }) {
-                                Icon(
-                                    Icons.Outlined.AccountCircle,
-                                    contentDescription = "プロフィール",
-                                    modifier = Modifier.size(MainTopBarActionIconSize),
-                                )
-                            }
                             IconButton(onClick = {
                                 if (!selectionModeActive) {
-                                    selectionModeActive = true
-                                    selectedEntryIds = emptySet()
+                                    startSelectionFromVisibleEntries()
                                 }
                             }) {
                                 Icon(
@@ -1723,7 +1809,9 @@ private fun MainScreen(
                     if (selectedSharedTagGroup == null) {
                         SharedTagGroupListContent(
                             groups = sharedTagGroups,
+                            isSignedIn = profileCloudState.isSignedIn,
                             onBack = { mainPane = MainPane.URLS },
+                            onOpenCloudAuth = { showProfileSheet = true },
                             onCreateGroup = {
                                 sharedTagGroupDialogState = sharedTagGroupDialogState.copy(
                                     visible = true,
@@ -1773,13 +1861,17 @@ private fun MainScreen(
                         showSharedTagCloudUi = showSharedTagCloudUi,
                         selectedService = selectedService,
                         selectedCollectionId = selectedCollectionId,
+                        selectedLocalTagId = selectedMainLocalTagId,
                         serviceFilterOrder = serviceFilterOrder,
                         topFilterOrderTokens = topFilterOrderTokens,
                         selectionModeActive = selectionModeActive,
                         selectedEntryIds = selectedEntryIds,
                         entryCardDisplayMode = entryCardDisplayMode,
                         mainListState = mainListState,
-                        onSelectService = { viewModel.selectService(it) },
+                        onSelectService = {
+                            selectedMainLocalTagId = null
+                            viewModel.selectService(it)
+                        },
                         onReorderServices = { serviceOrder ->
                             viewModel.reorderServices(serviceOrder)
                         },
@@ -1787,9 +1879,19 @@ private fun MainScreen(
                             viewModel.reorderTopFilters(tokens)
                         },
                         onSelectCollection = { targetId ->
+                            selectedMainLocalTagId = null
                             if (SHOW_COLLECTION_UI) toggleSelectedCollection(targetId)
                         },
-                        onRequestCreateLocalTag = { showLocalTagManagerSheet = true },
+                        onSelectLocalTag = { tagId ->
+                            selectedMainLocalTagId = tagId
+                            if (tagId != null) {
+                                viewModel.selectService(ServiceType.ALL)
+                            }
+                        },
+                        onRequestCreateLocalTag = {
+                            createLocalTagForMainFilter = true
+                            manualLocalTagDialogState = SharedTagDialogUiState(visible = true)
+                        },
                         onRequestRenameLocalTag = { tag ->
                             pendingRenameLocalTagId = tag.id
                             renameLocalTagDialogState = SharedTagDialogUiState(
@@ -1814,10 +1916,14 @@ private fun MainScreen(
                         },
                         onOpenTagDetail = onOpenTagDetail,
                         onRequestCreateSharedTag = {
-                            sharedTagDialogState = sharedTagDialogState.copy(
-                                visible = true,
-                                error = null,
-                            )
+                            if (profileCloudState.isSignedIn) {
+                                sharedTagDialogState = sharedTagDialogState.copy(
+                                    visible = true,
+                                    error = null,
+                                )
+                            } else {
+                                showProfileSheet = true
+                            }
                         },
                                     onOpenGroups = null,
                         onStartEntrySelection = { entryId ->
@@ -1900,12 +2006,12 @@ private fun ManualInputSheet(
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("manual_input_field"),
-                label = { Text("URL") },
-                placeholder = { Text("https://example.com") },
+                label = { Text("URL / テキスト") },
+                placeholder = { Text("https://example.com または残したいメモ") },
                 singleLine = true,
                 maxLines = 1,
                 keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Uri,
+                    keyboardType = KeyboardType.Text,
                     imeAction = ImeAction.Done,
                 ),
                 isError = inputError == ShareSaveResult.INVALID_URL ||
@@ -1916,7 +2022,7 @@ private fun ManualInputSheet(
                     when (inputError) {
                         ShareSaveResult.INVALID_URL -> Text("URL形式が正しくありません。https:// から始まるURLを入力してください")
                         ShareSaveResult.NO_URL_FOUND -> Text("入力内にURLが見つかりませんでした。URLをそのまま貼り付けてください")
-                        ShareSaveResult.INPUT_TOO_LARGE -> Text("入力が長すぎます。256KB以内のテキストでURLを貼り付けてください")
+                        ShareSaveResult.INPUT_TOO_LARGE -> Text("入力が長すぎます。256KB以内のURLまたはテキストにしてください")
                         ShareSaveResult.PERSONAL_URL_LIMIT_REACHED -> Text("ローンチ版の保存上限に達しました。不要なURLを整理してから追加してください。")
                         else -> Unit
                     }
@@ -1985,10 +2091,10 @@ private fun ManualInputSheet(
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                 )
             } else {
-                FlowRow(
+                PackedTagAssignmentFlow(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalSpacing = 8.dp,
+                    verticalSpacing = 8.dp,
                 ) {
                     localTags.forEach { tag ->
                         val selected = tag.id in selectedLocalTagIds
@@ -2062,11 +2168,12 @@ private fun ManualInputSheet(
 }
 
 @Composable
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 private fun LocalTagManagementSheet(
     visible: Boolean,
     localTags: List<TagWithCount>,
     onDismiss: () -> Unit,
+    onRequestRename: (TagWithCount) -> Unit,
     onRequestDelete: (TagWithCount) -> Unit,
 ) {
     if (!visible) return
@@ -2103,9 +2210,9 @@ private fun LocalTagManagementSheet(
                     )
                 }
             } else {
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                PackedTagAssignmentFlow(
+                    horizontalSpacing = 8.dp,
+                    verticalSpacing = 8.dp,
                 ) {
                     localTags.forEach { tag ->
                         Surface(
@@ -2113,19 +2220,30 @@ private fun LocalTagManagementSheet(
                             color = MaterialTheme.colorScheme.surfaceVariant,
                             contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                             border = BorderStroke(1.dp, OrbitTokens.outline),
+                            modifier = Modifier.combinedClickable(
+                                onClick = {},
+                                onDoubleClick = { onRequestRename(tag) },
+                            ),
                         ) {
                             Row(
                                 modifier = Modifier.padding(start = 14.dp, top = 8.dp, end = 8.dp, bottom = 8.dp),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Text(
-                                    text = tag.name,
-                                    modifier = Modifier.widthIn(max = 160.dp),
-                                    style = MaterialTheme.typography.titleSmall,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
+                                Column(modifier = Modifier.widthIn(max = 160.dp)) {
+                                    Text(
+                                        text = tag.name,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(
+                                        text = "${tag.urlCount}件",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                    )
+                                }
                                 IconButton(
                                     onClick = { onRequestDelete(tag) },
                                     modifier = Modifier.height(40.dp),
@@ -2198,9 +2316,10 @@ private fun CreateSharedTagDialog(
     newSharedTagName: String,
     createSharedTagError: String?,
     title: String = "共有タグを作成",
-    body: String = "サインイン中は作成後すぐクラウド共有できます。未サインインの場合はこの端末だけで使われます。",
+    body: String = "共有タグを作るにはサインインが必要です。先に共有タグクラウド画面でサインインしてください。",
     nameLabel: String = "共有タグ名",
     placeholder: String = "チーム共有 / 旅行 / 見返す など",
+    confirmLabel: String = "作成",
     onDismiss: () -> Unit,
     onNameChange: (String) -> Unit,
     onConfirm: () -> Unit,
@@ -2237,7 +2356,7 @@ private fun CreateSharedTagDialog(
                 onClick = onConfirm,
                 enabled = newSharedTagName.trim().isNotEmpty(),
             ) {
-                Text("作成")
+                Text(confirmLabel)
             }
         },
         dismissButton = {
@@ -2826,6 +2945,7 @@ private fun MainListContent(
     showSharedTagCloudUi: Boolean,
     selectedService: ServiceType,
     selectedCollectionId: Long?,
+    selectedLocalTagId: Long?,
     serviceFilterOrder: List<ServiceType>,
     topFilterOrderTokens: List<String>,
     selectionModeActive: Boolean,
@@ -2836,6 +2956,7 @@ private fun MainListContent(
     onReorderServices: (List<ServiceType>) -> Unit,
     onReorderTopFilters: (List<String>) -> Unit,
     onSelectCollection: (Long?) -> Unit,
+    onSelectLocalTag: (Long?) -> Unit,
     onRequestCreateLocalTag: () -> Unit,
     onRequestRenameLocalTag: (TagWithCount) -> Unit,
     onRequestCreateCollection: (() -> Unit)?,
@@ -2861,50 +2982,18 @@ private fun MainListContent(
         onReorderServices = onReorderServices,
         collections = customCollections,
         selectedCollectionId = selectedCollectionId,
+        localTags = localSaveTags,
+        selectedLocalTagId = selectedLocalTagId,
         onSelectService = onSelectService,
         onSelectCollection = onSelectCollection,
+        onSelectLocalTag = onSelectLocalTag,
+        onCreateLocalTag = onRequestCreateLocalTag,
+        onRenameLocalTag = onRequestRenameLocalTag,
         onCreateCollection = onRequestCreateCollection,
         onReorderTopFilters = onReorderTopFilters,
         onReorderCollections = onReorderCollections,
     )
     Spacer(modifier = Modifier.height(8.dp))
-    if (localSaveTags.isNotEmpty() || showSharedTagCloudUi) {
-        LazyRow(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = OrbitTokens.screenHorizontalPadding),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            item {
-                TextButton(onClick = onRequestCreateLocalTag) {
-                    Text("+")
-                }
-            }
-            items(localSaveTags, key = { it.id }) { tag ->
-                Surface(
-                    shape = RoundedCornerShape(999.dp),
-                    color = OrbitTokens.panelStrong,
-                    border = BorderStroke(1.dp, OrbitTokens.outline),
-                    modifier = Modifier.combinedClickable(
-                        onClick = {},
-                        onDoubleClick = { onRequestRenameLocalTag(tag) },
-                    ),
-                ) {
-                    Text(
-                        text = tag.name,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .widthIn(max = 160.dp)
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                    )
-                }
-            }
-        }
-        Spacer(modifier = Modifier.height(8.dp))
-    }
     if (showSharedTagCloudUi) {
         TagFilterRow(
             tags = sharedTags,
@@ -3006,7 +3095,9 @@ private enum class MainPane {
 @Composable
 private fun SharedTagGroupListContent(
     groups: List<SharedTagGroupRecord>,
+    isSignedIn: Boolean,
     onBack: () -> Unit,
+    onOpenCloudAuth: () -> Unit,
     onCreateGroup: () -> Unit,
     onOpenGroup: (SharedTagGroupRecord) -> Unit,
 ) {
@@ -3034,6 +3125,9 @@ private fun SharedTagGroupListContent(
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
                 )
+                TextButton(onClick = onOpenCloudAuth) {
+                    Text(if (isSignedIn) "プロフィール" else "サインイン")
+                }
                 Button(onClick = onCreateGroup) {
                     Icon(
                         imageVector = Icons.Outlined.Add,
@@ -3396,7 +3490,10 @@ private fun SharedTagGroupAddableTagRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            OutlinedButton(onClick = onAdd) {
+            OutlinedButton(
+                onClick = onAdd,
+                modifier = Modifier.widthIn(min = 64.dp),
+            ) {
                 Text("追加")
             }
         }
@@ -3938,11 +4035,16 @@ private fun BatchLocalTagAssignmentSheet(
     localTags: List<TagWithCount>,
     selectedCount: Int,
     onDismiss: () -> Unit,
-    onSelectTag: (TagWithCount) -> Unit,
+    onApply: (List<TagWithCount>) -> Unit,
 ) {
     if (!visible) return
+    var selectedTagIds by remember(visible, localTags) { mutableStateOf<Set<Long>>(emptySet()) }
+    val selectedTags = localTags.filter { tag -> tag.id in selectedTagIds }
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = {
+            selectedTagIds = emptySet()
+            onDismiss()
+        },
         title = { Text("タグを追加") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -3958,36 +4060,70 @@ private fun BatchLocalTagAssignmentSheet(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    PackedTagAssignmentFlow(
+                        horizontalSpacing = 8.dp,
+                        verticalSpacing = 8.dp,
                     ) {
                         localTags.forEach { tag ->
+                            val selected = tag.id in selectedTagIds
                             Surface(
                                 shape = RoundedCornerShape(50),
-                                color = OrbitTokens.panelSoft,
-                                border = BorderStroke(1.dp, OrbitTokens.outline),
-                                modifier = Modifier.clickable { onSelectTag(tag) },
+                                color = if (selected) MaterialTheme.colorScheme.primaryContainer else OrbitTokens.panelSoft,
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (selected) MaterialTheme.colorScheme.primary else OrbitTokens.outline,
+                                ),
+                                modifier = Modifier.clickable {
+                                    selectedTagIds = if (selected) {
+                                        selectedTagIds - tag.id
+                                    } else {
+                                        selectedTagIds + tag.id
+                                    }
+                                },
                             ) {
-                                Text(
-                                    text = tag.name,
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier
-                                        .widthIn(max = 180.dp)
-                                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                ) {
+                                    if (selected) {
+                                        Icon(
+                                            imageVector = Icons.Outlined.Check,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                    }
+                                    Text(
+                                        text = tag.name,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.widthIn(max = 180.dp),
+                                    )
+                                }
                             }
                         }
                     }
                 }
             }
         },
-        confirmButton = {},
+        confirmButton = {
+            TextButton(
+                enabled = selectedTags.isNotEmpty(),
+                onClick = {
+                    onApply(selectedTags)
+                    selectedTagIds = emptySet()
+                },
+            ) {
+                Text("追加")
+            }
+        },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
+            TextButton(onClick = {
+                selectedTagIds = emptySet()
+                onDismiss()
+            }) {
                 Text("キャンセル")
             }
         },
@@ -4257,8 +4393,10 @@ private fun ArchiveScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val collections by viewModel.collections.collectAsStateWithLifecycle()
+    val allTagsWithCount by viewModel.allTagsWithCount.collectAsStateWithLifecycle()
     val selectedService by viewModel.selectedServiceFlow.collectAsStateWithLifecycle()
     val selectedCollectionId by viewModel.selectedCollectionIdFlow.collectAsStateWithLifecycle()
+    val selectedLocalTagId by viewModel.selectedLocalTagIdFlow.collectAsStateWithLifecycle()
     val serviceFilterOrder by viewModel.serviceFilterOrder.collectAsStateWithLifecycle()
     val topFilterOrderTokens by viewModel.topFilterOrderTokens.collectAsStateWithLifecycle()
     val entryCardDisplayMode by viewModel.entryCardDisplayMode.collectAsStateWithLifecycle()
@@ -4275,10 +4413,39 @@ private fun ArchiveScreen(
             emptyList()
         }
     }
+    val localCollectionNameSet = remember(customCollections) {
+        customCollections.map { normalizeSharedTagName(it.name) }.toSet()
+    }
+    val localSaveTags = remember(allTagsWithCount, localCollectionNameSet) {
+        allTagsWithCount
+            .filter { tag ->
+                tag.scope == SharedTagScope.LOCAL_ONLY &&
+                    normalizeSharedTagName(tag.name) !in localCollectionNameSet
+            }
+            .distinctBy { normalizeSharedTagName(it.name) }
+    }
+    LaunchedEffect(localSaveTags, selectedLocalTagId) {
+        val selectedTagId = selectedLocalTagId ?: return@LaunchedEffect
+        if (localSaveTags.none { it.id == selectedTagId }) {
+            viewModel.selectLocalTag(null)
+        }
+    }
     var createCollectionState by remember { mutableStateOf(CreateCollectionDialogUiState()) }
+    var createLocalTagState by remember { mutableStateOf(SharedTagDialogUiState()) }
+    var renameLocalTagState by remember { mutableStateOf(SharedTagDialogUiState()) }
+    var pendingRenameLocalTagId by remember { mutableStateOf<Long?>(null) }
 
     fun closeCreateCollectionDialog() {
         createCollectionState = CreateCollectionDialogUiState()
+    }
+
+    fun closeCreateLocalTagDialog() {
+        createLocalTagState = SharedTagDialogUiState()
+    }
+
+    fun closeRenameLocalTagDialog() {
+        renameLocalTagState = SharedTagDialogUiState()
+        pendingRenameLocalTagId = null
     }
 
     fun confirmCreateCollection() {
@@ -4305,6 +4472,62 @@ private fun ArchiveScreen(
 
                 else -> {
                     createCollectionState = createCollectionState.copy(error = "タグを作成できませんでした")
+                }
+            }
+        }
+    }
+
+    fun confirmCreateLocalTag() {
+        scope.launch {
+            when (val result = viewModel.createLocalTag(createLocalTagState.name)) {
+                is CreateTagResult.Success -> {
+                    viewModel.selectLocalTag(result.tagId)
+                    closeCreateLocalTagDialog()
+                }
+
+                CreateTagResult.InvalidName -> {
+                    createLocalTagState = createLocalTagState.copy(error = "タグ名を入力してください")
+                }
+
+                CreateTagResult.Duplicate -> {
+                    val duplicateId = localSaveTags.firstOrNull {
+                        normalizeSharedTagName(it.name) == normalizeSharedTagName(createLocalTagState.name)
+                    }?.id
+                    if (duplicateId != null) {
+                        viewModel.selectLocalTag(duplicateId)
+                        closeCreateLocalTagDialog()
+                    } else {
+                        createLocalTagState = createLocalTagState.copy(error = "同じ名前のタグがあります")
+                    }
+                }
+
+                is CreateTagResult.LimitReached -> {
+                    createLocalTagState = createLocalTagState.copy(error = result.message)
+                }
+
+                CreateTagResult.Failed -> {
+                    createLocalTagState = createLocalTagState.copy(error = "タグを作成できませんでした")
+                }
+            }
+        }
+    }
+
+    fun confirmRenameLocalTag() {
+        val tagId = pendingRenameLocalTagId ?: return
+        scope.launch {
+            when (val result = viewModel.renameLocalTag(tagId, renameLocalTagState.name)) {
+                is CreateTagResult.Success -> closeRenameLocalTagDialog()
+                CreateTagResult.InvalidName -> {
+                    renameLocalTagState = renameLocalTagState.copy(error = "タグ名を入力してください")
+                }
+                CreateTagResult.Duplicate -> {
+                    renameLocalTagState = renameLocalTagState.copy(error = "同じ名前のタグがあります")
+                }
+                is CreateTagResult.LimitReached -> {
+                    renameLocalTagState = renameLocalTagState.copy(error = result.message)
+                }
+                CreateTagResult.Failed -> {
+                    renameLocalTagState = renameLocalTagState.copy(error = "タグ名を変更できませんでした")
                 }
             }
         }
@@ -4349,6 +4572,43 @@ private fun ArchiveScreen(
         onConfirm = { confirmCreateCollection() },
     )
 
+    CreateSharedTagDialog(
+        visible = createLocalTagState.visible,
+        newSharedTagName = createLocalTagState.name,
+        createSharedTagError = createLocalTagState.error,
+        title = "タグを作成",
+        body = "保存済みURLを絞り込める自作タグを作成します。",
+        nameLabel = "タグ名",
+        placeholder = "仕事 / 後で読む / 学習 など",
+        onDismiss = { closeCreateLocalTagDialog() },
+        onNameChange = {
+            createLocalTagState = createLocalTagState.copy(
+                name = it,
+                error = null,
+            )
+        },
+        onConfirm = { confirmCreateLocalTag() },
+    )
+
+    CreateSharedTagDialog(
+        visible = renameLocalTagState.visible && pendingRenameLocalTagId != null,
+        newSharedTagName = renameLocalTagState.name,
+        createSharedTagError = renameLocalTagState.error,
+        title = "タグ名を変更",
+        body = "自作タグの名前を変更します。",
+        nameLabel = "タグ名",
+        placeholder = "新しいタグ名",
+        confirmLabel = "変更",
+        onDismiss = { closeRenameLocalTagDialog() },
+        onNameChange = {
+            renameLocalTagState = renameLocalTagState.copy(
+                name = it,
+                error = null,
+            )
+        },
+        onConfirm = { confirmRenameLocalTag() },
+    )
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -4382,6 +4642,8 @@ private fun ArchiveScreen(
                     topFilterOrderTokens = topFilterOrderTokens,
                     collections = customCollections,
                     selectedCollectionId = selectedCollectionId,
+                    localTags = localSaveTags,
+                    selectedLocalTagId = selectedLocalTagId,
                     onSelectService = { viewModel.selectService(it) },
                     onReorderServices = { serviceOrder ->
                         viewModel.reorderServices(serviceOrder)
@@ -4397,6 +4659,27 @@ private fun ArchiveScreen(
                                 viewModel.selectCollection(targetId)
                             }
                         }
+                    },
+                    onSelectLocalTag = { tagId ->
+                        viewModel.selectLocalTag(
+                            if (selectedLocalTagId == tagId) null else tagId,
+                        )
+                        if (tagId != null) {
+                            viewModel.selectService(ServiceType.ALL)
+                        }
+                    },
+                    onCreateLocalTag = {
+                        createLocalTagState = createLocalTagState.copy(
+                            visible = true,
+                            error = null,
+                        )
+                    },
+                    onRenameLocalTag = { tag ->
+                        pendingRenameLocalTagId = tag.id
+                        renameLocalTagState = SharedTagDialogUiState(
+                            visible = true,
+                            name = tag.name,
+                        )
                     },
                     onCreateCollection = if (SHOW_COLLECTION_UI) {
                         {
@@ -4471,6 +4754,10 @@ private fun DetailScreen(
 ) {
     val entry by viewModel.entry.collectAsStateWithLifecycle(initialValue = null)
     val assignedTags by viewModel.assignedTags.collectAsStateWithLifecycle()
+    val videoAssets by viewModel.videoAssets.collectAsStateWithLifecycle()
+    val preferredVideoAsset by viewModel.preferredVideoAsset.collectAsStateWithLifecycle()
+    val latestVideoDownload by viewModel.latestVideoDownload.collectAsStateWithLifecycle()
+    val savedVideoDownloads by viewModel.savedVideoDownloads.collectAsStateWithLifecycle()
     val allTagsWithCount by viewModel.allTagsWithCount.collectAsStateWithLifecycle()
     val cloudState by viewModel.cloudState.collectAsStateWithLifecycle()
     val collections by viewModel.collections.collectAsStateWithLifecycle()
@@ -4495,6 +4782,7 @@ private fun DetailScreen(
     var showAddSharedTagSheet by rememberSaveable { mutableStateOf(false) }
     var newSharedTagName by rememberSaveable { mutableStateOf("") }
     var sharedTagError by rememberSaveable { mutableStateOf<String?>(null) }
+    var showMediaViewer by rememberSaveable { mutableStateOf(false) }
     var locallyRemovedCollectionIds by remember { mutableStateOf(emptySet<Long>()) }
     var locallyRemovedTagIds by remember { mutableStateOf(emptySet<Long>()) }
     var locallyAssignedTagIds by remember(entryId) { mutableStateOf(emptySet<Long>()) }
@@ -4545,7 +4833,6 @@ private fun DetailScreen(
             .asSequence()
             .filter { it.scope == SharedTagScope.LOCAL_ONLY }
             .filterNot { it.id in assignedTagIds }
-            .filter { it.urlCount > 0 }
             .filter { tag -> normalizeSharedTagName(tag.name) !in assignedLocalTagNameSet }
             .filter { tag -> normalizeSharedTagName(tag.name) !in localCollectionNameSet }
             .distinctBy { normalizeSharedTagName(it.name) }
@@ -4603,6 +4890,9 @@ private fun DetailScreen(
         isConfigured = cloudState.isConfigured,
         hasSharedTags = assignedSyncedTags.isNotEmpty() || availableSharedTags.isNotEmpty(),
     )
+    val savedMediaItems = remember(savedVideoDownloads, context) {
+        savedVideoDownloads.mapNotNull { it.toSavedMediaItem(context) }
+    }
 
     fun requestSaveTitle() {
         if (titleTooLong) return
@@ -4713,25 +5003,37 @@ private fun DetailScreen(
         bodySummary = current.bodySummary,
         fetchedBody = current.fetchedBody,
     )
+    val isTextCard = UrlRules.isTextCardHost(current.normalizedHost)
+    val textCardBody = current.fetchedBody?.takeIf { it.isNotBlank() } ?: current.originalUrl
     val showSummarySection = hasSummary
     val showBodySection = hasBody && !hideBodyAsDuplicateSummary
-    val isSocialExpandableContent = current.serviceType == ServiceType.X ||
+    val isSocialExpandableContent = current.serviceType == ServiceType.YOUTUBE ||
+        current.serviceType == ServiceType.TIKTOK ||
+        current.serviceType == ServiceType.X ||
         current.serviceType == ServiceType.INSTAGRAM
     val socialContentText = preferredMetadataContentText(
         fetchedBody = current.fetchedBody,
         bodySummary = current.bodySummary,
         description = current.description,
     )
-    val summarySectionLabel = metadataSummarySectionLabel(
+    val summarySectionLabel = if (isTextCard) {
+        "タイトル"
+    } else {
+        metadataSummarySectionLabel(
         serviceType = current.serviceType,
         fetchedBody = current.fetchedBody,
         fetchedBodyKind = current.fetchedBodyKind,
-    )
-    val bodySectionLabel = metadataBodySectionLabel(
+        )
+    }
+    val bodySectionLabel = if (isTextCard) {
+        "本文"
+    } else {
+        metadataBodySectionLabel(
         serviceType = current.serviceType,
         fetchedBody = current.fetchedBody,
         fetchedBodyKind = current.fetchedBodyKind,
-    )
+        )
+    }
     val readyWithoutFetchedContent = isReadyWithoutFetchedContent(
         state = current.metadataState,
         bodySummary = current.bodySummary,
@@ -4756,10 +5058,50 @@ private fun DetailScreen(
         )
     }
     val detailZoneId = ZoneId.of("Asia/Tokyo")
+    val supportedMediaService = current.serviceType in setOf(
+        ServiceType.TIKTOK,
+        ServiceType.INSTAGRAM,
+        ServiceType.YOUTUBE,
+    )
+    val canOfferMediaAction = current.localProvenanceCount > 0 &&
+        current.recordState == RecordState.ACTIVE &&
+        supportedMediaService
+    val hasSavedInternalMedia = savedMediaItems.isNotEmpty()
+    val hasDownloadableMediaAsset = videoAssets.any { it.resolveStatus == "AVAILABLE" && !it.downloadUrl.isNullOrBlank() }
+    val mediaUnavailable = canOfferMediaAction &&
+        videoAssets.isNotEmpty() &&
+        !hasDownloadableMediaAsset &&
+        videoAssets.any { it.resolveStatus == "FAILED" || it.resolveStatus == "UNAVAILABLE" }
+    val mediaUnavailableMessage = if (mediaUnavailable) {
+        mediaResolveFailureMessage(
+            reason = videoAssets.firstOrNull { it.resolveStatus == "FAILED" || it.resolveStatus == "UNAVAILABLE" }?.errorReason,
+            serviceType = current.serviceType,
+        )
+    } else {
+        null
+    }
+    val mediaActionLabel = when {
+        hasSavedInternalMedia -> "メディアを開く"
+        latestVideoDownload?.status == "DOWNLOADING" -> "保存中... ${latestVideoDownload?.progress ?: 0}%"
+        latestVideoDownload?.status == "QUEUED" -> "保存待ち"
+        mediaUnavailable -> "取得できませんでした"
+        else -> "メディアを保存"
+    }
+    val mediaActionEnabled = hasSavedInternalMedia ||
+        (canOfferMediaAction && latestVideoDownload?.status !in setOf("DOWNLOADING", "QUEUED"))
+    val showMediaAction = hasSavedInternalMedia || canOfferMediaAction || preferredVideoAsset != null
     LaunchedEffect(current.metadataState) {
         if (current.metadataState != MetadataState.PENDING) {
             retryRequested = false
         }
+    }
+
+    if (showMediaViewer && savedMediaItems.isNotEmpty()) {
+        AppMediaViewerDialog(
+            items = savedMediaItems,
+            title = effectiveTitle,
+            onDismiss = { showMediaViewer = false },
+        )
     }
 
     if (showMemoDialog) {
@@ -5075,14 +5417,16 @@ private fun DetailScreen(
                 if (assignedLocalTagItems.isNotEmpty()) {
                     OrbitPanel {
                         OrbitSectionLabel("現在のタグ")
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        PackedTagAssignmentFlow(
+                            horizontalSpacing = 10.dp,
+                            verticalSpacing = 10.dp,
+                            modifier = Modifier.fillMaxWidth(),
                         ) {
                             assignedLocalTagItems.forEach { item ->
                                 DetailTagAssignmentOptionRow(
                                     label = item.name,
                                     actionLabel = "外す",
+                                    compact = true,
                                     enabled = item.canRemove,
                                     actionTestTag = when (item) {
                                         is DetailTagItem.Collection -> "detail_local_tag_remove_collection_${item.collection.id}"
@@ -5107,14 +5451,16 @@ private fun DetailScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     } else {
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        PackedTagAssignmentFlow(
+                            horizontalSpacing = 10.dp,
+                            verticalSpacing = 10.dp,
+                            modifier = Modifier.fillMaxWidth(),
                         ) {
                             availableCollectionTags.forEach { collection ->
                                 DetailTagAssignmentOptionRow(
                                     label = collection.name,
                                     actionLabel = "追加",
+                                    compact = true,
                                     actionTestTag = "detail_local_tag_add_collection_${collection.id}",
                                     onClick = {
                                         scope.launch {
@@ -5147,6 +5493,7 @@ private fun DetailScreen(
                                 DetailTagAssignmentOptionRow(
                                     label = tag.name,
                                     actionLabel = "追加",
+                                    compact = true,
                                     actionTestTag = "detail_local_tag_add_tag_${tag.id}",
                                     onClick = {
                                         scope.launch {
@@ -5422,34 +5769,77 @@ private fun DetailScreen(
                 }
 
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        OrbitActionButton(
-                            onClick = {
-                                when (context.tryOpenExternalUrl(current.openUrl)) {
-                                    OpenUrlResult.Success -> Unit
-                                    OpenUrlResult.NoHandler,
-                                    OpenUrlResult.Failed,
-                                    -> onOpenFailed()
-                                }
-                            },
-                            style = OrbitActionStyle.PRIMARY,
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            OrbitActionText("開く")
-                        }
-
+                    if (isTextCard) {
                         OrbitActionButton(
                             onClick = {
                                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                clipboard.setPrimaryClip(ClipData.newPlainText("url", current.openUrl))
+                                clipboard.setPrimaryClip(ClipData.newPlainText("text", textCardBody))
                                 onCopySuccess()
                             },
-                            modifier = Modifier.weight(1f),
+                            style = OrbitActionStyle.PRIMARY,
+                            modifier = Modifier.fillMaxWidth(),
                         ) {
                             OrbitActionText("コピー")
+                        }
+                    } else {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            OrbitActionButton(
+                                onClick = {
+                                    when (context.tryOpenExternalUrl(current.openUrl)) {
+                                        OpenUrlResult.Success -> Unit
+                                        OpenUrlResult.NoHandler,
+                                        OpenUrlResult.Failed,
+                                        -> onOpenFailed()
+                                    }
+                                },
+                                style = OrbitActionStyle.PRIMARY,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                OrbitActionText("開く")
+                            }
+
+                            OrbitActionButton(
+                                onClick = {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("url", current.openUrl))
+                                    onCopySuccess()
+                                },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                OrbitActionText("コピー")
+                            }
+                        }
+                    }
+
+                    if (showMediaAction) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            OrbitActionButton(
+                                onClick = {
+                                    if (hasSavedInternalMedia) {
+                                        showMediaViewer = true
+                                    } else if (!mediaUnavailable) {
+                                        viewModel.onSaveVideoClicked()
+                                    }
+                                },
+                                enabled = mediaActionEnabled,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                OrbitActionText(mediaActionLabel)
+                            }
+                            mediaUnavailableMessage?.let { message ->
+                                Text(
+                                    text = message,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
 
@@ -5565,7 +5955,9 @@ private fun DetailScreen(
 
                     if (detailsExpanded) {
                         Column(modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 20.dp)) {
-                            DetailValue(label = "受信したURL", value = current.originalUrl)
+                            if (!isTextCard) {
+                                DetailValue(label = "正規化URL", value = current.normalizedUrl)
+                            }
                             DetailValue(
                                 label = "保存時刻",
                                 value = formatDetailDateTime(current.createdAt, detailZoneId),
@@ -5576,6 +5968,368 @@ private fun DetailScreen(
             }
         }
     }
+}
+
+private data class SavedMediaItem(
+    val uri: Uri,
+    val mediaType: String,
+    val fileName: String,
+)
+
+private data class VideoTexturePlayback(
+    val uri: Uri,
+    val player: MediaPlayer?,
+)
+
+private fun VideoDownloadEntity.toSavedMediaItem(context: Context): SavedMediaItem? {
+    val file = AppMediaStore.fileForLocalUri(context, localUri) ?: return null
+    if (!file.exists() || !file.isFile) return null
+    return SavedMediaItem(
+        uri = Uri.fromFile(file),
+        mediaType = mediaTypeFromFile(file),
+        fileName = fileName ?: file.name,
+    )
+}
+
+private fun mediaTypeFromFile(file: File): String {
+    val extension = file.extension.lowercase()
+    return when (extension) {
+        "jpg", "jpeg", "png", "webp", "gif", "heic", "heif" -> "IMAGE"
+        else -> "VIDEO"
+    }
+}
+
+private fun mediaResolveFailureMessage(reason: String?, serviceType: ServiceType): String {
+    return when (reason) {
+        "AUTH_REQUIRED" -> "${serviceType.displayName}側の認証が必要なため、現在はメディアを取得できません。"
+        "MEDIA_RESOLVER_BACKEND_UNCONFIGURED" -> "メディア保存サーバーが未設定です。"
+        "MEDIA_NOT_FOUND",
+        "MEDIA_ASSET_NOT_FOUND",
+        -> "この投稿から保存できるメディアを見つけられませんでした。"
+        "FORMAT_UNAVAILABLE" -> "この投稿のメディア形式は現在保存できません。"
+        "YOUTUBE_DIRECT_RESOLVE_TIMEOUT" -> "YouTube側の確認により、現在はメディアを取得できません。"
+        else -> "メディアを取得できませんでした。時間をおいて再度お試しください。"
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun AppMediaViewerDialog(
+    items: List<SavedMediaItem>,
+    title: String,
+    onDismiss: () -> Unit,
+) {
+    val pagerState = rememberPagerState(pageCount = { items.size })
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.48f)),
+            contentAlignment = Alignment.BottomCenter,
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.92f),
+                shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
+                color = MaterialTheme.colorScheme.background,
+                contentColor = MaterialTheme.colorScheme.onBackground,
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp)
+                        .padding(
+                            top = 10.dp,
+                            bottom = WindowInsets.navigationBars
+                                .only(WindowInsetsSides.Bottom)
+                                .asPaddingValues()
+                                .calculateBottomPadding() + 24.dp,
+                        ),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .width(72.dp)
+                                .height(8.dp)
+                                .background(
+                                    OrbitTokens.outline.copy(alpha = 0.72f),
+                                    RoundedCornerShape(50),
+                                ),
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Text(
+                            text = title,
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.onBackground,
+                        )
+                        IconButton(
+                            onClick = onDismiss,
+                            modifier = Modifier
+                                .size(40.dp)
+                                .background(OrbitTokens.panelSoft, CircleShape),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Close,
+                                contentDescription = "閉じる",
+                                tint = MaterialTheme.colorScheme.onBackground,
+                            )
+                        }
+                    }
+
+                    if (items.isEmpty()) {
+                        OrbitPanel(tone = OrbitPanelTone.SOFT) {
+                            Text(
+                                text = "保存済みメディアはありません",
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Spacer(Modifier.weight(1f))
+                    } else {
+                        HorizontalPager(
+                            state = pagerState,
+                            key = { page -> items[page].uri.toString() },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                        ) { page ->
+                            AppMediaPreview(
+                                item = items[page],
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 2.dp),
+                            )
+                        }
+
+                        if (items.size > 1) {
+                            AppMediaPageIndicator(
+                                currentPage = pagerState.currentPage,
+                                pageCount = items.size,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+    }
+}
+
+@Composable
+private fun AppMediaFileName(
+    fileName: String,
+    modifier: Modifier = Modifier,
+) {
+    Text(
+        text = middleEllipsizeFileName(fileName),
+        modifier = modifier,
+        style = MaterialTheme.typography.labelMedium.copy(
+            fontWeight = FontWeight.Medium,
+            fontFamily = FontFamily.Monospace,
+        ),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        textAlign = TextAlign.Center,
+    )
+}
+
+private fun middleEllipsizeFileName(fileName: String, maxChars: Int = 42): String {
+    if (fileName.length <= maxChars) return fileName
+    val extensionStart = fileName.lastIndexOf('.').takeIf { it > 0 && it < fileName.lastIndex - 1 }
+    val extension = extensionStart?.let { fileName.substring(it) }.orEmpty()
+    val nameWithoutExtension = extensionStart?.let { fileName.substring(0, it) } ?: fileName
+    val available = (maxChars - extension.length - 1).coerceAtLeast(8)
+    val head = (available * 0.58f).toInt().coerceAtLeast(4)
+    val tail = (available - head).coerceAtLeast(4)
+    return nameWithoutExtension.take(head) + "…" + nameWithoutExtension.takeLast(tail) + extension
+}
+
+@Composable
+private fun AppMediaPageIndicator(
+    currentPage: Int,
+    pageCount: Int,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        repeat(pageCount) { index ->
+            val selected = index == currentPage
+            Box(
+                modifier = Modifier
+                    .padding(horizontal = 3.dp)
+                    .size(if (selected) 8.dp else 6.dp)
+                    .background(
+                        color = if (selected) OrbitTokens.textPrimary else OrbitTokens.outlineStrong,
+                        shape = CircleShape,
+                    ),
+            )
+        }
+    }
+}
+
+@Composable
+private fun AppMediaPreview(
+    item: SavedMediaItem,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .clip(RoundedCornerShape(24.dp))
+                .background(Color.Black),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (item.mediaType == "IMAGE") {
+                AsyncImage(
+                    model = item.uri,
+                    contentDescription = item.fileName,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(8.dp),
+                )
+            } else {
+                AndroidView(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(24.dp)),
+                    factory = { context ->
+                        TextureView(context)
+                    },
+                    update = { textureView ->
+                        val currentPlayback = textureView.tag as? VideoTexturePlayback
+                        if (currentPlayback?.uri != item.uri) {
+                            currentPlayback?.player?.release()
+                            textureView.tag = VideoTexturePlayback(uri = item.uri, player = null)
+                            textureView.surfaceTextureListener = videoTextureListener(textureView, item.uri)
+                            if (textureView.isAvailable) {
+                                textureView.surfaceTexture?.let { surfaceTexture ->
+                                    startTextureVideo(textureView, item.uri, surfaceTexture)
+                                }
+                            }
+                        }
+                        textureView.setOnClickListener {
+                            val player = (textureView.tag as? VideoTexturePlayback)?.player ?: return@setOnClickListener
+                            if (player.isPlaying) {
+                                player.pause()
+                            } else {
+                                player.start()
+                            }
+                        }
+                    },
+                    onRelease = { textureView ->
+                        (textureView.tag as? VideoTexturePlayback)?.player?.release()
+                        textureView.surfaceTextureListener = null
+                        textureView.tag = null
+                    },
+                )
+            }
+        }
+
+        AppMediaFileName(
+            fileName = item.fileName,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+private fun videoTextureListener(textureView: TextureView, uri: Uri): TextureView.SurfaceTextureListener {
+    return object : TextureView.SurfaceTextureListener {
+        override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
+            startTextureVideo(textureView, uri, surface)
+        }
+
+        override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {
+            val player = (textureView.tag as? VideoTexturePlayback)?.player
+            applyTextureVideoFit(textureView, player?.videoWidth ?: 0, player?.videoHeight ?: 0)
+        }
+
+        override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
+            (textureView.tag as? VideoTexturePlayback)?.player?.release()
+            textureView.tag = VideoTexturePlayback(uri = uri, player = null)
+            return true
+        }
+
+        override fun onSurfaceTextureUpdated(surface: SurfaceTexture) = Unit
+    }
+}
+
+private fun startTextureVideo(textureView: TextureView, uri: Uri, surfaceTexture: SurfaceTexture) {
+    (textureView.tag as? VideoTexturePlayback)?.player?.release()
+    val surface = Surface(surfaceTexture)
+    val player = MediaPlayer()
+    try {
+        player.setDataSource(textureView.context, uri)
+        player.setSurface(surface)
+        player.isLooping = false
+        player.setOnPreparedListener { preparedPlayer ->
+            applyTextureVideoFit(textureView, preparedPlayer.videoWidth, preparedPlayer.videoHeight)
+            preparedPlayer.start()
+        }
+        player.setOnCompletionListener { completedPlayer ->
+            completedPlayer.seekTo(0)
+        }
+        player.setOnErrorListener { erroredPlayer, _, _ ->
+            erroredPlayer.release()
+            textureView.tag = VideoTexturePlayback(uri = uri, player = null)
+            true
+        }
+        textureView.tag = VideoTexturePlayback(uri = uri, player = player)
+        player.prepareAsync()
+    } catch (_: RuntimeException) {
+        player.release()
+        textureView.tag = VideoTexturePlayback(uri = uri, player = null)
+    } finally {
+        surface.release()
+    }
+}
+
+private fun applyTextureVideoFit(textureView: TextureView, videoWidth: Int, videoHeight: Int) {
+    val viewWidth = textureView.width
+    val viewHeight = textureView.height
+    if (videoWidth <= 0 || videoHeight <= 0 || viewWidth <= 0 || viewHeight <= 0) {
+        textureView.setTransform(null)
+        return
+    }
+
+    val scale = min(viewWidth.toFloat() / videoWidth.toFloat(), viewHeight.toFloat() / videoHeight.toFloat())
+    val scaleX = (videoWidth.toFloat() * scale) / viewWidth.toFloat()
+    val scaleY = (videoHeight.toFloat() * scale) / viewHeight.toFloat()
+    val matrix = Matrix().apply {
+        setScale(scaleX, scaleY, viewWidth / 2f, viewHeight / 2f)
+    }
+    textureView.setTransform(matrix)
 }
 
 @Composable
@@ -5756,6 +6510,7 @@ private sealed interface DetailTagItem {
 private fun DetailTagAssignmentOptionRow(
     label: String,
     actionLabel: String,
+    compact: Boolean = false,
     enabled: Boolean = true,
     actionTestTag: String? = null,
     onClick: () -> Unit,
@@ -5763,8 +6518,11 @@ private fun DetailTagAssignmentOptionRow(
 ) {
     val shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
     Row(
-        modifier = modifier
-            .widthIn(max = 340.dp)
+        modifier = (if (compact) {
+            modifier.widthIn(max = 260.dp)
+        } else {
+            modifier.fillMaxWidth()
+        })
             .background(
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 shape = shape,
@@ -5773,18 +6531,21 @@ private fun DetailTagAssignmentOptionRow(
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 shape = shape,
             )
-            .padding(start = 16.dp, top = 10.dp, end = 10.dp, bottom = 10.dp),
+            .padding(
+                start = if (compact) 12.dp else 16.dp,
+                top = if (compact) 9.dp else 10.dp,
+                end = if (compact) 8.dp else 10.dp,
+                bottom = if (compact) 9.dp else 10.dp,
+            ),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 8.dp),
     ) {
         Text(
             text = label,
-            modifier = Modifier
-                .weight(1f, fill = false)
-                .widthIn(max = 220.dp),
+            modifier = if (compact) Modifier.widthIn(max = 132.dp) else Modifier.weight(1f),
             style = MaterialTheme.typography.titleLarge,
             color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
+            maxLines = if (compact) 2 else 1,
             overflow = TextOverflow.Ellipsis,
         )
         Button(
@@ -5795,16 +6556,89 @@ private fun DetailTagAssignmentOptionRow(
             } else {
                 Modifier.testTag(actionTestTag)
             })
-                .height(40.dp)
-                .widthIn(min = 64.dp),
+                .height(if (compact) 38.dp else 40.dp)
+                .widthIn(min = if (compact) 54.dp else 72.dp),
             shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                horizontal = if (compact) 10.dp else 14.dp,
+                vertical = 0.dp,
+            ),
         ) {
             Text(
                 text = actionLabel,
                 style = MaterialTheme.typography.labelLarge,
                 maxLines = 1,
             )
+        }
+    }
+}
+
+@Composable
+private fun PackedTagAssignmentFlow(
+    horizontalSpacing: Dp,
+    verticalSpacing: Dp,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    val density = LocalDensity.current
+    val horizontalSpacingPx = with(density) { horizontalSpacing.roundToPx() }
+    val verticalSpacingPx = with(density) { verticalSpacing.roundToPx() }
+
+    Layout(
+        content = content,
+        modifier = modifier,
+    ) { measurables, constraints ->
+        val maxWidth = if (constraints.hasBoundedWidth) constraints.maxWidth else Constraints.Infinity
+        val childConstraints = constraints.copy(minWidth = 0, minHeight = 0)
+        val placeables = measurables.map { measurable -> measurable.measure(childConstraints) }
+        val remaining = placeables.indices.toMutableList()
+        val rows = mutableListOf<List<Int>>()
+
+        while (remaining.isNotEmpty()) {
+            val row = mutableListOf(remaining.removeAt(0))
+            var rowWidth = placeables[row.first()].width
+
+            var cursor = 0
+            while (cursor < remaining.size) {
+                val candidateIndex = remaining[cursor]
+                val candidateWidth = placeables[candidateIndex].width
+                val nextWidth = rowWidth + horizontalSpacingPx + candidateWidth
+                if (nextWidth <= maxWidth) {
+                    row.add(candidateIndex)
+                    rowWidth = nextWidth
+                    remaining.removeAt(cursor)
+                } else {
+                    cursor += 1
+                }
+            }
+            rows.add(row)
+        }
+
+        val rowHeights = rows.map { row ->
+            row.maxOfOrNull { index -> placeables[index].height } ?: 0
+        }
+        val contentWidth = rows.maxOfOrNull { row ->
+            row.sumOf { index -> placeables[index].width } +
+                horizontalSpacingPx * (row.size - 1).coerceAtLeast(0)
+        } ?: 0
+        val contentHeight = rowHeights.sum() + verticalSpacingPx * (rows.size - 1).coerceAtLeast(0)
+        val layoutWidth = if (constraints.hasBoundedWidth) {
+            constraints.maxWidth
+        } else {
+            contentWidth.coerceAtLeast(constraints.minWidth)
+        }
+        val layoutHeight = contentHeight.coerceIn(constraints.minHeight, constraints.maxHeight)
+
+        layout(layoutWidth, layoutHeight) {
+            var y = 0
+            rows.forEachIndexed { rowIndex, row ->
+                var x = 0
+                row.forEach { index ->
+                    placeables[index].placeRelative(x = x, y = y)
+                    x += placeables[index].width + horizontalSpacingPx
+                }
+                y += rowHeights[rowIndex] + verticalSpacingPx
+            }
         }
     }
 }
@@ -5881,50 +6715,33 @@ private fun DetailTagValuePill(
 private fun ExpandableMetadataSection(
     label: String,
     text: String,
-    previewLineLimit: Int = 4,
 ) {
-    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        val density = LocalDensity.current
-        val textMeasurer = rememberTextMeasurer()
-        val bodyStyle = MaterialTheme.typography.bodyMedium
-        val maxWidthPx = with(density) { maxWidth.roundToPx() }
-        val measurement = remember(text, maxWidthPx, bodyStyle) {
-            textMeasurer.measure(
-                text = AnnotatedString(text),
-                style = bodyStyle,
-                constraints = Constraints(maxWidth = maxWidthPx),
+    var expanded by rememberSaveable(text) { mutableStateOf(false) }
+    OrbitPanel(tone = OrbitPanelTone.SOFT, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded }
+                .padding(horizontal = 20.dp, vertical = 18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OrbitSectionLabel(
+                text = label,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(
+                imageVector = if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                contentDescription = if (expanded) "${label}を閉じる" else "${label}を表示",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        val fitsWithinPreview = measurement.lineCount <= previewLineLimit
-        var expandedOverride by rememberSaveable(text) { mutableStateOf<Boolean?>(null) }
-        val expanded = expandedOverride ?: fitsWithinPreview
-
-        OrbitPanel(tone = OrbitPanelTone.SOFT, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { expandedOverride = !expanded }
-                    .padding(horizontal = 20.dp, vertical = 18.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                OrbitSectionLabel(
-                    text = label,
-                    modifier = Modifier.weight(1f),
-                )
-                Icon(
-                    imageVector = if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
-                    contentDescription = if (expanded) "${label}を閉じる" else "${label}を表示",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            if (expanded) {
-                Text(
-                    text = text,
-                    style = bodyStyle,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 20.dp),
-                )
-            }
+        if (expanded) {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 20.dp),
+            )
         }
     }
 }
@@ -6135,7 +6952,13 @@ fun filterEntriesBySearch(
             entry.displayUrl.lowercase().contains(normalizedQuery) ||
             entry.userTitle.orEmpty().lowercase().contains(normalizedQuery) ||
             entry.fetchedTitle.orEmpty().lowercase().contains(normalizedQuery) ||
+            entry.fetchedAuthorName.orEmpty().lowercase().contains(normalizedQuery) ||
+            entry.fetchedBody.orEmpty().lowercase().contains(normalizedQuery) ||
+            entry.bodySummary.orEmpty().lowercase().contains(normalizedQuery) ||
+            entry.description.orEmpty().lowercase().contains(normalizedQuery) ||
+            entry.memo.lowercase().contains(normalizedQuery) ||
             entry.normalizedHost.lowercase().contains(normalizedQuery) ||
+            filterLabelForService(entry.serviceType).lowercase().contains(normalizedQuery) ||
             collectionNamesById[entry.collectionId]?.contains(normalizedQuery) == true ||
             entryTagNames.any { it.contains(normalizedQuery) }
     }
@@ -6253,7 +7076,7 @@ private val onboardingGuidePages = listOf(
     ),
     OnboardingGuidePage(
         title = "問い合わせ場所",
-        body = "プロフィールを開いた後、問い合わせから不具合や改善点を送れます。",
+        body = "共有タグクラウド画面から、不具合や改善点を送れます。",
         spotlight = { size -> Rect(left = 42f, top = size.height - 740f, right = size.width - 42f, bottom = size.height - 614f) },
         arrowOffset = { size -> Offset(size.width * 0.50f - 47f, size.height - 970f) },
         panelOnTop = true,

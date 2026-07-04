@@ -9,12 +9,15 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.BorderStroke
@@ -130,23 +133,24 @@ fun EntryCard(
                             ),
                     )
                     Column(modifier = Modifier.weight(1f)) {
-                        if (visibleLocalTagNames.isEmpty()) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.Top,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            ServiceBadge(
+                                serviceType = serviceTypeForUi(entry.serviceType),
+                                badgeImageUrl = entry.badgeImageUrl,
+                                modifier = Modifier.padding(top = 1.dp),
+                            )
+                            if (visibleLocalTagNames.isEmpty()) {
                                 Row(
                                     modifier = Modifier.weight(1f),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                                 ) {
-                                    ServiceBadge(
-                                        serviceType = serviceTypeForUi(entry.serviceType),
-                                        badgeImageUrl = entry.badgeImageUrl,
-                                    )
                                     Text(
-                                        text = serviceLabelForList(entry.serviceType, entry.normalizedHost),
+                                        text = entryCardHeaderFallbackText(entry),
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
                                         style = MaterialTheme.typography.bodyMedium,
@@ -177,29 +181,11 @@ fun EntryCard(
                                         modifier = Modifier.padding(top = 10.dp),
                                     )
                                 }
-                            }
-                        } else {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                visibleLocalTagNames.take(3).forEach { tagName ->
-                                    Surface(
-                                        shape = RoundedCornerShape(999.dp),
-                                        color = OrbitTokens.panelStrong,
-                                        border = BorderStroke(1.dp, OrbitTokens.outline),
-                                    ) {
-                                        Text(
-                                            text = tagName,
-                                            style = MaterialTheme.typography.labelMedium,
-                                            color = MaterialTheme.colorScheme.primary,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                                        )
-                                    }
-                                }
+                            } else {
+                                EntryCardLocalTagFlow(
+                                    tagNames = visibleLocalTagNames,
+                                    modifier = Modifier.weight(1f),
+                                )
                             }
                         }
                         Text(
@@ -261,6 +247,43 @@ fun EntryCard(
             }
         }
     }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun EntryCardLocalTagFlow(
+    tagNames: List<String>,
+    modifier: Modifier = Modifier,
+) {
+    FlowRow(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        tagNames.forEach { tagName ->
+            Surface(
+                shape = RoundedCornerShape(999.dp),
+                color = OrbitTokens.panelStrong,
+                border = BorderStroke(1.dp, OrbitTokens.outline),
+            ) {
+                Text(
+                    text = tagName,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .widthIn(max = 150.dp)
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                )
+            }
+        }
+    }
+}
+
+private fun entryCardHeaderFallbackText(entry: UrlEntryEntity): String {
+    entry.fetchedAuthorName?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
+    return serviceLabelForList(entry.serviceType, entry.normalizedHost)
 }
 
 internal fun entryCardVisibleLocalTagNames(localTagNames: List<String>): List<String> {

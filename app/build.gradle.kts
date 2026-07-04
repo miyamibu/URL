@@ -40,6 +40,10 @@ val publicInviteLinkBaseUrl = configString(
     envName = "URLSAVER_INVITE_LINK_BASE_URL",
     defaultValue = "https://miyamibu.xyz",
 ).trim().trimEnd('/')
+val mediaResolverBackendUrl = configString(
+    propertyName = "media.resolver.backend.url",
+    envName = "URLSAVER_MEDIA_RESOLVER_BACKEND_URL",
+).trim().trimEnd('/')
 val contactSupportEndpointUrl = configString(
     propertyName = "contact.support.endpoint.url",
     envName = "URLSAVER_CONTACT_SUPPORT_ENDPOINT_URL",
@@ -112,7 +116,9 @@ android {
             buildConfigField("String", "SUPABASE_URL", buildConfigString(debugSupabaseUrl))
             buildConfigField("String", "SUPABASE_ANON_KEY", buildConfigString(debugSupabaseAnonKey))
             buildConfigField("String", "INVITE_LINK_BASE_URL", buildConfigString(publicInviteLinkBaseUrl))
+            buildConfigField("String", "MEDIA_RESOLVER_BACKEND_URL", buildConfigString(mediaResolverBackendUrl))
             buildConfigField("String", "CONTACT_SUPPORT_ENDPOINT_URL", buildConfigString(debugContactSupportEndpointUrl))
+            buildConfigField("boolean", "ALLOW_LOCAL_MEDIA_DOWNLOADS", "true")
         }
         release {
             isMinifyEnabled = false
@@ -126,7 +132,9 @@ android {
             buildConfigField("String", "SUPABASE_URL", buildConfigString(releaseSupabaseUrl))
             buildConfigField("String", "SUPABASE_ANON_KEY", buildConfigString(releaseSupabaseAnonKey))
             buildConfigField("String", "INVITE_LINK_BASE_URL", buildConfigString(publicInviteLinkBaseUrl))
+            buildConfigField("String", "MEDIA_RESOLVER_BACKEND_URL", buildConfigString(mediaResolverBackendUrl))
             buildConfigField("String", "CONTACT_SUPPORT_ENDPOINT_URL", buildConfigString(releaseContactSupportEndpointUrl))
+            buildConfigField("boolean", "ALLOW_LOCAL_MEDIA_DOWNLOADS", "false")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

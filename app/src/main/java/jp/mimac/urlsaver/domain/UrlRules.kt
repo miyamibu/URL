@@ -1,6 +1,7 @@
 package jp.mimac.urlsaver.domain
 
 import android.content.Intent
+import java.security.MessageDigest
 import java.net.URI
 import java.util.Locale
 
@@ -8,6 +9,7 @@ object UrlRules {
     const val MAX_INPUT_TEXT_BYTES: Int = 256 * 1024
     const val MAX_EXTRACTED_URLS_PER_INPUT: Int = 50
     const val MAX_BATCH_SAVE_URLS_PER_INTAKE: Int = 50
+    const val TEXT_CARD_HOST: String = "text.rinbam.local"
 
     data class ExtractedUrlBatch(
         val urls: List<String>,
@@ -93,6 +95,96 @@ object UrlRules {
                 }
             }
         }
+    }
+
+    fun extractTextFallbackFromIntent(intent: Intent): String? {
+        return extractCandidateSources(intent)
+            .asSequence()
+            .flatten()
+            .mapNotNull(::normalizeTextCardBody)
+            .firstOrNull()
+    }
+
+    fun extractMemoWithoutUrlsFromIntent(intent: Intent): String? {
+        return extractCandidateSources(intent)
+            .asSequence()
+            .flatten()
+            .mapNotNull(::extractMemoWithoutUrls)
+            .firstOrNull()
+    }
+
+    fun extractMemoWithoutUrls(input: String): String? {
+        val normalized = normalizeTextCardBody(input) ?: return null
+        val ranges = URL_CANDIDATE_REGEX
+            .findAll(normalized)
+            .filter { normalize(it.value) != null }
+            .map { it.range }
+            .toList()
+        if (ranges.isEmpty()) return null
+
+        val withoutUrls = buildString {
+            var index = 0
+            for (range in ranges) {
+                if (index < range.first) {
+                    append(normalized.substring(index, range.first))
+                }
+                append('\n')
+                index = range.last + 1
+            }
+            if (index < normalized.length) {
+                append(normalized.substring(index))
+            }
+        }
+        val memo = withoutUrls
+            .lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .joinToString("\n")
+            .trim()
+        if (memo.isBlank()) return null
+        return memo.take(2000)
+    }
+
+    fun normalizeTextCardBody(input: String): String? {
+        val normalized = input
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .trim()
+        if (normalized.isEmpty()) return null
+        if (!isWithinInputTextByteLimit(normalized)) return null
+        return normalized
+    }
+
+    fun parseTextCard(input: String): ParsedUrl? {
+        val body = normalizeTextCardBody(input) ?: return null
+        val hash = sha256(body)
+        val normalized = "https://$TEXT_CARD_HOST/note/$hash"
+        return ParsedUrl(
+            originalUrl = body,
+            normalizedUrl = normalized,
+            displayUrl = "テキスト",
+            openUrl = normalized,
+            normalizedHost = TEXT_CARD_HOST,
+            rawSourceHost = TEXT_CARD_HOST,
+            serviceType = ServiceType.WEB,
+            contentContext = ContentContext.POST,
+        )
+    }
+
+    fun isTextCardHost(host: String?): Boolean {
+        return host?.equals(TEXT_CARD_HOST, ignoreCase = true) == true
+    }
+
+    fun textCardTitle(body: String): String {
+        val firstLine = body
+            .lineSequence()
+            .map { it.trim() }
+            .firstOrNull { it.isNotBlank() }
+            ?: body.trim()
+        return firstLine
+            .replace(Regex("\\s+"), " ")
+            .take(120)
+            .ifBlank { "テキスト" }
     }
 
     fun parseUrl(original: String): ParsedUrl? {
@@ -277,6 +369,11 @@ object UrlRules {
         return host == "127.0.0.1" || host == "localhost" || host == "::1"
     }
 
+    private fun sha256(value: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { byte -> "%02x".format(byte) }
+    }
+
     private fun isXHost(host: String): Boolean {
         val lowered = host.lowercase(Locale.ROOT)
         return lowered == "x.com" || lowered.endsWith("twitter.com")
@@ -384,5 +481,5 @@ object UrlRules {
         val statusId: String,
     )
 
-    private val URL_CANDIDATE_REGEX = Regex("https?://[^\\s<>()\\[\\]\"']+")
+    private val URL_CANDIDATE_REGEX = Regex("https?://[^\\s<>()\\[\\]\"']+", RegexOption.IGNORE_CASE)
 }

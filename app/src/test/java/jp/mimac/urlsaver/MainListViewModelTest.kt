@@ -191,6 +191,69 @@ class MainListViewModelTest {
         assertEquals(listOf(1L), result.map { it.id })
     }
 
+    @Test
+    fun filterEntriesBySearch_matchesCanonicalContentFields() {
+        val bodyMatch = entry(
+            id = 1L,
+            serviceType = ServiceType.INSTAGRAM,
+            collectionId = 1L,
+            fetchedBody = "投稿内容に沖縄旅行の記録があります",
+        )
+        val memoMatch = entry(
+            id = 2L,
+            serviceType = ServiceType.WEB,
+            collectionId = 1L,
+            memo = "あとで精算する",
+        )
+        val authorMatch = entry(
+            id = 3L,
+            serviceType = ServiceType.TIKTOK,
+            collectionId = 1L,
+            fetchedAuthorName = "OpenAI Research",
+        )
+        val serviceMatch = entry(
+            id = 4L,
+            serviceType = ServiceType.YOUTUBE,
+            collectionId = 1L,
+        )
+        val entries = listOf(bodyMatch, memoMatch, authorMatch, serviceMatch)
+
+        assertEquals(
+            listOf(1L),
+            filterEntriesBySearch(entries, "沖縄旅行", emptyList(), emptyList()).map { it.id },
+        )
+        assertEquals(
+            listOf(2L),
+            filterEntriesBySearch(entries, "精算", emptyList(), emptyList()).map { it.id },
+        )
+        assertEquals(
+            listOf(3L),
+            filterEntriesBySearch(entries, "research", emptyList(), emptyList()).map { it.id },
+        )
+        assertEquals(
+            listOf(4L),
+            filterEntriesBySearch(entries, "youtube", emptyList(), emptyList()).map { it.id },
+        )
+    }
+
+    @Test
+    fun filterEntriesBySearch_matchesAssignedVisibleSharedTagName() {
+        val entries = listOf(
+            entry(id = 1L, serviceType = ServiceType.WEB, collectionId = 1L),
+            entry(id = 2L, serviceType = ServiceType.WEB, collectionId = 1L),
+        )
+
+        val result = filterEntriesBySearch(
+            entries = entries,
+            query = "共有旅行",
+            collections = emptyList(),
+            tags = listOf(TagWithCount(id = 20L, name = "共有旅行", urlCount = 1)),
+            localTagEntryRefs = listOf(LocalTagEntryRef(tagId = 20L, entryId = 2L)),
+        )
+
+        assertEquals(listOf(2L), result.map { it.id })
+    }
+
     private class FakeRepository : MainListRepository {
         val archiveCalls = mutableListOf<Long>()
         val pendingDeleteCalls = mutableListOf<Long>()
@@ -244,6 +307,11 @@ class MainListViewModelTest {
         id: Long,
         serviceType: ServiceType,
         collectionId: Long,
+        fetchedAuthorName: String? = null,
+        fetchedBody: String? = null,
+        bodySummary: String? = null,
+        description: String? = null,
+        memo: String = "",
     ): UrlEntryEntity {
         return UrlEntryEntity(
             id = id,
@@ -256,6 +324,11 @@ class MainListViewModelTest {
             collectionId = collectionId,
             serviceType = serviceType,
             contentContext = ContentContext.STANDARD,
+            fetchedAuthorName = fetchedAuthorName,
+            fetchedBody = fetchedBody,
+            bodySummary = bodySummary,
+            description = description,
+            memo = memo,
             metadataState = MetadataState.READY,
             recordState = RecordState.ACTIVE,
             createdAt = id,

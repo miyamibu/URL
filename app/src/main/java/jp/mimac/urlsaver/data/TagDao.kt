@@ -107,7 +107,6 @@ interface TagDao {
         FROM tag_url_cross_refs AS r
         INNER JOIN tags AS t
             ON t.id = r.tagId
-           AND t.scope = 'LOCAL_ONLY'
            AND t.deletedAt IS NULL
         WHERE r.deletedAt IS NULL
         ORDER BY r.tagId ASC, r.entryId ASC

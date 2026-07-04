@@ -3,7 +3,9 @@ package jp.mimac.urlsaver.data
 import android.content.Intent
 import android.util.Log
 import androidx.room.withTransaction
+import jp.mimac.urlsaver.domain.ContentContext
 import jp.mimac.urlsaver.domain.MetadataError
+import jp.mimac.urlsaver.domain.MetadataBodyKind
 import jp.mimac.urlsaver.domain.MetadataState
 import jp.mimac.urlsaver.domain.LimitResult
 import jp.mimac.urlsaver.domain.RecordState
@@ -58,21 +60,41 @@ class DefaultUrlRepository(
 
     override suspend fun saveFromIntent(intent: Intent, collectionId: Long?): SaveResult {
         return when (val extracted = UrlRules.extractFromIntent(intent)) {
-            is ShareExtractionResult.Found -> saveFromUrl(extracted.url, collectionId)
+            is ShareExtractionResult.Found -> saveFromUrl(
+                extracted.url,
+                collectionId,
+                initialMemo = UrlRules.extractMemoWithoutUrlsFromIntent(intent),
+            )
             ShareExtractionResult.InputTooLarge -> SaveResult(ShareSaveResult.INPUT_TOO_LARGE)
-            ShareExtractionResult.InvalidUrl -> SaveResult(ShareSaveResult.INVALID_URL)
-            ShareExtractionResult.NoUrlFound -> SaveResult(ShareSaveResult.NO_URL_FOUND)
+            ShareExtractionResult.InvalidUrl -> {
+                val text = UrlRules.extractTextFallbackFromIntent(intent)
+                    ?: return SaveResult(ShareSaveResult.INVALID_URL)
+                saveFromTextCard(text, collectionId)
+            }
+            ShareExtractionResult.NoUrlFound -> {
+                val text = UrlRules.extractTextFallbackFromIntent(intent)
+                    ?: return SaveResult(ShareSaveResult.NO_URL_FOUND)
+                saveFromTextCard(text, collectionId)
+            }
         }
     }
 
     override suspend fun saveFromManualInput(input: String): SaveResult = saveFromManualInput(input, collectionId = null)
 
     override suspend fun saveFromManualInput(input: String, collectionId: Long?): SaveResult {
+        return saveFromManualInput(input, collectionId, initialMemo = UrlRules.extractMemoWithoutUrls(input))
+    }
+
+    override suspend fun saveFromManualInput(
+        input: String,
+        collectionId: Long?,
+        initialMemo: String?,
+    ): SaveResult {
         return when (val extracted = UrlRules.extractForManualInput(input)) {
-            is ShareExtractionResult.Found -> saveFromUrl(extracted.url, collectionId)
+            is ShareExtractionResult.Found -> saveFromUrl(extracted.url, collectionId, initialMemo)
             ShareExtractionResult.InputTooLarge -> SaveResult(ShareSaveResult.INPUT_TOO_LARGE)
             ShareExtractionResult.InvalidUrl -> SaveResult(ShareSaveResult.INVALID_URL)
-            ShareExtractionResult.NoUrlFound -> SaveResult(ShareSaveResult.NO_URL_FOUND)
+            ShareExtractionResult.NoUrlFound -> saveFromTextCard(input, collectionId)
         }
     }
 
@@ -105,8 +127,13 @@ class DefaultUrlRepository(
         return collectionsSupport.assignLabel(entryId, labelId)
     }
 
-    private suspend fun saveFromUrl(originalUrl: String, requestedCollectionId: Long?): SaveResult {
+    private suspend fun saveFromUrl(
+        originalUrl: String,
+        requestedCollectionId: Long?,
+        initialMemo: String? = null,
+    ): SaveResult {
         val parsed = UrlRules.parseUrl(originalUrl) ?: return SaveResult(ShareSaveResult.INVALID_URL)
+        val memoForNewEntry = normalizeInitialMemo(initialMemo)
         val now = clock.nowEpochMillis()
 
         return try {
@@ -125,6 +152,7 @@ class DefaultUrlRepository(
                             localProvenanceCount = 1,
                             collectionId = targetCollectionId,
                             recordState = RecordState.ACTIVE,
+                            memo = mergeInitialMemo(existing.memo, memoForNewEntry),
                             archivedAt = null,
                             pendingDeletionUntil = null,
                             updatedAt = now,
@@ -174,8 +202,14 @@ class DefaultUrlRepository(
                                     collectionId = targetCollectionId,
                                     updatedAt = now,
                                 )
-                                dao.update(restored)
                             }
+                            if (restored.memo.isBlank() && memoForNewEntry.isNotBlank()) {
+                                restored = restored.copy(
+                                    memo = memoForNewEntry,
+                                    updatedAt = now,
+                                )
+                            }
+                            dao.update(restored)
                             if (shouldEnqueueMetadataAfterRestore(restored)) {
                                 if (restored.metadataState == MetadataState.PENDING) {
                                     dao.markMetadataPending(restored.id, now)
@@ -207,6 +241,7 @@ class DefaultUrlRepository(
                             collectionId = targetCollectionId,
                             serviceType = parsed.serviceType,
                             contentContext = parsed.contentContext,
+                            memo = memoForNewEntry,
                             metadataState = MetadataState.PENDING,
                             metadataRequestedAt = now,
                             createdAt = now,
@@ -225,6 +260,127 @@ class DefaultUrlRepository(
             Log.e(TAG, "saveFromUrl failed", error)
             SaveResult(ShareSaveResult.SAVE_FAILED)
         }
+    }
+
+    private suspend fun saveFromTextCard(input: String, requestedCollectionId: Long?): SaveResult {
+        val parsed = UrlRules.parseTextCard(input) ?: return SaveResult(ShareSaveResult.NO_URL_FOUND)
+        val body = parsed.originalUrl
+        val title = UrlRules.textCardTitle(body)
+        val now = clock.nowEpochMillis()
+
+        return try {
+            database.withTransaction {
+                val targetCollectionId = collectionsSupport.resolveCollectionId(requestedCollectionId, now)
+                val existing = findExistingEntry(parsed.normalizedUrl)
+                if (existing != null) {
+                    if (existing.localProvenanceCount <= 0) {
+                        val limitResult = usageSummaryDataSource.limitChecker.checkCanSavePersonalUrl(
+                            usageSummaryDataSource.getUsageSummary(),
+                        )
+                        if (limitResult is LimitResult.Blocked) {
+                            return@withTransaction SaveResult(ShareSaveResult.PERSONAL_URL_LIMIT_REACHED)
+                        }
+                        val promoted = existing.copy(
+                            localProvenanceCount = 1,
+                            collectionId = targetCollectionId,
+                            recordState = RecordState.ACTIVE,
+                            archivedAt = null,
+                            pendingDeletionUntil = null,
+                            updatedAt = now,
+                        )
+                        dao.update(promoted)
+                        return@withTransaction SaveResult(
+                            result = ShareSaveResult.CREATED,
+                            entryId = promoted.id,
+                            normalizedUrl = promoted.normalizedUrl,
+                        )
+                    }
+                    when (existing.recordState) {
+                        RecordState.ACTIVE -> {
+                            if (existing.collectionId != targetCollectionId) {
+                                dao.update(
+                                    existing.copy(
+                                        collectionId = targetCollectionId,
+                                        updatedAt = now,
+                                    ),
+                                )
+                            }
+                            SaveResult(
+                                result = ShareSaveResult.DUPLICATE_ACTIVE,
+                                entryId = existing.id,
+                                normalizedUrl = existing.normalizedUrl,
+                            )
+                        }
+                        RecordState.ARCHIVED -> SaveResult(
+                            result = ShareSaveResult.DUPLICATE_ARCHIVED,
+                            entryId = existing.id,
+                            normalizedUrl = existing.normalizedUrl,
+                        )
+                        RecordState.PENDING_DELETE -> {
+                            var restored = dao.restoreFromPending(existing, now)
+                            if (restored.collectionId != targetCollectionId) {
+                                restored = restored.copy(
+                                    collectionId = targetCollectionId,
+                                    updatedAt = now,
+                                )
+                                dao.update(restored)
+                            }
+                            SaveResult(
+                                result = ShareSaveResult.RESTORED_FROM_PENDING_DELETE,
+                                entryId = restored.id,
+                                normalizedUrl = restored.normalizedUrl,
+                            )
+                        }
+                    }
+                } else {
+                    val limitResult = usageSummaryDataSource.limitChecker.checkCanSavePersonalUrl(
+                        usageSummaryDataSource.getUsageSummary(),
+                    )
+                    if (limitResult is LimitResult.Blocked) {
+                        return@withTransaction SaveResult(ShareSaveResult.PERSONAL_URL_LIMIT_REACHED)
+                    }
+                    val entryId = dao.insert(
+                        UrlEntryEntity(
+                            originalUrl = body,
+                            normalizedUrl = parsed.normalizedUrl,
+                            displayUrl = parsed.displayUrl,
+                            openUrl = parsed.openUrl,
+                            normalizedHost = parsed.normalizedHost,
+                            rawSourceHost = parsed.rawSourceHost,
+                            collectionId = targetCollectionId,
+                            serviceType = ServiceType.WEB,
+                            contentContext = ContentContext.POST,
+                            fetchedTitle = title,
+                            fetchedBody = body,
+                            fetchedBodyKind = MetadataBodyKind.WEB_EXCERPT,
+                            bodySummary = title,
+                            metadataState = MetadataState.READY,
+                            metadataFetchedAt = now,
+                            createdAt = now,
+                            updatedAt = now,
+                        ),
+                    )
+                    SaveResult(
+                        result = ShareSaveResult.CREATED,
+                        entryId = entryId,
+                        normalizedUrl = parsed.normalizedUrl,
+                    )
+                }
+            }
+        } catch (error: Throwable) {
+            Log.e(TAG, "saveFromTextCard failed", error)
+            SaveResult(ShareSaveResult.SAVE_FAILED)
+        }
+    }
+
+    private fun normalizeInitialMemo(initialMemo: String?): String {
+        val memo = UrlRules.normalizeMemo(initialMemo)
+        if (memo.isBlank()) return ""
+        return if (UrlRules.isMemoLengthValid(memo)) memo else memo.take(2000)
+    }
+
+    private fun mergeInitialMemo(existingMemo: String, initialMemo: String): String {
+        return existingMemo.ifBlank { initialMemo }
     }
 
     private suspend fun enqueueMetadataOrMarkUnavailable(entryId: Long, now: Long): Boolean {
@@ -291,13 +447,18 @@ class DefaultUrlRepository(
     override suspend fun markPendingDelete(entryId: Long, gracePeriodMillis: Long): Long? {
         val now = clock.nowEpochMillis()
         val target = dao.findById(entryId) ?: return null
-        if (target.recordState != RecordState.ACTIVE) return null
+        if (target.recordState != RecordState.ACTIVE && target.recordState != RecordState.ARCHIVED) return null
         val pendingUntil = now + gracePeriodMillis
+        val archivedAt = when (target.recordState) {
+            RecordState.ARCHIVED -> target.archivedAt ?: now
+            RecordState.ACTIVE -> null
+            RecordState.PENDING_DELETE -> null
+        }
         dao.update(
             target.copy(
                 recordState = RecordState.PENDING_DELETE,
                 pendingDeletionUntil = pendingUntil,
-                archivedAt = null,
+                archivedAt = archivedAt,
                 updatedAt = now,
             ),
         )
@@ -322,9 +483,20 @@ class DefaultUrlRepository(
         val now = clock.nowEpochMillis()
         val target = dao.findById(entryId) ?: return false
         return when (target.recordState) {
-            RecordState.PENDING_DELETE,
-            RecordState.ARCHIVED,
-            -> {
+            RecordState.PENDING_DELETE -> {
+                val restoreAsArchived = target.archivedAt != null
+                dao.update(
+                    target.copy(
+                        recordState = if (restoreAsArchived) RecordState.ARCHIVED else RecordState.ACTIVE,
+                        pendingDeletionUntil = null,
+                        archivedAt = if (restoreAsArchived) target.archivedAt else null,
+                        updatedAt = now,
+                    ),
+                )
+                true
+            }
+
+            RecordState.ARCHIVED -> {
                 dao.update(
                     target.copy(
                         recordState = RecordState.ACTIVE,

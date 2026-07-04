@@ -14,6 +14,11 @@ interface MainListRepository {
 
     suspend fun saveFromManualInput(input: String): SaveResult
     suspend fun saveFromManualInput(input: String, collectionId: Long?): SaveResult = saveFromManualInput(input)
+    suspend fun saveFromManualInput(
+        input: String,
+        collectionId: Long?,
+        initialMemo: String?,
+    ): SaveResult = saveFromManualInput(input, collectionId)
     suspend fun createCollection(name: String): CreateCollectionResult {
         return CreateCollectionResult(success = false, invalidName = true)
     }

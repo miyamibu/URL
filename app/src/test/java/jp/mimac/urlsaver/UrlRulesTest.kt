@@ -164,6 +164,26 @@ class UrlRulesTest {
     }
 
     @Test
+    fun extractManual_acceptsUppercaseHttpsScheme() {
+        val extracted = UrlRules.extractForManualInput("HTTPS://Example.COM:443/path/#frag")
+        assertEquals(ShareExtractionResult.Found("HTTPS://Example.COM:443/path/#frag"), extracted)
+    }
+
+    @Test
+    fun extractMemoWithoutUrls_removesValidUrlsAndKeepsSharedText() {
+        val memo = UrlRules.extractMemoWithoutUrls(
+            """
+            あとで読む
+            https://example.com/a
+            メモ本文
+            https://example.com/b?x=1
+            """.trimIndent(),
+        )
+
+        assertEquals("あとで読む\nメモ本文", memo)
+    }
+
+    @Test
     fun extractManual_invalidCandidateIsInvalidUrl() {
         val extracted = UrlRules.extractForManualInput("https:///broken")
         assertEquals(ShareExtractionResult.InvalidUrl, extracted)

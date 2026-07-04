@@ -2,6 +2,7 @@ package jp.mimac.urlsaver
 
 import jp.mimac.urlsaver.data.CollectionEntity
 import jp.mimac.urlsaver.domain.ServiceType
+import jp.mimac.urlsaver.domain.TagWithCount
 import jp.mimac.urlsaver.ui.components.mergedTopFilterTokens
 import jp.mimac.urlsaver.ui.components.resolvedTopFilterTokens
 import org.junit.Assert.assertEquals
@@ -73,6 +74,35 @@ class TopFilterOrderResolutionTest {
                 "service_INSTAGRAM",
             ),
             merged,
+        )
+    }
+
+    @Test
+    fun resolvedTokens_insertNewLocalTagsBeforeServiceFilters() {
+        val tokens = resolvedTopFilterTokens(
+            serviceOrder = listOf(ServiceType.YOUTUBE, ServiceType.X),
+            collections = emptyList(),
+            localTags = listOf(
+                TagWithCount(id = 20, name = "新しい自作", urlCount = 0),
+                TagWithCount(id = 10, name = "既存自作", urlCount = 1),
+            ),
+            topFilterOrderTokens = listOf(
+                "local_tag_10",
+                "all",
+                "service_YOUTUBE",
+                "service_X",
+            ),
+        )
+
+        assertEquals(
+            listOf(
+                "local_tag_10",
+                "local_tag_20",
+                "all",
+                "service_YOUTUBE",
+                "service_X",
+            ),
+            tokens,
         )
     }
 }

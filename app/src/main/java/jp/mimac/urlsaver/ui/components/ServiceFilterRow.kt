@@ -1,5 +1,7 @@
 package jp.mimac.urlsaver.ui.components
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
@@ -34,6 +36,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import jp.mimac.urlsaver.data.CollectionEntity
 import jp.mimac.urlsaver.domain.ServiceType
+import jp.mimac.urlsaver.domain.TagWithCount
 import jp.mimac.urlsaver.ui.filterLabelForService
 import jp.mimac.urlsaver.ui.theme.OrbitTokens
 import kotlinx.coroutines.withTimeoutOrNull
@@ -51,11 +54,13 @@ internal val fixedServiceFilterOrder = listOf(
 internal fun resolvedTopFilterTokens(
     serviceOrder: List<ServiceType>,
     collections: List<CollectionEntity>,
+    localTags: List<TagWithCount> = emptyList(),
     topFilterOrderTokens: List<String>,
 ): List<String> {
     return buildMovableItems(
         serviceOrder = serviceOrder,
         collections = collections,
+        localTags = localTags,
         topFilterOrderTokens = topFilterOrderTokens,
     ).map { item -> item.token }
 }
@@ -95,6 +100,13 @@ private sealed interface TopFilterItem {
     ) : TopFilterItem {
         override val token: String = "service_${service.name}"
     }
+
+    data class LocalTag(
+        val id: Long,
+        val label: String,
+    ) : TopFilterItem {
+        override val token: String = "local_tag_$id"
+    }
 }
 
 private data class ServiceItemBounds(
@@ -108,6 +120,7 @@ private data class ServiceItemBounds(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 fun ServiceFilterRow(
     selectedService: ServiceType,
     onSelectService: (ServiceType) -> Unit,
@@ -120,13 +133,19 @@ fun ServiceFilterRow(
     onCreateCollection: (() -> Unit)? = null,
     onReorderTopFilters: ((List<String>) -> Unit)? = null,
     onReorderCollections: ((List<Long>) -> Unit)? = null,
+    localTags: List<TagWithCount> = emptyList(),
+    selectedLocalTagId: Long? = null,
+    onSelectLocalTag: ((Long?) -> Unit)? = null,
+    onCreateLocalTag: (() -> Unit)? = null,
+    onRenameLocalTag: ((TagWithCount) -> Unit)? = null,
 ) {
     val listState = rememberLazyListState()
     val edgeThresholdPx = with(LocalDensity.current) { 32.dp.toPx() }
-    val latestMovableItems = remember(serviceOrder, collections, topFilterOrderTokens) {
+    val latestMovableItems = remember(serviceOrder, collections, localTags, topFilterOrderTokens) {
         buildMovableItems(
             serviceOrder = serviceOrder,
             collections = collections,
+            localTags = localTags,
             topFilterOrderTokens = topFilterOrderTokens,
         )
     }
@@ -302,15 +321,15 @@ fun ServiceFilterRow(
             ),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        if (onCreateCollection != null) {
-            item(key = "create_collection") {
+        if (onCreateLocalTag != null) {
+            item(key = "create_local_tag") {
                 OrbitFilterChip(
                     label = "+",
                     selected = false,
                     labelFontSize = 28.sp,
                     modifier = Modifier
-                        .testTag("top_filter_create")
-                        .clickable(enabled = !isDragging) { onCreateCollection() },
+                        .testTag("top_filter_create_local_tag")
+                        .clickable(enabled = !isDragging) { onCreateLocalTag() },
                 )
             }
         }
@@ -321,9 +340,17 @@ fun ServiceFilterRow(
         ) { item ->
             val draggedState = draggedToken == item.token
             val selectedState = when (item) {
-                TopFilterItem.All -> selectedCollectionId == null && selectedService == ServiceType.ALL
+                TopFilterItem.All -> selectedLocalTagId == null &&
+                    selectedCollectionId == null &&
+                    selectedService == ServiceType.ALL
                 is TopFilterItem.Collection -> selectedCollectionId == item.id
-                is TopFilterItem.Service -> selectedCollectionId == null && selectedService == item.service
+                is TopFilterItem.LocalTag -> selectedLocalTagId == item.id
+                is TopFilterItem.Service -> selectedLocalTagId == null &&
+                    selectedCollectionId == null &&
+                    selectedService == item.service
+            }
+            val localTag = (item as? TopFilterItem.LocalTag)?.let { local ->
+                localTags.firstOrNull { tag -> tag.id == local.id }
             }
 
             val baseModifier = Modifier
@@ -344,18 +371,45 @@ fun ServiceFilterRow(
                 label = when (item) {
                     TopFilterItem.All -> filterLabelForService(ServiceType.ALL)
                     is TopFilterItem.Collection -> item.label
+                    is TopFilterItem.LocalTag -> item.label
                     is TopFilterItem.Service -> filterLabelForService(item.service)
                 },
                 selected = selectedState,
                 modifier = baseModifier
                     .testTag("top_filter_${item.token}")
-                    .clickable(enabled = !isDragging) {
-                        when (item) {
-                            TopFilterItem.All -> onSelectService(ServiceType.ALL)
-                            is TopFilterItem.Collection -> onSelectCollection?.invoke(item.id)
-                            is TopFilterItem.Service -> onSelectService(item.service)
-                        }
-                    }
+                    .then(
+                        if (item is TopFilterItem.LocalTag) {
+                            Modifier.combinedClickable(
+                                enabled = !isDragging,
+                                onClick = {
+                                    onSelectLocalTag?.invoke(
+                                        if (selectedState) null else item.id,
+                                    )
+                                },
+                                onDoubleClick = {
+                                    localTag?.let { tag -> onRenameLocalTag?.invoke(tag) }
+                                },
+                            )
+                        } else {
+                            Modifier.clickable(enabled = !isDragging) {
+                                when (item) {
+                                    TopFilterItem.All -> {
+                                        onSelectLocalTag?.invoke(null)
+                                        onSelectService(ServiceType.ALL)
+                                    }
+                                    is TopFilterItem.Collection -> {
+                                        onSelectLocalTag?.invoke(null)
+                                        onSelectCollection?.invoke(item.id)
+                                    }
+                                    is TopFilterItem.Service -> {
+                                        onSelectLocalTag?.invoke(null)
+                                        onSelectService(item.service)
+                                    }
+                                    is TopFilterItem.LocalTag -> Unit
+                                }
+                            }
+                        },
+                    )
                     .semantics {
                         selected = selectedState
                         stateDescription = if (draggedState) {
@@ -368,15 +422,36 @@ fun ServiceFilterRow(
                     },
             )
         }
+
+        if (onCreateCollection != null) {
+            item(key = "create_collection") {
+                OrbitFilterChip(
+                    label = "+保存先",
+                    selected = false,
+                    modifier = Modifier
+                        .testTag("top_filter_create_collection")
+                        .clickable(enabled = !isDragging) { onCreateCollection() },
+                )
+            }
+        }
     }
 }
 
 private fun buildMovableItems(
     serviceOrder: List<ServiceType>,
     collections: List<CollectionEntity>,
+    localTags: List<TagWithCount>,
     topFilterOrderTokens: List<String>,
 ): List<TopFilterItem> {
     val baseItems = buildList {
+        localTags.forEach { tag ->
+            add(
+                TopFilterItem.LocalTag(
+                    id = tag.id,
+                    label = tag.name,
+                ),
+            )
+        }
         add(TopFilterItem.All)
         collections.forEach { collection ->
             add(
@@ -400,7 +475,13 @@ private fun buildMovableItems(
         .toMutableList()
     baseItems.forEach { item ->
         if (ordered.none { current -> current.token == item.token }) {
-            ordered.add(item)
+            if (item is TopFilterItem.LocalTag) {
+                val insertIndex = ordered.indexOfFirst { current -> current !is TopFilterItem.LocalTag }
+                    .let { index -> if (index == -1) ordered.size else index }
+                ordered.add(insertIndex, item)
+            } else {
+                ordered.add(item)
+            }
         }
     }
     return ordered
@@ -413,10 +494,12 @@ private fun mergeMovableItems(
     if (current.isEmpty()) return latest
 
     val latestByToken = latest.associateBy { item -> item.token }
-    return mergedTopFilterTokens(
-        currentTokens = current.map { item -> item.token },
-        latestTokens = latest.map { item -> item.token },
-    ).mapNotNull { token -> latestByToken[token] }
+    val currentTokens = current.map { item -> item.token }
+    val currentItems = currentTokens.mapNotNull { token -> latestByToken[token] }
+    val missingItems = latest.filter { item -> item.token !in currentTokens }
+    val missingLocalTags = missingItems.filterIsInstance<TopFilterItem.LocalTag>()
+    val missingOthers = missingItems.filterNot { item -> item is TopFilterItem.LocalTag }
+    return missingLocalTags + currentItems + missingOthers
 }
 
 private fun maybeAutoScroll(

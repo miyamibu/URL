@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.withTimeoutOrNull
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SharedTagInviteViewModel(
@@ -64,7 +65,9 @@ class SharedTagInviteViewModel(
             _previewResult.value = SharedTagInvitePreviewResult.InvalidInvite
             return
         }
-        _previewResult.value = tagRepository.previewInvite(inviteToken)
+        _previewResult.value = withTimeoutOrNull(INVITE_PREVIEW_TIMEOUT_MS) {
+            tagRepository.previewInvite(inviteToken)
+        } ?: SharedTagInvitePreviewResult.Failure("招待リンクを確認できませんでした。通信状態を確認して、もう一度開いてください。")
     }
 
     suspend fun signIn(email: String, password: String): SharedTagAuthResult {
@@ -98,5 +101,9 @@ class SharedTagInviteViewModel(
             pendingInviteStore.clear()
         }
         return result
+    }
+
+    private companion object {
+        const val INVITE_PREVIEW_TIMEOUT_MS = 12_000L
     }
 }

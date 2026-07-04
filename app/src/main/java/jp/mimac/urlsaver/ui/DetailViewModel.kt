@@ -7,6 +7,9 @@ import jp.mimac.urlsaver.data.DEFAULT_COLLECTION_ID
 import jp.mimac.urlsaver.data.TagRepository
 import jp.mimac.urlsaver.data.UrlEntryEntity
 import jp.mimac.urlsaver.data.UrlRepository
+import jp.mimac.urlsaver.data.VideoAssetEntity
+import jp.mimac.urlsaver.data.VideoDownloadEntity
+import jp.mimac.urlsaver.data.VideoRepository
 import jp.mimac.urlsaver.domain.AssignTagResult
 import jp.mimac.urlsaver.domain.CreateTagResult
 import jp.mimac.urlsaver.domain.TagWithCount
@@ -29,9 +32,18 @@ class DetailViewModel(
     private val entryId: Long,
     private val repository: UrlRepository,
     private val tagRepository: TagRepository,
+    private val videoRepository: VideoRepository,
 ) : ViewModel() {
 
     val entry: Flow<UrlEntryEntity?> = repository.observeEntry(entryId)
+    val videoAssets: StateFlow<List<VideoAssetEntity>> = videoRepository.observeAssetsForEntry(entryId)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val preferredVideoAsset: StateFlow<VideoAssetEntity?> = videoRepository.observePreferredAssetForEntry(entryId)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    val latestVideoDownload: StateFlow<VideoDownloadEntity?> = videoRepository.observeLatestDownloadForEntry(entryId)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    val savedVideoDownloads: StateFlow<List<VideoDownloadEntity>> = videoRepository.observeSavedDownloadsForEntry(entryId)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val assignedTags: StateFlow<List<SharedTagRecord>> = tagRepository.observeTagsForEntry(entryId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val allTagsWithCount: StateFlow<List<TagWithCount>> = tagRepository.observeAllTagsWithCount()
@@ -47,6 +59,12 @@ class DetailViewModel(
 
     private val effectChannel = Channel<DetailEffect>(capacity = Channel.BUFFERED)
     val effects = effectChannel.receiveAsFlow()
+
+    init {
+        viewModelScope.launch {
+            videoRepository.repairSavedDownloadsForEntry(entryId)
+        }
+    }
 
     suspend fun saveTitle(input: String): SaveTitleUiResult {
         val result = repository.saveUserTitle(entryId, input)
@@ -69,6 +87,19 @@ class DetailViewModel(
 
     suspend fun refreshMetadata(): Boolean {
         return repository.refreshMetadata(entryId)
+    }
+
+    fun onSaveVideoClicked() {
+        viewModelScope.launch {
+            val assetIds = videoAssets.value
+                .filter { it.resolveStatus == "AVAILABLE" && !it.downloadUrl.isNullOrBlank() }
+                .map { it.id }
+            if (assetIds.isEmpty()) {
+                videoRepository.enqueueResolve(entryId, autoDownload = true)
+            } else {
+                videoRepository.enqueueDownloads(assetIds)
+            }
+        }
     }
 
     suspend fun assignTag(tagId: Long): AssignTagResult {
