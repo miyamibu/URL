@@ -25,6 +25,12 @@ struct AppNotification: Identifiable, Equatable {
     let autoDismissAfter: TimeInterval?
 }
 
+enum ManualSaveOutcome: Equatable {
+    case inputError(ShareSaveResult)
+    case saved(SaveResult)
+    case completed
+}
+
 enum PromoCodeApplyResult: Equatable {
     case success
     case authRequired
@@ -42,6 +48,13 @@ struct ChatGptPersonalLinkSettings: Equatable {
     var contentFetchEnabled: Bool = false
     var lastSyncedAt: Date?
     var lastErrorMessage: String?
+}
+
+struct SavedAppMediaFile: Identifiable, Equatable, Sendable {
+    let id: String
+    let fileURL: URL
+    let mediaType: String
+    let fileName: String
 }
 
 @MainActor
@@ -62,6 +75,7 @@ final class URLSaverAppModel: ObservableObject {
     @Published private(set) var collections: [CollectionSummary] = []
     @Published private(set) var chatGptPersonalLinkSettings = ChatGptPersonalLinkSettings()
     @Published private(set) var isUpdatingChatGptPersonalLinkSync = false
+    @Published private(set) var mediaSaveRevision = 0
     @Published private(set) var profileStatusMessage: String?
     @Published var selectedTab: RootTab = .main
     @Published var navigationPath: [Int64] = []
@@ -214,27 +228,39 @@ final class URLSaverAppModel: ObservableObject {
         await reload()
     }
 
-    func manualSave(input: String, localTagIDs: Set<Int64> = [], collectionID: Int64? = nil) async -> ShareSaveResult? {
+    func prepareManualSave(input: String, localTagIDs: Set<Int64> = [], collectionID: Int64? = nil) async -> ManualSaveOutcome {
         if let data = input.trimmingCharacters(in: .whitespacesAndNewlines).data(using: .utf8),
            (try? JSONDecoder().decode(TagSharePayload.self, from: data)) != nil {
             _ = await importLocalTagPayloadText(input)
-            return nil
+            return .completed
         }
         guard let saveResult = try? services.repository.saveFromManualInput(input, localTagIDs: Array(localTagIDs)) else {
-            enqueueNotification(
-                AppNotification(message: "保存できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3)
-            )
-            return nil
+            return .saved(SaveResult(result: .saveFailed))
         }
 
         switch saveResult.result {
         case .inputTooLarge, .invalidURL, .noURLFound:
-            return saveResult.result
+            return .inputError(saveResult.result)
         default:
             if let collectionID, let entryID = saveResult.entryID {
                 _ = try? services.repository.assignCollection(entryID: entryID, collectionID: collectionID)
             }
-            await handleSaveResult(saveResult, degradationNotice: nil)
+            return .saved(saveResult)
+        }
+    }
+
+    func finishPreparedManualSave(_ saveResult: SaveResult) async {
+        await handleSaveResult(saveResult, degradationNotice: nil)
+    }
+
+    func manualSave(input: String, localTagIDs: Set<Int64> = [], collectionID: Int64? = nil) async -> ShareSaveResult? {
+        switch await prepareManualSave(input: input, localTagIDs: localTagIDs, collectionID: collectionID) {
+        case .inputError(let result):
+            return result
+        case .saved(let saveResult):
+            await finishPreparedManualSave(saveResult)
+            return nil
+        case .completed:
             return nil
         }
     }
@@ -361,6 +387,12 @@ final class URLSaverAppModel: ObservableObject {
     }
 
     func createLocalTag(name: String) async -> LocalTagSummary? {
+        let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !normalizedName.isEmpty,
+           localTags.contains(where: { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedName }) {
+            enqueueNotification(AppNotification(message: "このタグはすでにあります", actionLabel: nil, action: nil, autoDismissAfter: 3))
+            return nil
+        }
         guard let tag = try? services.repository.createLocalTag(name: name) else {
             enqueueNotification(AppNotification(message: "タグを作成できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
             return nil
@@ -377,6 +409,15 @@ final class URLSaverAppModel: ObservableObject {
         }
         await reload()
         enqueueNotification(AppNotification(message: "タグ名を変更しました", actionLabel: nil, action: nil, autoDismissAfter: 3))
+        return true
+    }
+
+    func reorderLocalTags(tagIDs: [Int64]) async -> Bool {
+        guard (try? services.repository.reorderLocalTags(tagIDs: tagIDs)) == true else {
+            enqueueNotification(AppNotification(message: "タグを並び替えできませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
+            return false
+        }
+        await reload()
         return true
     }
 
@@ -1314,6 +1355,54 @@ final class URLSaverAppModel: ObservableObject {
         return try? services.repository.loadEntry(id: entryID)
     }
 
+    func savedAppMediaItemsForEntry(entryID: Int64) -> [SavedAppMediaFile] {
+        IOSAppMediaStore.savedFiles(entryID: entryID)
+    }
+
+    func saveMediaForEntry(entryID: Int64) async -> Bool {
+        guard let entry = entry(for: entryID),
+              entry.localProvenanceCount > 0,
+              entry.recordState == .active,
+              IOSBackendMediaResolver.supports(serviceType: entry.serviceType) else {
+            enqueueNotification(AppNotification(message: "この投稿のメディアは保存できません", actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return false
+        }
+
+        do {
+            let assets = try await IOSBackendMediaResolver().resolve(entry: entry)
+            guard !assets.isEmpty else {
+                enqueueNotification(AppNotification(message: "メディアを取得できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 4))
+                return false
+            }
+
+            var savedCount = 0
+            for (index, asset) in assets.enumerated() {
+                do {
+                    _ = try await IOSAppMediaSaver.save(asset: asset, entryID: entryID, index: index)
+                    savedCount += 1
+                } catch {
+                    continue
+                }
+            }
+
+            guard savedCount > 0 else {
+                enqueueNotification(AppNotification(message: "メディアを保存できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 4))
+                return false
+            }
+
+            mediaSaveRevision += 1
+            let message = savedCount == 1 ? "メディアを保存しました" : "\(savedCount)件のメディアを保存しました"
+            enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return true
+        } catch let error as IOSMediaResolverError {
+            enqueueNotification(AppNotification(message: error.userMessage, actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return false
+        } catch {
+            enqueueNotification(AppNotification(message: "メディアを取得できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return false
+        }
+    }
+
     private func handleSaveResult(_ saveResult: SaveResult, degradationNotice: ShareDegradationNotice?) async {
         if saveResult.shouldScheduleMetadata, let entryID = saveResult.entryID {
             AppBackgroundScheduler.schedule()
@@ -1497,6 +1586,302 @@ final class URLSaverAppModel: ObservableObject {
 
     private func cancelDeleteTimer(entryID: Int64) {
         deleteTimers.removeValue(forKey: entryID)?.cancel()
+    }
+}
+
+private struct IOSResolvedMediaAsset: Decodable, Sendable {
+    let providerAssetID: String
+    let downloadURL: String
+    let mediaType: String
+    let mimeType: String?
+    let requestHeadersJSON: String?
+
+    enum CodingKeys: String, CodingKey {
+        case providerAssetID = "providerAssetId"
+        case downloadURL = "downloadUrl"
+        case mediaType
+        case mimeType
+        case requestHeadersJSON = "requestHeadersJson"
+    }
+}
+
+private struct IOSMediaResolveResponse: Decodable {
+    let ok: Bool
+    let assets: [IOSResolvedMediaAsset]
+    let error: String?
+    let message: String?
+}
+
+private enum IOSMediaResolverError: Error {
+    case unsupported
+    case unconfigured
+    case failed
+    case authRequired
+    case message(String)
+    case invalidDownloadURL
+    case httpStatus(Int)
+
+    var userMessage: String {
+        switch self {
+        case .unsupported:
+            return "この投稿のメディアは保存できません"
+        case .unconfigured:
+            return "メディア保存サーバーが未設定です"
+        case .authRequired:
+            return "サービス側の認証が必要なため、現在はメディアを取得できません"
+        case .message(let value):
+            return value
+        case .failed, .invalidDownloadURL, .httpStatus:
+            return "メディアを取得できませんでした"
+        }
+    }
+}
+
+private struct IOSBackendMediaResolver {
+    static func supports(serviceType: ServiceType) -> Bool {
+        switch serviceType {
+        case .youtube, .tiktok, .instagram:
+            return true
+        case .all, .web:
+            return false
+        case .x:
+            return false
+        }
+    }
+
+    func resolve(entry: URLRecord) async throws -> [IOSResolvedMediaAsset] {
+        guard Self.supports(serviceType: entry.serviceType) else {
+            throw IOSMediaResolverError.unsupported
+        }
+        guard let baseURL = Self.backendBaseURL() else {
+            throw IOSMediaResolverError.unconfigured
+        }
+
+        var request = URLRequest(url: baseURL.appendingPathComponent("resolve"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 75
+        request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("Rinbam iOS", forHTTPHeaderField: "User-Agent")
+        request.httpBody = try JSONSerialization.data(
+            withJSONObject: [
+                "provider": providerName(for: entry.serviceType),
+                "serviceType": entry.serviceType.rawValue,
+                "url": entry.openURL,
+            ],
+            options: []
+        )
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw IOSMediaResolverError.httpStatus(-1)
+        }
+        if !(200..<300).contains(httpResponse.statusCode) {
+            throw Self.error(from: data, fallbackStatus: httpResponse.statusCode)
+        }
+
+        let decoded = try JSONDecoder().decode(IOSMediaResolveResponse.self, from: data)
+        guard decoded.ok else {
+            throw Self.error(from: decoded)
+        }
+        return decoded.assets.filter { asset in
+            guard let url = URL(string: asset.downloadURL),
+                  let scheme = url.scheme?.lowercased(),
+                  scheme == "https" || scheme == "http" else {
+                return false
+            }
+            return asset.mediaType == "IMAGE" || asset.mediaType == "VIDEO"
+        }
+    }
+
+    private static func backendBaseURL() -> URL? {
+        let rawValue = Bundle.main.object(forInfoDictionaryKey: "MediaResolverBackendURL") as? String
+        let normalized = rawValue?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "https:/$()/", with: "https://")
+            .replacingOccurrences(of: "http:/$()/", with: "http://")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let normalized, !normalized.isEmpty else { return nil }
+        return URL(string: normalized)
+    }
+
+    private static func error(from data: Data, fallbackStatus: Int) -> IOSMediaResolverError {
+        if let decoded = try? JSONDecoder().decode(IOSMediaResolveResponse.self, from: data) {
+            return error(from: decoded)
+        }
+        return .httpStatus(fallbackStatus)
+    }
+
+    private static func error(from response: IOSMediaResolveResponse) -> IOSMediaResolverError {
+        let errorCode = response.error?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawMessage = response.message?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lowered = rawMessage?.lowercased() ?? ""
+        if errorCode == "AUTH_REQUIRED" ||
+            lowered.contains("sign in") ||
+            lowered.contains("cookies") ||
+            lowered.contains("login") ||
+            lowered.contains("not a bot") {
+            return .authRequired
+        }
+        if errorCode == "MEDIA_RESOLVER_BACKEND_UNCONFIGURED" {
+            return .unconfigured
+        }
+        return .failed
+    }
+
+    private func providerName(for serviceType: ServiceType) -> String {
+        switch serviceType {
+        case .youtube:
+            return "youtube"
+        case .tiktok:
+            return "tiktok"
+        case .instagram:
+            return "instagram"
+        case .all, .web, .x:
+            return "generic"
+        }
+    }
+}
+
+private enum IOSAppMediaSaver {
+    static func save(asset: IOSResolvedMediaAsset, entryID: Int64, index: Int) async throws -> SavedAppMediaFile {
+        guard let downloadURL = URL(string: asset.downloadURL),
+              let scheme = downloadURL.scheme?.lowercased(),
+              scheme == "https" || scheme == "http" else {
+            throw IOSMediaResolverError.invalidDownloadURL
+        }
+
+        var request = URLRequest(url: downloadURL)
+        request.timeoutInterval = 90
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+        request.setValue("image/avif,image/webp,image/apng,image/*,video/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
+        for (name, value) in sanitizedHeaders(from: asset.requestHeadersJSON) {
+            if request.value(forHTTPHeaderField: name) == nil {
+                request.setValue(value, forHTTPHeaderField: name)
+            }
+        }
+
+        let (temporaryURL, response) = try await URLSession.shared.download(for: request)
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200..<300).contains(httpResponse.statusCode) else {
+            try? FileManager.default.removeItem(at: temporaryURL)
+            throw IOSMediaResolverError.httpStatus((response as? HTTPURLResponse)?.statusCode ?? -1)
+        }
+
+        let fileName = fileName(for: asset, fallbackIndex: index)
+        let destination = try IOSAppMediaStore.fileURL(entryID: entryID, fileName: fileName)
+        try? FileManager.default.removeItem(at: destination)
+        try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.moveItem(at: temporaryURL, to: destination)
+        return SavedAppMediaFile(
+            id: destination.path,
+            fileURL: destination,
+            mediaType: asset.mediaType,
+            fileName: fileName
+        )
+    }
+
+    private static func sanitizedHeaders(from json: String?) -> [(String, String)] {
+        guard let json,
+              let data = json.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return []
+        }
+        return object.compactMap { key, value in
+            let lowerKey = key.lowercased()
+            guard lowerKey != "cookie",
+                  lowerKey != "authorization",
+                  let stringValue = value as? String,
+                  !stringValue.isEmpty else {
+                return nil
+            }
+            return (key, stringValue)
+        }
+    }
+
+    private static func fileName(for asset: IOSResolvedMediaAsset, fallbackIndex: Int) -> String {
+        let safeBase = asset.providerAssetID
+            .replacingOccurrences(of: "[^A-Za-z0-9._-]+", with: "_", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "._-"))
+        let base = safeBase.isEmpty ? "rinbam_media_\(fallbackIndex + 1)" : "\(fallbackIndex + 1)_\(safeBase)"
+        return "\(base).\(fileExtension(for: asset))"
+    }
+
+    private static func fileExtension(for asset: IOSResolvedMediaAsset) -> String {
+        if let ext = URL(string: asset.downloadURL)?.pathExtension.lowercased(),
+           ["jpg", "jpeg", "png", "webp", "heic", "mp4", "mov", "webm"].contains(ext) {
+            return ext == "jpeg" ? "jpg" : ext
+        }
+        switch asset.mimeType?.lowercased() {
+        case "image/png": return "png"
+        case "image/webp": return "webp"
+        case "image/heic": return "heic"
+        case "video/quicktime": return "mov"
+        case "video/webm": return "webm"
+        case "video/mp4": return "mp4"
+        default:
+            return asset.mediaType == "IMAGE" ? "jpg" : "mp4"
+        }
+    }
+}
+
+private enum IOSAppMediaStore {
+    private static let rootDirectoryName = "RinbamMedia"
+
+    static func savedFiles(entryID: Int64) -> [SavedAppMediaFile] {
+        guard let directory = try? directoryURL(entryID: entryID) else { return [] }
+        let urls = (try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.creationDateKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        return urls
+            .filter { !$0.hasDirectoryPath }
+            .sorted { lhs, rhs in
+                let leftDate = (try? lhs.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+                let rightDate = (try? rhs.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+                if leftDate == rightDate { return lhs.lastPathComponent < rhs.lastPathComponent }
+                return leftDate < rightDate
+            }
+            .map { url in
+                SavedAppMediaFile(
+                    id: url.path,
+                    fileURL: url,
+                    mediaType: mediaType(for: url),
+                    fileName: url.lastPathComponent
+                )
+            }
+    }
+
+    static func fileURL(entryID: Int64, fileName: String) throws -> URL {
+        try directoryURL(entryID: entryID)
+            .appendingPathComponent(fileName, isDirectory: false)
+    }
+
+    private static func directoryURL(entryID: Int64) throws -> URL {
+        let root = try rootURL()
+        return root.appendingPathComponent(String(entryID), isDirectory: true)
+    }
+
+    private static func rootURL() throws -> URL {
+        let base = try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        let root = base.appendingPathComponent(rootDirectoryName, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return root
+    }
+
+    private static func mediaType(for url: URL) -> String {
+        switch url.pathExtension.lowercased() {
+        case "jpg", "jpeg", "png", "webp", "gif", "heic", "heif":
+            return "IMAGE"
+        default:
+            return "VIDEO"
+        }
     }
 }
 

@@ -117,6 +117,34 @@ final class ServiceFilterTests: XCTestCase {
         XCTAssertEqual(result.map(\.id), [2])
     }
 
+    func testSearchFilteredEntriesMatchesCanonicalContentFields() {
+        let bodyMatch = makeRecord(
+            id: 1,
+            serviceType: .instagram,
+            host: "instagram.com",
+            fetchedBody: "投稿内容に沖縄旅行の記録があります"
+        )
+        let memoMatch = makeRecord(
+            id: 2,
+            serviceType: .web,
+            host: "memo.example.com",
+            memo: "あとで精算する"
+        )
+        let authorMatch = makeRecord(
+            id: 3,
+            serviceType: .tiktok,
+            host: "tiktok.com",
+            fetchedAuthorName: "OpenAI Research"
+        )
+        let serviceMatch = makeRecord(id: 4, serviceType: .youtube, host: "youtube.com")
+        let entries = [bodyMatch, memoMatch, authorMatch, serviceMatch]
+
+        XCTAssertEqual(searchFilteredEntries(entries, query: "沖縄旅行").map(\.id), [1])
+        XCTAssertEqual(searchFilteredEntries(entries, query: "精算").map(\.id), [2])
+        XCTAssertEqual(searchFilteredEntries(entries, query: "research").map(\.id), [3])
+        XCTAssertEqual(searchFilteredEntries(entries, query: "youtube").map(\.id), [4])
+    }
+
     func testSwipeActionTriggerMatchesAndroidThreshold() {
         XCTAssertEqual(swipeActionTriggerWidth(containerWidth: 360), 144)
     }
@@ -256,7 +284,12 @@ final class ServiceFilterTests: XCTestCase {
         serviceType: URLSaveriOS.ServiceType,
         host: String,
         collectionID: Int64 = 1,
-        localProvenanceCount: Int = 1
+        localProvenanceCount: Int = 1,
+        fetchedAuthorName: String? = nil,
+        fetchedBody: String? = nil,
+        bodySummary: String? = nil,
+        description: String? = nil,
+        memo: String = ""
     ) -> URLSaveriOS.URLRecord {
         URLSaveriOS.URLRecord(
             id: id,
@@ -271,11 +304,12 @@ final class ServiceFilterTests: XCTestCase {
             contentContext: .standard,
             userTitle: nil,
             fetchedTitle: nil,
-            fetchedBody: nil,
+            fetchedAuthorName: fetchedAuthorName,
+            fetchedBody: fetchedBody,
             fetchedBodyKind: nil,
-            bodySummary: nil,
-            description: nil,
-            memo: "",
+            bodySummary: bodySummary,
+            description: description,
+            memo: memo,
             thumbnailURL: nil,
             badgeImageURL: nil,
             canonicalID: nil,

@@ -4,11 +4,12 @@ import XCTest
 final class SharedTagCloudLiveSyncTests: XCTestCase {
     func testOwnerCanSyncAndroidMigratedSharedTagFromLiveCloud() async throws {
         let env = try LiveSharedTagTestEnvironment.requireConfigured()
+        let anonKey = try env.requireAnonKey()
         let ownerEmail = try env.requireOwnerEmail()
         let ownerPassword = try env.requireOwnerPassword()
         let expectedTagName = try env.requireExpectedAndroidTagName()
 
-        let harness = try TestSharedTagCloudHarness.make(baseURL: env.baseURL)
+        let harness = try TestSharedTagCloudHarness.make(baseURL: env.baseURL, anonKey: anonKey)
         let signInResult = await harness.service.signIn(email: ownerEmail, password: ownerPassword)
         guard case .success = signInResult else {
             XCTFail("Owner sign-in failed: \(signInResult)")
@@ -31,19 +32,30 @@ final class SharedTagCloudLiveSyncTests: XCTestCase {
 
     func testInviteFlowLetsSecondIOSClientJoinAndReadSharedURL() async throws {
         let env = try LiveSharedTagTestEnvironment.requireConfigured()
-        let ownerHarness = try TestSharedTagCloudHarness.make(baseURL: env.baseURL)
-        let collaboratorHarness = try TestSharedTagCloudHarness.make(baseURL: env.baseURL)
+        let anonKey = try env.requireAnonKey()
+        let ownerHarness = try TestSharedTagCloudHarness.make(baseURL: env.baseURL, anonKey: anonKey)
+        let collaboratorHarness = try TestSharedTagCloudHarness.make(baseURL: env.baseURL, anonKey: anonKey)
 
         let testID = UUID().uuidString.lowercased()
-        let ownerEmail = "ios-owner-\(testID.prefix(8))@example.com"
-        let ownerPassword = "pass12345"
-        let collaboratorEmail = "ios-collab-\(testID.prefix(8))@example.com"
-        let collaboratorPassword = "pass12345"
+        let ownerEmail = env.ownerEmail ?? "ios-owner-\(testID.prefix(8))@example.com"
+        let ownerPassword = env.ownerPassword ?? "pass12345"
+        let collaboratorEmail = env.collaboratorEmail ?? "ios-collab-\(testID.prefix(8))@example.com"
+        let collaboratorPassword = env.collaboratorPassword ?? "pass12345"
         let tagName = "Live Sync \(testID.prefix(6))"
         let rawURL = "https://example.com/live-sync-\(testID)"
 
-        let ownerSignUpResult = await ownerHarness.service.signUp(email: ownerEmail, password: ownerPassword)
-        guard case .success = ownerSignUpResult else {
+        let ownerSignUpResult = await signInOrSignUp(
+            harness: ownerHarness,
+            email: ownerEmail,
+            password: ownerPassword,
+            shouldUseExistingAccount: env.ownerEmail != nil
+        )
+        switch ownerSignUpResult {
+        case .success:
+            break
+        case .needsEmailConfirmation:
+            throw XCTSkip("Live Supabase requires email confirmation for newly-created test users.")
+        default:
             XCTFail("Owner sign-up failed: \(ownerSignUpResult)")
             return
         }
@@ -76,11 +88,18 @@ final class SharedTagCloudLiveSyncTests: XCTestCase {
             return
         }
 
-        let collaboratorSignUpResult = await collaboratorHarness.service.signUp(
+        let collaboratorSignUpResult = await signInOrSignUp(
+            harness: collaboratorHarness,
             email: collaboratorEmail,
-            password: collaboratorPassword
+            password: collaboratorPassword,
+            shouldUseExistingAccount: env.collaboratorEmail != nil
         )
-        guard case .success = collaboratorSignUpResult else {
+        switch collaboratorSignUpResult {
+        case .success:
+            break
+        case .needsEmailConfirmation:
+            throw XCTSkip("Live Supabase requires email confirmation for newly-created collaborator test users.")
+        default:
             XCTFail("Collaborator sign-up failed: \(collaboratorSignUpResult)")
             return
         }
@@ -110,7 +129,8 @@ final class SharedTagCloudLiveSyncTests: XCTestCase {
 
     func testCreateInviteForAndroidDeviceAcceptance() async throws {
         let env = try LiveSharedTagTestEnvironment.requireConfigured()
-        let ownerHarness = try TestSharedTagCloudHarness.make(baseURL: env.baseURL)
+        let anonKey = try env.requireAnonKey()
+        let ownerHarness = try TestSharedTagCloudHarness.make(baseURL: env.baseURL, anonKey: anonKey)
 
         let testID = UUID().uuidString.lowercased()
         let ownerEmail = "ios-owner-\(testID.prefix(8))@example.com"
@@ -119,7 +139,12 @@ final class SharedTagCloudLiveSyncTests: XCTestCase {
         let rawURL = "https://example.com/android-join-\(testID)"
 
         let ownerSignUpResult = await ownerHarness.service.signUp(email: ownerEmail, password: ownerPassword)
-        guard case .success = ownerSignUpResult else {
+        switch ownerSignUpResult {
+        case .success:
+            break
+        case .needsEmailConfirmation:
+            throw XCTSkip("Live Supabase requires email confirmation for newly-created test users.")
+        default:
             XCTFail("Owner sign-up failed: \(ownerSignUpResult)")
             return
         }
@@ -154,12 +179,27 @@ final class SharedTagCloudLiveSyncTests: XCTestCase {
         }
     }
 
+    private func signInOrSignUp(
+        harness: TestSharedTagCloudHarness,
+        email: String,
+        password: String,
+        shouldUseExistingAccount: Bool
+    ) async -> SharedTagAuthResult {
+        if shouldUseExistingAccount {
+            return await harness.service.signIn(email: email, password: password)
+        }
+        return await harness.service.signUp(email: email, password: password)
+    }
+
 }
 
 private struct LiveSharedTagTestEnvironment {
     let baseURL: String
+    let anonKey: String?
     let ownerEmail: String?
     let ownerPassword: String?
+    let collaboratorEmail: String?
+    let collaboratorPassword: String?
     let expectedAndroidTagName: String?
 
     static func fromEnvironment(
@@ -169,16 +209,25 @@ private struct LiveSharedTagTestEnvironment {
         let baseURL = environment["URLSAVER_LIVE_SHARED_TAG_BASE_URL"]?.trimmingCharacters(in: .whitespacesAndNewlines)
             ?? fileConfig?["base_url"]
             ?? (Bundle.main.object(forInfoDictionaryKey: "SupabaseURL") as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let anonKey = environment["URLSAVER_LIVE_SHARED_TAG_ANON_KEY"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? environment["URLSAVER_SUPABASE_ANON_KEY"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? fileConfig?["anon_key"]
+            ?? (Bundle.main.object(forInfoDictionaryKey: "SupabaseAnonKey") as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let trimmedBaseURL = baseURL?.trimmingCharacters(in: .whitespacesAndNewlines),
               !trimmedBaseURL.isEmpty else {
             return nil
         }
         return LiveSharedTagTestEnvironment(
             baseURL: trimmedBaseURL,
+            anonKey: anonKey,
             ownerEmail: environment["URLSAVER_LIVE_SHARED_TAG_OWNER_EMAIL"]?.trimmingCharacters(in: .whitespacesAndNewlines)
                 ?? fileConfig?["owner_email"],
             ownerPassword: environment["URLSAVER_LIVE_SHARED_TAG_OWNER_PASSWORD"]?.trimmingCharacters(in: .whitespacesAndNewlines)
                 ?? fileConfig?["owner_password"],
+            collaboratorEmail: environment["URLSAVER_LIVE_SHARED_TAG_COLLABORATOR_EMAIL"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+                ?? fileConfig?["collaborator_email"],
+            collaboratorPassword: environment["URLSAVER_LIVE_SHARED_TAG_COLLABORATOR_PASSWORD"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+                ?? fileConfig?["collaborator_password"],
             expectedAndroidTagName: environment["URLSAVER_LIVE_SHARED_TAG_EXPECTED_NAME"]?.trimmingCharacters(in: .whitespacesAndNewlines)
                 ?? fileConfig?["expected_android_tag_name"]
         )
@@ -196,6 +245,13 @@ private struct LiveSharedTagTestEnvironment {
             throw XCTSkip("URLSAVER_LIVE_SHARED_TAG_OWNER_EMAIL is required for this live shared-tag test.")
         }
         return ownerEmail
+    }
+
+    func requireAnonKey() throws -> String {
+        guard let anonKey, !anonKey.isEmpty else {
+            throw XCTSkip("URLSAVER_LIVE_SHARED_TAG_ANON_KEY or URLSAVER_SUPABASE_ANON_KEY is required for this live shared-tag test.")
+        }
+        return anonKey
     }
 
     func requireOwnerPassword() throws -> String {
@@ -235,7 +291,7 @@ private final class TestSharedTagCloudHarness {
         self.service = service
     }
 
-    static func make(baseURL: String) throws -> TestSharedTagCloudHarness {
+    static func make(baseURL: String, anonKey: String) throws -> TestSharedTagCloudHarness {
         let directoryURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
@@ -247,7 +303,7 @@ private final class TestSharedTagCloudHarness {
             config: SharedTagCloudConfig(
                 enabled: true,
                 supabaseURL: baseURL,
-                anonKey: "dev-anon-key"
+                anonKey: anonKey
             ),
             sessionStore: sessionStore,
             store: store,

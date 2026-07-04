@@ -14,7 +14,6 @@ struct SharedTagDetailSheet: View {
     @State private var isShowingAddEntrySheet = false
     @State private var isShowingDeleteConfirmation = false
     @State private var isShowingLeaveConfirmation = false
-    @State private var isShowingInfo = false
     @State private var isWorking = false
     @State private var isSyncing = false
     @State private var shareItems: [Any] = []
@@ -179,11 +178,6 @@ struct SharedTagDetailSheet: View {
         } message: {
             Text("この端末の共有タグ一覧から外れます。共有タグ自体や他の参加者のURLは削除されません。")
         }
-        .alert("共有タグについて", isPresented: $isShowingInfo) {
-            Button("閉じる", role: .cancel) {}
-        } message: {
-            Text(sharedTagInfoMessage(for: tag))
-        }
         .alert("オーナー権限を移譲", isPresented: Binding(
             get: { pendingOwnershipTransferMember != nil },
             set: { if !$0 { pendingOwnershipTransferMember = nil } }
@@ -281,33 +275,8 @@ struct SharedTagDetailSheet: View {
         return role != .owner
     }
 
-    private func sharedTagInfoMessage(for tag: SharedTagSummary?) -> String {
-        let roleText: String
-        switch tag?.currentUserRole {
-        case .owner:
-            roleText = "あなたはオーナーです。招待リンクの共有、参加者の削除、タグ削除ができます。"
-        case .editor:
-            roleText = "あなたは編集者です。URL の追加と削除、共有タグから抜ける操作ができます。"
-        case .viewer:
-            roleText = "あなたは閲覧者です。URL の閲覧と共有タグから抜ける操作ができます。"
-        case nil:
-            roleText = "同期が完了すると、この共有タグでの権限が表示されます。"
-        }
-        return "この共有タグでは URL 一覧だけを同期します。\n\n\(roleText)"
-    }
-
     private func headerButtons(for tag: SharedTagSummary?) -> [ScreenHeaderButton] {
         var buttons: [ScreenHeaderButton] = []
-
-        if tag != nil {
-            buttons.append(
-                ScreenHeaderButton(
-                    icon: "exclamationmark.circle",
-                    accessibilityLabel: "共有タグの説明",
-                    action: { isShowingInfo = true }
-                )
-            )
-        }
 
         buttons.append(
             ScreenHeaderButton(

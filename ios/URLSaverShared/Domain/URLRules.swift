@@ -1,9 +1,11 @@
 import Foundation
+import CryptoKit
 
 enum URLRules {
     static let maxInputTextBytes = 256 * 1024
     static let maxExtractedURLsPerInput = 50
     static let maxBatchSaveURLsPerIntake = 50
+    static let textCardHost = "text.rinbam.local"
 
     struct ExtractedURLBatch: Equatable, Sendable {
         let urls: [String]
@@ -92,6 +94,104 @@ enum URLRules {
         case nil:
             return extractURLCandidates(from: trimmed).isEmpty ? .noURLFound : .invalidURL
         }
+    }
+
+    static func extractTextFallback(from candidateGroups: ShareCandidateGroups) -> String? {
+        for group in candidateGroups.orderedGroups {
+            for candidate in group {
+                if let text = normalizeTextCardBody(candidate) {
+                    return text
+                }
+            }
+        }
+        return nil
+    }
+
+    static func extractMemoWithoutURLs(from candidateGroups: ShareCandidateGroups) -> String? {
+        for group in candidateGroups.orderedGroups {
+            for candidate in group {
+                if let memo = extractMemoWithoutURLs(candidate) {
+                    return memo
+                }
+            }
+        }
+        return nil
+    }
+
+    static func extractMemoWithoutURLs(_ input: String) -> String? {
+        guard let normalized = normalizeTextCardBody(input) else { return nil }
+        let nsText = normalized as NSString
+        let validRanges = extractURLCandidateRanges(from: normalized)
+            .filter { range in
+                normalize(nsText.substring(with: range)) != nil
+            }
+        guard !validRanges.isEmpty else { return nil }
+
+        var pieces: [String] = []
+        var index = 0
+        for range in validRanges {
+            if index < range.location {
+                pieces.append(nsText.substring(with: NSRange(location: index, length: range.location - index)))
+            }
+            pieces.append("\n")
+            index = range.location + range.length
+        }
+        if index < nsText.length {
+            pieces.append(nsText.substring(from: index))
+        }
+
+        let memo = pieces
+            .joined()
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !memo.isEmpty else { return nil }
+        return String(memo.prefix(2_000))
+    }
+
+    static func normalizeTextCardBody(_ input: String) -> String? {
+        let normalized = input
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty, isWithinInputTextByteLimit(normalized) else {
+            return nil
+        }
+        return normalized
+    }
+
+    static func parseTextCard(_ input: String) -> ParsedURL? {
+        guard let body = normalizeTextCardBody(input) else { return nil }
+        let hash = sha256(body)
+        let normalized = "https://\(textCardHost)/note/\(hash)"
+        return ParsedURL(
+            originalURL: body,
+            normalizedURL: normalized,
+            displayURL: "テキスト",
+            openURL: normalized,
+            normalizedHost: textCardHost,
+            rawSourceHost: textCardHost,
+            serviceType: .web,
+            contentContext: .post
+        )
+    }
+
+    static func isTextCardHost(_ host: String?) -> Bool {
+        host?.caseInsensitiveCompare(textCardHost) == .orderedSame
+    }
+
+    static func textCardTitle(_ body: String) -> String {
+        let firstLine = body
+            .split(whereSeparator: \.isNewline)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first(where: { !$0.isEmpty }) ?? body.trimmingCharacters(in: .whitespacesAndNewlines)
+        let collapsed = firstLine
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+        let title = String(collapsed.prefix(120))
+        return title.isEmpty ? "テキスト" : title
     }
 
     static func parseURL(_ original: String) -> ParsedURL? {
@@ -190,6 +290,9 @@ enum URLRules {
         if let fetchedTitle = fetchedTitle, !fetchedTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return fetchedTitle
         }
+        if isTextCardHost(normalizedHost) {
+            return "テキスト"
+        }
         if serviceType != .web {
             return "\(serviceType.displayName)のリンク"
         }
@@ -267,15 +370,25 @@ enum URLRules {
         return sawOversizedInput ? .inputTooLarge : nil
     }
 
+    private static func sha256(_ value: String) -> String {
+        let digest = SHA256.hash(data: Data(value.utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
     private static func extractURLCandidates(from text: String) -> [String] {
+        let nsText = text as NSString
+        return extractURLCandidateRanges(from: text).map {
+            nsText.substring(with: $0)
+        }
+    }
+
+    private static func extractURLCandidateRanges(from text: String) -> [NSRange] {
         let pattern = #"https?://[^\s<>()\[\]"']+"#
-        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
             return []
         }
         let nsText = text as NSString
-        return regex.matches(in: text, range: NSRange(location: 0, length: nsText.length)).map {
-            nsText.substring(with: $0.range)
-        }
+        return regex.matches(in: text, range: NSRange(location: 0, length: nsText.length)).map(\.range)
     }
 
     private static func isLoopbackHost(_ host: String) -> Bool {

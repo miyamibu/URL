@@ -908,10 +908,22 @@ enum SharedTagCloudError: Error {
         case .ownerTransferRequired:
             return "共有タグ詳細の参加者からオーナー権限を移譲してから削除してください"
         case .httpStatus(_, let message):
-            return message.isEmpty ? "通信に失敗しました" : message
+            return Self.normalizedUserMessage(message, fallback: "通信に失敗しました")
         case .message(let message):
-            return message
+            return Self.normalizedUserMessage(message, fallback: "通信に失敗しました")
         }
+    }
+
+    private static func normalizedUserMessage(_ message: String, fallback: String) -> String {
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return fallback }
+        let lowercased = trimmed.lowercased()
+        if lowercased.contains("invalid_or_expired_invite")
+            || lowercased.contains("invalid invite")
+            || lowercased.contains("expired invite") {
+            return "招待リンクが無効か期限切れです"
+        }
+        return trimmed
     }
 }
 

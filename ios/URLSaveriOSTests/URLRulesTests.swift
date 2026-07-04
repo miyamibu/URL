@@ -62,9 +62,56 @@ final class URLRulesTests: XCTestCase {
         )
     }
 
+    func testExtractAllCollectsMultipleURLsFromShareExtensionCandidateGroups() {
+        let groups = ShareCandidateGroups(
+            extraCandidates: [
+                """
+                あとで読む
+                https://example.com/first
+                https://example.com/second#fragment
+                """
+            ],
+            providerTextCandidates: [
+                "共有本文 https://example.com/third?x=1"
+            ],
+            streamCandidates: [
+                "https://example.com/second"
+            ]
+        )
+
+        XCTAssertEqual(
+            URLRules.extractAllFromCandidateGroups(groups).urls,
+            [
+                "https://example.com/first",
+                "https://example.com/second",
+                "https://example.com/third?x=1",
+            ]
+        )
+    }
+
     func testManualInputDifferentiatesNoURLAndInvalidURL() {
         XCTAssertEqual(URLRules.extractForManualInput("hello"), .noURLFound)
         XCTAssertEqual(URLRules.extractForManualInput("https:///broken"), .invalidURL)
+    }
+
+    func testManualInputAcceptsUppercaseHTTPSScheme() {
+        XCTAssertEqual(
+            URLRules.extractForManualInput("HTTPS://Example.COM:443/path/#frag"),
+            .found("HTTPS://Example.COM:443/path/#frag")
+        )
+    }
+
+    func testExtractMemoWithoutURLsRemovesValidURLsAndKeepsSharedText() {
+        let memo = URLRules.extractMemoWithoutURLs(
+            """
+            あとで読む
+            https://example.com/a
+            メモ本文
+            https://example.com/b?x=1
+            """
+        )
+
+        XCTAssertEqual(memo, "あとで読む\nメモ本文")
     }
 
     func testManualInputTooLargeReturnsExplicitError() {

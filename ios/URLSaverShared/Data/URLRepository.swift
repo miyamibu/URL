@@ -57,7 +57,7 @@ final class URLRepository: @unchecked Sendable {
             LEFT JOIN url_entries
                 ON url_entries.id = local_tag_entries.entry_id
             GROUP BY local_tags.id
-            ORDER BY local_tags.created_at DESC, local_tags.id DESC;
+            ORDER BY local_tags.sort_order ASC, local_tags.id ASC;
             """
         ) { statement in
             LocalTagSummary(
@@ -92,7 +92,7 @@ final class URLRepository: @unchecked Sendable {
             LEFT JOIN url_entries counted_entries
                 ON counted_entries.id = counted_links.entry_id
             GROUP BY local_tags.id
-            ORDER BY local_tags.created_at DESC, local_tags.id DESC;
+            ORDER BY local_tags.sort_order ASC, local_tags.id ASC;
             """,
             binds: [sql(entryID)]
         ) { statement in
@@ -242,14 +242,16 @@ final class URLRepository: @unchecked Sendable {
         guard let normalized = normalizeLocalTagName(rawName) else { return nil }
         let now = Date()
         do {
+            let sortOrder = ((try? database.fetchInt("SELECT MIN(sort_order) FROM local_tags;")) ?? 0) - 1
             let id = try insert(
                 sql: """
-                INSERT INTO local_tags (name, normalized_name, created_at, updated_at)
-                VALUES (?, ?, ?, ?);
+                INSERT INTO local_tags (name, normalized_name, sort_order, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?);
                 """,
                 binds: [
                     sql(normalized.name),
                     sql(normalized.key),
+                    sql(sortOrder),
                     sql(now.timeIntervalSince1970),
                     sql(now.timeIntervalSince1970),
                 ]
@@ -264,6 +266,31 @@ final class URLRepository: @unchecked Sendable {
         } catch {
             return try loadLocalTagByNormalizedName(normalized.key)
         }
+    }
+
+    func reorderLocalTags(tagIDs: [Int64]) throws -> Bool {
+        let currentIDs = try loadLocalTags().map(\.id)
+        let currentIDSet = Set(currentIDs)
+        var seen = Set<Int64>()
+        let requestedIDs = tagIDs.filter { id in
+            currentIDSet.contains(id) && seen.insert(id).inserted
+        }
+        guard !requestedIDs.isEmpty else { return false }
+        let orderedIDs = requestedIDs + currentIDs.filter { !seen.contains($0) }
+        let now = Date().timeIntervalSince1970
+        try database.transaction {
+            for (index, id) in orderedIDs.enumerated() {
+                try execute(
+                    """
+                    UPDATE local_tags
+                    SET sort_order = ?, updated_at = ?
+                    WHERE id = ?;
+                    """,
+                    binds: [sql(index), sql(now), sql(id)]
+                )
+            }
+        }
+        return true
     }
 
     func renameLocalTag(id tagID: Int64, name rawName: String) throws -> Bool {
@@ -467,7 +494,7 @@ final class URLRepository: @unchecked Sendable {
     func saveFromManualInput(_ input: String, localTagIDs: [Int64] = []) throws -> SaveResult {
         switch URLRules.extractForManualInput(input) {
         case .found(let url):
-            let result = try saveFromURL(url)
+            let result = try saveFromURL(url, initialMemo: URLRules.extractMemoWithoutURLs(input))
             try assignLocalTagsAfterSave(result: result, localTagIDs: localTagIDs)
             return result
         case .inputTooLarge:
@@ -475,12 +502,18 @@ final class URLRepository: @unchecked Sendable {
         case .invalidURL:
             return SaveResult(result: .invalidURL)
         case .noURLFound:
-            return SaveResult(result: .noURLFound)
+            let result = try saveFromTextCard(input)
+            try assignLocalTagsAfterSave(result: result, localTagIDs: localTagIDs)
+            return result
         }
     }
 
-    func saveFromResolvedURL(_ url: String, localTagIDs: [Int64] = []) throws -> SaveResult {
-        let result = try saveFromURL(url)
+    func saveFromResolvedURL(
+        _ url: String,
+        localTagIDs: [Int64] = [],
+        initialMemo: String? = nil
+    ) throws -> SaveResult {
+        let result = try saveFromURL(url, initialMemo: initialMemo)
         try assignLocalTagsAfterSave(result: result, localTagIDs: localTagIDs)
         return result
     }
@@ -524,7 +557,8 @@ final class URLRepository: @unchecked Sendable {
     }
 
     func markPendingDelete(entryID: Int64, gracePeriod: TimeInterval = 5) throws -> Date? {
-        guard let entry = try loadEntry(id: entryID), entry.recordState == .active else {
+        guard let entry = try loadEntry(id: entryID),
+              entry.recordState == .active || entry.recordState == .archived else {
             return nil
         }
         let now = Date()
@@ -534,7 +568,6 @@ final class URLRepository: @unchecked Sendable {
             UPDATE url_entries
             SET record_state = 'PENDING_DELETE',
                 pending_deletion_until = ?,
-                archived_at = NULL,
                 updated_at = ?
             WHERE id = ?;
             """,
@@ -588,16 +621,22 @@ final class URLRepository: @unchecked Sendable {
             return false
         }
         let now = Date()
+        let restoreToArchived = entry.recordState == .pendingDelete && entry.archivedAt != nil
         try execute(
             """
             UPDATE url_entries
-            SET record_state = 'ACTIVE',
+            SET record_state = ?,
                 pending_deletion_until = NULL,
-                archived_at = NULL,
+                archived_at = ?,
                 updated_at = ?
             WHERE id = ?;
             """,
-            binds: [sql(now.timeIntervalSince1970), sql(entryID)]
+            binds: [
+                sql(restoreToArchived ? RecordState.archived.rawValue : RecordState.active.rawValue),
+                sql(restoreToArchived ? entry.archivedAt?.timeIntervalSince1970 : nil),
+                sql(now.timeIntervalSince1970),
+                sql(entryID)
+            ]
         )
         return true
     }
@@ -723,25 +762,30 @@ final class URLRepository: @unchecked Sendable {
         )
     }
 
-    private func saveFromURL(_ originalURL: String) throws -> SaveResult {
+    private func saveFromURL(_ originalURL: String, initialMemo: String? = nil) throws -> SaveResult {
         guard let parsed = URLRules.parseURL(originalURL) else {
             return SaveResult(result: .invalidURL)
         }
+        let memoForNewEntry = normalizeInitialMemo(initialMemo)
 
         if let existing = try findExisting(normalizedURL: parsed.normalizedURL) {
             if existing.localProvenanceCount == 0 {
                 let now = Date()
+                let mergedMemo = existing.memo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? memoForNewEntry
+                    : existing.memo
                 try execute(
                     """
                     UPDATE url_entries
                     SET local_provenance_count = 1,
                         record_state = 'ACTIVE',
+                        memo = ?,
                         pending_deletion_until = NULL,
                         archived_at = NULL,
                         updated_at = ?
                     WHERE id = ?;
                     """,
-                    binds: [sql(now.timeIntervalSince1970), sql(existing.id)]
+                    binds: [sql(mergedMemo), sql(now.timeIntervalSince1970), sql(existing.id)]
                 )
                 return SaveResult(
                     result: .created,
@@ -758,16 +802,22 @@ final class URLRepository: @unchecked Sendable {
                 return SaveResult(result: .duplicateArchived, entryID: existing.id, normalizedURL: existing.normalizedURL)
             case .pendingDelete:
                 let now = Date()
+                let restoreToArchived = existing.archivedAt != nil
                 try execute(
                     """
                     UPDATE url_entries
-                    SET record_state = 'ACTIVE',
+                    SET record_state = ?,
                         pending_deletion_until = NULL,
-                        archived_at = NULL,
+                        archived_at = ?,
                         updated_at = ?
                     WHERE id = ?;
                     """,
-                    binds: [sql(now.timeIntervalSince1970), sql(existing.id)]
+                    binds: [
+                        sql(restoreToArchived ? RecordState.archived.rawValue : RecordState.active.rawValue),
+                        sql(restoreToArchived ? existing.archivedAt?.timeIntervalSince1970 : nil),
+                        sql(now.timeIntervalSince1970),
+                        sql(existing.id)
+                    ]
                 )
                 return SaveResult(
                     result: .restoredFromPendingDelete,
@@ -789,6 +839,7 @@ final class URLRepository: @unchecked Sendable {
             raw_source_host,
             service_type,
             content_context,
+            memo,
             metadata_state,
             metadata_requested_at,
             record_state,
@@ -796,7 +847,7 @@ final class URLRepository: @unchecked Sendable {
             shared_reference_count,
             created_at,
             updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, 'ACTIVE', 1, 0, ?, ?);
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, 'ACTIVE', 1, 0, ?, ?);
         """
         let rowID = try insert(
             sql: insertSQL,
@@ -809,6 +860,7 @@ final class URLRepository: @unchecked Sendable {
                 sql(parsed.rawSourceHost),
                 sql(parsed.serviceType.rawValue),
                 sql(parsed.contentContext.rawValue),
+                sql(memoForNewEntry),
                 sql(now.timeIntervalSince1970),
                 sql(now.timeIntervalSince1970),
                 sql(now.timeIntervalSince1970),
@@ -820,6 +872,112 @@ final class URLRepository: @unchecked Sendable {
             normalizedURL: parsed.normalizedURL,
             shouldScheduleMetadata: true
         )
+    }
+
+    private func saveFromTextCard(_ input: String) throws -> SaveResult {
+        guard let parsed = URLRules.parseTextCard(input) else {
+            return SaveResult(result: .noURLFound)
+        }
+        let body = parsed.originalURL
+        let title = URLRules.textCardTitle(body)
+
+        if let existing = try findExisting(normalizedURL: parsed.normalizedURL) {
+            if existing.localProvenanceCount == 0 {
+                let now = Date()
+                try execute(
+                    """
+                    UPDATE url_entries
+                    SET local_provenance_count = 1,
+                        record_state = 'ACTIVE',
+                        pending_deletion_until = NULL,
+                        archived_at = NULL,
+                        updated_at = ?
+                    WHERE id = ?;
+                    """,
+                    binds: [sql(now.timeIntervalSince1970), sql(existing.id)]
+                )
+                return SaveResult(result: .created, entryID: existing.id, normalizedURL: existing.normalizedURL)
+            }
+
+            switch existing.recordState {
+            case .active:
+                return SaveResult(result: .duplicateActive, entryID: existing.id, normalizedURL: existing.normalizedURL)
+            case .archived:
+                return SaveResult(result: .duplicateArchived, entryID: existing.id, normalizedURL: existing.normalizedURL)
+            case .pendingDelete:
+                let now = Date()
+                let restoreToArchived = existing.archivedAt != nil
+                try execute(
+                    """
+                    UPDATE url_entries
+                    SET record_state = ?,
+                        pending_deletion_until = NULL,
+                        archived_at = ?,
+                        updated_at = ?
+                    WHERE id = ?;
+                    """,
+                    binds: [
+                        sql(restoreToArchived ? RecordState.archived.rawValue : RecordState.active.rawValue),
+                        sql(restoreToArchived ? existing.archivedAt?.timeIntervalSince1970 : nil),
+                        sql(now.timeIntervalSince1970),
+                        sql(existing.id)
+                    ]
+                )
+                return SaveResult(result: .restoredFromPendingDelete, entryID: existing.id, normalizedURL: existing.normalizedURL)
+            }
+        }
+
+        let now = Date()
+        let insertSQL = """
+        INSERT INTO url_entries (
+            original_url,
+            normalized_url,
+            display_url,
+            open_url,
+            normalized_host,
+            raw_source_host,
+            service_type,
+            content_context,
+            fetched_title,
+            fetched_body,
+            fetched_body_kind,
+            body_summary,
+            metadata_state,
+            metadata_fetched_at,
+            record_state,
+            local_provenance_count,
+            shared_reference_count,
+            created_at,
+            updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'READY', ?, 'ACTIVE', 1, 0, ?, ?);
+        """
+        let rowID = try insert(
+            sql: insertSQL,
+            binds: [
+                sql(body),
+                sql(parsed.normalizedURL),
+                sql(parsed.displayURL),
+                sql(parsed.openURL),
+                sql(parsed.normalizedHost),
+                sql(parsed.rawSourceHost),
+                sql(ServiceType.web.rawValue),
+                sql(ContentContext.post.rawValue),
+                sql(title),
+                sql(body),
+                sql(MetadataBodyKind.webExcerpt.rawValue),
+                sql(title),
+                sql(now.timeIntervalSince1970),
+                sql(now.timeIntervalSince1970),
+                sql(now.timeIntervalSince1970),
+            ]
+        )
+        return SaveResult(result: .created, entryID: rowID, normalizedURL: parsed.normalizedURL)
+    }
+
+    private func normalizeInitialMemo(_ initialMemo: String?) -> String {
+        let memo = URLRules.normalizeMemo(initialMemo)
+        guard !memo.isEmpty else { return "" }
+        return URLRules.isMemoLengthValid(memo) ? memo : String(memo.prefix(2_000))
     }
 
     private func findExisting(normalizedURL: String) throws -> URLRecord? {
@@ -1000,6 +1158,7 @@ final class URLRepository: @unchecked Sendable {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             normalized_name TEXT NOT NULL UNIQUE,
+            sort_order INTEGER NOT NULL DEFAULT 0,
             created_at REAL NOT NULL,
             updated_at REAL NOT NULL
         );
@@ -1049,8 +1208,15 @@ final class URLRepository: @unchecked Sendable {
             column: "collection_id",
             definition: "collection_id INTEGER NOT NULL DEFAULT 1"
         )
+        try database.addColumnIfMissing(
+            table: "local_tags",
+            column: "sort_order",
+            definition: "sort_order INTEGER NOT NULL DEFAULT 0"
+        )
         try executeBatch("CREATE INDEX IF NOT EXISTS idx_url_entries_local_visibility ON url_entries(local_provenance_count, record_state);")
         try executeBatch("CREATE INDEX IF NOT EXISTS idx_url_entries_collection ON url_entries(collection_id);")
+        try executeBatch("CREATE INDEX IF NOT EXISTS idx_local_tags_sort_order ON local_tags(sort_order);")
+        try initializeLocalTagSortOrderIfNeeded()
         try scheduleSocialBadgeBackfillIfNeeded()
     }
 
@@ -1069,6 +1235,34 @@ final class URLRepository: @unchecked Sendable {
                 sql(now),
             ]
         )
+    }
+
+    private func initializeLocalTagSortOrderIfNeeded() throws {
+        let flagKey = "local_tag_sort_order_v1"
+        let existingFlag = try database.fetchString(
+            "SELECT key FROM schema_flags WHERE key = ? LIMIT 1;",
+            binds: [sql(flagKey)]
+        )
+        guard existingFlag == nil else { return }
+
+        let tagIDs = try database.fetchMany(
+            sql: "SELECT id FROM local_tags ORDER BY created_at DESC, id DESC;"
+        ) { statement in
+            sqlite3_column_int64(statement, 0)
+        }
+        let now = Date().timeIntervalSince1970
+        try database.transaction {
+            for (index, id) in tagIDs.enumerated() {
+                try execute(
+                    "UPDATE local_tags SET sort_order = ? WHERE id = ?;",
+                    binds: [sql(index), sql(id)]
+                )
+            }
+            try execute(
+                "INSERT OR REPLACE INTO schema_flags (key, applied_at) VALUES (?, ?);",
+                binds: [sql(flagKey), sql(now)]
+            )
+        }
     }
 
     private func scheduleSocialBadgeBackfillIfNeeded() throws {

@@ -34,6 +34,20 @@ final class URLRepositoryTests: XCTestCase {
         XCTAssertEqual(duplicateArchived.entryID, created.entryID)
     }
 
+    func testManualInputUppercaseSchemeAndDefaultPortDeduplicates() throws {
+        let created = try repository.saveFromManualInput("HTTPS://Example.COM:443/manual-normalize/#frag")
+        XCTAssertEqual(created.result, .created)
+
+        let duplicate = try repository.saveFromManualInput("https://example.com/manual-normalize")
+        XCTAssertEqual(duplicate.result, .duplicateActive)
+        XCTAssertEqual(duplicate.entryID, created.entryID)
+
+        let snapshot = try repository.observeActiveSnapshot()
+            .filter { $0.normalizedURL == "https://example.com/manual-normalize" }
+        XCTAssertEqual(snapshot.count, 1)
+        XCTAssertEqual(snapshot.first?.normalizedURL, "https://example.com/manual-normalize")
+    }
+
     func testResolvedURLSaveCreatesEntryForSharePath() throws {
         let created = try repository.saveFromResolvedURL("https://example.com/shared")
         XCTAssertEqual(created.result, .created)
@@ -48,6 +62,40 @@ final class URLRepositoryTests: XCTestCase {
         let entry = try XCTUnwrap(repository.loadEntry(id: created.entryID!))
 
         XCTAssertEqual(entry.collectionID, 1)
+    }
+
+    func testManualInputURLWithTextStoresTextAsMemo() throws {
+        let created = try repository.saveFromManualInput(
+            """
+            あとで読む
+            https://example.com/with-memo
+            メモ本文
+            """
+        )
+        let entry = try XCTUnwrap(repository.loadEntry(id: created.entryID!))
+
+        XCTAssertEqual(entry.normalizedURL, "https://example.com/with-memo")
+        XCTAssertEqual(entry.memo, "あとで読む\nメモ本文")
+    }
+
+    func testManualInputWithoutURLCreatesTextCard() throws {
+        let body = """
+        投稿メモのタイトル
+        これはURLなしで保存する本文です。
+        あとでカードとして読み返します。
+        """
+
+        let created = try repository.saveFromManualInput(body)
+        XCTAssertEqual(created.result, .created)
+
+        let entry = try XCTUnwrap(repository.loadEntry(id: created.entryID!))
+        XCTAssertTrue(entry.normalizedURL.hasPrefix("https://text.rinbam.local/note/"))
+        XCTAssertEqual(entry.displayURL, "テキスト")
+        XCTAssertEqual(entry.fetchedTitle, "投稿メモのタイトル")
+        XCTAssertEqual(entry.fetchedBody, body)
+        XCTAssertEqual(entry.fetchedBodyKind, .webExcerpt)
+        XCTAssertEqual(entry.bodySummary, "投稿メモのタイトル")
+        XCTAssertEqual(entry.metadataState, .ready)
     }
 
     func testCollectionLifecycleCreateAssignReorderAndDelete() throws {
@@ -78,6 +126,20 @@ final class URLRepositoryTests: XCTestCase {
         XCTAssertFalse(try repository.deleteCollection(id: 1))
     }
 
+    func testLocalTagsCreateAtFrontAndReorder() throws {
+        let first = try XCTUnwrap(try repository.createLocalTag(name: "first"))
+        let second = try XCTUnwrap(try repository.createLocalTag(name: "second"))
+        let third = try XCTUnwrap(try repository.createLocalTag(name: "third"))
+
+        XCTAssertEqual(try repository.loadLocalTags().map(\.id), [third.id, second.id, first.id])
+
+        XCTAssertTrue(try repository.reorderLocalTags(tagIDs: [first.id, third.id, second.id]))
+        XCTAssertEqual(try repository.loadLocalTags().map(\.id), [first.id, third.id, second.id])
+
+        let fourth = try XCTUnwrap(try repository.createLocalTag(name: "fourth"))
+        XCTAssertEqual(try repository.loadLocalTags().map(\.id).prefix(4), [fourth.id, first.id, third.id, second.id])
+    }
+
     func testPendingDeleteRestorePreservesEntryAndSchedulesMetadataWhenNeeded() async throws {
         let created = try repository.saveFromManualInput("https://example.com/path")
         XCTAssertEqual(created.result, .created)
@@ -102,9 +164,13 @@ final class URLRepositoryTests: XCTestCase {
         XCTAssertEqual(try repository.loadEntry(id: third.entryID!)?.recordState, .active)
 
         XCTAssertNotNil(try repository.markPendingDelete(entryID: third.entryID!, gracePeriod: 30))
-        XCTAssertNil(try repository.markPendingDelete(entryID: second.entryID!, gracePeriod: 30))
+        XCTAssertNotNil(try repository.markPendingDelete(entryID: second.entryID!, gracePeriod: 30))
         XCTAssertEqual(try repository.loadEntry(id: third.entryID!)?.recordState, .pendingDelete)
         XCTAssertNotNil(try repository.loadEntry(id: third.entryID!)?.pendingDeletionUntil)
+        XCTAssertEqual(try repository.loadEntry(id: second.entryID!)?.recordState, .pendingDelete)
+
+        XCTAssertTrue(try repository.restore(entryID: second.entryID!))
+        XCTAssertEqual(try repository.loadEntry(id: second.entryID!)?.recordState, .archived)
     }
 
     func testMetadataUpdateDoesNotChangeUpdatedAt() async throws {
@@ -134,6 +200,126 @@ final class URLRepositoryTests: XCTestCase {
         XCTAssertEqual(before.updatedAt, after.updatedAt)
         XCTAssertEqual(after.metadataFetchedAt, Date(timeIntervalSince1970: 500))
         XCTAssertEqual(after.fetchedTitle, "title")
+    }
+
+    func testRetryMetadataAcceptsFailedUnavailableAndReadyWithoutFetchedContent() throws {
+        let failed = try repository.saveFromManualInput("https://example.com/retry-failed")
+        try repository.applyMetadataUpdate(
+            entryID: failed.entryID!,
+            metadata: MetadataUpdate(
+                fetchedTitle: nil,
+                fetchedBody: nil,
+                fetchedBodyKind: nil,
+                bodySummary: nil,
+                description: nil,
+                thumbnailURL: nil,
+                badgeImageURL: nil,
+                metadataState: .failed,
+                metadataFetchedAt: Date(timeIntervalSince1970: 500),
+                metadataError: .timeout,
+                canonicalID: nil,
+                normalizedHost: nil,
+                rawSourceHost: nil
+            )
+        )
+        XCTAssertTrue(try repository.retryMetadata(entryID: failed.entryID!))
+        let failedAfter = try XCTUnwrap(repository.loadEntry(id: failed.entryID!))
+        XCTAssertEqual(failedAfter.metadataState, .pending)
+        XCTAssertNil(failedAfter.metadataError)
+        XCTAssertNotNil(failedAfter.metadataRequestedAt)
+
+        let unavailable = try repository.saveFromManualInput("https://example.com/retry-unavailable")
+        try repository.applyMetadataUpdate(
+            entryID: unavailable.entryID!,
+            metadata: MetadataUpdate(
+                fetchedTitle: nil,
+                fetchedBody: nil,
+                fetchedBodyKind: nil,
+                bodySummary: nil,
+                description: nil,
+                thumbnailURL: nil,
+                badgeImageURL: nil,
+                metadataState: .unavailable,
+                metadataFetchedAt: Date(timeIntervalSince1970: 600),
+                metadataError: .nonHTML,
+                canonicalID: nil,
+                normalizedHost: nil,
+                rawSourceHost: nil
+            )
+        )
+        XCTAssertTrue(try repository.retryMetadata(entryID: unavailable.entryID!))
+        let unavailableAfter = try XCTUnwrap(repository.loadEntry(id: unavailable.entryID!))
+        XCTAssertEqual(unavailableAfter.metadataState, .pending)
+        XCTAssertNil(unavailableAfter.metadataError)
+        XCTAssertNotNil(unavailableAfter.metadataRequestedAt)
+
+        let readyWithoutContent = try repository.saveFromManualInput("https://example.com/retry-ready")
+        try repository.applyMetadataUpdate(
+            entryID: readyWithoutContent.entryID!,
+            metadata: MetadataUpdate(
+                fetchedTitle: nil,
+                fetchedBody: nil,
+                fetchedBodyKind: nil,
+                bodySummary: nil,
+                description: nil,
+                thumbnailURL: nil,
+                badgeImageURL: nil,
+                metadataState: .ready,
+                metadataFetchedAt: Date(timeIntervalSince1970: 700),
+                metadataError: nil,
+                canonicalID: nil,
+                normalizedHost: nil,
+                rawSourceHost: nil
+            )
+        )
+        XCTAssertTrue(try repository.retryMetadata(entryID: readyWithoutContent.entryID!))
+        XCTAssertEqual(try repository.loadEntry(id: readyWithoutContent.entryID!)?.metadataState, .pending)
+
+        let readyWithContent = try repository.saveFromManualInput("https://example.com/retry-ready-with-content")
+        try repository.applyMetadataUpdate(
+            entryID: readyWithContent.entryID!,
+            metadata: MetadataUpdate(
+                fetchedTitle: "title",
+                fetchedBody: "body",
+                fetchedBodyKind: .webExcerpt,
+                bodySummary: "summary",
+                description: nil,
+                thumbnailURL: nil,
+                badgeImageURL: nil,
+                metadataState: .ready,
+                metadataFetchedAt: Date(timeIntervalSince1970: 800),
+                metadataError: nil,
+                canonicalID: nil,
+                normalizedHost: nil,
+                rawSourceHost: nil
+            )
+        )
+        XCTAssertFalse(try repository.retryMetadata(entryID: readyWithContent.entryID!))
+
+        let readySocialMissingBadge = try repository.saveFromManualInput("https://x.com/openai/status/123")
+        try repository.applyMetadataUpdate(
+            entryID: readySocialMissingBadge.entryID!,
+            metadata: MetadataUpdate(
+                fetchedTitle: "post",
+                fetchedBody: "body",
+                fetchedBodyKind: .xPostText,
+                bodySummary: "summary",
+                description: nil,
+                thumbnailURL: nil,
+                badgeImageURL: nil,
+                metadataState: .ready,
+                metadataFetchedAt: Date(timeIntervalSince1970: 900),
+                metadataError: nil,
+                canonicalID: nil,
+                normalizedHost: nil,
+                rawSourceHost: nil
+            )
+        )
+        XCTAssertTrue(try repository.retryMetadata(entryID: readySocialMissingBadge.entryID!))
+        XCTAssertEqual(try repository.loadEntry(id: readySocialMissingBadge.entryID!)?.metadataState, .pending)
+
+        let pending = try repository.saveFromManualInput("https://example.com/retry-pending")
+        XCTAssertFalse(try repository.retryMetadata(entryID: pending.entryID!))
     }
 
     func testTitleAndMemoNormalization() async throws {

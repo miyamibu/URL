@@ -8,8 +8,9 @@ final class ShareViewController: UIViewController {
         static let pickerTopInset: CGFloat = 19
         static let pickerHorizontalInset: CGFloat = 8
         static let compactResultHeight: CGFloat = 420
-        static let compactPickerHeight: CGFloat = 590
-        static let expandedPickerHeight: CGFloat = 700
+        static let minimumPickerHeight: CGFloat = 360
+        static let maximumPickerHeight: CGFloat = 700
+        static let maximumTagAreaHeight: CGFloat = 230
     }
 
     private let statusLabel = UILabel()
@@ -33,6 +34,7 @@ final class ShareViewController: UIViewController {
     private var resultBottomConstraint: NSLayoutConstraint?
     private var panelHeightConstraint: NSLayoutConstraint?
     private var tagAreaHeightConstraint: NSLayoutConstraint?
+    private var tagFlowHeightConstraint: NSLayoutConstraint?
     private var resultDirectConstraints: [NSLayoutConstraint] = []
     private var repository: URLRepository?
     private var localTags: [LocalTagSummary] = []
@@ -41,7 +43,7 @@ final class ShareViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        preferredContentSize = CGSize(width: 0, height: Layout.compactPickerHeight)
+        preferredContentSize = CGSize(width: 0, height: Layout.minimumPickerHeight)
         view.backgroundColor = .systemBackground
         view.isOpaque = true
         configureUI()
@@ -53,7 +55,7 @@ final class ShareViewController: UIViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        preferredContentSize = CGSize(width: view.bounds.width, height: panelHeightConstraint?.constant ?? Layout.compactPickerHeight)
+        preferredContentSize = CGSize(width: view.bounds.width, height: panelHeightConstraint?.constant ?? Layout.minimumPickerHeight)
     }
 
     private func configureUI() {
@@ -91,6 +93,7 @@ final class ShareViewController: UIViewController {
         tagScrollView.addSubview(tagFlowView)
 
         tagFlowView.translatesAutoresizingMaskIntoConstraints = false
+        tagFlowHeightConstraint = tagFlowView.heightAnchor.constraint(equalToConstant: 0)
         tagAreaView.addSubview(tagScrollView)
         NSLayoutConstraint.activate([
             tagScrollView.leadingAnchor.constraint(equalTo: tagAreaView.leadingAnchor),
@@ -102,7 +105,7 @@ final class ShareViewController: UIViewController {
             tagFlowView.topAnchor.constraint(equalTo: tagScrollView.contentLayoutGuide.topAnchor),
             tagFlowView.bottomAnchor.constraint(equalTo: tagScrollView.contentLayoutGuide.bottomAnchor),
             tagFlowView.widthAnchor.constraint(equalTo: tagScrollView.frameLayoutGuide.widthAnchor),
-            tagFlowView.heightAnchor.constraint(greaterThanOrEqualTo: tagScrollView.frameLayoutGuide.heightAnchor),
+            tagFlowHeightConstraint!,
         ])
 
         contentStack.translatesAutoresizingMaskIntoConstraints = false
@@ -163,7 +166,7 @@ final class ShareViewController: UIViewController {
             equalTo: panelView.safeAreaLayoutGuide.bottomAnchor,
             constant: Layout.resultBottomOffset
         )
-        panelHeightConstraint = panelView.heightAnchor.constraint(equalToConstant: Layout.compactPickerHeight)
+        panelHeightConstraint = panelView.heightAnchor.constraint(equalToConstant: Layout.minimumPickerHeight)
         resultBottomConstraint?.isActive = false
         NSLayoutConstraint.activate([
             panelView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -177,7 +180,7 @@ final class ShareViewController: UIViewController {
             pickerContainerView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Layout.pickerHorizontalInset),
             pickerContainerView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -Layout.pickerHorizontalInset),
             pickerContainerView.topAnchor.constraint(equalTo: view.topAnchor, constant: Layout.pickerTopInset),
-            pickerContainerView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: Layout.pickerBottomOffset),
+            pickerContainerView.bottomAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.bottomAnchor, constant: Layout.pickerBottomOffset),
             pickerTitleLabel.leadingAnchor.constraint(equalTo: pickerContainerView.leadingAnchor),
             pickerTitleLabel.trailingAnchor.constraint(equalTo: pickerContainerView.trailingAnchor),
             pickerTitleLabel.topAnchor.constraint(equalTo: pickerContainerView.topAnchor),
@@ -186,20 +189,20 @@ final class ShareViewController: UIViewController {
             pickerMessageLabel.topAnchor.constraint(equalTo: pickerTitleLabel.bottomAnchor, constant: 8),
             pickerActionsStack.leadingAnchor.constraint(equalTo: pickerContainerView.leadingAnchor),
             pickerActionsStack.trailingAnchor.constraint(equalTo: pickerContainerView.trailingAnchor),
+            pickerActionsStack.topAnchor.constraint(equalTo: createTagButton.bottomAnchor, constant: 22),
             pickerActionsStack.bottomAnchor.constraint(equalTo: pickerContainerView.bottomAnchor),
             pickerActionsStack.heightAnchor.constraint(equalToConstant: 58),
             createTagButton.leadingAnchor.constraint(equalTo: pickerContainerView.leadingAnchor),
             createTagButton.trailingAnchor.constraint(equalTo: pickerContainerView.trailingAnchor),
-            createTagButton.bottomAnchor.constraint(equalTo: pickerActionsStack.topAnchor, constant: -22),
+            createTagButton.topAnchor.constraint(equalTo: createTagField.bottomAnchor, constant: 18),
             createTagButton.heightAnchor.constraint(equalToConstant: 54),
             createTagField.leadingAnchor.constraint(equalTo: pickerContainerView.leadingAnchor),
             createTagField.trailingAnchor.constraint(equalTo: pickerContainerView.trailingAnchor),
-            createTagField.bottomAnchor.constraint(equalTo: createTagButton.topAnchor, constant: -18),
+            createTagField.topAnchor.constraint(equalTo: tagAreaView.bottomAnchor, constant: 14),
             createTagField.heightAnchor.constraint(equalToConstant: 58),
             tagAreaView.leadingAnchor.constraint(equalTo: pickerContainerView.leadingAnchor),
             tagAreaView.trailingAnchor.constraint(equalTo: pickerContainerView.trailingAnchor),
-            tagAreaView.bottomAnchor.constraint(equalTo: createTagField.topAnchor, constant: -14),
-            tagAreaView.topAnchor.constraint(greaterThanOrEqualTo: pickerMessageLabel.bottomAnchor, constant: 18),
+            tagAreaView.topAnchor.constraint(equalTo: pickerMessageLabel.bottomAnchor, constant: 18),
         ])
     }
 
@@ -292,14 +295,16 @@ final class ShareViewController: UIViewController {
 
         let extractedBatch = URLRules.extractAllFromCandidateGroups(payload.candidateGroups)
         let allURLs = extractedBatch.urls
+        let sharedMemo = URLRules.extractMemoWithoutURLs(from: payload.candidateGroups)
 
-        if payload.isExplicitMultiShare && allURLs.count > 1 {
+        if allURLs.count > 1 {
             let degradation: ShareDegradationNotice? = extractedBatch.truncatedToMaxURLs ? .truncatedToMaxURLs : nil
             await presentTagPicker(
                 repository: repository,
                 share: PendingExtensionShare(
                     urls: allURLs,
                     isBatch: true,
+                    memo: sharedMemo,
                     degradationNotice: degradation
                 )
             )
@@ -313,6 +318,7 @@ final class ShareViewController: UIViewController {
                     share: PendingExtensionShare(
                         urls: [url],
                         isBatch: false,
+                        memo: sharedMemo,
                         degradationNotice: degradation
                     )
                 )
@@ -321,10 +327,32 @@ final class ShareViewController: UIViewController {
                 await MainActor.run { updateStatus("共有内容が長すぎるため処理できませんでした", finished: true) }
                 return
             case .invalidURL:
-                await MainActor.run { updateStatus("有効なURLではありませんでした", finished: true) }
+                if let text = URLRules.extractTextFallback(from: payload.candidateGroups) {
+                    await presentTagPicker(
+                        repository: repository,
+                        share: PendingExtensionShare(
+                            urls: [text],
+                            isBatch: false,
+                            degradationNotice: nil
+                        )
+                    )
+                } else {
+                    await MainActor.run { updateStatus("有効なURLではありませんでした", finished: true) }
+                }
                 return
             case .noURLFound:
-                await MainActor.run { updateStatus("URLが見つかりませんでした", finished: true) }
+                if let text = URLRules.extractTextFallback(from: payload.candidateGroups) {
+                    await presentTagPicker(
+                        repository: repository,
+                        share: PendingExtensionShare(
+                            urls: [text],
+                            isBatch: false,
+                            degradationNotice: nil
+                        )
+                    )
+                } else {
+                    await MainActor.run { updateStatus("保存できる内容が見つかりませんでした", finished: true) }
+                }
                 return
             }
         }
@@ -348,7 +376,6 @@ final class ShareViewController: UIViewController {
         pickerContainerView.isHidden = false
         pickerBottomConstraint?.isActive = true
         resultBottomConstraint?.isActive = false
-        updatePreferredContentHeight(localTags.count > 8 ? Layout.expandedPickerHeight : Layout.compactPickerHeight)
 
         statusLabel.textAlignment = .left
         statusLabel.font = .preferredFont(forTextStyle: .headline)
@@ -370,7 +397,7 @@ final class ShareViewController: UIViewController {
         createTagField.setContentHuggingPriority(.required, for: .vertical)
         createTagField.setContentCompressionResistancePriority(.required, for: .vertical)
 
-        createTagButton.setTitle("＋ タグを作成", for: .normal)
+        createTagButton.setTitle("＋", for: .normal)
         createTagButton.titleLabel?.font = .preferredFont(forTextStyle: .title2)
         createTagButton.titleLabel?.adjustsFontForContentSizeCategory = true
         createTagButton.setContentHuggingPriority(.required, for: .vertical)
@@ -400,6 +427,7 @@ final class ShareViewController: UIViewController {
             pickerMessageLabel.isHidden = false
             createTagField.becomeFirstResponder()
         }
+        updatePickerLayoutHeight()
     }
 
     @MainActor
@@ -411,15 +439,55 @@ final class ShareViewController: UIViewController {
                 self?.toggleLocalTag(tagID)
             }
         )
+        tagFlowHeightConstraint?.constant = preferredTagContentHeight()
         tagAreaHeightConstraint?.constant = preferredTagAreaHeight()
+        updatePickerLayoutHeight()
     }
 
     private func preferredTagAreaHeight() -> CGFloat {
         guard !localTags.isEmpty else { return 0 }
+        return min(preferredTagContentHeight(), Layout.maximumTagAreaHeight)
+    }
+
+    private func preferredTagContentHeight() -> CGFloat {
+        guard !localTags.isEmpty else { return 0 }
         let marginsWidth = view.layoutMargins.left + view.layoutMargins.right
         let availableWidth = max(240, view.bounds.width - marginsWidth)
-        let measuredHeight = tagFlowView.preferredHeight(for: availableWidth)
-        return min(max(measuredHeight, 56), 230)
+        return max(56, tagFlowView.preferredHeight(for: availableWidth))
+    }
+
+    private func updatePickerLayoutHeight() {
+        updatePreferredContentHeight(preferredPickerHeight())
+    }
+
+    private func preferredPickerHeight() -> CGFloat {
+        let contentWidth = max(240, view.bounds.width - Layout.pickerHorizontalInset * 2)
+        let titleHeight = fittingHeight(for: pickerTitleLabel, width: contentWidth)
+        let messageHeight = pickerMessageLabel.isHidden ? 0 : fittingHeight(for: pickerMessageLabel, width: contentWidth)
+        let messageGap: CGFloat = pickerMessageLabel.isHidden ? 0 : 8
+        let tagGap: CGFloat = localTags.isEmpty ? 0 : 18
+        let contentHeight = Layout.pickerTopInset +
+            titleHeight +
+            messageGap +
+            messageHeight +
+            tagGap +
+            preferredTagAreaHeight() +
+            14 +
+            58 +
+            18 +
+            54 +
+            22 +
+            58 +
+            abs(Layout.pickerBottomOffset)
+        return min(max(contentHeight, Layout.minimumPickerHeight), Layout.maximumPickerHeight)
+    }
+
+    private func fittingHeight(for label: UILabel, width: CGFloat) -> CGFloat {
+        label.systemLayoutSizeFitting(
+            CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
     }
 
     private func updatePreferredContentHeight(_ height: CGFloat) {
@@ -475,7 +543,11 @@ final class ShareViewController: UIViewController {
                 var restored = 0
                 var failed = 0
                 for url in pendingShare.urls {
-                    let result = (try? repository.saveFromResolvedURL(url, localTagIDs: localTagIDs))
+                    let result = (try? repository.saveFromResolvedURL(
+                        url,
+                        localTagIDs: localTagIDs,
+                        initialMemo: pendingShare.memo
+                    ))
                         ?? SaveResult(result: .saveFailed)
                     switch result.result {
                     case .created:
@@ -507,7 +579,11 @@ final class ShareViewController: UIViewController {
                 let statusText = "\(summary.total)件を処理しました（新規\(summary.created) / 既存\(summary.duplicate) / 復元\(summary.restored) / 失敗\(summary.failed)）"
                 await MainActor.run { updateStatus(statusText, finished: true) }
             } else {
-                let result = (try? repository.saveFromResolvedURL(pendingShare.urls[0], localTagIDs: localTagIDs))
+                let result = (try? repository.saveFromResolvedURL(
+                    pendingShare.urls[0],
+                    localTagIDs: localTagIDs,
+                    initialMemo: pendingShare.memo
+                ))
                     ?? SaveResult(result: .saveFailed)
                 let report = ShareHandoffReport(
                     result: result.result,
@@ -542,7 +618,7 @@ final class ShareViewController: UIViewController {
             return
         case .noURLFound:
             routeURL = nil
-            await MainActor.run { updateStatus("URLが見つかりませんでした", finished: true) }
+            await MainActor.run { updateStatus("保存できる内容が見つかりませんでした", finished: true) }
             return
         }
 
@@ -603,7 +679,7 @@ final class ShareViewController: UIViewController {
         case .invalidURL:
             main = "有効なURLではありませんでした"
         case .noURLFound:
-            main = "URLが見つかりませんでした"
+            main = "保存できる内容が見つかりませんでした"
         case .batchProcessed:
             main = "処理しました"
         }
@@ -672,9 +748,7 @@ private final class TagFlowView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         let rows = makeRows(maxWidth: bounds.width)
-        let totalHeight = rows.reduce(CGFloat(0)) { partial, row in partial + row.height } +
-            CGFloat(max(0, rows.count - 1)) * verticalSpacing
-        var y = max(0, bounds.height - totalHeight)
+        var y: CGFloat = 0
 
         for row in rows {
             var x: CGFloat = 0
@@ -770,7 +844,20 @@ private struct ShareExtensionPayload {
 private struct PendingExtensionShare {
     let urls: [String]
     let isBatch: Bool
+    let memo: String?
     let degradationNotice: ShareDegradationNotice?
+
+    init(
+        urls: [String],
+        isBatch: Bool,
+        memo: String? = nil,
+        degradationNotice: ShareDegradationNotice?
+    ) {
+        self.urls = urls
+        self.isBatch = isBatch
+        self.memo = memo
+        self.degradationNotice = degradationNotice
+    }
 }
 
 private enum ShareExtensionPayloadExtractor {

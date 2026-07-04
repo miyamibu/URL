@@ -1046,7 +1046,7 @@ struct PendingInviteBanner: View {
                     Text("共有招待を受け取りました")
                         .font(.system(size: 18, weight: .heavy, design: .rounded))
                         .foregroundStyle(AppPalette.textPrimary)
-                    Text("プロフィール画面から参加できます")
+                    Text("共有タグクラウド画面から参加できます")
                         .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(AppPalette.textSecondary)
                     Text(DateFormatters.detailTimestamp.string(from: pendingInviteRecord.savedAt))

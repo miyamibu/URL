@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 enum LaunchAdVisibility {
     // Trial launch switch. Set this back to true when banner ads should return.
@@ -128,6 +129,19 @@ struct ScreenHeader: View {
     let title: String
     let leadingButton: ScreenHeaderButton?
     let trailingButtons: [ScreenHeaderButton]
+    let onTitleTap: (() -> Void)?
+
+    init(
+        title: String,
+        leadingButton: ScreenHeaderButton?,
+        trailingButtons: [ScreenHeaderButton],
+        onTitleTap: (() -> Void)? = nil
+    ) {
+        self.title = title
+        self.leadingButton = leadingButton
+        self.trailingButtons = trailingButtons
+        self.onTitleTap = onTitleTap
+    }
 
     var body: some View {
         HStack(spacing: 2) {
@@ -135,12 +149,15 @@ struct ScreenHeader: View {
                 IconChromeButton(button: leadingButton)
             }
 
-            Text(title)
-                .font(.system(size: headerTitleSize, weight: .heavy, design: .rounded))
-                .foregroundStyle(AppPalette.textPrimary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-                .layoutPriority(1)
+            if let onTitleTap {
+                Button(action: onTitleTap) {
+                    headerTitle
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(title)
+            } else {
+                headerTitle
+            }
 
             Spacer(minLength: 4)
 
@@ -160,6 +177,15 @@ struct ScreenHeader: View {
         }
 
         return leadingButton == nil ? 32 : 31
+    }
+
+    private var headerTitle: some View {
+        Text(title)
+            .font(.system(size: headerTitleSize, weight: .heavy, design: .rounded))
+            .foregroundStyle(AppPalette.textPrimary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
+            .layoutPriority(1)
     }
 }
 
@@ -347,57 +373,46 @@ struct EntryCardView: View {
                         .padding(.top, 4)
 
                     VStack(alignment: .leading, spacing: 10) {
-                        if visibleLocalTagNames.isEmpty {
-                            HStack(spacing: 10) {
-                                ServiceBadgeView(serviceType: entry.serviceType, badgeImageURL: entry.badgeImageURL)
+                        HStack(alignment: .top, spacing: 10) {
+                            ServiceBadgeView(serviceType: entry.serviceType, badgeImageURL: entry.badgeImageURL)
+                                .padding(.top, 1)
 
-                                Text(serviceLabel(for: entry))
-                                    .font(.system(size: 16, weight: .medium))
-                                    .foregroundStyle(AppPalette.textSecondary)
-                                    .lineLimit(1)
-
-                                if entry.contentContext != .standard {
-                                    Text(contentContextLabel(for: entry.contentContext))
-                                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                            if visibleLocalTagNames.isEmpty {
+                                HStack(spacing: 10) {
+                                    Text(entryCardHeaderFallbackText(for: entry))
+                                        .font(.system(size: 16, weight: .medium))
                                         .foregroundStyle(AppPalette.textSecondary)
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 6)
-                                        .background(AppPalette.panelStrong, in: Capsule())
-                                        .overlay(
-                                            Capsule()
-                                                .stroke(AppPalette.outline, lineWidth: 1.5)
-                                        )
-                                }
+                                        .lineLimit(1)
 
-                                Spacer(minLength: 8)
-
-                                Circle()
-                                    .fill(metadataDotColor(for: entry.metadataState))
-                                    .frame(width: 10, height: 10)
-                                    .overlay(Circle().stroke(AppPalette.background, lineWidth: 1.2))
-
-                                Text("\(timestampLabel) \(DateFormatters.listTimestamp.string(from: timestampDate(for: entry)))")
-                                    .font(.system(size: 12, weight: .bold))
-                                    .foregroundStyle(AppPalette.textSecondary)
-                                    .lineLimit(1)
-                            }
-                        } else {
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 8) {
-                                    ForEach(visibleLocalTagNames, id: \.self) { tagName in
-                                        Text(tagName)
+                                    if entry.contentContext != .standard {
+                                        Text(contentContextLabel(for: entry.contentContext))
                                             .font(.system(size: 13, weight: .bold, design: .rounded))
-                                            .foregroundStyle(AppPalette.primaryStrong)
-                                            .lineLimit(1)
+                                            .foregroundStyle(AppPalette.textSecondary)
                                             .padding(.horizontal, 12)
                                             .padding(.vertical, 6)
-                                            .background(AppPalette.primarySurface, in: Capsule())
+                                            .background(AppPalette.panelStrong, in: Capsule())
                                             .overlay(
                                                 Capsule()
-                                                    .stroke(AppPalette.primaryStrong.opacity(0.45), lineWidth: 1)
+                                                    .stroke(AppPalette.outline, lineWidth: 1.5)
                                             )
                                     }
+
+                                    Spacer(minLength: 8)
+
+                                    Circle()
+                                        .fill(metadataDotColor(for: entry.metadataState))
+                                        .frame(width: 10, height: 10)
+                                        .overlay(Circle().stroke(AppPalette.background, lineWidth: 1.2))
+
+                                    Text("\(timestampLabel) \(DateFormatters.listTimestamp.string(from: timestampDate(for: entry)))")
+                                        .font(.system(size: 12, weight: .bold))
+                                        .foregroundStyle(AppPalette.textSecondary)
+                                        .lineLimit(1)
                                 }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            } else {
+                                EntryLocalTagFlow(tagNames: visibleLocalTagNames)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                             }
                         }
 
@@ -461,6 +476,112 @@ struct EntryCardView: View {
         }
         return entry.createdAt
     }
+}
+
+private struct EntryLocalTagFlow: View {
+    let tagNames: [String]
+
+    var body: some View {
+        EntryLocalTagFlowLayout(horizontalSpacing: 6, verticalSpacing: 6) {
+            ForEach(tagNames, id: \.self) { tagName in
+                Text(tagName)
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(AppPalette.primaryStrong)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: 150)
+                    .background(AppPalette.primarySurface, in: Capsule())
+                    .overlay(
+                        Capsule()
+                            .stroke(AppPalette.primaryStrong.opacity(0.45), lineWidth: 1)
+                    )
+            }
+        }
+    }
+}
+
+private struct EntryLocalTagFlowLayout: Layout {
+    var horizontalSpacing: CGFloat
+    var verticalSpacing: CGFloat
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        let rows = rows(in: maxWidth, subviews: subviews)
+        let width = rows.map(\.width).max() ?? 0
+        let height = rows.reduce(CGFloat.zero) { total, row in
+            total + row.height
+        } + CGFloat(max(rows.count - 1, 0)) * verticalSpacing
+        return CGSize(width: width, height: height)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        var y = bounds.minY
+        for row in rows(in: bounds.width, subviews: subviews) {
+            var x = bounds.minX
+            for item in row.items {
+                subviews[item.index].place(
+                    at: CGPoint(x: x, y: y),
+                    proposal: ProposedViewSize(item.size)
+                )
+                x += item.size.width + horizontalSpacing
+            }
+            y += row.height + verticalSpacing
+        }
+    }
+
+    private func rows(in maxWidth: CGFloat, subviews: Subviews) -> [Row] {
+        var rows: [Row] = []
+        var current = Row()
+
+        for index in subviews.indices {
+            let measured = subviews[index].sizeThatFits(.unspecified)
+            let size = CGSize(width: min(measured.width, maxWidth), height: measured.height)
+            let nextWidth = current.items.isEmpty ? size.width : current.width + horizontalSpacing + size.width
+
+            if !current.items.isEmpty && nextWidth > maxWidth {
+                rows.append(current)
+                current = Row()
+            }
+
+            current.items.append(Item(index: index, size: size))
+            current.width = current.items.count == 1 ? size.width : current.width + horizontalSpacing + size.width
+            current.height = max(current.height, size.height)
+        }
+
+        if !current.items.isEmpty {
+            rows.append(current)
+        }
+        return rows
+    }
+
+    private struct Row {
+        var items: [Item] = []
+        var width: CGFloat = 0
+        var height: CGFloat = 0
+    }
+
+    private struct Item {
+        let index: Int
+        let size: CGSize
+    }
+}
+
+private func entryCardHeaderFallbackText(for entry: URLRecord) -> String {
+    if let authorName = nonBlank(entry.fetchedAuthorName) {
+        return authorName
+    }
+    return serviceLabel(for: entry)
 }
 
 func entryCardVisibleLocalTagNames(_ localTagNames: [String]) -> [String] {
@@ -546,6 +667,81 @@ struct SwipeableEntryCard: View {
 
         if offset >= triggerWidth || (projectedOffset >= triggerWidth && offset >= triggerWidth * 0.75) {
             onArchive()
+        } else if offset <= -triggerWidth || (projectedOffset <= -triggerWidth && offset <= -triggerWidth * 0.75) {
+            onDelete()
+        }
+
+        dragOffset = 0
+    }
+}
+
+struct SwipeableArchivedEntryCard: View {
+    let entry: URLRecord
+    let displayMode: EntryListDisplayMode
+    let cardWidth: CGFloat
+    let localTagNames: [String]
+    let onTap: () -> Void
+    let onRestore: () -> Void
+    let onDelete: () -> Void
+
+    @State private var dragOffset: CGFloat = 0
+
+    var body: some View {
+        ZStack {
+            HStack(spacing: 0) {
+                SwipeActionHint(
+                    systemImage: "arrow.uturn.backward.circle.fill",
+                    label: "戻す",
+                    color: AppPalette.secondarySurface,
+                    alignment: .leading
+                )
+
+                Spacer(minLength: 0)
+
+                SwipeActionHint(
+                    systemImage: "trash.fill",
+                    label: "削除",
+                    color: AppPalette.dangerSurface,
+                    alignment: .trailing
+                )
+            }
+            .frame(width: cardWidth)
+            .opacity(dragOffset == 0 ? 0 : 1)
+
+            EntryCardView(
+                entry: entry,
+                timestampLabel: "アーカイブ",
+                displayMode: displayMode,
+                cardWidth: cardWidth,
+                localTagNames: localTagNames
+            )
+            .offset(x: dragOffset)
+            .contentShape(Rectangle())
+        }
+        .overlay {
+            HorizontalCardSwipeRecognizer(
+                cardWidth: cardWidth,
+                onTap: onTap,
+                onLongPress: {},
+                onChanged: { offset in
+                    dragOffset = offset
+                },
+                onEnded: { offset, velocity in
+                    handleSwipeEnd(offset: offset, velocity: velocity)
+                }
+            )
+        }
+        .frame(width: cardWidth)
+        .clipped()
+        .animation(.interactiveSpring(response: 0.26, dampingFraction: 0.88), value: dragOffset)
+    }
+
+    private func handleSwipeEnd(offset: CGFloat, velocity: CGFloat) {
+        let triggerWidth = swipeActionTriggerWidth(containerWidth: cardWidth)
+        let projectedOffset = offset + velocity * 0.12
+
+        if offset >= triggerWidth || (projectedOffset >= triggerWidth && offset >= triggerWidth * 0.75) {
+            onRestore()
         } else if offset <= -triggerWidth || (projectedOffset <= -triggerWidth && offset <= -triggerWidth * 0.75) {
             onDelete()
         }
@@ -964,6 +1160,8 @@ private struct RemoteURLImage<Content: View, Placeholder: View>: View {
 }
 
 struct ServiceFilterRow: View {
+    @State private var draggingLocalTagID: Int64?
+
     @Binding var selectedService: ServiceType
     @Binding var selectedLocalTagID: Int64?
     @Binding var selectedCollectionID: Int64?
@@ -976,6 +1174,7 @@ struct ServiceFilterRow: View {
     let onSelectLocalTag: (Int64?) -> Void
     let onSelectCollection: (Int64?) -> Void
     let onRenameLocalTag: (LocalTagSummary) -> Void
+    let onReorderLocalTags: ([Int64]) -> Void
 
     init(
         selectedService: Binding<ServiceType>,
@@ -989,7 +1188,8 @@ struct ServiceFilterRow: View {
         collections: [CollectionSummary] = [],
         onSelectLocalTag: @escaping (Int64?) -> Void = { _ in },
         onSelectCollection: @escaping (Int64?) -> Void = { _ in },
-        onRenameLocalTag: @escaping (LocalTagSummary) -> Void = { _ in }
+        onRenameLocalTag: @escaping (LocalTagSummary) -> Void = { _ in },
+        onReorderLocalTags: @escaping ([Int64]) -> Void = { _ in }
     ) {
         _selectedService = selectedService
         _selectedLocalTagID = selectedLocalTagID
@@ -1003,6 +1203,7 @@ struct ServiceFilterRow: View {
         self.onSelectLocalTag = onSelectLocalTag
         self.onSelectCollection = onSelectCollection
         self.onRenameLocalTag = onRenameLocalTag
+        self.onReorderLocalTags = onReorderLocalTags
     }
 
     var body: some View {
@@ -1013,6 +1214,37 @@ struct ServiceFilterRow: View {
                         label: "+",
                         selected: false,
                         action: createAction
+                    )
+                }
+
+                ForEach(localTags) { tag in
+                    FilterChipButton(
+                        label: tag.name,
+                        selected: selectedLocalTagID == tag.id
+                    ) {
+                        selectedService = .all
+                        selectedCollectionID = nil
+                        selectedLocalTagID = tag.id
+                        onSelectCollection(nil)
+                        onSelectLocalTag(tag.id)
+                    }
+                    .simultaneousGesture(
+                        TapGesture(count: 2).onEnded {
+                            onRenameLocalTag(tag)
+                        }
+                    )
+                    .onDrag {
+                        draggingLocalTagID = tag.id
+                        return NSItemProvider(object: String(tag.id) as NSString)
+                    }
+                    .onDrop(
+                        of: [UTType.text],
+                        delegate: LocalTagChipDropDelegate(
+                            targetTag: tag,
+                            localTags: localTags,
+                            draggingLocalTagID: $draggingLocalTagID,
+                            onReorderLocalTags: onReorderLocalTags
+                        )
                     )
                 }
 
@@ -1057,24 +1289,6 @@ struct ServiceFilterRow: View {
                         onSelectCollection(selectedCollectionID)
                     }
                 }
-
-                ForEach(localTags) { tag in
-                    FilterChipButton(
-                        label: tag.name,
-                        selected: selectedLocalTagID == tag.id
-                    ) {
-                        selectedService = .all
-                        selectedCollectionID = nil
-                        selectedLocalTagID = tag.id
-                        onSelectCollection(nil)
-                        onSelectLocalTag(tag.id)
-                    }
-                    .simultaneousGesture(
-                        TapGesture(count: 2).onEnded {
-                            onRenameLocalTag(tag)
-                        }
-                    )
-                }
             }
             .padding(.horizontal, 14)
         }
@@ -1090,6 +1304,36 @@ struct ServiceFilterRow: View {
         case .tiktok: return "TIKTOK"
         }
     }
+}
+
+private struct LocalTagChipDropDelegate: DropDelegate {
+    let targetTag: LocalTagSummary
+    let localTags: [LocalTagSummary]
+    @Binding var draggingLocalTagID: Int64?
+    let onReorderLocalTags: ([Int64]) -> Void
+
+    func dropEntered(info: DropInfo) {
+        guard let draggingLocalTagID,
+              draggingLocalTagID != targetTag.id else {
+            return
+        }
+        var orderedIDs = localTags.map(\.id)
+        guard let fromIndex = orderedIDs.firstIndex(of: draggingLocalTagID),
+              let toIndex = orderedIDs.firstIndex(of: targetTag.id) else {
+            return
+        }
+        orderedIDs.move(
+            fromOffsets: IndexSet(integer: fromIndex),
+            toOffset: toIndex > fromIndex ? toIndex + 1 : toIndex
+        )
+        onReorderLocalTags(orderedIDs)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        draggingLocalTagID = nil
+        return true
+    }
+
 }
 
 let serviceFilterOrder: [ServiceType] = [
@@ -1127,8 +1371,11 @@ struct FilterChipButton: View {
                 Text(label)
                     .font(.system(size: 14, weight: .heavy, design: .rounded))
                     .foregroundStyle(selected ? AppPalette.primaryStrong : Color.white.opacity(0.78))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                     .padding(.horizontal, 18)
                     .padding(.vertical, 11)
+                    .frame(maxWidth: 190)
                     .background(selected ? AppPalette.primarySurface : AppPalette.panelStrong, in: Capsule())
             }
         }
@@ -1311,6 +1558,9 @@ func filteredEntries(
 }
 
 func serviceLabel(for entry: URLRecord) -> String {
+    if URLRules.isTextCardHost(entry.normalizedHost) {
+        return "テキスト"
+    }
     switch entry.serviceType {
     case .youtube:
         return "YouTube"
@@ -1328,6 +1578,16 @@ func serviceLabel(for entry: URLRecord) -> String {
 func preferredDisplayTitle(for entry: URLRecord) -> String {
     if let userTitle = nonBlank(entry.userTitle) {
         return userTitle
+    }
+
+    if URLRules.isTextCardHost(entry.normalizedHost) {
+        if let fetchedTitle = nonBlank(entry.fetchedTitle) {
+            return fetchedTitle
+        }
+        if let body = nonBlank(entry.fetchedBody) ?? nonBlank(entry.originalURL) {
+            return URLRules.textCardTitle(body)
+        }
+        return "テキスト"
     }
 
     if isSocialPostTitleContentFirstService(entry.serviceType),

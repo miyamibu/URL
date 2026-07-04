@@ -1,3 +1,4 @@
+import AVKit
 import SwiftUI
 import UIKit
 
@@ -21,9 +22,41 @@ struct DetailView: View {
     @State private var isShowingSharedTagEditor = false
     @State private var isShowingCollectionEditor = false
     @State private var isRemovingTag = false
+    @State private var isSavingMedia = false
+    @State private var isShowingMediaViewer = false
 
     private var entry: URLRecord? {
         model.entry(for: entryID)
+    }
+
+    private var savedAppMediaItems: [SavedAppMediaFile] {
+        _ = model.mediaSaveRevision
+        return model.savedAppMediaItemsForEntry(entryID: entryID)
+    }
+
+    private var canOfferMediaAction: Bool {
+        guard let entry else { return false }
+        return entry.localProvenanceCount > 0 &&
+            entry.recordState == .active &&
+            [.youtube, .tiktok, .instagram].contains(entry.serviceType)
+    }
+
+    private var shouldShowMediaAction: Bool {
+        !savedAppMediaItems.isEmpty || canOfferMediaAction
+    }
+
+    private var isTextCard: Bool {
+        URLRules.isTextCardHost(entry?.normalizedHost)
+    }
+
+    private var textCardBody: String {
+        if let body = entry?.fetchedBody {
+            let text = body.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty {
+                return text
+            }
+        }
+        return entry?.originalURL ?? ""
     }
 
     private var assignedSharedTags: [SharedTagSummary] {
@@ -203,19 +236,52 @@ struct DetailView: View {
                                 }
 
                                 VStack(spacing: 10) {
-                                    HStack(spacing: 10) {
+                                    if isTextCard {
                                         AppActionButton(tone: .primary) {
-                                            if let url = URL(string: entry.openURL) {
-                                                openURL(url)
-                                            }
-                                        } label: {
-                                            Text("開く")
-                                        }
-
-                                        AppActionButton {
-                                            UIPasteboard.general.string = entry.openURL
+                                            UIPasteboard.general.string = textCardBody
                                         } label: {
                                             Text("コピー")
+                                        }
+                                    } else {
+                                        HStack(spacing: 10) {
+                                            AppActionButton(tone: .primary) {
+                                                if let url = URL(string: entry.openURL) {
+                                                    openURL(url)
+                                                }
+                                            } label: {
+                                                Text("開く")
+                                            }
+
+                                            AppActionButton {
+                                                UIPasteboard.general.string = entry.openURL
+                                            } label: {
+                                                Text("コピー")
+                                            }
+                                        }
+                                    }
+
+                                    if shouldShowMediaAction {
+                                        AppActionButton(enabled: !isSavingMedia) {
+                                            if !savedAppMediaItems.isEmpty {
+                                                isShowingMediaViewer = true
+                                            } else {
+                                                isSavingMedia = true
+                                                Task {
+                                                    let saved = await model.saveMediaForEntry(entryID: entryID)
+                                                    isSavingMedia = false
+                                                    if saved, !savedAppMediaItems.isEmpty {
+                                                        isShowingMediaViewer = true
+                                                    }
+                                                }
+                                            }
+                                        } label: {
+                                            if !savedAppMediaItems.isEmpty {
+                                                Text("メディアを開く")
+                                            } else if isSavingMedia {
+                                                Text("保存中...")
+                                            } else {
+                                                Text("メディアを保存")
+                                            }
                                         }
                                     }
 
@@ -319,30 +385,34 @@ struct DetailView: View {
                                 }
 
                                 AppPanel {
-                                    Button {
+                                    HStack {
+                                        DetailSectionLabel(text: "詳細情報")
+                                        Spacer()
+                                        Image(systemName: isShowingDetails ? "chevron.up" : "chevron.down")
+                                            .font(.system(size: 12, weight: .bold))
+                                            .foregroundStyle(AppPalette.textSecondary)
+                                    }
+                                    .contentShape(Rectangle())
+                                    .onTapGesture {
                                         withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
                                             isShowingDetails.toggle()
                                         }
-                                    } label: {
-                                        HStack {
-                                            DetailSectionLabel(text: "詳細情報")
-                                            Spacer()
-                                            Image(systemName: isShowingDetails ? "chevron.up" : "chevron.down")
-                                                .font(.system(size: 12, weight: .bold))
-                                                .foregroundStyle(AppPalette.textSecondary)
-                                        }
                                     }
-                                    .buttonStyle(.plain)
+                                    .accessibilityElement(children: .combine)
+                                    .accessibilityLabel("詳細情報")
+                                    .accessibilityAddTraits(.isButton)
 
                                     if isShowingDetails {
                                         VStack(alignment: .leading, spacing: 12) {
-                                            DetailValue(
-                                                label: "受信したURL",
-                                                value: entry.originalURL,
-                                                onTap: {
-                                                    UIPasteboard.general.string = entry.originalURL
-                                                }
-                                            )
+                                            if !isTextCard {
+                                                DetailValue(
+                                                    label: "正規化URL",
+                                                    value: entry.normalizedURL,
+                                                    onTap: {
+                                                        UIPasteboard.general.string = entry.normalizedURL
+                                                    }
+                                                )
+                                            }
                                             DetailValue(label: "保存時刻", value: DateFormatters.detailTimestamp.string(from: entry.createdAt))
                                         }
                                     }
@@ -421,6 +491,15 @@ struct DetailView: View {
                 .presentationCornerRadius(32)
             }
         }
+        .sheet(isPresented: $isShowingMediaViewer) {
+            AppMediaViewerSheet(
+                title: entry.map { preferredDisplayTitle(for: $0) } ?? "メディア",
+                items: savedAppMediaItems
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+            .presentationCornerRadius(32)
+        }
         .confirmationDialog("削除しますか？", isPresented: $isShowingDeleteConfirm, titleVisibility: .visible) {
             Button("削除する", role: .destructive) {
                 Task {
@@ -447,6 +526,9 @@ struct DetailView: View {
     }
 
     private func summaryLabel(for entry: URLRecord) -> String {
+        if URLRules.isTextCardHost(entry.normalizedHost) {
+            return "タイトル"
+        }
         switch entry.fetchedBodyKind {
         case .youtubeDescription:
             return "概要欄の要点"
@@ -464,6 +546,9 @@ struct DetailView: View {
     }
 
     private func bodyLabel(for entry: URLRecord) -> String {
+        if URLRules.isTextCardHost(entry.normalizedHost) {
+            return "本文"
+        }
         if isSocialPostContentService(entry.serviceType) {
             return "投稿内容"
         }
@@ -537,6 +622,100 @@ private struct DetailThumbnailImage: View {
     }
 }
 
+private struct AppMediaViewerSheet: View {
+    let title: String
+    let items: [SavedAppMediaFile]
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ScreenContainer {
+            VStack(spacing: 14) {
+                Capsule()
+                    .fill(AppPalette.outlineSoft)
+                    .frame(width: 72, height: 8)
+                    .padding(.top, 10)
+
+                HStack(spacing: 12) {
+                    Text(title)
+                        .font(.system(size: 22, weight: .heavy, design: .rounded))
+                        .foregroundStyle(AppPalette.textPrimary)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14, weight: .heavy))
+                            .foregroundStyle(AppPalette.textPrimary)
+                            .frame(width: 40, height: 40)
+                            .background(AppPalette.surfaceSoft, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("閉じる")
+                }
+
+                if items.isEmpty {
+                    AppPanel {
+                        Text("保存済みメディアはありません")
+                            .font(.system(size: 17, weight: .medium))
+                            .foregroundStyle(AppPalette.textSecondary)
+                            .frame(maxWidth: .infinity)
+                    }
+                    Spacer(minLength: 0)
+                } else {
+                    TabView {
+                        ForEach(items) { item in
+                            AppMediaPreview(item: item)
+                                .padding(.horizontal, 2)
+                        }
+                    }
+                    .tabViewStyle(.page(indexDisplayMode: items.count > 1 ? .automatic : .never))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 24)
+        }
+    }
+}
+
+private struct AppMediaPreview: View {
+    let item: SavedAppMediaFile
+
+    var body: some View {
+        VStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .fill(Color.black)
+
+                if item.mediaType == "IMAGE" {
+                    AsyncImage(url: item.fileURL) { image in
+                        image
+                            .resizable()
+                            .scaledToFit()
+                    } placeholder: {
+                        ProgressView()
+                            .tint(Color.white)
+                    }
+                    .padding(8)
+                } else {
+                    VideoPlayer(player: AVPlayer(url: item.fileURL))
+                        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            Text(item.fileName)
+                .font(.system(size: 13, weight: .medium, design: .monospaced))
+                .foregroundStyle(AppPalette.textSecondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+    }
+}
+
 private struct ExpandableDetailBodySection: View {
     let label: String
     let text: String
@@ -545,7 +724,7 @@ private struct ExpandableDetailBodySection: View {
     @State private var isExpanded = false
 
     private var needsExpansion: Bool {
-        availableWidth > 0 && Self.estimatedLineCount(for: text, width: availableWidth) >= 5
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
@@ -569,7 +748,7 @@ private struct ExpandableDetailBodySection: View {
                 }
             }
 
-            if !needsExpansion || isExpanded {
+            if isExpanded {
                 Text(text)
                     .font(.system(size: 17, weight: .medium))
                     .foregroundStyle(AppPalette.textSecondary)
@@ -840,11 +1019,7 @@ private struct EntryLocalTagAssignmentSheet: View {
                             .font(.system(size: 18, weight: .heavy, design: .rounded))
                             .foregroundStyle(AppPalette.textPrimary)
 
-                        LazyVGrid(
-                            columns: [GridItem(.adaptive(minimum: 150), spacing: 10, alignment: .leading)],
-                            alignment: .leading,
-                            spacing: 10
-                        ) {
+                        TagAssignmentFlowLayout(horizontalSpacing: 10, verticalSpacing: 10, maxItemWidth: 260) {
                             ForEach(assignedTags) { tag in
                                 LocalTagAssignmentPill(
                                     name: tag.name,
@@ -880,11 +1055,7 @@ private struct EntryLocalTagAssignmentSheet: View {
                             .font(.system(size: 16, weight: .medium))
                             .foregroundStyle(AppPalette.textSecondary)
                     } else {
-                        LazyVGrid(
-                            columns: [GridItem(.adaptive(minimum: 150), spacing: 10, alignment: .leading)],
-                            alignment: .leading,
-                            spacing: 10
-                        ) {
+                        TagAssignmentFlowLayout(horizontalSpacing: 10, verticalSpacing: 10, maxItemWidth: 260) {
                             ForEach(unassignedTags) { tag in
                                 LocalTagAssignmentPill(
                                     name: tag.name,
@@ -931,8 +1102,8 @@ private struct LocalTagAssignmentPill: View {
                 .font(.system(size: 20, weight: .heavy, design: .rounded))
                 .foregroundStyle(AppPalette.textPrimary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.82)
-                .frame(maxWidth: 148, alignment: .leading)
+                .truncationMode(.tail)
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
 
             Button(action: onAction) {
                 Text(actionTitle)
@@ -955,7 +1126,78 @@ private struct LocalTagAssignmentPill: View {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(AppPalette.outlineSoft, lineWidth: 1.5)
         )
-        .fixedSize(horizontal: true, vertical: false)
+        .frame(maxWidth: 260, alignment: .leading)
+    }
+}
+
+private struct TagAssignmentFlowLayout: Layout {
+    let horizontalSpacing: CGFloat
+    let verticalSpacing: CGFloat
+    let maxItemWidth: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let boundsWidth = proposal.width ?? maxItemWidth
+        let sizes = measuredSizes(for: subviews, boundsWidth: boundsWidth)
+        let rows = packedRows(sizes: sizes, maxWidth: boundsWidth)
+        let height = rows.enumerated().reduce(CGFloat(0)) { partial, rowData in
+            let rowHeight = rowData.element.map { sizes[$0].height }.max() ?? 0
+            return partial + rowHeight + (rowData.offset == rows.count - 1 ? 0 : verticalSpacing)
+        }
+        return CGSize(width: boundsWidth, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let sizes = measuredSizes(for: subviews, boundsWidth: bounds.width)
+        let rows = packedRows(sizes: sizes, maxWidth: bounds.width)
+        var y = bounds.minY
+
+        for row in rows {
+            var x = bounds.minX
+            let rowHeight = row.map { sizes[$0].height }.max() ?? 0
+            for index in row {
+                subviews[index].place(
+                    at: CGPoint(x: x, y: y),
+                    anchor: .topLeading,
+                    proposal: ProposedViewSize(width: sizes[index].width, height: sizes[index].height)
+                )
+                x += sizes[index].width + horizontalSpacing
+            }
+            y += rowHeight + verticalSpacing
+        }
+    }
+
+    private func measuredSizes(for subviews: Subviews, boundsWidth: CGFloat) -> [CGSize] {
+        let itemWidth = min(maxItemWidth, max(boundsWidth, 0))
+        return subviews.map { subview in
+            subview.sizeThatFits(ProposedViewSize(width: itemWidth, height: nil))
+        }
+    }
+
+    private func packedRows(sizes: [CGSize], maxWidth: CGFloat) -> [[Int]] {
+        var remaining = Array(sizes.indices)
+        var rows: [[Int]] = []
+
+        while !remaining.isEmpty {
+            var row = [remaining.removeFirst()]
+            var rowWidth = sizes[row[0]].width
+            var cursor = 0
+
+            while cursor < remaining.count {
+                let candidate = remaining[cursor]
+                let nextWidth = rowWidth + horizontalSpacing + sizes[candidate].width
+                if nextWidth <= maxWidth {
+                    row.append(candidate)
+                    rowWidth = nextWidth
+                    remaining.remove(at: cursor)
+                } else {
+                    cursor += 1
+                }
+            }
+
+            rows.append(row)
+        }
+
+        return rows
     }
 }
 
