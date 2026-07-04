@@ -3,11 +3,13 @@ services:
     name: rinbam-media-resolver
     env: python
     plan: starter
-    buildCommand: pip install --upgrade -r requirements-media-resolver.txt
-    startCommand: python3 scripts/media_resolver_backend.py
+    buildCommand: DENO_INSTALL=$PWD/.deno curl -fsSL https://deno.land/install.sh | sh && pip install --upgrade -r requirements-media-resolver.txt
+    startCommand: PATH=$PWD/.deno/bin:$PATH python3 scripts/media_resolver_backend.py
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
         value: 3.13.5
       - key: MEDIA_RESOLVER_CACHE_DIR
         value: /tmp/rinbam-media-cache
+      - key: MEDIA_RESOLVER_YOUTUBE_CLI_TIMEOUT_SECONDS
+        value: "55"

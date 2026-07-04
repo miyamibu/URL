@@ -15,6 +15,7 @@ import mimetypes
 import os
 import pathlib
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -31,6 +32,8 @@ AUDIO_EXTENSIONS = {".m4a", ".mp3", ".aac", ".opus", ".ogg", ".wav"}
 SUPPORTED_HOST_RE = re.compile(
     r"(^|\.)youtube\.com$|^youtu\.be$|(^|\.)instagram\.com$|(^|\.)tiktok\.com$|(^|\.)x\.com$|(^|\.)twitter\.com$"
 )
+DIRECT_MEDIA_PROXIES: dict[str, dict[str, str | float]] = {}
+DIRECT_MEDIA_PROXY_TTL_SECONDS = 10 * 60
 
 
 def _env_value(*names: str) -> str | None:
@@ -189,7 +192,9 @@ def _yt_dlp_cookie_options(provider: str) -> dict:
     for cookie_content in content_candidates:
         if not cookie_content:
             continue
-        runtime_path = _runtime_cookie_path(f"content:{provider}:{hashlib.sha256(cookie_content.encode('utf-8')).hexdigest()}")
+        writable_dir = pathlib.Path(os.environ.get("MEDIA_RESOLVER_COOKIES_RUNTIME_DIR", "/tmp/rinbam-media-resolver-cookies"))
+        writable_dir.mkdir(parents=True, exist_ok=True)
+        runtime_path = writable_dir / f"{hashlib.sha256(f'{provider}:{cookie_content}'.encode('utf-8')).hexdigest()[:16]}.txt"
         if not runtime_path.exists() or runtime_path.read_text(encoding="utf-8", errors="replace") != cookie_content:
             runtime_path.write_text(cookie_content, encoding="utf-8")
         return {"cookiefile": str(runtime_path)}
@@ -198,17 +203,122 @@ def _yt_dlp_cookie_options(provider: str) -> dict:
             continue
         path = pathlib.Path(cookie_file).expanduser()
         if path.is_file():
-            runtime_path = _runtime_cookie_path(f"file:{path}")
-            if not runtime_path.exists() or runtime_path.stat().st_mtime < path.stat().st_mtime:
+            writable_dir = pathlib.Path(os.environ.get("MEDIA_RESOLVER_COOKIES_RUNTIME_DIR", "/tmp/rinbam-media-resolver-cookies"))
+            writable_dir.mkdir(parents=True, exist_ok=True)
+            runtime_path = writable_dir / f"{hashlib.sha256(str(path).encode('utf-8')).hexdigest()[:16]}.txt"
+            if not runtime_path.exists() or runtime_path.read_bytes() != path.read_bytes():
                 shutil.copyfile(path, runtime_path)
             return {"cookiefile": str(runtime_path)}
     return {}
 
 
-def _runtime_cookie_path(key: str) -> pathlib.Path:
-    writable_dir = pathlib.Path(os.environ.get("MEDIA_RESOLVER_COOKIES_RUNTIME_DIR", "/tmp/rinbam-media-resolver-cookies"))
-    writable_dir.mkdir(parents=True, exist_ok=True)
-    return writable_dir / f"{hashlib.sha256(key.encode('utf-8')).hexdigest()[:16]}.txt"
+def _yt_dlp_cookie_cli_args(provider: str) -> list[str]:
+    cookie_file = _yt_dlp_cookie_options(provider).get("cookiefile")
+    if isinstance(cookie_file, str) and cookie_file:
+        return ["--cookies", cookie_file]
+    return []
+
+
+def _yt_dlp_cookie_status(provider: str) -> dict:
+    provider_key = provider.upper().replace("-", "_")
+    provider_file = _env_value(
+        f"MEDIA_RESOLVER_{provider_key}_COOKIES_FILE",
+        f"{provider_key}_YTDLP_COOKIES_FILE",
+    )
+    provider_content = _env_secret_content(
+        f"MEDIA_RESOLVER_{provider_key}_COOKIES",
+        f"{provider_key}_YTDLP_COOKIES",
+    )
+    shared_file = _env_value(
+        "MEDIA_RESOLVER_YTDLP_COOKIES_FILE",
+        "YT_DLP_COOKIES_FILE",
+    )
+    shared_content = _env_secret_content(
+        "MEDIA_RESOLVER_YTDLP_COOKIES",
+        "YT_DLP_COOKIES",
+    )
+    content_candidates = [
+        provider_content,
+        None if shared_file else shared_content,
+    ]
+    file_candidates = [
+        None if provider_content else provider_file,
+        None if provider_content else shared_file,
+    ]
+    configured_file = None
+    configured_content = None
+    for candidate in content_candidates:
+        if candidate:
+            configured_content = candidate
+            break
+    if not configured_content:
+        for candidate in file_candidates:
+            if candidate and pathlib.Path(candidate).expanduser().is_file():
+                configured_file = candidate
+                break
+    file_readable = False
+    diagnostics: dict[str, object] = {
+        "lineCount": 0,
+        "domainCount": 0,
+        "domains": [],
+    }
+    if configured_file:
+        configured_path = pathlib.Path(configured_file).expanduser()
+        file_readable = configured_path.is_file()
+        if file_readable:
+            diagnostics = _cookie_file_diagnostics(configured_path)
+    elif configured_content:
+        diagnostics = _cookie_content_diagnostics(configured_content)
+    return {
+        "fileConfigured": bool(configured_file),
+        "fileReadable": file_readable,
+        "contentConfigured": bool(configured_content),
+        **diagnostics,
+    }
+
+
+def _cookie_content_diagnostics(content: str) -> dict[str, object]:
+    domains = set()
+    line_count = 0
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        line_count += 1
+        parts = line.split("\t")
+        if parts:
+            domain = parts[0].strip().lstrip(".").lower()
+            if domain:
+                domains.add(domain)
+    return {
+        "lineCount": line_count,
+        "domainCount": len(domains),
+        "domains": sorted(domains)[:12],
+    }
+
+
+def _cookie_file_diagnostics(path: pathlib.Path) -> dict[str, object]:
+    try:
+        return _cookie_content_diagnostics(path.read_text(encoding="utf-8", errors="replace"))
+    except Exception:
+        return {
+            "lineCount": 0,
+            "domainCount": 0,
+            "domains": [],
+        }
+
+
+def _yt_dlp_cli_env() -> dict[str, str]:
+    env = dict(os.environ)
+    deno_bins = [
+        pathlib.Path.cwd() / ".deno" / "bin",
+        pathlib.Path("/opt/render/project/src/.deno/bin"),
+    ]
+    existing_path = env.get("PATH", "")
+    prefixes = [str(path) for path in deno_bins if path.is_dir()]
+    if prefixes:
+        env["PATH"] = os.pathsep.join([*prefixes, existing_path])
+    return env
 
 
 def _media_type(path: pathlib.Path) -> str:
@@ -216,6 +326,28 @@ def _media_type(path: pathlib.Path) -> str:
     if suffix in IMAGE_EXTENSIONS:
         return "IMAGE"
     return "VIDEO"
+
+
+def _is_youtube_video_candidate(candidate: dict) -> bool:
+    media_url = candidate.get("url")
+    if not isinstance(media_url, str) or not media_url.startswith(("http://", "https://")):
+        return False
+    ext = str(candidate.get("ext") or "").lower()
+    mime_type = str(candidate.get("mime_type") or candidate.get("mimeType") or "").lower()
+    vcodec = str(candidate.get("vcodec") or "").lower()
+    if ext not in {suffix.lstrip(".") for suffix in VIDEO_EXTENSIONS} and not mime_type.startswith("video/"):
+        return False
+    return vcodec not in {"", "none"}
+
+
+def _youtube_info_has_video_candidate(info: dict) -> bool:
+    if _is_youtube_video_candidate(info):
+        return True
+    formats = info.get("formats")
+    return isinstance(formats, list) and any(
+        isinstance(candidate, dict) and _is_youtube_video_candidate(candidate)
+        for candidate in formats
+    )
 
 
 def _quality_label(info: dict, path: pathlib.Path) -> str | None:
@@ -229,7 +361,7 @@ def _quality_label(info: dict, path: pathlib.Path) -> str | None:
 
 def _yt_dlp_format(provider: str) -> str:
     if provider == "youtube":
-        return "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/best[ext=mp4]/best"
+        return "b[ext=mp4][height<=360]/b[ext=mp4][height<=480]/18/best[ext=mp4]/best"
     return "18/b[ext=mp4]/bv*[ext=mp4]+ba[ext=m4a]/best[ext=mp4]/best"
 
 
@@ -241,6 +373,32 @@ def _youtube_fallback_formats() -> list[str | None]:
         "best",
         None,
     ]
+
+
+def _youtube_client_variants() -> list[list[str]]:
+    return [
+        _youtube_extractor_args_cli(None),
+        _youtube_extractor_args_cli("web"),
+        _youtube_extractor_args_cli("mweb"),
+        _youtube_extractor_args_cli("ios"),
+        _youtube_extractor_args_cli("android"),
+        _youtube_extractor_args_cli("tv"),
+    ]
+
+
+def _youtube_extractor_args_cli(player_client: str | None) -> list[str]:
+    raw_args = _env_value("MEDIA_RESOLVER_YOUTUBE_EXTRACTOR_ARGS", "YOUTUBE_YTDLP_EXTRACTOR_ARGS")
+    po_token = _env_value("MEDIA_RESOLVER_YOUTUBE_PO_TOKEN", "YOUTUBE_YTDLP_PO_TOKEN")
+    args = []
+    if raw_args:
+        args.append(raw_args)
+    if po_token:
+        args.append(f"po_token={po_token}")
+    if player_client:
+        args.append(f"player_client={player_client}")
+    if not args:
+        return []
+    return ["--extractor-args", "youtube:" + ";".join(args)]
 
 
 def _resolver_error(provider: str, exc: Exception) -> dict:
@@ -257,6 +415,29 @@ def _resolver_error(provider: str, exc: Exception) -> dict:
     else:
         code = "RESOLVE_FAILED"
     return {"ok": False, "provider": provider, "error": code, "message": message, "assets": []}
+
+
+def _safe_log(message: str) -> None:
+    sys.stderr.write(f"{message}\n")
+    sys.stderr.flush()
+
+
+def _truncate_log(message: str, limit: int = 500) -> str:
+    compact = " ".join(str(message).split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 1] + "…"
+
+
+def _purge_expired_direct_proxies(now: float | None = None) -> None:
+    current = time.time() if now is None else now
+    expired = [
+        token
+        for token, item in DIRECT_MEDIA_PROXIES.items()
+        if float(item.get("expiresAt") or 0) < current
+    ]
+    for token in expired:
+        DIRECT_MEDIA_PROXIES.pop(token, None)
 
 
 class MediaResolver:
@@ -278,7 +459,10 @@ class MediaResolver:
             instagram_assets = self._resolve_instagram_embed(url)
             if instagram_assets:
                 return {"ok": True, "provider": "instagram", "assets": instagram_assets}
-            instagram_assets = self._resolve_instagram_ytdlp(url)
+            try:
+                instagram_assets = self._resolve_instagram_ytdlp(url)
+            except Exception as exc:
+                return _resolver_error("instagram", exc)
             if instagram_assets:
                 return {"ok": True, "provider": "instagram", "assets": instagram_assets}
 
@@ -288,57 +472,49 @@ class MediaResolver:
             direct_result, direct_error = self._resolve_youtube_direct_asset(yt_dlp, url, stable)
             if direct_result is not None:
                 return direct_result
-            return {
-                "ok": False,
-                "provider": "youtube",
-                "error": "YOUTUBE_DIRECT_RESOLVE_TIMEOUT",
-                "message": direct_error or "YouTube direct media URL resolution did not complete within the backend timeout.",
-                "assets": [],
-            }
+            if direct_error:
+                _safe_log(f"youtube direct resolver failed: {_truncate_log(direct_error)}")
+            if os.environ.get("MEDIA_RESOLVER_YOUTUBE_SERVER_DOWNLOAD_ENABLED", "").lower() not in {"1", "true", "yes"}:
+                return _resolver_error(
+                    provider,
+                    RuntimeError(
+                        direct_error
+                        or "YouTube direct resolver returned no usable video. Configure valid YouTube cookies and PO token, or enable server download fallback explicitly."
+                    ),
+                )
         existing = self._find_existing(stable)
         info: dict = {}
         if existing is None:
-            outtmpl = str(self.cache_dir / f"{stable}.%(ext)s")
-            options = {
-                "format": _yt_dlp_format(provider),
-                "merge_output_format": "mp4",
-                "outtmpl": outtmpl,
-                "quiet": True,
-                "no_warnings": True,
-                "noplaylist": True,
-                "retries": 2,
-                "fragment_retries": 2,
-                "socket_timeout": 30,
-                **_yt_dlp_cookie_options(provider),
-            }
-            if ffmpeg_location:
-                options["ffmpeg_location"] = ffmpeg_location
-            try:
-                with yt_dlp.YoutubeDL(options) as ydl:  # type: ignore[attr-defined]
-                    info = ydl.extract_info(url, download=True) or {}
-            except Exception as exc:
-                if provider != "youtube" or "requested format is not available" not in str(exc).lower():
+            if provider == "youtube":
+                info, existing, cli_error = self._resolve_youtube_cli_download(url, stable, ffmpeg_location)
+                if existing is None:
+                    if cli_error:
+                        _safe_log(f"youtube resolver failed: {_truncate_log(cli_error)}")
+                    return _resolver_error(provider, RuntimeError(cli_error or "YouTube media file was not created"))
+                if ffmpeg_location:
+                    existing = self._ensure_mobile_mp4(existing, ffmpeg_location)
+            else:
+                outtmpl = str(self.cache_dir / f"{stable}.%(ext)s")
+                options = {
+                    "format": _yt_dlp_format(provider),
+                    "merge_output_format": "mp4",
+                    "outtmpl": outtmpl,
+                    "quiet": True,
+                    "no_warnings": True,
+                    "noplaylist": True,
+                    "retries": 2,
+                    "fragment_retries": 2,
+                    "socket_timeout": 30,
+                    **_yt_dlp_cookie_options(provider),
+                }
+                if ffmpeg_location:
+                    options["ffmpeg_location"] = ffmpeg_location
+                try:
+                    with yt_dlp.YoutubeDL(options) as ydl:  # type: ignore[attr-defined]
+                        info = ydl.extract_info(url, download=True) or {}
+                except Exception as exc:
                     return _resolver_error(provider, exc)
-                last_error: Exception = exc
-                for fallback_format in _youtube_fallback_formats():
-                    fallback_options = dict(options)
-                    if fallback_format is None:
-                        fallback_options.pop("format", None)
-                    else:
-                        fallback_options["format"] = fallback_format
-                    try:
-                        with yt_dlp.YoutubeDL(fallback_options) as ydl:  # type: ignore[attr-defined]
-                            info = ydl.extract_info(url, download=True) or {}
-                        last_error = None  # type: ignore[assignment]
-                        break
-                    except Exception as fallback_exc:
-                        last_error = fallback_exc
-                if last_error is not None:
-                    direct_result, _ = self._resolve_youtube_direct_asset(yt_dlp, url, stable)
-                    if direct_result is not None:
-                        return direct_result
-                    return _resolver_error(provider, last_error)
-            existing = self._find_existing(stable)
+                existing = self._find_existing(stable)
         else:
             with yt_dlp.YoutubeDL({
                 "quiet": True,
@@ -498,8 +674,8 @@ class MediaResolver:
             "noplaylist": True,
             "socket_timeout": 20,
             "skip_download": True,
-            "format": None,
-            "extractor_args": {"youtube": {"player_client": ["android"]}},
+            "format": "all",
+            **_yt_dlp_cookie_options("youtube"),
         }
         try:
             with yt_dlp.YoutubeDL(options) as ydl:  # type: ignore[attr-defined]
@@ -508,39 +684,323 @@ class MediaResolver:
             return None, cli_error or str(exc)
         return self._youtube_direct_result(info, url, stable), cli_error
 
-    @staticmethod
-    def _resolve_youtube_direct_info_cli(url: str) -> tuple[dict | None, str | None]:
-        try:
-            completed = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "yt_dlp",
-                    "--dump-json",
-                    "--skip-download",
-                    "--no-warnings",
-                    "--extractor-args",
-                    "youtube:player_client=android",
-                    url,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=int(os.environ.get("MEDIA_RESOLVER_YOUTUBE_CLI_TIMEOUT_SECONDS", "25")),
-                check=True,
-            )
-            return json.loads(completed.stdout), None
-        except subprocess.TimeoutExpired as exc:
-            stderr = (exc.stderr or "").strip() if isinstance(exc.stderr, str) else ""
-            return None, f"yt-dlp CLI timed out after {exc.timeout} seconds. {stderr}".strip()
-        except subprocess.CalledProcessError as exc:
-            stderr = (exc.stderr or "").strip()
-            return None, stderr or str(exc)
-        except Exception as exc:
-            return None, str(exc)
+    def _resolve_youtube_cli_download(
+        self,
+        url: str,
+        stable: str,
+        ffmpeg_location: str | None,
+    ) -> tuple[dict, pathlib.Path | None, str | None]:
+        info, info_error = self._resolve_youtube_direct_info_cli(url)
+        outtmpl = str(self.cache_dir / f"{stable}.%(ext)s")
+        direct_existing, direct_error = self._download_youtube_direct_format(info or {}, stable, ffmpeg_location)
+        if direct_existing is not None:
+            return info or {}, direct_existing, None
+        base_command = [
+            sys.executable,
+            "-m",
+            "yt_dlp",
+            "--quiet",
+            "--no-warnings",
+            "--no-playlist",
+            "--remote-components",
+            "ejs:github",
+            "--merge-output-format",
+            "mp4",
+            "--retries",
+            "2",
+            "--fragment-retries",
+            "2",
+            "--output",
+            outtmpl,
+            *_yt_dlp_cookie_cli_args("youtube"),
+        ]
+        if ffmpeg_location:
+            base_command.extend(["--ffmpeg-location", ffmpeg_location])
+        timeout = int(os.environ.get("MEDIA_RESOLVER_YOUTUBE_DOWNLOAD_TIMEOUT_SECONDS", "180"))
+        formats: list[str | None] = []
+        for item in [_yt_dlp_format("youtube"), *_youtube_fallback_formats()]:
+            if item not in formats:
+                formats.append(item)
 
-    def _youtube_direct_result(self, info: dict, url: str, stable: str) -> dict | None:
+        errors: list[str] = []
+        if direct_error:
+            errors.append(f"direct: {direct_error}")
+        for client_variant in _youtube_client_variants():
+            client_label = "default"
+            if client_variant:
+                client_label = client_variant[-1].split("=", 1)[-1]
+            for format_selector in formats:
+                command = [*base_command, *client_variant]
+                if format_selector:
+                    command.extend(["--format", format_selector])
+                try:
+                    subprocess.run(
+                        [*command, url],
+                        capture_output=True,
+                        text=True,
+                        timeout=timeout,
+                        check=True,
+                        env=_yt_dlp_cli_env(),
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    stderr = (exc.stderr or "").strip() if isinstance(exc.stderr, str) else ""
+                    errors.append(f"{client_label}/{format_selector or 'default'}: yt-dlp download timed out after {exc.timeout} seconds. {stderr}".strip())
+                    continue
+                except subprocess.CalledProcessError as exc:
+                    stderr = (exc.stderr or "").strip()
+                    errors.append(f"{client_label}/{format_selector or 'default'}: {stderr or str(exc)}")
+                    continue
+                except Exception as exc:
+                    errors.append(f"{client_label}/{format_selector or 'default'}: {exc}")
+                    continue
+
+                existing = self._find_existing(stable)
+                if existing is not None:
+                    return info or {}, existing, None
+                errors.append(f"{client_label}/{format_selector or 'default'}: yt-dlp download completed but no media file was found")
+
+        if info_error:
+            errors.append(f"info: {info_error}")
+        return info or {}, None, " | ".join(errors) or "yt-dlp download completed but no media file was found"
+
+    def _download_youtube_direct_format(
+        self,
+        info: dict,
+        stable: str,
+        ffmpeg_location: str | None,
+    ) -> tuple[pathlib.Path | None, str | None]:
         formats = info.get("formats")
         if not isinstance(formats, list):
+            return None, "yt-dlp info did not include formats"
+
+        progressive_candidates = []
+        hls_candidates = []
+        for item in formats:
+            if not isinstance(item, dict):
+                continue
+            media_url = item.get("url")
+            if not isinstance(media_url, str) or not media_url:
+                continue
+            ext = str(item.get("ext") or "").lower()
+            protocol = str(item.get("protocol") or "").lower()
+            vcodec = str(item.get("vcodec") or "").lower()
+            acodec = str(item.get("acodec") or "").lower()
+            if ext != "mp4":
+                continue
+            if vcodec in {"none", ""} or acodec in {"none", ""}:
+                continue
+            height = item.get("height")
+            height_value = height if isinstance(height, int) else 10_000
+            row = (height_value > 480, height_value, item)
+            if protocol.startswith("http"):
+                progressive_candidates.append(row)
+            elif "m3u8" in protocol:
+                hls_candidates.append(row)
+
+        if progressive_candidates:
+            progressive_candidates.sort(key=lambda row: (row[0], row[1]))
+            return self._download_youtube_progressive_mp4(progressive_candidates[0][2], stable)
+        if hls_candidates and ffmpeg_location:
+            hls_candidates.sort(key=lambda row: (row[0], row[1]))
+            return self._download_youtube_hls_mp4(hls_candidates[0][2], stable, ffmpeg_location)
+        if hls_candidates and not ffmpeg_location:
+            return None, "direct HLS mp4 format was available but ffmpeg was not available"
+        return None, "no direct progressive or HLS mp4 format was available"
+
+    def _download_youtube_progressive_mp4(self, selected: dict, stable: str) -> tuple[pathlib.Path | None, str | None]:
+        media_url = str(selected["url"])
+        headers = selected.get("http_headers") if isinstance(selected.get("http_headers"), dict) else {}
+        request = urllib.request.Request(media_url, headers={str(k): str(v) for k, v in headers.items()})
+        target = self.cache_dir / f"{stable}.mp4"
+        temp = self.cache_dir / f"{stable}.direct-tmp.mp4"
+        try:
+            with urllib.request.urlopen(request, timeout=90) as response, temp.open("wb") as output:
+                shutil.copyfileobj(response, output)
+            if temp.stat().st_size <= 0:
+                temp.unlink(missing_ok=True)
+                return None, "direct progressive mp4 download produced an empty file"
+            temp.replace(target)
+            return target, None
+        except Exception as exc:
+            temp.unlink(missing_ok=True)
+            return None, str(exc)
+
+    def _download_youtube_hls_mp4(
+        self,
+        selected: dict,
+        stable: str,
+        ffmpeg_location: str,
+    ) -> tuple[pathlib.Path | None, str | None]:
+        media_url = str(selected["url"])
+        headers = selected.get("http_headers") if isinstance(selected.get("http_headers"), dict) else {}
+        header_lines = "".join(f"{key}: {value}\r\n" for key, value in headers.items())
+        target = self.cache_dir / f"{stable}.mp4"
+        temp = self.cache_dir / f"{stable}.hls-tmp.mp4"
+        command = [
+            ffmpeg_location,
+            "-y",
+            "-hide_banner",
+        ]
+        if header_lines:
+            command.extend(["-headers", header_lines])
+        command.extend(
+            [
+                "-i",
+                media_url,
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a?",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-movflags",
+                "+faststart",
+                str(temp),
+            ]
+        )
+        try:
+            subprocess.run(command, capture_output=True, text=True, timeout=180, check=True)
+            if temp.stat().st_size <= 0:
+                temp.unlink(missing_ok=True)
+                return None, "direct HLS mp4 download produced an empty file"
+            temp.replace(target)
+            return target, None
+        except Exception as exc:
+            temp.unlink(missing_ok=True)
+            return None, str(exc)
+
+    @staticmethod
+    def _resolve_youtube_direct_info_cli(url: str) -> tuple[dict | None, str | None]:
+        base_command = [
+            sys.executable,
+            "-m",
+            "yt_dlp",
+            "--dump-json",
+            "--skip-download",
+            "--no-warnings",
+            "--remote-components",
+            "ejs:github",
+            "--format",
+            "all",
+            *_yt_dlp_cookie_cli_args("youtube"),
+        ]
+        client_variants = _youtube_client_variants()
+        last_error = None
+        timeout = int(os.environ.get("MEDIA_RESOLVER_YOUTUBE_CLI_TIMEOUT_SECONDS", "45"))
+        for variant in client_variants:
+            try:
+                completed = subprocess.run(
+                    [*base_command, *variant, url],
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    check=True,
+                    env=_yt_dlp_cli_env(),
+                )
+                entries = []
+                for line in completed.stdout.splitlines():
+                    line = line.strip()
+                    if line:
+                        entries.append(json.loads(line))
+                if entries:
+                    if isinstance(entries[0].get("formats"), list):
+                        if _youtube_info_has_video_candidate(entries[0]):
+                            return entries[0], None
+                        last_error = "yt-dlp CLI returned no usable video formats"
+                        continue
+                    merged = dict(entries[0])
+                    merged["formats"] = entries
+                    if _youtube_info_has_video_candidate(merged):
+                        return merged, None
+                    last_error = "yt-dlp CLI returned no usable video formats"
+                    continue
+                last_error = "yt-dlp CLI produced no JSON output"
+            except subprocess.TimeoutExpired as exc:
+                stderr = (exc.stderr or "").strip() if isinstance(exc.stderr, str) else ""
+                last_error = f"yt-dlp CLI timed out after {exc.timeout} seconds. {stderr}".strip()
+            except subprocess.CalledProcessError as exc:
+                stderr = (exc.stderr or "").strip()
+                last_error = stderr or str(exc)
+            except Exception as exc:
+                last_error = str(exc)
+        return None, last_error
+
+    def _youtube_direct_result(self, info: dict, url: str, stable: str) -> dict | None:
+        selected_url = info.get("url")
+        top_vcodec = str(info.get("vcodec") or "").lower()
+        top_acodec = str(info.get("acodec") or "").lower()
+        top_has_audio_video = top_vcodec not in {"", "none"} and top_acodec not in {"", "none"}
+        formats = info.get("formats")
+        if (
+            top_has_audio_video
+            and isinstance(selected_url, str)
+            and selected_url.startswith(("http://", "https://"))
+        ):
+            duration = info.get("duration")
+            duration_ms = int(duration * 1000) if isinstance(duration, (int, float)) and duration > 0 else None
+            ext = str(info.get("ext") or "mp4").lower()
+            media_type = "IMAGE" if ext in IMAGE_EXTENSIONS else "VIDEO"
+            mime_type = _mime_type(pathlib.Path(f"media.{ext}"))
+            return {
+                "ok": True,
+                "provider": "youtube",
+                "assets": [
+                    {
+                        "provider": "youtube",
+                        "providerAssetId": f"{info.get('id') or stable}:direct:{info.get('format_id') or ext}",
+                        "canonicalPostUrl": info.get("webpage_url") or url,
+                        "authorName": info.get("uploader") or info.get("channel"),
+                        "title": info.get("title"),
+                        "thumbnailUrl": info.get("thumbnail"),
+                        "durationMs": duration_ms,
+                        "mediaType": media_type,
+                        "downloadUrl": self._direct_media_proxy_url(selected_url, mime_type),
+                        "mimeType": mime_type,
+                        "qualityLabel": _quality_label(info, pathlib.Path(f"media.{ext}")),
+                        "width": info.get("width"),
+                        "height": info.get("height"),
+                        "bitrate": None,
+                        "isPreferred": True,
+                    }
+                ],
+            }
+
+        if not isinstance(formats, list):
+            if isinstance(selected_url, str) and selected_url.startswith(("http://", "https://")):
+                duration = info.get("duration")
+                duration_ms = int(duration * 1000) if isinstance(duration, (int, float)) and duration > 0 else None
+                ext = str(info.get("ext") or "mp4").lower()
+                media_type = "IMAGE" if ext in IMAGE_EXTENSIONS else "VIDEO"
+                mime_type = _mime_type(pathlib.Path(f"media.{ext}"))
+                return {
+                    "ok": True,
+                    "provider": "youtube",
+                    "assets": [
+                        {
+                            "provider": "youtube",
+                            "providerAssetId": f"{info.get('id') or stable}:direct:{info.get('format_id') or ext}",
+                            "canonicalPostUrl": info.get("webpage_url") or url,
+                            "authorName": info.get("uploader") or info.get("channel"),
+                            "title": info.get("title"),
+                            "thumbnailUrl": info.get("thumbnail"),
+                            "durationMs": duration_ms,
+                            "mediaType": media_type,
+                            "downloadUrl": self._direct_media_proxy_url(selected_url, mime_type),
+                            "mimeType": mime_type,
+                            "qualityLabel": _quality_label(info, pathlib.Path(f"media.{ext}")),
+                            "width": info.get("width"),
+                            "height": info.get("height"),
+                            "bitrate": None,
+                            "isPreferred": True,
+                        }
+                    ],
+                }
             return None
 
         def score(candidate: dict) -> tuple[int, int, int, int]:
@@ -559,11 +1019,40 @@ class MediaResolver:
             candidate
             for candidate in formats
             if isinstance(candidate, dict)
-            and isinstance(candidate.get("url"), str)
-            and str(candidate.get("url")).startswith(("http://", "https://"))
+            and _is_youtube_video_candidate(candidate)
             and str(candidate.get("vcodec") or "").lower() not in {"", "none"}
             and str(candidate.get("acodec") or "").lower() not in {"", "none"}
         ]
+        if not candidates:
+            format_dicts = [candidate for candidate in formats if isinstance(candidate, dict)]
+            with_url = [
+                candidate
+                for candidate in format_dicts
+                if _is_youtube_video_candidate(candidate)
+            ]
+            video_only = [
+                candidate
+                for candidate in with_url
+                if str(candidate.get("vcodec") or "").lower() not in {"", "none"}
+                and str(candidate.get("acodec") or "").lower() in {"", "none"}
+            ]
+            audio_only = [
+                candidate
+                for candidate in with_url
+                if str(candidate.get("vcodec") or "").lower() in {"", "none"}
+                and str(candidate.get("acodec") or "").lower() not in {"", "none"}
+            ]
+            _safe_log(
+                "youtube direct resolver produced no combined asset: "
+                f"formats={len(format_dicts)} with_url={len(with_url)} "
+                f"video_only={len(video_only)} audio_only={len(audio_only)} "
+                "sample="
+                + ",".join(
+                    f"{candidate.get('format_id')}:{candidate.get('ext')}:{candidate.get('height')}:{candidate.get('protocol')}"
+                    for candidate in with_url[:6]
+                )
+            )
+            return None
         if not candidates:
             return None
         selected = max(candidates, key=score)
@@ -584,7 +1073,7 @@ class MediaResolver:
                     "thumbnailUrl": info.get("thumbnail"),
                     "durationMs": duration_ms,
                     "mediaType": "VIDEO",
-                    "downloadUrl": selected["url"],
+                    "downloadUrl": self._direct_media_proxy_url(selected["url"], mime_type),
                     "mimeType": mime_type,
                     "qualityLabel": f"{selected.get('height')}p" if isinstance(selected.get("height"), int) else None,
                     "width": selected.get("width"),
@@ -594,6 +1083,16 @@ class MediaResolver:
                 }
             ],
         }
+
+    def _direct_media_proxy_url(self, media_url: str, mime_type: str) -> str:
+        _purge_expired_direct_proxies()
+        token = secrets.token_urlsafe(18)
+        DIRECT_MEDIA_PROXIES[token] = {
+            "url": media_url,
+            "mimeType": mime_type,
+            "expiresAt": time.time() + DIRECT_MEDIA_PROXY_TTL_SECONDS,
+        }
+        return f"{self.public_base_url}/proxy/{quote(token)}"
 
     def _resolve_instagram_embed(self, url: str) -> list[dict]:
         parsed = urlparse(url)
@@ -806,12 +1305,29 @@ class MediaResolver:
 class Handler(BaseHTTPRequestHandler):
     resolver: MediaResolver
 
+    def do_HEAD(self) -> None:
+        if self.path in {"/", "/health"}:
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        self.send_error(HTTPStatus.NOT_FOUND)
+
     def do_GET(self) -> None:
         if self.path == "/health":
             self._json({
                 "ok": True,
                 "service": "rinbam-media-resolver",
                 "version": os.environ.get("RENDER_GIT_COMMIT") or os.environ.get("RENDER_GIT_COMMIT_SHA"),
+                "cookies": {
+                    "youtube": _yt_dlp_cookie_status("youtube"),
+                    "instagram": _yt_dlp_cookie_status("instagram"),
+                },
+                "youtube": {
+                    "poTokenConfigured": bool(_env_value("MEDIA_RESOLVER_YOUTUBE_PO_TOKEN", "YOUTUBE_YTDLP_PO_TOKEN")),
+                    "extractorArgsConfigured": bool(_env_value("MEDIA_RESOLVER_YOUTUBE_EXTRACTOR_ARGS", "YOUTUBE_YTDLP_EXTRACTOR_ARGS")),
+                    "serverDownloadEnabled": os.environ.get("MEDIA_RESOLVER_YOUTUBE_SERVER_DOWNLOAD_ENABLED", "").lower() in {"1", "true", "yes"},
+                },
                 "time": int(time.time()),
             })
             return
@@ -827,6 +1343,37 @@ class Handler(BaseHTTPRequestHandler):
             with path.open("rb") as file:
                 while chunk := file.read(1024 * 1024):
                     self.wfile.write(chunk)
+            return
+        if self.path.startswith("/proxy/"):
+            token = pathlib.Path(unquote(self.path.removeprefix("/proxy/"))).name
+            _purge_expired_direct_proxies()
+            item = DIRECT_MEDIA_PROXIES.get(token)
+            media_url = str(item.get("url") or "") if item else ""
+            if not media_url.startswith(("http://", "https://")):
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            headers = {
+                "User-Agent": "Mozilla/5.0",
+                "Accept": "*/*",
+            }
+            incoming_range = self.headers.get("Range")
+            if incoming_range:
+                headers["Range"] = incoming_range
+            request = urllib.request.Request(media_url, headers=headers)
+            try:
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    status = HTTPStatus.PARTIAL_CONTENT if response.status == 206 else HTTPStatus.OK
+                    self.send_response(status)
+                    self.send_header("Content-Type", response.headers.get("Content-Type") or str(item.get("mimeType") or "application/octet-stream"))
+                    for header in ("Content-Length", "Content-Range", "Accept-Ranges"):
+                        value = response.headers.get(header)
+                        if value:
+                            self.send_header(header, value)
+                    self.end_headers()
+                    while chunk := response.read(1024 * 1024):
+                        self.wfile.write(chunk)
+            except Exception:
+                self.send_error(HTTPStatus.BAD_GATEWAY)
             return
         self.send_error(HTTPStatus.NOT_FOUND)
 

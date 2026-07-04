@@ -56,14 +56,18 @@ start command, and `/health` check for `rinbam-media-resolver`.
 Recommended start command:
 
 ```bash
-python3 scripts/media_resolver_backend.py
+PATH=$PWD/.deno/bin:$PATH python3 scripts/media_resolver_backend.py
 ```
 
 Recommended build command:
 
 ```bash
-pip install --upgrade -r requirements-media-resolver.txt
+DENO_INSTALL=$PWD/.deno curl -fsSL https://deno.land/install.sh | sh && pip install --upgrade -r requirements-media-resolver.txt
 ```
+
+YouTube extraction can require yt-dlp's JavaScript challenge solver. Keep Deno
+available on `PATH` in production hosts so `--remote-components ejs:github`
+can run the solver when needed.
 
 For Instagram or YouTube posts that are not accessible anonymously, configure a
 Netscape cookies file as a host secret and point one of these environment
@@ -79,6 +83,39 @@ YT_DLP_COOKIES_FILE
 ```
 
 Do not commit cookies or account secrets to the repository.
+
+`GET /health` intentionally reports only safe cookie diagnostics:
+
+```text
+fileConfigured / fileReadable / contentConfigured
+lineCount / domainCount / domains
+```
+
+Use these values to confirm the mounted secret actually contains YouTube or
+Instagram cookie rows. Cookie names and values are never returned.
+
+For YouTube production, prefer direct/proxy resolution with a valid cookies file
+and PO token. Configure one of:
+
+```text
+MEDIA_RESOLVER_YOUTUBE_PO_TOKEN
+YOUTUBE_YTDLP_PO_TOKEN
+```
+
+If yt-dlp needs additional extractor arguments, configure:
+
+```text
+MEDIA_RESOLVER_YOUTUBE_EXTRACTOR_ARGS
+YOUTUBE_YTDLP_EXTRACTOR_ARGS
+```
+
+Server-side YouTube downloading is disabled by default because it can keep
+mobile clients waiting for minutes on hosts that YouTube challenges. Enable it
+only for controlled debugging:
+
+```text
+MEDIA_RESOLVER_YOUTUBE_SERVER_DOWNLOAD_ENABLED=true
+```
 
 On Render, store the cookies file as a Secret File and set
 `MEDIA_RESOLVER_INSTAGRAM_COOKIES_FILE`,
