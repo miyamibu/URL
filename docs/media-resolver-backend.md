@@ -65,13 +65,15 @@ Recommended build command:
 pip install --upgrade -r requirements-media-resolver.txt
 ```
 
-For Instagram posts that are not accessible anonymously, configure a Netscape
-cookies file as a host secret and point one of these environment variables to
-that mounted file path:
+For Instagram or YouTube posts that are not accessible anonymously, configure a
+Netscape cookies file as a host secret and point one of these environment
+variables to that mounted file path:
 
 ```text
 MEDIA_RESOLVER_INSTAGRAM_COOKIES_FILE
 INSTAGRAM_YTDLP_COOKIES_FILE
+MEDIA_RESOLVER_YOUTUBE_COOKIES_FILE
+YOUTUBE_YTDLP_COOKIES_FILE
 MEDIA_RESOLVER_YTDLP_COOKIES_FILE
 YT_DLP_COOKIES_FILE
 ```
@@ -79,7 +81,22 @@ YT_DLP_COOKIES_FILE
 Do not commit cookies or account secrets to the repository.
 
 On Render, store the cookies file as a Secret File and set
-`MEDIA_RESOLVER_INSTAGRAM_COOKIES_FILE` to that mounted file path.
+`MEDIA_RESOLVER_INSTAGRAM_COOKIES_FILE`,
+`MEDIA_RESOLVER_YOUTUBE_COOKIES_FILE`, or the shared
+`MEDIA_RESOLVER_YTDLP_COOKIES_FILE` to that mounted file path.
+
+If Secret Files are awkward in the host UI, store the Netscape cookies file
+contents in a secret environment variable instead. The backend writes the secret
+value to a runtime-only file under `/tmp` before passing it to `yt-dlp`.
+
+```text
+MEDIA_RESOLVER_INSTAGRAM_COOKIES
+INSTAGRAM_YTDLP_COOKIES
+MEDIA_RESOLVER_YOUTUBE_COOKIES
+YOUTUBE_YTDLP_COOKIES
+MEDIA_RESOLVER_YTDLP_COOKIES
+YT_DLP_COOKIES
+```
 
 ## Done When
 
