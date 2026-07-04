@@ -1099,4 +1099,159 @@ class MigrationDedupTest {
         helper.close()
         context.deleteDatabase(dbName)
     }
+
+    @Test
+    fun migration_18_20_preservesEntriesAndCreatesMediaTables() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val dbName = "migration-18-20.db"
+        context.deleteDatabase(dbName)
+        val helper = createPostPlanHelper(context, dbName, includePendingDeleteOriginState = false)
+        val db = helper.writableDatabase
+        insertPostPlanEntry(db)
+
+        AppDatabase.MIGRATION_18_20.migrate(db)
+
+        db.query("SELECT COUNT(*) FROM url_entries WHERE normalizedUrl = 'https://example.com/media'").use {
+            it.moveToFirst()
+            assertEquals(1, it.getInt(0))
+        }
+        assertTrue(hasTable(db, "video_assets"))
+        assertTrue(hasTable(db, "video_downloads"))
+
+        helper.close()
+        context.deleteDatabase(dbName)
+    }
+
+    @Test
+    fun migration_19_20_dropsPostPlanColumnWithoutDeletingEntries() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val dbName = "migration-19-20.db"
+        context.deleteDatabase(dbName)
+        val helper = createPostPlanHelper(context, dbName, includePendingDeleteOriginState = true)
+        val db = helper.writableDatabase
+        insertPostPlanEntry(db)
+
+        AppDatabase.MIGRATION_19_20.migrate(db)
+
+        db.query("SELECT COUNT(*) FROM url_entries WHERE normalizedUrl = 'https://example.com/media'").use {
+            it.moveToFirst()
+            assertEquals(1, it.getInt(0))
+        }
+        assertTrue(!hasColumn(db, "url_entries", "pendingDeleteOriginState"))
+        assertTrue(hasTable(db, "video_assets"))
+        assertTrue(hasTable(db, "video_downloads"))
+
+        helper.close()
+        context.deleteDatabase(dbName)
+    }
+
+    private fun createPostPlanHelper(
+        context: Context,
+        dbName: String,
+        includePendingDeleteOriginState: Boolean,
+    ): SupportSQLiteOpenHelper {
+        return FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(dbName)
+                .callback(
+                    object : SupportSQLiteOpenHelper.Callback(if (includePendingDeleteOriginState) 19 else 18) {
+                        override fun onCreate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                            val extraColumn = if (includePendingDeleteOriginState) {
+                                ", pendingDeleteOriginState TEXT"
+                            } else {
+                                ""
+                            }
+                            db.execSQL(
+                                """
+                                CREATE TABLE IF NOT EXISTS url_entries (
+                                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                    originalUrl TEXT NOT NULL,
+                                    normalizedUrl TEXT NOT NULL,
+                                    displayUrl TEXT NOT NULL,
+                                    openUrl TEXT NOT NULL,
+                                    normalizedHost TEXT NOT NULL,
+                                    rawSourceHost TEXT NOT NULL,
+                                    collectionId INTEGER NOT NULL,
+                                    serviceType TEXT NOT NULL,
+                                    contentContext TEXT NOT NULL,
+                                    userTitle TEXT,
+                                    fetchedTitle TEXT,
+                                    fetchedAuthorName TEXT,
+                                    fetchedBody TEXT,
+                                    fetchedBodyKind TEXT,
+                                    bodySummary TEXT,
+                                    description TEXT,
+                                    memo TEXT NOT NULL,
+                                    thumbnailUrl TEXT,
+                                    badgeImageUrl TEXT,
+                                    canonicalId TEXT,
+                                    userLabelId INTEGER,
+                                    localProvenanceCount INTEGER NOT NULL,
+                                    sharedReferenceCount INTEGER NOT NULL,
+                                    metadataState TEXT NOT NULL,
+                                    metadataError TEXT,
+                                    metadataRequestedAt INTEGER,
+                                    metadataFetchedAt INTEGER,
+                                    recordState TEXT NOT NULL,
+                                    createdAt INTEGER NOT NULL,
+                                    updatedAt INTEGER NOT NULL,
+                                    archivedAt INTEGER,
+                                    pendingDeletionUntil INTEGER
+                                    $extraColumn
+                                )
+                                """.trimIndent(),
+                            )
+                        }
+
+                        override fun onUpgrade(
+                            db: androidx.sqlite.db.SupportSQLiteDatabase,
+                            oldVersion: Int,
+                            newVersion: Int,
+                        ) = Unit
+                    },
+                )
+                .build(),
+        )
+    }
+
+    private fun insertPostPlanEntry(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            INSERT INTO url_entries (
+                originalUrl, normalizedUrl, displayUrl, openUrl, normalizedHost, rawSourceHost,
+                collectionId, serviceType, contentContext, memo, localProvenanceCount,
+                sharedReferenceCount, metadataState, recordState, createdAt, updatedAt
+            ) VALUES (
+                'https://example.com/media', 'https://example.com/media', 'example.com/media',
+                'https://example.com/media', 'example.com', 'example.com', 1, 'WEB', 'POST',
+                '', 1, 0, 'READY', 'ACTIVE', 100, 200
+            )
+            """.trimIndent(),
+        )
+    }
+
+    private fun hasTable(db: androidx.sqlite.db.SupportSQLiteDatabase, tableName: String): Boolean {
+        return db.query(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+            arrayOf(tableName),
+        ).use { cursor -> cursor.moveToFirst() }
+    }
+
+    private fun hasColumn(
+        db: androidx.sqlite.db.SupportSQLiteDatabase,
+        tableName: String,
+        columnName: String,
+    ): Boolean {
+        return db.query("PRAGMA table_info(`$tableName`)").use { cursor ->
+            val nameIndex = cursor.getColumnIndex("name")
+            var found = false
+            while (cursor.moveToNext()) {
+                if (cursor.getString(nameIndex) == columnName) {
+                    found = true
+                    break
+                }
+            }
+            found
+        }
+    }
 }

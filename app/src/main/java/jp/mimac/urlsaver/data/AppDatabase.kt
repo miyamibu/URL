@@ -21,8 +21,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         SharedTagGroupTagEntity::class,
         SharedTagSyncOutboxEntity::class,
         SharedTagSyncStateEntity::class,
+        VideoAssetEntity::class,
+        VideoDownloadEntity::class,
     ],
-    version = 17,
+    version = 20,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -32,6 +34,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun tagDao(): TagDao
     abstract fun userLabelDao(): UserLabelDao
     abstract fun sharedTagSyncDao(): SharedTagSyncDao
+    abstract fun videoAssetDao(): VideoAssetDao
+    abstract fun videoDownloadDao(): VideoDownloadDao
 
     companion object {
         fun create(context: Context): AppDatabase {
@@ -53,8 +57,9 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_14_15,
                     MIGRATION_15_16,
                     MIGRATION_16_17,
-                    MIGRATION_18_17,
-                    MIGRATION_19_17,
+                    MIGRATION_17_18,
+                    MIGRATION_18_20,
+                    MIGRATION_19_20,
                 )
                 .addCallback(
                     object : Callback() {
@@ -391,20 +396,90 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        val MIGRATION_18_17 = object : Migration(18, 17) {
+        val MIGRATION_17_18 = object : Migration(17, 18) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                downgradePostPlanSchemaTo17(db)
+                ensureMediaTables(db)
             }
         }
 
-        val MIGRATION_19_17 = object : Migration(19, 17) {
+        val MIGRATION_18_20 = object : Migration(18, 20) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                downgradePostPlanSchemaTo17(db)
+                ensureMediaTables(db)
+                dropPostPlanColumnsIfPresent(db)
             }
         }
 
-        private fun downgradePostPlanSchemaTo17(db: SupportSQLiteDatabase) {
+        val MIGRATION_19_20 = object : Migration(19, 20) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                ensureMediaTables(db)
+                dropPostPlanColumnsIfPresent(db)
+            }
+        }
+
+        private fun dropPostPlanColumnsIfPresent(db: SupportSQLiteDatabase) {
             dropColumnIfPresent(db, "url_entries", "pendingDeleteOriginState")
+        }
+
+        private fun ensureMediaTables(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS video_assets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    entryId INTEGER NOT NULL,
+                    provider TEXT NOT NULL,
+                    providerAssetId TEXT NOT NULL,
+                    sourceUrl TEXT NOT NULL,
+                    canonicalPostUrl TEXT,
+                    authorName TEXT,
+                    title TEXT,
+                    bodyText TEXT,
+                    thumbnailUrl TEXT,
+                    durationMs INTEGER,
+                    mediaType TEXT NOT NULL,
+                    hasVideo TEXT NOT NULL,
+                    resolveStatus TEXT NOT NULL,
+                    downloadUrl TEXT,
+                    requestHeadersJson TEXT,
+                    mimeType TEXT,
+                    qualityLabel TEXT,
+                    width INTEGER,
+                    height INTEGER,
+                    bitrate INTEGER,
+                    isPreferred INTEGER NOT NULL,
+                    checkedAt INTEGER NOT NULL,
+                    expiresAt INTEGER,
+                    errorReason TEXT,
+                    FOREIGN KEY(entryId) REFERENCES url_entries(id) ON UPDATE NO ACTION ON DELETE CASCADE
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS video_downloads (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    entryId INTEGER NOT NULL,
+                    videoAssetId INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    progress INTEGER NOT NULL,
+                    bytesDownloaded INTEGER,
+                    totalBytes INTEGER,
+                    localUri TEXT,
+                    fileName TEXT,
+                    startedAt INTEGER,
+                    savedAt INTEGER,
+                    errorMessage TEXT,
+                    FOREIGN KEY(entryId) REFERENCES url_entries(id) ON UPDATE NO ACTION ON DELETE CASCADE,
+                    FOREIGN KEY(videoAssetId) REFERENCES video_assets(id) ON UPDATE NO ACTION ON DELETE CASCADE
+                )
+                """.trimIndent(),
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_video_assets_entryId ON video_assets(entryId)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_video_assets_provider ON video_assets(provider)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_video_assets_resolveStatus ON video_assets(resolveStatus)")
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_video_assets_entryId_provider_providerAssetId ON video_assets(entryId, provider, providerAssetId)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_video_downloads_entryId ON video_downloads(entryId)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_video_downloads_videoAssetId ON video_downloads(videoAssetId)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_video_downloads_status ON video_downloads(status)")
         }
 
         private fun ensureSharedTagGroupTables(db: SupportSQLiteDatabase) {

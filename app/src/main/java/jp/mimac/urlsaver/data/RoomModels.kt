@@ -1,6 +1,7 @@
 package jp.mimac.urlsaver.data
 
 import androidx.room.Entity
+import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import jp.mimac.urlsaver.domain.ContentContext
@@ -87,4 +88,86 @@ data class MetadataUpdate(
     val canonicalId: String?,
     val normalizedHost: String?,
     val rawSourceHost: String?,
+)
+
+@Entity(
+    tableName = "video_assets",
+    indices = [
+        Index(value = ["entryId"]),
+        Index(value = ["provider"]),
+        Index(value = ["resolveStatus"]),
+        Index(value = ["entryId", "provider", "providerAssetId"], unique = true),
+    ],
+    foreignKeys = [
+        ForeignKey(
+            entity = UrlEntryEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["entryId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+)
+data class VideoAssetEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val entryId: Long,
+    val provider: String,
+    val providerAssetId: String,
+    val sourceUrl: String,
+    val canonicalPostUrl: String?,
+    val authorName: String?,
+    val title: String?,
+    val bodyText: String?,
+    val thumbnailUrl: String?,
+    val durationMs: Long?,
+    val mediaType: String,
+    val hasVideo: String,
+    val resolveStatus: String,
+    val downloadUrl: String?,
+    val requestHeadersJson: String?,
+    val mimeType: String?,
+    val qualityLabel: String?,
+    val width: Int?,
+    val height: Int?,
+    val bitrate: Int?,
+    val isPreferred: Boolean,
+    val checkedAt: Long,
+    val expiresAt: Long?,
+    val errorReason: String?,
+)
+
+@Entity(
+    tableName = "video_downloads",
+    indices = [
+        Index(value = ["entryId"]),
+        Index(value = ["videoAssetId"]),
+        Index(value = ["status"]),
+    ],
+    foreignKeys = [
+        ForeignKey(
+            entity = UrlEntryEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["entryId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+        ForeignKey(
+            entity = VideoAssetEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["videoAssetId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+)
+data class VideoDownloadEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val entryId: Long,
+    val videoAssetId: Long,
+    val status: String,
+    val progress: Int,
+    val bytesDownloaded: Long?,
+    val totalBytes: Long?,
+    val localUri: String?,
+    val fileName: String?,
+    val startedAt: Long?,
+    val savedAt: Long?,
+    val errorMessage: String?,
 )
