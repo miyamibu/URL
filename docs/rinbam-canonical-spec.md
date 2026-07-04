@@ -95,8 +95,9 @@
 
 ## Local Tags And Shared Tags
 ### Adopted
-- ホーム上段は自作タグ行と共有タグ行を分ける。
-- 自作タグ作成ボタンは `+` のみ。
+- ホーム上段のサービスフィルタと自作タグは、iPhone と同じ 1 本の横スクロール行に並べる。
+- 自作タグ作成ボタンはその上段行の先頭に置き、`+` のみを表示する。
+- 共有タグ行は自作タグ/サービスフィルタ行とは別に表示する。
 - 共有タグ作成ボタンも `+` のみ。
 - 新規作成した自作タグは先頭に表示する。
 - 自作タグは長押しドラッグで並び替え可能にする。
@@ -104,6 +105,8 @@
 - 自作タグはダブルタップで名前変更できる。
 - タグ管理はタグ名、件数、ゴミ箱アイコンを中心にする。
 - タグ管理でリンク、JSON、文字付き `削除` を出さない。
+- タグ詳細/共有タグ詳細の上段に Info/ビックリマーク系の説明アイコンを出さない。
+- 自作タグ詳細にリンク/JSON共有導線を出さない。
 - ゴミ箱アイコン押下時は確認ダイアログを出す。
 - タグ一覧/追加画面は空きスペースを埋める折り返しレイアウトにする。
 - 長いタグ名は省略してよいが、追加/削除などの操作ボタンは必ず表示する。
@@ -145,7 +148,7 @@
 - 保存済みメディアがある場合は `メディアを開く`。
 - 未保存で対象投稿の場合は `メディアを保存`。
 - 通常ページなど対象外では `メディアを保存` を出さない。
-- TikTok / Instagram / YouTube / X は動画、画像、複数画像を判別する。
+- TikTok / Instagram / YouTube は動画、画像、複数画像を判別する。
 - 複数画像投稿は複数画像として保存・表示する。
 - 動画投稿は動画として保存・再生/表示する。
 - YouTube 通常動画/Shorts も保存対象にする。
@@ -370,27 +373,29 @@
 - Android実機データはユーザーデータとして扱う。
 - DB schema 変更では保存済みURL、タグ、メモ、メディア情報を消さない migration を優先する。
 - schema 変更時は Room schema JSON と migration テスト/起動確認を更新する。
-- テキストカード導入時は `normalizedUrl` 前提を壊さない別種別設計にする。
+- テキストカードは別テーブルではなく、`https://text.rinbam.local/note/{sha256(body)}` の内部キーで既存カード基盤と共存する。
 - URLカードの duplicate key は引き続き `normalizedUrl`。
 - テキストカードの duplicate key は本文完全一致。
+- メディア保存 tables は `video_assets` / `video_downloads` を正式採用する。
+- Android DB は下げ方向 migration を正規ルートにしない。現在の 17/18/19 系実機データは次の正規 schema 20 へ保存型 migration で集約する。
 
 ### Requires Design
-- メディア保存 tables と現在の schema 17/18/19 保護 migration の統合方針。
-- テキストカードの DB モデルと URLカードとの共存方法。
+- なし。未実装/外部未検証は `docs/qa/rinbam_canonical_story_status.*` の `status_code` / `remaining_gate` で追跡する。
 
 ## Backend And Media Resolver
 ### Adopted
-- TikTok / Instagram / YouTube / X の投稿種別を判別し、動画/画像/複数画像を保存できるようにする。
+- TikTok / Instagram / YouTube の投稿種別を判別し、動画/画像/複数画像を保存できるようにする。
 - 外部サービス制限で失敗した場合も `できませんでした` で終わらせず、認証付き resolver、別方式、再試行へつなげる。
 - Render デプロイ前に対象 branch と commit を確認する。
 - 本番 URL の `/health` と代表 `/resolve` を確認する。
 
 ### Known Risk
-- TikTok / Instagram / YouTube / X はログイン要求、地域制限、非公開投稿、期限切れURL、規約変更で失敗し得る。
+- TikTok / Instagram / YouTube はログイン要求、地域制限、非公開投稿、期限切れURL、規約変更で失敗し得る。
 - `絶対保存できる` は product goal とし、実装上は検証対象URLで成功するまで改善ループする。
 
 ## Adopted Rejection List
 - ホーム上部の Info/ビックリマーク系アイコン。
+- タグ詳細/共有タグ詳細の上段 Info/ビックリマーク系アイコン。
 - カード通常タップで外部URLを直接開く。
 - タイトルとサービスアイコンで詳細/外部URLを分ける操作。
 - 自作タグがあるカードで保存時刻を上段表示すること。
@@ -407,12 +412,13 @@
 - 本当のバックアップ/復元。
 - AIによる要約、タグ候補、日付候補。
 - テキストから日時/場所/金額/名前を専用UI/専用DB列として抽出する機能。
-- Instagram/YouTube/X の認証付き resolver の具体方式。
+- Instagram/YouTube の認証付き resolver の具体方式。
 
 ## Verification Matrix
 | Area | Required Checks |
 | --- | --- |
 | Mobile UI contract | `python3 scripts/verify_mobile_ui_contract.py` |
+| Canonical QA tracker | `python3 scripts/verify_canonical_story_tracker.py`; `status_code=PASS` and `remaining_gate=none` only for fully closed rows |
 | Android UI/source | `./gradlew assembleDebug` |
 | Android logic/DB | `./gradlew testDebugUnitTest` |
 | Android lint when broad UI changes | `./gradlew lintDebug` |

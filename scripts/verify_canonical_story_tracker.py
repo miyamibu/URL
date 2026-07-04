@@ -27,6 +27,8 @@ EXPECTED_COLUMNS = [
     "validation_method",
     "production_equivalent_check",
     "status",
+    "status_code",
+    "remaining_gate",
     "first_test_result",
     "documented_errors",
     "fix_status",
@@ -45,7 +47,19 @@ def read_csv_rows(path: Path) -> list[list[str]]:
         return list(csv.reader(handle))
 
 
+def read_shared_strings(zip_file: ZipFile) -> list[str]:
+    if "xl/sharedStrings.xml" not in zip_file.namelist():
+        return []
+    root = ET.fromstring(zip_file.read("xl/sharedStrings.xml"))
+    values: list[str] = []
+    for item in root.findall("m:si", SPREADSHEET_NS):
+        texts = [text_el.text or "" for text_el in item.findall(".//m:t", SPREADSHEET_NS)]
+        values.append("".join(texts))
+    return values
+
+
 def read_inline_sheet(zip_file: ZipFile, sheet_path: str) -> list[list[str]]:
+    shared_strings = read_shared_strings(zip_file)
     root = ET.fromstring(zip_file.read(sheet_path))
     rows: list[list[str]] = []
     for row_el in root.findall(".//m:sheetData/m:row", SPREADSHEET_NS):
@@ -56,7 +70,11 @@ def read_inline_sheet(zip_file: ZipFile, sheet_path: str) -> list[list[str]]:
             if inline_text is not None:
                 values.append(inline_text.text or "")
             elif value_text is not None:
-                values.append(value_text.text or "")
+                raw_value = value_text.text or ""
+                if cell.get("t") == "s":
+                    values.append(shared_strings[int(raw_value)])
+                else:
+                    values.append(raw_value)
             else:
                 values.append("")
         rows.append(values)
@@ -112,6 +130,33 @@ def expected_gate_rows(rows: list[dict[str, str]]) -> list[list[str]]:
             for marker in ["未実行", "未検証", "CONNECTED_TEST_GAP", "connected instrumentation gap"]
         )
 
+    if "remaining_gate" in rows[0]:
+        gate_names = [
+            "physical_android",
+            "physical_iphone",
+            "render_media",
+            "supabase_auth",
+            "store_console",
+            "resend_live",
+            "public_web",
+            "design_required",
+        ]
+        output: list[list[str]] = [["remaining_gate", "count", "story_ids"]]
+        for gate_name in gate_names:
+            story_ids = []
+            for row in rows:
+                if row.get("story_id") == "ES-001":
+                    continue
+                gates_for_row = {
+                    gate.strip()
+                    for gate in row.get("remaining_gate", "").split(";")
+                    if gate.strip() and gate.strip() != "none"
+                }
+                if gate_name in gates_for_row:
+                    story_ids.append(row["story_id"])
+            output.append([gate_name, str(len(story_ids)), ",".join(story_ids)])
+        return output
+
     gates = [
         ("physical_Android", physical_android),
         ("physical_iPhone", physical_iphone),
@@ -132,11 +177,11 @@ def expected_gate_rows(rows: list[dict[str, str]]) -> list[list[str]]:
 
 
 def expected_summary_rows(rows: list[dict[str, str]]) -> list[list[str]]:
-    status_counts = Counter(row.get("status", "") for row in rows)
-    summary = [["status", "count"]]
+    status_column = "status_code" if "status_code" in rows[0] else "status"
+    status_counts = Counter(row.get(status_column, "") for row in rows)
+    summary = [[status_column, "count"]]
     for status, count in sorted(status_counts.items()):
         summary.append([status, str(count)])
-    summary.append([])
     summary.extend(expected_gate_rows(rows))
     return summary
 
