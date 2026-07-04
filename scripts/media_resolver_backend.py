@@ -15,6 +15,7 @@ import mimetypes
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -37,6 +38,14 @@ def _env_value(*names: str) -> str | None:
         value = os.environ.get(name)
         if value and value.strip():
             return value.strip()
+    return None
+
+
+def _env_secret_content(*names: str) -> str | None:
+    for name in names:
+        value = os.environ.get(name)
+        if value and value.strip():
+            return value
     return None
 
 
@@ -162,8 +171,30 @@ def _yt_dlp_cookie_options(provider: str) -> dict:
     if cookie_file:
         path = pathlib.Path(cookie_file).expanduser()
         if path.is_file():
-            return {"cookiefile": str(path)}
+            runtime_path = _runtime_cookie_path(f"file:{path}")
+            if not runtime_path.exists() or runtime_path.stat().st_mtime < path.stat().st_mtime:
+                shutil.copyfile(path, runtime_path)
+            return {"cookiefile": str(runtime_path)}
+    cookie_content = _env_secret_content(
+        f"MEDIA_RESOLVER_{provider_key}_COOKIES",
+        f"{provider_key}_YTDLP_COOKIES",
+        "MEDIA_RESOLVER_YTDLP_COOKIES",
+        "YT_DLP_COOKIES",
+    )
+    if cookie_content:
+        runtime_path = _runtime_cookie_path(
+            f"content:{provider}:{hashlib.sha256(cookie_content.encode('utf-8')).hexdigest()}"
+        )
+        if not runtime_path.exists() or runtime_path.read_text(encoding="utf-8", errors="replace") != cookie_content:
+            runtime_path.write_text(cookie_content, encoding="utf-8")
+        return {"cookiefile": str(runtime_path)}
     return {}
+
+
+def _runtime_cookie_path(key: str) -> pathlib.Path:
+    writable_dir = pathlib.Path(os.environ.get("MEDIA_RESOLVER_COOKIES_RUNTIME_DIR", "/tmp/rinbam-media-resolver-cookies"))
+    writable_dir.mkdir(parents=True, exist_ok=True)
+    return writable_dir / f"{hashlib.sha256(key.encode('utf-8')).hexdigest()[:16]}.txt"
 
 
 def _media_type(path: pathlib.Path) -> str:
