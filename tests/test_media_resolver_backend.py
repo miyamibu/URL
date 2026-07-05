@@ -163,6 +163,69 @@ class FormatSelectionTest(unittest.TestCase):
         self.assertEqual(args, ["--extractor-args", "youtube:po_token=token-value;player_client=ios"])
 
 
+class YouTubeDelegateTest(unittest.TestCase):
+    def test_youtube_resolve_uses_delegate_when_configured(self):
+        resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://render.example.test")
+        response = mock.Mock()
+        response.__enter__ = mock.Mock(return_value=response)
+        response.__exit__ = mock.Mock(return_value=None)
+        response.read.return_value = (
+            b'{"ok": true, "provider": "youtube", "assets": '
+            b'[{"mediaType": "VIDEO", "downloadUrl": "https://railway.example.test/proxy/abc"}]}'
+        )
+
+        with mock.patch.dict(
+            os.environ,
+            {"MEDIA_RESOLVER_YOUTUBE_DELEGATE_URL": "https://railway.example.test/"},
+            clear=True,
+        ), mock.patch.object(media_resolver_backend.urllib.request, "urlopen", return_value=response) as urlopen:
+            result = resolver.resolve("https://youtu.be/abc123", "youtube")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["provider"], "youtube")
+        self.assertEqual(result["assets"][0]["mediaType"], "VIDEO")
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, "https://railway.example.test/resolve")
+        self.assertEqual(
+            request.get_header("X-rinbam-resolver-hop"),
+            media_resolver_backend.YOUTUBE_DELEGATE_HEADER_VALUE,
+        )
+
+    def test_youtube_delegate_is_skipped_when_loop_guard_is_disabled(self):
+        resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://render.example.test")
+        with mock.patch.dict(
+            os.environ,
+            {"MEDIA_RESOLVER_YOUTUBE_DELEGATE_URL": "https://railway.example.test"},
+            clear=True,
+        ), mock.patch.object(media_resolver_backend, "_load_tools", return_value=(mock.Mock(), None)), mock.patch.object(
+            resolver, "_resolve_youtube_direct_asset", return_value=(None, "no formats")
+        ), mock.patch.object(
+            media_resolver_backend.urllib.request, "urlopen"
+        ) as urlopen:
+            result = resolver.resolve("https://youtu.be/abc123", "youtube", allow_delegate=False)
+
+        urlopen.assert_not_called()
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["provider"], "youtube")
+
+    def test_youtube_delegate_is_skipped_when_host_matches_current_resolver(self):
+        resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://render.example.test")
+        with mock.patch.dict(
+            os.environ,
+            {"MEDIA_RESOLVER_YOUTUBE_DELEGATE_URL": "https://render.example.test"},
+            clear=True,
+        ), mock.patch.object(media_resolver_backend, "_load_tools", return_value=(mock.Mock(), None)), mock.patch.object(
+            resolver, "_resolve_youtube_direct_asset", return_value=(None, "no formats")
+        ), mock.patch.object(
+            media_resolver_backend.urllib.request, "urlopen"
+        ) as urlopen:
+            result = resolver.resolve("https://youtu.be/abc123", "youtube")
+
+        urlopen.assert_not_called()
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["provider"], "youtube")
+
+
 class YouTubeDirectResultTest(unittest.TestCase):
     def setUp(self):
         media_resolver_backend.DIRECT_MEDIA_PROXIES.clear()

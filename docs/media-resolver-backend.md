@@ -53,6 +53,9 @@ Use a server-style host such as Render or Railway.
 For Render Blueprint deploys, `render.yaml` defines the service, build command,
 start command, and `/health` check for `rinbam-media-resolver`.
 
+For Railway deploys, `railway.json` uses the same build and start commands. The
+script reads Railway's `PORT` and `RAILWAY_PUBLIC_DOMAIN` automatically.
+
 Recommended start command:
 
 ```bash
@@ -83,6 +86,21 @@ YT_DLP_COOKIES_FILE
 ```
 
 Do not commit cookies or account secrets to the repository.
+
+## YouTube Delegate Host
+
+If a host can resolve Instagram/TikTok but YouTube is blocked by that host's
+egress or HTTP fingerprint, keep the app-facing backend URL on the existing
+host and delegate only YouTube to a separate resolver host:
+
+```text
+MEDIA_RESOLVER_YOUTUBE_DELEGATE_URL=https://your-youtube-resolver.example.com
+```
+
+Set this variable only on the app-facing host, such as Render. Do not set it on
+the YouTube resolver host itself. Requests forwarded by the backend include an
+internal loop-guard header so an accidental recursive configuration does not
+delegate indefinitely.
 
 `GET /health` intentionally reports only safe cookie diagnostics:
 

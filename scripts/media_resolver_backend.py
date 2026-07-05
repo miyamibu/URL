@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -34,6 +35,8 @@ SUPPORTED_HOST_RE = re.compile(
 )
 DIRECT_MEDIA_PROXIES: dict[str, dict[str, str | float]] = {}
 DIRECT_MEDIA_PROXY_TTL_SECONDS = 10 * 60
+YOUTUBE_DELEGATE_HEADER = "X-Rinbam-Resolver-Hop"
+YOUTUBE_DELEGATE_HEADER_VALUE = "youtube-delegate"
 
 
 def _env_value(*names: str) -> str | None:
@@ -64,6 +67,22 @@ def _public_base_url(host: str, port: int, explicit: str | None) -> str:
             return railway_domain.rstrip("/")
         return f"https://{railway_domain.rstrip('/')}"
     return f"http://{host}:{port}"
+
+
+def _youtube_delegate_url() -> str | None:
+    value = _env_value("MEDIA_RESOLVER_YOUTUBE_DELEGATE_URL")
+    if not value:
+        return None
+    return value.rstrip("/")
+
+
+def _safe_url_host(value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        return (urlparse(value).hostname or "").lower() or None
+    except Exception:
+        return None
 
 
 def _safe_id(value: str) -> str:
@@ -456,11 +475,15 @@ class MediaResolver:
         self.public_base_url = public_base_url.rstrip("/")
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
-    def resolve(self, url: str, service_type: str | None) -> dict:
+    def resolve(self, url: str, service_type: str | None, allow_delegate: bool = True) -> dict:
         if not _is_supported_url(url):
             return {"ok": False, "error": "UNSUPPORTED_URL", "assets": []}
 
         provider = self._provider(url, service_type)
+        if provider == "youtube" and allow_delegate:
+            delegated = self._resolve_youtube_delegate(url)
+            if delegated is not None:
+                return delegated
         if provider == "tiktok":
             tiktok_assets = self._resolve_tiktok_tikwm(url)
             if tiktok_assets:
@@ -1381,6 +1404,41 @@ class MediaResolver:
             return "x"
         return "web"
 
+    def _resolve_youtube_delegate(self, url: str) -> dict | None:
+        delegate_base = _youtube_delegate_url()
+        if not delegate_base:
+            return None
+        if _safe_url_host(delegate_base) == _safe_url_host(self.public_base_url):
+            _safe_log("youtube delegate ignored because it points to the current resolver host")
+            return None
+
+        endpoint = f"{delegate_base}/resolve"
+        body = json.dumps({"url": url, "serviceType": "youtube"}, ensure_ascii=False).encode("utf-8")
+        request = urllib.request.Request(
+            endpoint,
+            data=body,
+            headers={
+                "Content-Type": "application/json; charset=utf-8",
+                "Accept": "application/json",
+                YOUTUBE_DELEGATE_HEADER: YOUTUBE_DELEGATE_HEADER_VALUE,
+            },
+            method="POST",
+        )
+        timeout = int(os.environ.get("MEDIA_RESOLVER_YOUTUBE_DELEGATE_TIMEOUT_SECONDS", "70"))
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return json.loads(response.read().decode("utf-8", "replace"))
+        except urllib.error.HTTPError as exc:
+            try:
+                payload = json.loads(exc.read().decode("utf-8", "replace"))
+                if isinstance(payload, dict):
+                    return payload
+            except Exception:
+                pass
+            return _resolver_error("youtube", RuntimeError(f"YouTube delegate returned HTTP {exc.code}"))
+        except Exception as exc:
+            return _resolver_error("youtube", RuntimeError(f"YouTube delegate failed: {exc}"))
+
 
 class Handler(BaseHTTPRequestHandler):
     resolver: MediaResolver
@@ -1407,6 +1465,8 @@ class Handler(BaseHTTPRequestHandler):
                     "poTokenConfigured": bool(_env_value("MEDIA_RESOLVER_YOUTUBE_PO_TOKEN", "YOUTUBE_YTDLP_PO_TOKEN")),
                     "extractorArgsConfigured": bool(_env_value("MEDIA_RESOLVER_YOUTUBE_EXTRACTOR_ARGS", "YOUTUBE_YTDLP_EXTRACTOR_ARGS")),
                     "serverDownloadEnabled": os.environ.get("MEDIA_RESOLVER_YOUTUBE_SERVER_DOWNLOAD_ENABLED", "").lower() in {"1", "true", "yes"},
+                    "delegateConfigured": bool(_youtube_delegate_url()),
+                    "delegateHost": _safe_url_host(_youtube_delegate_url()),
                 },
                 "time": int(time.time()),
             })
@@ -1466,7 +1526,8 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
             url = str(payload.get("url") or "").strip()
             service_type = payload.get("serviceType") or payload.get("provider")
-            result = self.resolver.resolve(url, str(service_type) if service_type else None)
+            allow_delegate = self.headers.get(YOUTUBE_DELEGATE_HEADER) != YOUTUBE_DELEGATE_HEADER_VALUE
+            result = self.resolver.resolve(url, str(service_type) if service_type else None, allow_delegate=allow_delegate)
             status = HTTPStatus.OK if result.get("ok") else HTTPStatus.BAD_REQUEST
             self._json(result, status=status)
         except Exception as exc:
