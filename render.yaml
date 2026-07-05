@@ -13,3 +13,5 @@ services:
         value: /tmp/rinbam-media-cache
       - key: MEDIA_RESOLVER_YOUTUBE_CLI_TIMEOUT_SECONDS
         value: "55"
+      - key: MEDIA_RESOLVER_YOUTUBE_DELEGATE_URL
+        value: https://rinbam-youtube-resolver-production.up.railway.app
