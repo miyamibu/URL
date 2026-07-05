@@ -1,0 +1,12 @@
+revoke execute on function public.create_shared_tag_group(text) from public, anon;
+revoke execute on function public.list_shared_tag_groups() from public, anon;
+revoke execute on function public.create_shared_tag_group_invite(uuid, text) from public, anon;
+revoke execute on function public.create_shared_tag_in_group(uuid, text) from public, anon;
+revoke execute on function public.accept_shared_tag_group_invite(text) from public, anon;
+revoke execute on function public.preview_shared_tag_group_invite(text) from public;
+grant execute on function public.create_shared_tag_group(text) to authenticated;
+grant execute on function public.list_shared_tag_groups() to authenticated;
+grant execute on function public.create_shared_tag_group_invite(uuid, text) to authenticated;
+grant execute on function public.create_shared_tag_in_group(uuid, text) to authenticated;
+grant execute on function public.accept_shared_tag_group_invite(text) to authenticated;
+grant execute on function public.preview_shared_tag_group_invite(text) to anon, authenticated;
