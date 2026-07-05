@@ -1132,6 +1132,10 @@ class MediaResolver:
             section = decoded.split("edge_sidecar_to_children", 1)[1]
         image_urls = [] if kind == "reel" else self._instagram_graph_urls(section, "GraphImage", "display_url")
         video_urls = self._instagram_graph_urls(section, "GraphVideo", "video_url")
+        if not image_urls and kind != "reel":
+            image_urls = self._instagram_embed_image_urls(section)
+        if not video_urls:
+            video_urls = self._instagram_embed_video_urls(section)
         assets = [
             self._direct_asset(
                 provider="instagram",
@@ -1175,6 +1179,70 @@ class MediaResolver:
             if url_match and _is_instagram_media_url(url_match.group(1)):
                 results.append(url_match.group(1))
         return results
+
+    @staticmethod
+    def _instagram_embed_image_urls(html: str) -> list[str]:
+        candidates: dict[str, tuple[int, str]] = {}
+        for match in re.finditer(r'https:(?:\\?/\\?/|//)[^"<> ]+?\.jpg[^"<> ]*', html):
+            media_url = (
+                match.group(0)
+                .replace(r"\/", "/")
+                .replace(r"\u0026", "&")
+                .replace("\\u00253D", "%3D")
+                .replace("&amp;", "&")
+            )
+            if not _is_instagram_media_url(media_url):
+                continue
+            if "t51.2885-19" in media_url or "profile_pic" in media_url:
+                continue
+            if "/v/t51." not in media_url:
+                continue
+            key = pathlib.PurePosixPath(urlparse(media_url).path).name
+            if not key:
+                continue
+            score = MediaResolver._instagram_image_score(media_url)
+            current = candidates.get(key)
+            if current is None or score > current[0]:
+                candidates[key] = (score, media_url)
+        return [item[1] for item in sorted(candidates.values(), key=lambda item: item[0], reverse=True)]
+
+    @staticmethod
+    def _instagram_embed_video_urls(html: str) -> list[str]:
+        results = []
+        for match in re.finditer(r'https:(?:\\?/\\?/|//)[^"<> ]+?\.mp4[^"<> ]*', html):
+            media_url = (
+                match.group(0)
+                .replace(r"\/", "/")
+                .replace(r"\u0026", "&")
+                .replace("&amp;", "&")
+            )
+            if _is_instagram_media_url(media_url):
+                results.append(media_url)
+        return _stable_unique(results)
+
+    @staticmethod
+    def _instagram_image_score(media_url: str) -> int:
+        score = 0
+        for token, value in (
+            ("p1080", 100),
+            ("s1080", 100),
+            ("p720", 80),
+            ("s750", 75),
+            ("p640", 65),
+            ("s640", 65),
+            ("p480", 50),
+            ("s480", 50),
+            ("p320", 30),
+            ("s320", 30),
+            ("p240", 20),
+            ("s240", 20),
+            ("s150", 10),
+        ):
+            if token in media_url:
+                score = max(score, value)
+        if "dst-jpg_e35_tt" in media_url:
+            score += 5
+        return score
 
     @staticmethod
     def _direct_asset(
