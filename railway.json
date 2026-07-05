@@ -2,7 +2,7 @@
   "$schema": "https://railway.com/railway.schema.json",
   "build": {
     "builder": "NIXPACKS",
-    "buildCommand": "DENO_INSTALL=$PWD/.deno python scripts/install_deno_for_nixpacks.py && python -m pip install --upgrade -r requirements-media-resolver.txt"
+    "buildCommand": "DENO_INSTALL=$PWD/.deno python scripts/install_deno_for_nixpacks.py && python -m ensurepip --upgrade && python -m pip install --upgrade -r requirements-media-resolver.txt"
   },
   "deploy": {
     "startCommand": "PATH=$PWD/.deno/bin:$PATH python scripts/media_resolver_backend.py",
