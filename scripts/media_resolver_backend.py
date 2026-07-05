@@ -181,23 +181,14 @@ def _yt_dlp_cookie_options(provider: str) -> dict:
         "MEDIA_RESOLVER_YTDLP_COOKIES",
         "YT_DLP_COOKIES",
     )
-    content_candidates = [
-        provider_cookie_content,
-        None if shared_cookie_file else shared_cookie_content,
-    ]
     file_candidates = [
-        None if provider_cookie_content else provider_cookie_file,
-        None if provider_cookie_content else shared_cookie_file,
+        provider_cookie_file,
+        shared_cookie_file,
     ]
-    for cookie_content in content_candidates:
-        if not cookie_content:
-            continue
-        writable_dir = pathlib.Path(os.environ.get("MEDIA_RESOLVER_COOKIES_RUNTIME_DIR", "/tmp/rinbam-media-resolver-cookies"))
-        writable_dir.mkdir(parents=True, exist_ok=True)
-        runtime_path = writable_dir / f"{hashlib.sha256(f'{provider}:{cookie_content}'.encode('utf-8')).hexdigest()[:16]}.txt"
-        if not runtime_path.exists() or runtime_path.read_text(encoding="utf-8", errors="replace") != cookie_content:
-            runtime_path.write_text(cookie_content, encoding="utf-8")
-        return {"cookiefile": str(runtime_path)}
+    content_candidates = [
+        None if provider_cookie_file else provider_cookie_content,
+        None if provider_cookie_file or shared_cookie_file else shared_cookie_content,
+    ]
     for cookie_file in file_candidates:
         if not cookie_file:
             continue
@@ -209,6 +200,15 @@ def _yt_dlp_cookie_options(provider: str) -> dict:
             if not runtime_path.exists() or runtime_path.read_bytes() != path.read_bytes():
                 shutil.copyfile(path, runtime_path)
             return {"cookiefile": str(runtime_path)}
+    for cookie_content in content_candidates:
+        if not cookie_content:
+            continue
+        writable_dir = pathlib.Path(os.environ.get("MEDIA_RESOLVER_COOKIES_RUNTIME_DIR", "/tmp/rinbam-media-resolver-cookies"))
+        writable_dir.mkdir(parents=True, exist_ok=True)
+        runtime_path = writable_dir / f"{hashlib.sha256(f'{provider}:{cookie_content}'.encode('utf-8')).hexdigest()[:16]}.txt"
+        if not runtime_path.exists() or runtime_path.read_text(encoding="utf-8", errors="replace") != cookie_content:
+            runtime_path.write_text(cookie_content, encoding="utf-8")
+        return {"cookiefile": str(runtime_path)}
     return {}
 
 
@@ -237,13 +237,13 @@ def _yt_dlp_cookie_status(provider: str) -> dict:
         "MEDIA_RESOLVER_YTDLP_COOKIES",
         "YT_DLP_COOKIES",
     )
-    content_candidates = [
-        provider_content,
-        None if shared_file else shared_content,
-    ]
     file_candidates = [
-        None if provider_content else provider_file,
-        None if provider_content else shared_file,
+        provider_file,
+        shared_file,
+    ]
+    content_candidates = [
+        None if provider_file else provider_content,
+        None if provider_file or shared_file else shared_content,
     ]
     configured_file = None
     configured_content = None
