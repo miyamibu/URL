@@ -425,7 +425,7 @@ def _youtube_impersonate_cli_args() -> list[str]:
     if target is None:
         target = "chrome"
     target = target.strip()
-    if not target:
+    if not target or target.lower() in {"0", "false", "none", "off"}:
         return []
     return ["--impersonate", target]
 
