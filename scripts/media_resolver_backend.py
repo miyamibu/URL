@@ -401,6 +401,16 @@ def _youtube_extractor_args_cli(player_client: str | None) -> list[str]:
     return ["--extractor-args", "youtube:" + ";".join(args)]
 
 
+def _youtube_impersonate_cli_args() -> list[str]:
+    target = _env_value("MEDIA_RESOLVER_YOUTUBE_IMPERSONATE", "YOUTUBE_YTDLP_IMPERSONATE")
+    if target is None:
+        target = "chrome"
+    target = target.strip()
+    if not target:
+        return []
+    return ["--impersonate", target]
+
+
 def _resolver_error(provider: str, exc: Exception) -> dict:
     message = str(exc)
     lowered = message.lower()
@@ -713,6 +723,7 @@ class MediaResolver:
             "--output",
             outtmpl,
             *_yt_dlp_cookie_cli_args("youtube"),
+            *_youtube_impersonate_cli_args(),
         ]
         if ffmpeg_location:
             base_command.extend(["--ffmpeg-location", ffmpeg_location])
@@ -889,6 +900,7 @@ class MediaResolver:
             "--format",
             "all",
             *_yt_dlp_cookie_cli_args("youtube"),
+            *_youtube_impersonate_cli_args(),
         ]
         client_variants = _youtube_client_variants()
         last_error = None
