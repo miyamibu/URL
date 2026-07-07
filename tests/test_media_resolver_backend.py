@@ -18,6 +18,16 @@ assert spec.loader is not None
 spec.loader.exec_module(media_resolver_backend)
 
 
+class SupportedUrlTest(unittest.TestCase):
+    def test_x_links_are_not_media_resolver_targets(self):
+        resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://example.test")
+
+        result = resolver.resolve("https://x.com/i/status/2061285320088523185", None)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "UNSUPPORTED_URL")
+
+
 class CookieOptionsTest(unittest.TestCase):
     def test_provider_specific_cookie_file_is_copied_to_runtime_path(self):
         with tempfile.TemporaryDirectory() as tmp:

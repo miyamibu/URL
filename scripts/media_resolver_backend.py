@@ -31,7 +31,7 @@ VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".webm"}
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic"}
 AUDIO_EXTENSIONS = {".m4a", ".mp3", ".aac", ".opus", ".ogg", ".wav"}
 SUPPORTED_HOST_RE = re.compile(
-    r"(^|\.)youtube\.com$|^youtu\.be$|(^|\.)instagram\.com$|(^|\.)tiktok\.com$|(^|\.)x\.com$|(^|\.)twitter\.com$"
+    r"(^|\.)youtube\.com$|^youtu\.be$|(^|\.)instagram\.com$|(^|\.)tiktok\.com$"
 )
 DIRECT_MEDIA_PROXIES: dict[str, dict[str, str | float]] = {}
 DIRECT_MEDIA_PROXY_TTL_SECONDS = 10 * 60
