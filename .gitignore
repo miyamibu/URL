@@ -19,8 +19,10 @@ artifacts/*classpath*.txt
 artifacts/device-backups/
 artifacts/device-verification/
 artifacts/recovery/
+artifacts/render-verification/
 artifacts/ui-review/2026-06-30/
 artifacts/tiktok-live/
+__pycache__/
 tmp_main.png
 
 # Web app generated/local outputs
