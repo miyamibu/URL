@@ -469,6 +469,25 @@ def _purge_expired_direct_proxies(now: float | None = None) -> None:
         DIRECT_MEDIA_PROXIES.pop(token, None)
 
 
+def _safe_proxy_headers(value: object) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    blocked = {"authorization", "cookie", "x-goog-visitor-id"}
+    result: dict[str, str] = {}
+    for raw_name, raw_value in value.items():
+        name = str(raw_name).strip()
+        lower_name = name.lower()
+        if not name or lower_name in blocked or "\n" in name or "\r" in name:
+            continue
+        if raw_value is None:
+            continue
+        string_value = str(raw_value).strip()
+        if not string_value or "\n" in string_value or "\r" in string_value:
+            continue
+        result[name] = string_value
+    return result
+
+
 class MediaResolver:
     def __init__(self, cache_dir: pathlib.Path, public_base_url: str) -> None:
         self.cache_dir = cache_dir
@@ -995,7 +1014,7 @@ class MediaResolver:
                         "thumbnailUrl": info.get("thumbnail"),
                         "durationMs": duration_ms,
                         "mediaType": media_type,
-                        "downloadUrl": self._direct_media_proxy_url(selected_url, mime_type),
+                        "downloadUrl": self._direct_media_proxy_url(selected_url, mime_type, info.get("http_headers")),
                         "mimeType": mime_type,
                         "qualityLabel": _quality_label(info, pathlib.Path(f"media.{ext}")),
                         "width": info.get("width"),
@@ -1026,7 +1045,7 @@ class MediaResolver:
                             "thumbnailUrl": info.get("thumbnail"),
                             "durationMs": duration_ms,
                             "mediaType": media_type,
-                            "downloadUrl": self._direct_media_proxy_url(selected_url, mime_type),
+                            "downloadUrl": self._direct_media_proxy_url(selected_url, mime_type, info.get("http_headers")),
                             "mimeType": mime_type,
                             "qualityLabel": _quality_label(info, pathlib.Path(f"media.{ext}")),
                             "width": info.get("width"),
@@ -1108,7 +1127,11 @@ class MediaResolver:
                     "thumbnailUrl": info.get("thumbnail"),
                     "durationMs": duration_ms,
                     "mediaType": "VIDEO",
-                    "downloadUrl": self._direct_media_proxy_url(selected["url"], mime_type),
+                    "downloadUrl": self._direct_media_proxy_url(
+                        selected["url"],
+                        mime_type,
+                        selected.get("http_headers") or info.get("http_headers"),
+                    ),
                     "mimeType": mime_type,
                     "qualityLabel": f"{selected.get('height')}p" if isinstance(selected.get("height"), int) else None,
                     "width": selected.get("width"),
@@ -1119,12 +1142,13 @@ class MediaResolver:
             ],
         }
 
-    def _direct_media_proxy_url(self, media_url: str, mime_type: str) -> str:
+    def _direct_media_proxy_url(self, media_url: str, mime_type: str, headers: object | None = None) -> str:
         _purge_expired_direct_proxies()
         token = secrets.token_urlsafe(18)
         DIRECT_MEDIA_PROXIES[token] = {
             "url": media_url,
             "mimeType": mime_type,
+            "headers": _safe_proxy_headers(headers),
             "expiresAt": time.time() + DIRECT_MEDIA_PROXY_TTL_SECONDS,
         }
         return f"{self.public_base_url}/proxy/{quote(token)}"
@@ -1496,6 +1520,13 @@ class Handler(BaseHTTPRequestHandler):
                 "User-Agent": "Mozilla/5.0",
                 "Accept": "*/*",
             }
+            stored_headers = item.get("headers") if item else None
+            if isinstance(stored_headers, dict):
+                headers.update({
+                    str(name): str(value)
+                    for name, value in stored_headers.items()
+                    if str(name).strip() and str(value).strip()
+                })
             incoming_range = self.headers.get("Range")
             if incoming_range:
                 headers["Range"] = incoming_range

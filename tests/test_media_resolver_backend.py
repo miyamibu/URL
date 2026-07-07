@@ -267,6 +267,11 @@ class YouTubeDirectResultTest(unittest.TestCase):
                 "acodec": "mp4a",
                 "title": "Video title",
                 "duration": 12,
+                "http_headers": {
+                    "User-Agent": "yt-dlp-user-agent",
+                    "Referer": "https://www.youtube.com/",
+                    "Cookie": "secret=value",
+                },
             },
             "https://youtu.be/abc123",
             "stable",
@@ -276,6 +281,10 @@ class YouTubeDirectResultTest(unittest.TestCase):
         asset = result["assets"][0]
         self.assertTrue(asset["downloadUrl"].startswith("https://example.test/proxy/"))
         self.assertEqual(len(media_resolver_backend.DIRECT_MEDIA_PROXIES), 1)
+        proxy_item = next(iter(media_resolver_backend.DIRECT_MEDIA_PROXIES.values()))
+        self.assertEqual(proxy_item["headers"]["User-Agent"], "yt-dlp-user-agent")
+        self.assertEqual(proxy_item["headers"]["Referer"], "https://www.youtube.com/")
+        self.assertNotIn("Cookie", proxy_item["headers"])
         self.assertEqual(asset["mediaType"], "VIDEO")
         self.assertEqual(asset["providerAssetId"], "abc123:direct:18")
 

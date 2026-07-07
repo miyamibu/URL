@@ -91,14 +91,7 @@ class DetailViewModel(
 
     fun onSaveVideoClicked() {
         viewModelScope.launch {
-            val assetIds = videoAssets.value
-                .filter { it.resolveStatus == "AVAILABLE" && !it.downloadUrl.isNullOrBlank() }
-                .map { it.id }
-            if (assetIds.isEmpty()) {
-                videoRepository.enqueueResolve(entryId, autoDownload = true)
-            } else {
-                videoRepository.enqueueDownloads(assetIds)
-            }
+            videoRepository.enqueueResolve(entryId, autoDownload = true)
         }
     }
 

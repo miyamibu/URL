@@ -46,7 +46,9 @@ class BackendVideoResolver(
         val assetsArray = objectValue.optJSONArray("assets")
         val assets = (0 until (assetsArray?.length() ?: 0)).mapNotNull { index ->
             val asset = assetsArray?.optJSONObject(index) ?: return@mapNotNull null
-            val downloadUrl = asset.optString("downloadUrl").takeIf { it.startsWith("http://") || it.startsWith("https://") }
+            val downloadUrl = asset.optString("downloadUrl")
+                .normalizeMediaUrl()
+                .takeIf { it.startsWith("http://") || it.startsWith("https://") }
                 ?: return@mapNotNull null
             val mediaType = asset.optString("mediaType").takeIf { it == "IMAGE" || it == "VIDEO" }
                 ?: if (downloadUrl.substringBefore('?').endsWith(".mp4", ignoreCase = true)) "VIDEO" else "IMAGE"
@@ -57,7 +59,7 @@ class BackendVideoResolver(
                 authorName = asset.optString("authorName").takeIf { it.isNotBlank() } ?: entry.fetchedAuthorName,
                 title = asset.optString("title").takeIf { it.isNotBlank() } ?: entry.fetchedTitle ?: entry.userTitle,
                 bodyText = entry.fetchedBody,
-                thumbnailUrl = asset.optString("thumbnailUrl").takeIf { it.isNotBlank() } ?: entry.thumbnailUrl,
+                thumbnailUrl = asset.optString("thumbnailUrl").normalizeMediaUrl().takeIf { it.isNotBlank() } ?: entry.thumbnailUrl,
                 durationMs = asset.optLong("durationMs").takeIf { it > 0 },
                 mediaType = mediaType,
                 downloadUrl = downloadUrl,
@@ -109,6 +111,10 @@ class BackendVideoResolver(
 
     private fun String.escapeJson(): String = replace("\\", "\\\\").replace("\"", "\\\"")
 
+}
+
+private fun String.normalizeMediaUrl(): String {
+    return replace("\\%", "%").trim()
 }
 
 internal fun mediaResolveErrorReason(error: String?, message: String?): String {
