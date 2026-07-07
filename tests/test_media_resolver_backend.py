@@ -373,6 +373,29 @@ class YouTubeDirectResultTest(unittest.TestCase):
         self.assertEqual(result["error"], "RESOLVE_FAILED")
         cli_download.assert_not_called()
 
+    def test_youtube_server_download_flag_prefers_cached_file_over_proxy(self):
+        cache_dir = pathlib.Path(tempfile.mkdtemp())
+        stable = media_resolver_backend._safe_id("https://youtu.be/abc123")
+        (cache_dir / f"{stable}.mp4").write_bytes(b"media")
+        resolver = media_resolver_backend.MediaResolver(cache_dir, "https://example.test")
+        ydl = mock.Mock()
+        ydl.__enter__ = mock.Mock(return_value=ydl)
+        ydl.__exit__ = mock.Mock(return_value=None)
+        ydl.extract_info.return_value = {"id": "abc123", "title": "Video title"}
+        yt_dlp = mock.Mock()
+        yt_dlp.YoutubeDL.return_value = ydl
+
+        with (
+            mock.patch.object(media_resolver_backend, "_load_tools", return_value=(yt_dlp, None)),
+            mock.patch.object(resolver, "_resolve_youtube_direct_asset") as direct_asset,
+            mock.patch.dict(os.environ, {"MEDIA_RESOLVER_YOUTUBE_SERVER_DOWNLOAD_ENABLED": "true"}, clear=True),
+        ):
+            result = resolver.resolve("https://youtu.be/abc123", "youtube")
+
+        direct_asset.assert_not_called()
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["assets"][0]["downloadUrl"].startswith("https://example.test/files/"))
+
 
 class HandlerTest(unittest.TestCase):
     def test_head_health_returns_ok_for_render_readiness(self):

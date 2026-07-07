@@ -521,12 +521,15 @@ class MediaResolver:
         yt_dlp, ffmpeg_location = _load_tools()
         stable = _safe_id(url)
         if provider == "youtube":
-            direct_result, direct_error = self._resolve_youtube_direct_asset(yt_dlp, url, stable)
-            if direct_result is not None:
-                return direct_result
-            if direct_error:
-                _safe_log(f"youtube direct resolver failed: {_truncate_log(direct_error)}")
-            if os.environ.get("MEDIA_RESOLVER_YOUTUBE_SERVER_DOWNLOAD_ENABLED", "").lower() not in {"1", "true", "yes"}:
+            server_download_enabled = os.environ.get("MEDIA_RESOLVER_YOUTUBE_SERVER_DOWNLOAD_ENABLED", "").lower() in {"1", "true", "yes"}
+            direct_error = None
+            if not server_download_enabled:
+                direct_result, direct_error = self._resolve_youtube_direct_asset(yt_dlp, url, stable)
+                if direct_result is not None:
+                    return direct_result
+                if direct_error:
+                    _safe_log(f"youtube direct resolver failed: {_truncate_log(direct_error)}")
+            if not server_download_enabled:
                 return _resolver_error(
                     provider,
                     RuntimeError(
