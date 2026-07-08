@@ -451,6 +451,17 @@ class InstagramOrderTest(unittest.TestCase):
         ])
         self.assertEqual([asset["isPreferred"] for asset in assets], [True, False, False])
 
+    def test_instagram_media_url_decodes_double_escaped_percent_sequences(self):
+        url = (
+            "https:\\/\\/scontent.cdninstagram.com\\/o1\\/v\\/t16\\/f2\\/video.mp4"
+            "?efg=abc\\u00253D\\u00253D&amp;ccb=17-1"
+        )
+
+        decoded = media_resolver_backend._decode_instagram_media_url(url)
+
+        self.assertEqual(decoded, "https://scontent.cdninstagram.com/o1/v/t16/f2/video.mp4?efg=abc%3D%3D&ccb=17-1")
+        self.assertNotIn("\\u0025", decoded)
+
 
 class HandlerTest(unittest.TestCase):
     def test_head_health_returns_ok_for_render_readiness(self):

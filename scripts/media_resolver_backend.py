@@ -145,6 +145,28 @@ def _is_instagram_media_url(value: str) -> bool:
         return False
 
 
+def _decode_instagram_media_url(value: str) -> str:
+    decoded = value.replace(r"\/", "/").replace("&amp;", "&")
+    for _ in range(2):
+        decoded = (
+            decoded
+            .replace(r"\\u002F", "/")
+            .replace(r"\u002F", "/")
+            .replace(r"\\u0026", "&")
+            .replace(r"\u0026", "&")
+            .replace(r"\\u0025", "%")
+            .replace(r"\u0025", "%")
+        )
+        try:
+            unescaped = decoded.encode("utf-8").decode("unicode_escape")
+        except Exception:
+            break
+        if unescaped == decoded:
+            break
+        decoded = unescaped
+    return decoded
+
+
 def _stable_unique(values: list[str]) -> list[str]:
     seen = set()
     result = []
@@ -1250,7 +1272,7 @@ class MediaResolver:
             url_match = re.search(rf'"{field}":"(https:[^"]+)"', chunk)
             if not url_match:
                 continue
-            media_url = url_match.group(1)
+            media_url = _decode_instagram_media_url(url_match.group(1))
             if not _is_instagram_media_url(media_url) or media_url in seen:
                 continue
             seen.add(media_url)
@@ -1265,13 +1287,7 @@ class MediaResolver:
         for match in re.finditer(r'https:(?:\\?/\\?/|//)[^"<> ]+?\.jpg[^"<> ]*', html):
             if not include_images:
                 continue
-            media_url = (
-                match.group(0)
-                .replace(r"\/", "/")
-                .replace(r"\u0026", "&")
-                .replace("\\u00253D", "%3D")
-                .replace("&amp;", "&")
-            )
+            media_url = _decode_instagram_media_url(match.group(0))
             if not _is_instagram_media_url(media_url):
                 continue
             if "t51.2885-19" in media_url or "profile_pic" in media_url:
@@ -1287,12 +1303,7 @@ class MediaResolver:
                 first_pos = current[0] if current is not None else match.start()
                 image_candidates[key] = (first_pos, score, media_url)
         for match in re.finditer(r'https:(?:\\?/\\?/|//)[^"<> ]+?\.mp4[^"<> ]*', html):
-            media_url = (
-                match.group(0)
-                .replace(r"\/", "/")
-                .replace(r"\u0026", "&")
-                .replace("&amp;", "&")
-            )
+            media_url = _decode_instagram_media_url(match.group(0))
             if _is_instagram_media_url(media_url) and media_url not in seen_videos:
                 seen_videos.add(media_url)
                 video_candidates.append((match.start(), media_url))
