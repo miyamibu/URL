@@ -396,6 +396,7 @@ final class ShareViewController: UIViewController {
         createTagField.returnKeyType = .done
         createTagField.setContentHuggingPriority(.required, for: .vertical)
         createTagField.setContentCompressionResistancePriority(.required, for: .vertical)
+        createTagField.resignFirstResponder()
 
         createTagButton.setTitle("＋", for: .normal)
         createTagButton.titleLabel?.font = .preferredFont(forTextStyle: .title2)
@@ -425,7 +426,6 @@ final class ShareViewController: UIViewController {
         if localTags.isEmpty {
             pickerMessageLabel.text = "タグがまだありません。必要なら作成できます。"
             pickerMessageLabel.isHidden = false
-            createTagField.becomeFirstResponder()
         }
         updatePickerLayoutHeight()
     }

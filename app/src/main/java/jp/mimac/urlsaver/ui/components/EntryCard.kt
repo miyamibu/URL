@@ -41,14 +41,13 @@ import jp.mimac.urlsaver.domain.EntryCardDisplayMode
 import jp.mimac.urlsaver.domain.MetadataState
 import jp.mimac.urlsaver.domain.ServiceType
 import jp.mimac.urlsaver.domain.UrlRules
-import jp.mimac.urlsaver.ui.formatTimestamp
 import jp.mimac.urlsaver.ui.metadataListStatusText
 import jp.mimac.urlsaver.ui.preferredDisplayTitle
 import jp.mimac.urlsaver.ui.serviceLabelForList
 import jp.mimac.urlsaver.ui.serviceTypeForUi
 import jp.mimac.urlsaver.ui.theme.OrbitTokens
-import java.time.ZoneId
 
+@Suppress("UNUSED_PARAMETER")
 @Composable
 fun EntryCard(
     entry: UrlEntryEntity,
@@ -171,15 +170,6 @@ fun EntryCard(
                                             )
                                         }
                                     }
-                                }
-                                Column(horizontalAlignment = Alignment.End) {
-                                    MetadataStatusDot(entry.metadataState)
-                                    Text(
-                                        text = "$timestampLabel ${formatTimestamp(timestampMillis, ZoneId.of("Asia/Tokyo"))}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(top = 10.dp),
-                                    )
                                 }
                             } else {
                                 EntryCardLocalTagFlow(

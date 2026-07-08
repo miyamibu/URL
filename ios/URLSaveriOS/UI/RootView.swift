@@ -248,7 +248,7 @@ struct RootView: View {
                                 onOpenArchive: { model.selectedTab = .archive },
                                 bottomSafeAreaInset: proxy.safeAreaInsets.bottom
                             )
-                            .offset(y: proxy.safeAreaInsets.bottom)
+                            .offset(y: proxy.safeAreaInsets.bottom + 4)
                         }
                     }
                     .navigationDestination(for: Int64.self) { entryID in
@@ -824,6 +824,13 @@ private struct MainScreen: View {
                 action: { displayMode = displayMode == .rich ? .compact : .rich }
             ),
         ]
+        buttons.append(
+            ScreenHeaderButton(
+                icon: "person.crop.circle",
+                accessibilityLabel: "プロフィール",
+                action: onOpenSharedTagCloud
+            )
+        )
         buttons.append(
             ScreenHeaderButton(
                 icon: "checkmark.square",

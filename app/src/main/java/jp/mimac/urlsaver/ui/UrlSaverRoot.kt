@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Matrix
+import android.graphics.BitmapFactory
 import android.graphics.SurfaceTexture
 import android.media.MediaPlayer
 import android.net.Uri
@@ -19,6 +20,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -50,6 +52,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -128,12 +131,12 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -1715,6 +1718,13 @@ private fun MainScreen(
                                     modifier = Modifier.size(MainTopBarActionIconSize),
                                 )
                             }
+                            IconButton(onClick = { showProfileSheet = true }) {
+                                Icon(
+                                    Icons.Outlined.AccountCircle,
+                                    contentDescription = "プロフィール",
+                                    modifier = Modifier.size(MainTopBarActionIconSize),
+                                )
+                            }
                             IconButton(onClick = {
                                 if (!selectionModeActive) {
                                     startSelectionFromVisibleEntries()
@@ -1958,7 +1968,9 @@ private fun MainScreen(
         }
         if (showMainBottomBar) {
             MainBottomNavBar(
-                modifier = Modifier.align(Alignment.BottomCenter),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .offset(y = 4.dp),
                 onOpenGroups = {
                     showUsageGuide = false
                     mainPane = MainPane.GROUPS
@@ -5981,6 +5993,11 @@ private data class VideoTexturePlayback(
     val player: MediaPlayer?,
 )
 
+private data class MediaDimensions(
+    val width: Int,
+    val height: Int,
+)
+
 private fun VideoDownloadEntity.toSavedMediaItem(context: Context): SavedMediaItem? {
     val file = AppMediaStore.fileForLocalUri(context, localUri) ?: return null
     if (!file.exists() || !file.isFile) return null
@@ -6020,6 +6037,8 @@ private fun AppMediaViewerDialog(
     onDismiss: () -> Unit,
 ) {
     val pagerState = rememberPagerState(pageCount = { items.size })
+    val dismissThresholdPx = with(LocalDensity.current) { 96.dp.toPx() }
+    var downwardDragPx by remember { mutableStateOf(0f) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -6034,7 +6053,21 @@ private fun AppMediaViewerDialog(
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .fillMaxHeight(0.92f),
+                    .fillMaxHeight()
+                    .pointerInput(onDismiss) {
+                        detectVerticalDragGestures(
+                            onDragStart = { downwardDragPx = 0f },
+                            onVerticalDrag = { _, dragAmount ->
+                                downwardDragPx = (downwardDragPx + dragAmount).coerceAtLeast(0f)
+                                if (downwardDragPx >= dismissThresholdPx) {
+                                    downwardDragPx = 0f
+                                    onDismiss()
+                                }
+                            },
+                            onDragEnd = { downwardDragPx = 0f },
+                            onDragCancel = { downwardDragPx = 0f },
+                        )
+                    },
                 shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
                 color = MaterialTheme.colorScheme.background,
                 contentColor = MaterialTheme.colorScheme.onBackground,
@@ -6072,24 +6105,30 @@ private fun AppMediaViewerDialog(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Text(
-                            text = title,
-                            modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            color = MaterialTheme.colorScheme.onBackground,
-                        )
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .horizontalScroll(rememberScrollState()),
+                        ) {
+                            Text(
+                                text = title,
+                                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                                maxLines = 1,
+                                overflow = TextOverflow.Clip,
+                                color = MaterialTheme.colorScheme.onBackground,
+                            )
+                        }
                         IconButton(
                             onClick = onDismiss,
                             modifier = Modifier
                                 .size(40.dp)
-                                .background(OrbitTokens.panelSoft, CircleShape),
+                                .background(MaterialTheme.colorScheme.surfaceVariant, CircleShape)
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape),
                         ) {
                             Icon(
                                 imageVector = Icons.Outlined.Close,
                                 contentDescription = "閉じる",
-                                tint = MaterialTheme.colorScheme.onBackground,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     }
@@ -6106,27 +6145,32 @@ private fun AppMediaViewerDialog(
                         }
                         Spacer(Modifier.weight(1f))
                     } else {
-                        HorizontalPager(
-                            state = pagerState,
-                            key = { page -> items[page].uri.toString() },
+                        Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .weight(1f),
-                        ) { page ->
-                            AppMediaPreview(
-                                item = items[page],
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(horizontal = 2.dp),
-                            )
-                        }
-
-                        if (items.size > 1) {
-                            AppMediaPageIndicator(
-                                currentPage = pagerState.currentPage,
-                                pageCount = items.size,
-                                modifier = Modifier.fillMaxWidth(),
-                            )
+                                .weight(1f)
+                                .offset(y = 64.dp),
+                        ) {
+                            HorizontalPager(
+                                state = pagerState,
+                                key = { page -> items[page].uri.toString() },
+                                modifier = Modifier.fillMaxSize(),
+                            ) { page ->
+                                AppMediaPreview(
+                                    item = items[page],
+                                    reserveIndicatorSpace = items.size > 1,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 2.dp),
+                                )
+                            }
+                            if (items.size > 1) {
+                                AppMediaFixedPageIndicator(
+                                    items = items,
+                                    currentPage = pagerState.currentPage,
+                                    modifier = Modifier.matchParentSize(),
+                                )
+                            }
                         }
                     }
                 }
@@ -6137,33 +6181,47 @@ private fun AppMediaViewerDialog(
 }
 
 @Composable
-private fun AppMediaFileName(
-    fileName: String,
+private fun AppMediaFixedPageIndicator(
+    items: List<SavedMediaItem>,
+    currentPage: Int,
     modifier: Modifier = Modifier,
 ) {
-    Text(
-        text = middleEllipsizeFileName(fileName),
-        modifier = modifier,
-        style = MaterialTheme.typography.labelMedium.copy(
-            fontWeight = FontWeight.Medium,
-            fontFamily = FontFamily.Monospace,
-        ),
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        textAlign = TextAlign.Center,
-    )
-}
+    val currentItem = items.getOrNull(currentPage) ?: return
+    var mediaDimensions by remember(currentItem.uri) { mutableStateOf<MediaDimensions?>(null) }
 
-private fun middleEllipsizeFileName(fileName: String, maxChars: Int = 42): String {
-    if (fileName.length <= maxChars) return fileName
-    val extensionStart = fileName.lastIndexOf('.').takeIf { it > 0 && it < fileName.lastIndex - 1 }
-    val extension = extensionStart?.let { fileName.substring(it) }.orEmpty()
-    val nameWithoutExtension = extensionStart?.let { fileName.substring(0, it) } ?: fileName
-    val available = (maxChars - extension.length - 1).coerceAtLeast(8)
-    val head = (available * 0.58f).toInt().coerceAtLeast(4)
-    val tail = (available - head).coerceAtLeast(4)
-    return nameWithoutExtension.take(head) + "…" + nameWithoutExtension.takeLast(tail) + extension
+    LaunchedEffect(currentItem.uri, currentItem.mediaType) {
+        mediaDimensions = if (currentItem.mediaType == "IMAGE") {
+            readImageDimensions(currentItem.uri)
+        } else {
+            null
+        }
+    }
+
+    BoxWithConstraints(
+        modifier = modifier,
+        contentAlignment = Alignment.TopCenter,
+    ) {
+        val mediaAspectRatio = mediaDimensions
+            ?.takeIf { it.width > 0 && it.height > 0 }
+            ?.let { it.width.toFloat() / it.height.toFloat() }
+            ?: if (currentItem.mediaType == "IMAGE") 1f else (9f / 16f)
+        val indicatorReserve = if (maxHeight > 46.dp) 46.dp else 0.dp
+        val availableMediaHeight = maxHeight - indicatorReserve
+        val mediaHeightByRatio = maxWidth / mediaAspectRatio
+        val mediaHeight = if (mediaHeightByRatio < availableMediaHeight) {
+            mediaHeightByRatio
+        } else {
+            availableMediaHeight
+        }
+
+        AppMediaPageIndicator(
+            currentPage = currentPage,
+            pageCount = items.size,
+            modifier = Modifier
+                .fillMaxWidth()
+                .offset(y = mediaHeight + 14.dp),
+        )
+    }
 }
 
 @Composable
@@ -6181,13 +6239,22 @@ private fun AppMediaPageIndicator(
             val selected = index == currentPage
             Box(
                 modifier = Modifier
-                    .padding(horizontal = 3.dp)
-                    .size(if (selected) 8.dp else 6.dp)
-                    .background(
-                        color = if (selected) OrbitTokens.textPrimary else OrbitTokens.outlineStrong,
-                        shape = CircleShape,
-                    ),
-            )
+                    .size(width = 14.dp, height = 12.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(7.dp)
+                        .background(
+                            color = if (selected) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.32f)
+                            },
+                            shape = CircleShape,
+                        ),
+                )
+            }
         }
     }
 }
@@ -6195,17 +6262,36 @@ private fun AppMediaPageIndicator(
 @Composable
 private fun AppMediaPreview(
     item: SavedMediaItem,
+    reserveIndicatorSpace: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    Column(
+    var mediaDimensions by remember(item.uri) { mutableStateOf<MediaDimensions?>(null) }
+
+    LaunchedEffect(item.uri, item.mediaType) {
+        mediaDimensions = if (item.mediaType == "IMAGE") {
+            readImageDimensions(item.uri)
+        } else {
+            null
+        }
+    }
+
+    BoxWithConstraints(
         modifier = modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+        contentAlignment = Alignment.TopCenter,
     ) {
+        val mediaAspectRatio = mediaDimensions
+            ?.takeIf { it.width > 0 && it.height > 0 }
+            ?.let { it.width.toFloat() / it.height.toFloat() }
+            ?: if (item.mediaType == "IMAGE") 1f else (9f / 16f)
+        val indicatorReserve = if (reserveIndicatorSpace && maxHeight > 46.dp) 46.dp else 0.dp
+        val availableMediaHeight = maxHeight - indicatorReserve
+        val mediaHeightByRatio = maxWidth / mediaAspectRatio
+        val mediaHeight = if (mediaHeightByRatio < availableMediaHeight) mediaHeightByRatio else availableMediaHeight
+
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f)
+                .height(mediaHeight)
                 .clip(RoundedCornerShape(24.dp))
                 .background(Color.Black),
             contentAlignment = Alignment.Center,
@@ -6215,9 +6301,7 @@ private fun AppMediaPreview(
                     model = item.uri,
                     contentDescription = item.fileName,
                     contentScale = ContentScale.Fit,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(8.dp),
+                    modifier = Modifier.fillMaxSize(),
                 )
             } else {
                 AndroidView(
@@ -6247,6 +6331,11 @@ private fun AppMediaPreview(
                                 player.start()
                             }
                         }
+                        (textureView.tag as? VideoTexturePlayback)?.player?.let { player ->
+                            if (player.videoWidth > 0 && player.videoHeight > 0) {
+                                mediaDimensions = MediaDimensions(player.videoWidth, player.videoHeight)
+                            }
+                        }
                     },
                     onRelease = { textureView ->
                         (textureView.tag as? VideoTexturePlayback)?.player?.release()
@@ -6256,14 +6345,8 @@ private fun AppMediaPreview(
                 )
             }
         }
-
-        AppMediaFileName(
-            fileName = item.fileName,
-            modifier = Modifier.fillMaxWidth(),
-        )
     }
 }
-
 private fun videoTextureListener(textureView: TextureView, uri: Uri): TextureView.SurfaceTextureListener {
     return object : TextureView.SurfaceTextureListener {
         override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
@@ -6282,6 +6365,19 @@ private fun videoTextureListener(textureView: TextureView, uri: Uri): TextureVie
         }
 
         override fun onSurfaceTextureUpdated(surface: SurfaceTexture) = Unit
+    }
+}
+
+private fun readImageDimensions(uri: Uri): MediaDimensions? {
+    val path = uri.path ?: return null
+    val options = BitmapFactory.Options().apply {
+        inJustDecodeBounds = true
+    }
+    BitmapFactory.decodeFile(path, options)
+    return if (options.outWidth > 0 && options.outHeight > 0) {
+        MediaDimensions(options.outWidth, options.outHeight)
+    } else {
+        null
     }
 }
 
@@ -6442,18 +6538,24 @@ private fun DetailTagSummaryPanel(
             modifier = Modifier.fillMaxHeight(),
             verticalArrangement = Arrangement.spacedBy(9.dp),
         ) {
-            OrbitSectionLabel(
-                text = title,
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-            )
-            DetailTagEditButton(
-                onClick = onEdit,
-                modifier = if (editButtonTestTag == null) {
-                    Modifier
-                } else {
-                    Modifier.testTag(editButtonTestTag)
-                },
-            )
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                DetailTagSectionLabel(
+                    text = title,
+                    modifier = Modifier.weight(1f),
+                )
+                DetailTagEditButton(
+                    onClick = onEdit,
+                    modifier = if (editButtonTestTag == null) {
+                        Modifier.width(78.dp)
+                    } else {
+                        Modifier.width(78.dp).testTag(editButtonTestTag)
+                    },
+                )
+            }
 
             if (tags.isEmpty()) {
                 DetailTagValuePill(
@@ -6644,6 +6746,24 @@ private fun PackedTagAssignmentFlow(
 }
 
 @Composable
+private fun DetailTagSectionLabel(
+    text: String,
+    modifier: Modifier = Modifier,
+) {
+    Text(
+        text = text,
+        modifier = modifier,
+        style = MaterialTheme.typography.labelMedium.copy(
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.2.sp,
+        ),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
+}
+
+@Composable
 private fun DetailTagEditButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -6651,7 +6771,6 @@ private fun DetailTagEditButton(
     Button(
         onClick = onClick,
         modifier = modifier
-            .fillMaxWidth()
             .height(42.dp),
         shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
         colors = ButtonDefaults.buttonColors(
@@ -6867,14 +6986,17 @@ private fun MainBottomNavBar(
                     color = MaterialTheme.colorScheme.primary,
                     shape = RoundedCornerShape(99.dp),
                 )
-                .clickable(onClick = onAdd),
+                .clickable(onClick = onAdd)
+                .semantics { contentDescription = "追加" },
             contentAlignment = Alignment.Center,
         ) {
-            Icon(
-                Icons.Outlined.Add,
-                contentDescription = "追加",
-                tint = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier.size(34.dp),
+            Text(
+                text = "+",
+                color = MaterialTheme.colorScheme.onPrimary,
+                fontSize = 48.sp,
+                fontWeight = FontWeight.Black,
+                lineHeight = 48.sp,
+                textAlign = TextAlign.Center,
             )
         }
     }

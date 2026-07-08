@@ -631,17 +631,16 @@ private struct AppMediaViewerSheet: View {
     var body: some View {
         ScreenContainer {
             VStack(spacing: 14) {
-                Capsule()
-                    .fill(AppPalette.outlineSoft)
-                    .frame(width: 72, height: 8)
-                    .padding(.top, 10)
-
                 HStack(spacing: 12) {
-                    Text(title)
-                        .font(.system(size: 22, weight: .heavy, design: .rounded))
-                        .foregroundStyle(AppPalette.textPrimary)
-                        .lineLimit(2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        Text(title)
+                            .font(.system(size: 22, weight: .heavy, design: .rounded))
+                            .foregroundStyle(AppPalette.textPrimary)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .offset(y: 14)
 
                     Button {
                         dismiss()
@@ -701,17 +700,45 @@ private struct AppMediaPreview: View {
                     }
                     .padding(8)
                 } else {
-                    VideoPlayer(player: AVPlayer(url: item.fileURL))
+                    AppMediaVideoPlayer(url: item.fileURL)
                         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            Text(item.fileName)
-                .font(.system(size: 13, weight: .medium, design: .monospaced))
-                .foregroundStyle(AppPalette.textSecondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
+        }
+    }
+}
+
+private struct AppMediaVideoPlayer: View {
+    let url: URL
+
+    @State private var player: AVPlayer?
+
+    var body: some View {
+        VideoPlayer(player: player)
+            .onAppear {
+                configureAudioPlayback()
+                let nextPlayer = AVPlayer(url: url)
+                nextPlayer.isMuted = false
+                nextPlayer.volume = 1.0
+                player = nextPlayer
+            }
+            .onDisappear {
+                player?.pause()
+                player = nil
+            }
+    }
+
+    private func configureAudioPlayback() {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(.playback, mode: .moviePlayback, options: [])
+            try session.setActive(true)
+        } catch {
+            #if DEBUG
+            print("Failed to configure media audio session: \(error)")
+            #endif
         }
     }
 }
@@ -1228,12 +1255,15 @@ private struct DetailTagSummaryPanel: View {
     var body: some View {
         AppPanel {
             VStack(alignment: .leading, spacing: 9) {
-                DetailSectionLabel(text: title)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(alignment: .center, spacing: 8) {
+                    DetailSectionLabel(text: title)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
-                DetailTagEditButton(action: onEdit)
+                    DetailTagEditButton(action: onEdit)
+                        .frame(width: 72)
+                }
 
                 if tags.isEmpty {
                     DetailTagValuePill(text: emptyText, isEmpty: true, canRemove: false, onRemove: nil)

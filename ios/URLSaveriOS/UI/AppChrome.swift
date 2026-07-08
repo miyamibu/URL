@@ -396,18 +396,6 @@ struct EntryCardView: View {
                                                     .stroke(AppPalette.outline, lineWidth: 1.5)
                                             )
                                     }
-
-                                    Spacer(minLength: 8)
-
-                                    Circle()
-                                        .fill(metadataDotColor(for: entry.metadataState))
-                                        .frame(width: 10, height: 10)
-                                        .overlay(Circle().stroke(AppPalette.background, lineWidth: 1.2))
-
-                                    Text("\(timestampLabel) \(DateFormatters.listTimestamp.string(from: timestampDate(for: entry)))")
-                                        .font(.system(size: 12, weight: .bold))
-                                        .foregroundStyle(AppPalette.textSecondary)
-                                        .lineLimit(1)
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             } else {
