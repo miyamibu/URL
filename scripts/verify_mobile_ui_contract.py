@@ -165,6 +165,36 @@ def main() -> int:
             "Android media viewer must not keep the old visible file-name label path",
         ),
         lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
+            "val carouselAspectRatio = remember(items) { stableMediaAspectRatio(items) }",
+            "Android media viewer must use one stable carousel frame ratio across image/video pages",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
+            "frameAspectRatio = carouselAspectRatio",
+            "Android media preview pages must receive the stable carousel frame ratio",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
+            "val stableMediaFrameHeight = if (mediaHeightByRatio < availableMediaHeight)",
+            "Android media page indicator must be positioned from the stable carousel frame height",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
+            "val indicatorTopOffset = (stableMediaFrameHeight + 14.dp).coerceAtMost(maxIndicatorTop)",
+            "Android media page indicator must stay visible while remaining independent of the current page",
+        ),
+        lambda: forbid(
+            "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
+            "offset(y = mediaHeight + 14.dp)",
+            "Android media page indicator must not follow the current image/video height",
+        ),
+        lambda: require(
+            "docs/mobile-ui-regression-contract.md",
+            "Android の複数メディア点インジケータは、写真/動画ページごとの高さに追従させず、同じカルーセル内で見える位置に縦固定する。",
+            "UI contract must prevent Android media dots from moving vertically by media type",
+        ),
+        lambda: require(
             "app/src/main/java/jp/mimac/urlsaver/ui/components/EntryCard.kt",
             "localTagNames: List<String>",
             "Android entry cards must accept local tag names",

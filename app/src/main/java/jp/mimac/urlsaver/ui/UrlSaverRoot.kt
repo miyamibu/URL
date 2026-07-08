@@ -8,6 +8,7 @@ import android.graphics.Matrix
 import android.graphics.BitmapFactory
 import android.graphics.SurfaceTexture
 import android.media.MediaPlayer
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.view.Surface
 import android.view.TextureView
@@ -5986,6 +5987,7 @@ private data class SavedMediaItem(
     val uri: Uri,
     val mediaType: String,
     val fileName: String,
+    val dimensions: MediaDimensions?,
 )
 
 private data class VideoTexturePlayback(
@@ -6001,10 +6003,12 @@ private data class MediaDimensions(
 private fun VideoDownloadEntity.toSavedMediaItem(context: Context): SavedMediaItem? {
     val file = AppMediaStore.fileForLocalUri(context, localUri) ?: return null
     if (!file.exists() || !file.isFile) return null
+    val mediaType = mediaTypeFromFile(file)
     return SavedMediaItem(
         uri = Uri.fromFile(file),
-        mediaType = mediaTypeFromFile(file),
+        mediaType = mediaType,
         fileName = fileName ?: file.name,
+        dimensions = readMediaDimensions(file, mediaType),
     )
 }
 
@@ -6037,6 +6041,7 @@ private fun AppMediaViewerDialog(
     onDismiss: () -> Unit,
 ) {
     val pagerState = rememberPagerState(pageCount = { items.size })
+    val carouselAspectRatio = remember(items) { stableMediaAspectRatio(items) }
     val dismissThresholdPx = with(LocalDensity.current) { 96.dp.toPx() }
     var downwardDragPx by remember { mutableStateOf(0f) }
 
@@ -6145,12 +6150,24 @@ private fun AppMediaViewerDialog(
                         }
                         Spacer(Modifier.weight(1f))
                     } else {
-                        Box(
+                        BoxWithConstraints(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .weight(1f)
                                 .offset(y = 64.dp),
                         ) {
+                            val mediaAspectRatio = carouselAspectRatio.takeIf { it > 0f } ?: 1f
+                            val indicatorReserve = if (items.size > 1 && maxHeight > 46.dp) 46.dp else 0.dp
+                            val availableMediaHeight = maxHeight - indicatorReserve
+                            val mediaHeightByRatio = maxWidth / mediaAspectRatio
+                            val stableMediaFrameHeight = if (mediaHeightByRatio < availableMediaHeight) {
+                                mediaHeightByRatio
+                            } else {
+                                availableMediaHeight
+                            }
+                            val maxIndicatorTop = (maxHeight - 88.dp).coerceAtLeast(0.dp)
+                            val indicatorTopOffset = (stableMediaFrameHeight + 14.dp).coerceAtMost(maxIndicatorTop)
+
                             HorizontalPager(
                                 state = pagerState,
                                 key = { page -> items[page].uri.toString() },
@@ -6158,6 +6175,7 @@ private fun AppMediaViewerDialog(
                             ) { page ->
                                 AppMediaPreview(
                                     item = items[page],
+                                    frameAspectRatio = carouselAspectRatio,
                                     reserveIndicatorSpace = items.size > 1,
                                     modifier = Modifier
                                         .fillMaxSize()
@@ -6166,9 +6184,12 @@ private fun AppMediaViewerDialog(
                             }
                             if (items.size > 1) {
                                 AppMediaFixedPageIndicator(
-                                    items = items,
                                     currentPage = pagerState.currentPage,
-                                    modifier = Modifier.matchParentSize(),
+                                    pageCount = items.size,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(24.dp)
+                                        .offset(y = indicatorTopOffset),
                                 )
                             }
                         }
@@ -6182,44 +6203,18 @@ private fun AppMediaViewerDialog(
 
 @Composable
 private fun AppMediaFixedPageIndicator(
-    items: List<SavedMediaItem>,
     currentPage: Int,
+    pageCount: Int,
     modifier: Modifier = Modifier,
 ) {
-    val currentItem = items.getOrNull(currentPage) ?: return
-    var mediaDimensions by remember(currentItem.uri) { mutableStateOf<MediaDimensions?>(null) }
-
-    LaunchedEffect(currentItem.uri, currentItem.mediaType) {
-        mediaDimensions = if (currentItem.mediaType == "IMAGE") {
-            readImageDimensions(currentItem.uri)
-        } else {
-            null
-        }
-    }
-
-    BoxWithConstraints(
+    Box(
         modifier = modifier,
-        contentAlignment = Alignment.TopCenter,
+        contentAlignment = Alignment.Center,
     ) {
-        val mediaAspectRatio = mediaDimensions
-            ?.takeIf { it.width > 0 && it.height > 0 }
-            ?.let { it.width.toFloat() / it.height.toFloat() }
-            ?: if (currentItem.mediaType == "IMAGE") 1f else (9f / 16f)
-        val indicatorReserve = if (maxHeight > 46.dp) 46.dp else 0.dp
-        val availableMediaHeight = maxHeight - indicatorReserve
-        val mediaHeightByRatio = maxWidth / mediaAspectRatio
-        val mediaHeight = if (mediaHeightByRatio < availableMediaHeight) {
-            mediaHeightByRatio
-        } else {
-            availableMediaHeight
-        }
-
         AppMediaPageIndicator(
             currentPage = currentPage,
-            pageCount = items.size,
-            modifier = Modifier
-                .fillMaxWidth()
-                .offset(y = mediaHeight + 14.dp),
+            pageCount = pageCount,
+            modifier = Modifier.fillMaxWidth(),
         )
     }
 }
@@ -6262,27 +6257,15 @@ private fun AppMediaPageIndicator(
 @Composable
 private fun AppMediaPreview(
     item: SavedMediaItem,
+    frameAspectRatio: Float,
     reserveIndicatorSpace: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    var mediaDimensions by remember(item.uri) { mutableStateOf<MediaDimensions?>(null) }
-
-    LaunchedEffect(item.uri, item.mediaType) {
-        mediaDimensions = if (item.mediaType == "IMAGE") {
-            readImageDimensions(item.uri)
-        } else {
-            null
-        }
-    }
-
     BoxWithConstraints(
         modifier = modifier.fillMaxSize(),
         contentAlignment = Alignment.TopCenter,
     ) {
-        val mediaAspectRatio = mediaDimensions
-            ?.takeIf { it.width > 0 && it.height > 0 }
-            ?.let { it.width.toFloat() / it.height.toFloat() }
-            ?: if (item.mediaType == "IMAGE") 1f else (9f / 16f)
+        val mediaAspectRatio = frameAspectRatio.takeIf { it > 0f } ?: 1f
         val indicatorReserve = if (reserveIndicatorSpace && maxHeight > 46.dp) 46.dp else 0.dp
         val availableMediaHeight = maxHeight - indicatorReserve
         val mediaHeightByRatio = maxWidth / mediaAspectRatio
@@ -6331,11 +6314,6 @@ private fun AppMediaPreview(
                                 player.start()
                             }
                         }
-                        (textureView.tag as? VideoTexturePlayback)?.player?.let { player ->
-                            if (player.videoWidth > 0 && player.videoHeight > 0) {
-                                mediaDimensions = MediaDimensions(player.videoWidth, player.videoHeight)
-                            }
-                        }
                     },
                     onRelease = { textureView ->
                         (textureView.tag as? VideoTexturePlayback)?.player?.release()
@@ -6347,6 +6325,52 @@ private fun AppMediaPreview(
         }
     }
 }
+
+private fun stableMediaAspectRatio(items: List<SavedMediaItem>): Float {
+    val first = items.firstOrNull()
+    return first?.dimensions?.aspectRatio()
+        ?: if (first?.mediaType == "VIDEO") 9f / 16f else 1f
+}
+
+private fun MediaDimensions.aspectRatio(): Float? {
+    return if (width > 0 && height > 0) width.toFloat() / height.toFloat() else null
+}
+
+private fun readMediaDimensions(file: File, mediaType: String): MediaDimensions? {
+    return if (mediaType == "IMAGE") readImageDimensions(file) else readVideoDimensions(file)
+}
+
+private fun readImageDimensions(file: File): MediaDimensions? {
+    val options = BitmapFactory.Options().apply {
+        inJustDecodeBounds = true
+    }
+    BitmapFactory.decodeFile(file.path, options)
+    return if (options.outWidth > 0 && options.outHeight > 0) {
+        MediaDimensions(options.outWidth, options.outHeight)
+    } else {
+        null
+    }
+}
+
+private fun readVideoDimensions(file: File): MediaDimensions? {
+    val retriever = MediaMetadataRetriever()
+    return try {
+        retriever.setDataSource(file.absolutePath)
+        val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull()
+        val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull()
+        if (width == null || height == null || width <= 0 || height <= 0) {
+            null
+        } else {
+            val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+            if (rotation % 180 == 0) MediaDimensions(width, height) else MediaDimensions(height, width)
+        }
+    } catch (_: RuntimeException) {
+        null
+    } finally {
+        runCatching { retriever.release() }
+    }
+}
+
 private fun videoTextureListener(textureView: TextureView, uri: Uri): TextureView.SurfaceTextureListener {
     return object : TextureView.SurfaceTextureListener {
         override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
