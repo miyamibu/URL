@@ -211,8 +211,10 @@ struct DetailView: View {
 
                                 if isSocialPostContentService(entry.serviceType) {
                                     if let body = socialDetailBodyText(for: entry) {
-                                        AppPanel {
+                                        AppPanel(padded: false) {
                                             ExpandableDetailBodySection(label: bodyLabel(for: entry), text: body)
+                                                .padding(.horizontal, 20)
+                                                .padding(.vertical, 12)
                                         }
                                     }
                                 } else {
@@ -755,9 +757,12 @@ private struct ExpandableDetailBodySection: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 10) {
-                DetailSectionLabel(text: label)
+                Text(label)
+                    .font(.system(size: 17, weight: .heavy, design: .monospaced))
+                    .foregroundStyle(AppPalette.textSecondary)
+                    .textCase(.uppercase)
                 Spacer(minLength: 0)
 
                 if needsExpansion {
@@ -769,7 +774,7 @@ private struct ExpandableDetailBodySection: View {
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                             .font(.system(size: 13, weight: .bold))
                             .foregroundStyle(AppPalette.textSecondary)
-                            .frame(width: 36, height: 36)
+                            .frame(width: 32, height: 32)
                     }
                     .accessibilityLabel(isExpanded ? "\(label)を閉じる" : "\(label)を表示")
                 }
@@ -777,7 +782,7 @@ private struct ExpandableDetailBodySection: View {
 
             if isExpanded {
                 Text(text)
-                    .font(.system(size: 17, weight: .medium))
+                    .font(.system(size: 18, weight: .medium))
                     .foregroundStyle(AppPalette.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
