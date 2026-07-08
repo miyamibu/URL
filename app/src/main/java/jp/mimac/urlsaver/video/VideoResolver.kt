@@ -44,7 +44,7 @@ class BackendVideoResolver(
             )
         }
         val assetsArray = objectValue.optJSONArray("assets")
-        val assets = (0 until (assetsArray?.length() ?: 0)).mapNotNull { index ->
+        val parsedAssets = (0 until (assetsArray?.length() ?: 0)).mapNotNull { index ->
             val asset = assetsArray?.optJSONObject(index) ?: return@mapNotNull null
             val downloadUrl = asset.optString("downloadUrl")
                 .normalizeMediaUrl()
@@ -69,11 +69,16 @@ class BackendVideoResolver(
                 width = asset.optInt("width").takeIf { it > 0 },
                 height = asset.optInt("height").takeIf { it > 0 },
                 bitrate = asset.optInt("bitrate").takeIf { it > 0 },
+                sortIndex = asset.optInt("sortIndex", index),
                 isPreferred = asset.optBoolean("isPreferred", index == 0),
                 expiresAt = asset.optLong("expiresAt").takeIf { it > 0 },
                 errorReason = null,
             )
-        }.mapIndexed { index, asset -> asset.copy(isPreferred = index == 0) }
+        }
+        val assets = parsedAssets
+            .mapIndexed { index, asset -> index to asset }
+            .sortedWith(compareBy<Pair<Int, ResolvedVideoAsset>> { it.second.sortIndex }.thenBy { it.first })
+            .mapIndexed { index, pair -> pair.second.copy(sortIndex = index, isPreferred = index == 0) }
 
         return VideoResolveResult(
             provider = provider,

@@ -129,6 +129,7 @@ data class VideoAssetEntity(
     val width: Int?,
     val height: Int?,
     val bitrate: Int?,
+    val sortIndex: Int,
     val isPreferred: Boolean,
     val checkedAt: Long,
     val expiresAt: Long?,

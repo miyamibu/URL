@@ -143,6 +143,7 @@ class DefaultVideoRepository(
             width = null,
             height = null,
             bitrate = null,
+            sortIndex = index,
             isPreferred = index == 0,
             checkedAt = timestamp,
             expiresAt = null,

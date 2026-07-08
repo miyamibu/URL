@@ -1145,6 +1145,84 @@ class MigrationDedupTest {
         context.deleteDatabase(dbName)
     }
 
+    @Test
+    fun migration_20_21_addsMediaSortIndexWithoutDeletingAssets() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val dbName = "migration-20-21.db"
+        context.deleteDatabase(dbName)
+        val helper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(dbName)
+                .callback(
+                    object : SupportSQLiteOpenHelper.Callback(20) {
+                        override fun onCreate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                            db.execSQL(
+                                """
+                                CREATE TABLE IF NOT EXISTS video_assets (
+                                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                    entryId INTEGER NOT NULL,
+                                    provider TEXT NOT NULL,
+                                    providerAssetId TEXT NOT NULL,
+                                    sourceUrl TEXT NOT NULL,
+                                    canonicalPostUrl TEXT,
+                                    authorName TEXT,
+                                    title TEXT,
+                                    bodyText TEXT,
+                                    thumbnailUrl TEXT,
+                                    durationMs INTEGER,
+                                    mediaType TEXT NOT NULL,
+                                    hasVideo TEXT NOT NULL,
+                                    resolveStatus TEXT NOT NULL,
+                                    downloadUrl TEXT,
+                                    requestHeadersJson TEXT,
+                                    mimeType TEXT,
+                                    qualityLabel TEXT,
+                                    width INTEGER,
+                                    height INTEGER,
+                                    bitrate INTEGER,
+                                    isPreferred INTEGER NOT NULL,
+                                    checkedAt INTEGER NOT NULL,
+                                    expiresAt INTEGER,
+                                    errorReason TEXT
+                                )
+                                """.trimIndent(),
+                            )
+                        }
+
+                        override fun onUpgrade(
+                            db: androidx.sqlite.db.SupportSQLiteDatabase,
+                            oldVersion: Int,
+                            newVersion: Int,
+                        ) = Unit
+                    },
+                )
+                .build(),
+        )
+        val db = helper.writableDatabase
+        db.execSQL(
+            """
+            INSERT INTO video_assets (
+                entryId, provider, providerAssetId, sourceUrl, mediaType, hasVideo,
+                resolveStatus, isPreferred, checkedAt
+            ) VALUES (
+                1, 'instagram', 'asset-1', 'https://example.com/post', 'IMAGE', 'NO',
+                'AVAILABLE', 1, 100
+            )
+            """.trimIndent(),
+        )
+
+        AppDatabase.MIGRATION_20_21.migrate(db)
+
+        assertTrue(hasColumn(db, "video_assets", "sortIndex"))
+        db.query("SELECT sortIndex FROM video_assets WHERE providerAssetId = 'asset-1'").use {
+            it.moveToFirst()
+            assertEquals(0, it.getInt(0))
+        }
+
+        helper.close()
+        context.deleteDatabase(dbName)
+    }
+
     private fun createPostPlanHelper(
         context: Context,
         dbName: String,

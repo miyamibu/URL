@@ -8,13 +8,13 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface VideoAssetDao {
-    @Query("SELECT * FROM video_assets WHERE entryId = :entryId ORDER BY isPreferred DESC, mediaType ASC, id ASC")
+    @Query("SELECT * FROM video_assets WHERE entryId = :entryId ORDER BY sortIndex ASC, id ASC")
     fun observeAssetsForEntry(entryId: Long): Flow<List<VideoAssetEntity>>
 
-    @Query("SELECT * FROM video_assets WHERE entryId = :entryId AND isPreferred = 1 ORDER BY id ASC LIMIT 1")
+    @Query("SELECT * FROM video_assets WHERE entryId = :entryId AND isPreferred = 1 ORDER BY sortIndex ASC, id ASC LIMIT 1")
     fun observePreferredAssetForEntry(entryId: Long): Flow<VideoAssetEntity?>
 
-    @Query("SELECT * FROM video_assets WHERE entryId IN (:entryIds) ORDER BY entryId ASC, isPreferred DESC, mediaType ASC, id ASC")
+    @Query("SELECT * FROM video_assets WHERE entryId IN (:entryIds) ORDER BY entryId ASC, sortIndex ASC, id ASC")
     suspend fun loadAssetsForEntries(entryIds: List<Long>): List<VideoAssetEntity>
 
     @Query("SELECT * FROM video_assets WHERE id = :assetId LIMIT 1")
@@ -53,8 +53,9 @@ interface VideoDownloadDao {
 
     @Query(
         """
-        SELECT * FROM video_downloads
-        WHERE id IN (
+        SELECT d.* FROM video_downloads AS d
+        INNER JOIN video_assets AS a ON a.id = d.videoAssetId
+        WHERE d.id IN (
             SELECT MIN(id)
             FROM video_downloads
             WHERE entryId = :entryId
@@ -62,7 +63,7 @@ interface VideoDownloadDao {
                 AND localUri LIKE 'app-media://media/%'
             GROUP BY localUri
         )
-        ORDER BY COALESCE(savedAt, startedAt, id) ASC, id ASC
+        ORDER BY a.sortIndex ASC, d.id ASC
         """,
     )
     fun observeSavedDownloadsForEntry(entryId: Long): Flow<List<VideoDownloadEntity>>

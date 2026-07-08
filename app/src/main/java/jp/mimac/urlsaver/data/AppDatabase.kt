@@ -24,7 +24,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         VideoAssetEntity::class,
         VideoDownloadEntity::class,
     ],
-    version = 20,
+    version = 21,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -60,6 +60,7 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_17_18,
                     MIGRATION_18_20,
                     MIGRATION_19_20,
+                    MIGRATION_20_21,
                 )
                 .addCallback(
                     object : Callback() {
@@ -416,6 +417,13 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                ensureMediaTables(db)
+                addColumnIfMissing(db, "video_assets", "sortIndex", "INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         private fun dropPostPlanColumnsIfPresent(db: SupportSQLiteDatabase) {
             dropColumnIfPresent(db, "url_entries", "pendingDeleteOriginState")
         }
@@ -445,6 +453,7 @@ abstract class AppDatabase : RoomDatabase() {
                     width INTEGER,
                     height INTEGER,
                     bitrate INTEGER,
+                    sortIndex INTEGER NOT NULL DEFAULT 0,
                     isPreferred INTEGER NOT NULL,
                     checkedAt INTEGER NOT NULL,
                     expiresAt INTEGER,

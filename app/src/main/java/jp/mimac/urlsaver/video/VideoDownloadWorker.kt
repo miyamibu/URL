@@ -29,7 +29,9 @@ class VideoDownloadWorker(
         if (assetId <= 0L) return Result.failure()
         val asset = videoAssetDao.findById(assetId) ?: return Result.failure()
         urlEntryDao.findById(asset.entryId) ?: return Result.success()
-        val downloadUrl = asset.downloadUrl?.takeIf(::isAllowedDownloadUrl)
+        val downloadUrl = asset.downloadUrl
+            ?.let(::normalizeDownloadUrl)
+            ?.takeIf(::isAllowedDownloadUrl)
         val downloadId = videoDownloadDao.insertOrUpdateDownload(
             VideoDownloadEntity(
                 entryId = asset.entryId,
@@ -169,6 +171,16 @@ class VideoDownloadWorker(
                 host.startsWith("10.") ||
                 host.startsWith("192.168.") ||
                 Regex("""172\.(1[6-9]|2[0-9]|3[0-1])\..+""").matches(host)
+        }
+
+        private fun normalizeDownloadUrl(url: String): String {
+            return url
+                .replace("\\/", "/")
+                .replace("\\u002F", "/")
+                .replace("\\u0026", "&")
+                .replace("\\u0025", "%")
+                .replace("\\%", "%")
+                .trim()
         }
     }
 }

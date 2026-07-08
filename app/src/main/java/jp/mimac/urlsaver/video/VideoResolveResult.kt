@@ -25,6 +25,7 @@ data class ResolvedVideoAsset(
     val width: Int?,
     val height: Int?,
     val bitrate: Int?,
+    val sortIndex: Int,
     val isPreferred: Boolean,
     val expiresAt: Long?,
     val errorReason: String?,
