@@ -68,9 +68,19 @@ Checked against `https://rinbam-media-resolver.onrender.com` on 2026-07-08.
 ## Excluded From Git
 
 - Device screenshots, raw UI traces, app data backups, and raw Render JSON under `artifacts/`.
-- No push, deploy, release, uninstall, `pm clear`, or app-data deletion is part of this cleanup.
+- No deploy, release, uninstall, `pm clear`, or app-data deletion is part of this cleanup.
+- Push was handled only after explicit follow-up approval, after merging the remote branch state.
 
 ## Remaining Boundaries
 
 - Render was rechecked live, but this cleanup does not deploy new backend code.
 - Real-device UI proof exists in `artifacts/`, but the binary/evidence files remain local and ignored.
+
+## Remote Sync After Approval
+
+After the cleanup commits, `origin/codex/rinbam-consolidation-20260705` contained two additional commits:
+
+- `05d6b84d Preserve Instagram media order`
+- `8a152e83 Decode Instagram media URL escapes`
+
+These were merged into the local branch before the final validation and normal push.
