@@ -1375,19 +1375,26 @@ final class URLSaverAppModel: ObservableObject {
                 return false
             }
 
-            var savedCount = 0
+            var savedFiles: [SavedAppMediaFile] = []
             for (index, asset) in assets.enumerated() {
                 do {
-                    _ = try await IOSAppMediaSaver.save(asset: asset, entryID: entryID, index: index)
-                    savedCount += 1
+                    let savedFile = try await IOSAppMediaSaver.save(asset: asset, entryID: entryID, index: index)
+                    savedFiles.append(savedFile)
                 } catch {
                     continue
                 }
             }
 
+            let savedCount = savedFiles.count
             guard savedCount > 0 else {
                 enqueueNotification(AppNotification(message: "メディアを保存できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 4))
                 return false
+            }
+            if savedCount == assets.count {
+                IOSAppMediaStore.removeFilesNotMatching(
+                    entryID: entryID,
+                    keepFileNames: Set(savedFiles.map(\.fileName))
+                )
             }
 
             mediaSaveRevision += 1
@@ -1595,6 +1602,7 @@ private struct IOSResolvedMediaAsset: Decodable, Sendable {
     let mediaType: String
     let mimeType: String?
     let requestHeadersJSON: String?
+    let sortIndex: Int?
 
     enum CodingKeys: String, CodingKey {
         case providerAssetID = "providerAssetId"
@@ -1602,6 +1610,7 @@ private struct IOSResolvedMediaAsset: Decodable, Sendable {
         case mediaType
         case mimeType
         case requestHeadersJSON = "requestHeadersJson"
+        case sortIndex
     }
 }
 
@@ -1800,10 +1809,12 @@ private enum IOSAppMediaSaver {
     }
 
     private static func fileName(for asset: IOSResolvedMediaAsset, fallbackIndex: Int) -> String {
+        let sortIndex = max(0, asset.sortIndex ?? fallbackIndex)
+        let prefix = String(format: "%03d", sortIndex)
         let safeBase = asset.providerAssetID
             .replacingOccurrences(of: "[^A-Za-z0-9._-]+", with: "_", options: .regularExpression)
             .trimmingCharacters(in: CharacterSet(charactersIn: "._-"))
-        let base = safeBase.isEmpty ? "rinbam_media_\(fallbackIndex + 1)" : "\(fallbackIndex + 1)_\(safeBase)"
+        let base = safeBase.isEmpty ? "\(prefix)_rinbam_media" : "\(prefix)_\(safeBase)"
         return "\(base).\(fileExtension(for: asset))"
     }
 
@@ -1832,16 +1843,13 @@ private enum IOSAppMediaStore {
         guard let directory = try? directoryURL(entryID: entryID) else { return [] }
         let urls = (try? FileManager.default.contentsOfDirectory(
             at: directory,
-            includingPropertiesForKeys: [.creationDateKey],
+            includingPropertiesForKeys: [],
             options: [.skipsHiddenFiles]
         )) ?? []
         return urls
             .filter { !$0.hasDirectoryPath }
             .sorted { lhs, rhs in
-                let leftDate = (try? lhs.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
-                let rightDate = (try? rhs.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
-                if leftDate == rightDate { return lhs.lastPathComponent < rhs.lastPathComponent }
-                return leftDate < rightDate
+                rinbamMediaFileNamePrecedes(lhs.lastPathComponent, rhs.lastPathComponent)
             }
             .map { url in
                 SavedAppMediaFile(
@@ -1851,6 +1859,18 @@ private enum IOSAppMediaStore {
                     fileName: url.lastPathComponent
                 )
             }
+    }
+
+    static func removeFilesNotMatching(entryID: Int64, keepFileNames: Set<String>) {
+        guard let directory = try? directoryURL(entryID: entryID) else { return }
+        let urls = (try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        for url in urls where !url.hasDirectoryPath && !keepFileNames.contains(url.lastPathComponent) {
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 
     static func fileURL(entryID: Int64, fileName: String) throws -> URL {
@@ -1882,6 +1902,31 @@ private enum IOSAppMediaStore {
         default:
             return "VIDEO"
         }
+    }
+}
+
+func rinbamMediaSortIndex(from fileName: String) -> Int? {
+    let prefix = fileName.prefix(while: { $0.isNumber })
+    guard prefix.count == 3,
+          fileName.dropFirst(prefix.count).first == "_",
+          let value = Int(prefix) else {
+        return nil
+    }
+    return value
+}
+
+func rinbamMediaFileNamePrecedes(_ lhs: String, _ rhs: String) -> Bool {
+    let leftIndex = rinbamMediaSortIndex(from: lhs)
+    let rightIndex = rinbamMediaSortIndex(from: rhs)
+    switch (leftIndex, rightIndex) {
+    case let (left?, right?) where left != right:
+        return left < right
+    case (.some, nil):
+        return true
+    case (nil, .some):
+        return false
+    default:
+        return lhs.localizedStandardCompare(rhs) == .orderedAscending
     }
 }
 

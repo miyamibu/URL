@@ -279,6 +279,34 @@ final class ServiceFilterTests: XCTestCase {
         XCTAssertTrue(cardSwipeShouldBegin(horizontal: 5, vertical: 2, velocityX: 500, velocityY: 80))
     }
 
+    func testMediaSortIndexParsesZeroPaddedPrefix() {
+        XCTAssertEqual(rinbamMediaSortIndex(from: "000_shortcode_item_0.jpg"), 0)
+        XCTAssertEqual(rinbamMediaSortIndex(from: "001_shortcode_item_1.mp4"), 1)
+        XCTAssertEqual(rinbamMediaSortIndex(from: "010_shortcode_item_10.jpg"), 10)
+    }
+
+    func testMediaSortIndexRejectsLegacyNames() {
+        XCTAssertNil(rinbamMediaSortIndex(from: "1_shortcode_item_0.jpg"))
+        XCTAssertNil(rinbamMediaSortIndex(from: "instagram_shortcode_item_0.jpg"))
+        XCTAssertNil(rinbamMediaSortIndex(from: "000-shortcode-item.jpg"))
+    }
+
+    func testMediaFileNamesSortNumericallyByPrefix() {
+        let names = [
+            "010_shortcode_item_10.jpg",
+            "001_shortcode_item_1.mp4",
+            "legacy_name.jpg",
+            "000_shortcode_item_0.jpg",
+        ]
+
+        XCTAssertEqual(names.sorted(by: rinbamMediaFileNamePrecedes), [
+            "000_shortcode_item_0.jpg",
+            "001_shortcode_item_1.mp4",
+            "010_shortcode_item_10.jpg",
+            "legacy_name.jpg",
+        ])
+    }
+
     private func makeRecord(
         id: Int64,
         serviceType: URLSaveriOS.ServiceType,
