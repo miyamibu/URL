@@ -55,6 +55,11 @@ def main() -> int:
         ),
         lambda: require(
             "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
+            "IconButton(onClick = { showProfileSheet = true })",
+            "Android home top bar must keep the profile button",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
             "localTagNamesByEntryId",
             "main cards must receive local/custom tag assignments",
         ),
@@ -120,6 +125,46 @@ def main() -> int:
             "detail shared tag heading must remain 共有タグ",
         ),
         lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
+            "horizontalArrangement = Arrangement.spacedBy(8.dp),\n                verticalAlignment = Alignment.CenterVertically,\n            ) {\n                DetailTagSectionLabel(",
+            "Android detail tag edit button must be in the heading row, not stacked below",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
+            "private fun DetailTagSectionLabel(\n    text: String,\n    modifier: Modifier = Modifier,",
+            "Android detail tag headings must use the compact one-line label",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
+            "maxLines = 1,\n        overflow = TextOverflow.Ellipsis,\n    )\n}",
+            "Android detail tag headings must not wrap to two lines",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
+            "Modifier.width(78.dp).testTag(editButtonTestTag)",
+            "Android detail tag edit button must stay compact on the right side of the heading",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
+            ".horizontalScroll(rememberScrollState()),\n                        ) {\n                            Text(\n                                text = title,",
+            "Android media viewer title must stay one line and horizontally scrollable",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
+            "maxLines = 1,\n                                overflow = TextOverflow.Clip,\n                                color = MaterialTheme.colorScheme.onBackground,",
+            "Android media viewer title must not wrap to two lines",
+        ),
+        lambda: forbid(
+            "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
+            "AppMediaFileName(",
+            "Android media viewer must not show internal file names below the media",
+        ),
+        lambda: forbid(
+            "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
+            "middleEllipsizeFileName",
+            "Android media viewer must not keep the old visible file-name label path",
+        ),
+        lambda: require(
             "app/src/main/java/jp/mimac/urlsaver/ui/components/EntryCard.kt",
             "localTagNames: List<String>",
             "Android entry cards must accept local tag names",
@@ -135,9 +180,24 @@ def main() -> int:
             "Android entry cards must hide service/time header when local tags exist",
         ),
         lambda: forbid(
+            "app/src/main/java/jp/mimac/urlsaver/ui/components/EntryCard.kt",
+            "MetadataStatusDot(entry.metadataState)",
+            "Android cards without local tags must not show the right-side metadata status dot",
+        ),
+        lambda: forbid(
+            "app/src/main/java/jp/mimac/urlsaver/ui/components/EntryCard.kt",
+            'text = "$timestampLabel ${formatTimestamp(timestampMillis, ZoneId.of("Asia/Tokyo"))}"',
+            "Android cards without local tags must not show saved/archive timestamp in the header",
+        ),
+        lambda: forbid(
             "ios/URLSaveriOS/UI/RootView.swift",
             'icon: "info.circle"',
             "home top-bar Info icon must not be reintroduced on iPhone",
+        ),
+        lambda: require(
+            "ios/URLSaveriOS/UI/RootView.swift",
+            'icon: "person.crop.circle"',
+            "iPhone home header must keep the profile button",
         ),
         lambda: require(
             "ios/URLSaveriOS/UI/RootView.swift",
@@ -195,6 +255,16 @@ def main() -> int:
             "if visibleLocalTagNames.isEmpty",
             "iPhone entry cards must hide service/time header when local tags exist",
         ),
+        lambda: forbid(
+            "ios/URLSaveriOS/UI/AppChrome.swift",
+            "Circle()\n                                        .fill(metadataDotColor(for: entry.metadataState))",
+            "iPhone cards without local tags must not show the right-side metadata status dot",
+        ),
+        lambda: forbid(
+            "ios/URLSaveriOS/UI/AppChrome.swift",
+            'Text("\\(timestampLabel) \\(DateFormatters.listTimestamp.string(from: timestampDate(for: entry)))")',
+            "iPhone cards without local tags must not show saved/archive timestamp in the header",
+        ),
         lambda: require(
             "ios/URLSaveriOS/UI/DetailView.swift",
             'title: "自作タグ"',
@@ -204,6 +274,31 @@ def main() -> int:
             "ios/URLSaveriOS/UI/DetailView.swift",
             'title: "共有タグ"',
             "iPhone detail shared tag heading must remain 共有タグ",
+        ),
+        lambda: require(
+            "ios/URLSaveriOS/UI/DetailView.swift",
+            "HStack(alignment: .center, spacing: 8) {\n                    DetailSectionLabel(text: title)",
+            "iPhone detail tag edit button must be in the heading row, not stacked below",
+        ),
+        lambda: require(
+            "ios/URLSaveriOS/UI/DetailView.swift",
+            "DetailTagEditButton(action: onEdit)\n                        .frame(width: 72)",
+            "iPhone detail tag edit button must stay compact on the right side of the heading",
+        ),
+        lambda: require(
+            "ios/URLSaveriOS/UI/DetailView.swift",
+            "ScrollView(.horizontal, showsIndicators: false) {\n                        Text(title)",
+            "iPhone media viewer title must stay one line and horizontally scrollable",
+        ),
+        lambda: require(
+            "ios/URLSaveriOS/UI/DetailView.swift",
+            ".lineLimit(1)\n                            .fixedSize(horizontal: true, vertical: false)",
+            "iPhone media viewer title must not wrap to two lines",
+        ),
+        lambda: forbid(
+            "ios/URLSaveriOS/UI/DetailView.swift",
+            "Text(item.fileName)",
+            "iPhone media viewer must not show internal file names below the media",
         ),
     ]
 
