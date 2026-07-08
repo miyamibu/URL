@@ -21,6 +21,10 @@ artifacts/device-verification/
 artifacts/recovery/
 artifacts/render-verification/
 artifacts/ui-review/2026-06-30/
+artifacts/ui-review/**/*.jpg
+artifacts/ui-review/**/*.jpeg
+artifacts/ui-review/**/*.png
+artifacts/ui-review/**/*.xml
 artifacts/tiktok-live/
 __pycache__/
 tmp_main.png
