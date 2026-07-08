@@ -407,6 +407,51 @@ class YouTubeDirectResultTest(unittest.TestCase):
         self.assertTrue(result["assets"][0]["downloadUrl"].startswith("https://example.test/files/"))
 
 
+class InstagramOrderTest(unittest.TestCase):
+    def test_graph_sidecar_preserves_mixed_media_order(self):
+        html = (
+            '"edge_sidecar_to_children":{"edges":['
+            '{"node":{"__typename":"GraphImage","display_url":"https://scontent.cdninstagram.com/v/t51.29350-15/first.jpg"}},'
+            '{"node":{"__typename":"GraphVideo","video_url":"https://scontent.cdninstagram.com/o1/v/t16/f1/video.mp4"}},'
+            '{"node":{"__typename":"GraphImage","display_url":"https://scontent.cdninstagram.com/v/t51.29350-15/second.jpg"}}'
+            "]}"
+        )
+
+        media = media_resolver_backend.MediaResolver._instagram_graph_media(html, include_images=True)
+
+        self.assertEqual([item[0] for item in media], ["IMAGE", "VIDEO", "IMAGE"])
+        self.assertEqual([item[1] for item in media], [
+            "https://scontent.cdninstagram.com/v/t51.29350-15/first.jpg",
+            "https://scontent.cdninstagram.com/o1/v/t16/f1/video.mp4",
+            "https://scontent.cdninstagram.com/v/t51.29350-15/second.jpg",
+        ])
+
+    def test_instagram_embed_assets_include_sort_index(self):
+        resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://example.test")
+        response = mock.Mock()
+        response.__enter__ = mock.Mock(return_value=response)
+        response.__exit__ = mock.Mock(return_value=None)
+        response.read.return_value = (
+            b'"edge_sidecar_to_children":{"edges":['
+            b'{"node":{"__typename":"GraphImage","display_url":"https://scontent.cdninstagram.com/v/t51.29350-15/first.jpg"}},'
+            b'{"node":{"__typename":"GraphVideo","video_url":"https://scontent.cdninstagram.com/o1/v/t16/f1/video.mp4"}},'
+            b'{"node":{"__typename":"GraphImage","display_url":"https://scontent.cdninstagram.com/v/t51.29350-15/second.jpg"}}'
+            b"]}"
+        )
+
+        with mock.patch.object(media_resolver_backend.urllib.request, "urlopen", return_value=response):
+            assets = resolver._resolve_instagram_embed("https://www.instagram.com/p/SHORTCODE/")
+
+        self.assertEqual([asset["mediaType"] for asset in assets], ["IMAGE", "VIDEO", "IMAGE"])
+        self.assertEqual([asset["sortIndex"] for asset in assets], [0, 1, 2])
+        self.assertEqual([asset["providerAssetId"] for asset in assets], [
+            "SHORTCODE:item:0",
+            "SHORTCODE:item:1",
+            "SHORTCODE:item:2",
+        ])
+        self.assertEqual([asset["isPreferred"] for asset in assets], [True, False, False])
+
+
 class HandlerTest(unittest.TestCase):
     def test_head_health_returns_ok_for_render_readiness(self):
         with tempfile.TemporaryDirectory() as tmp:
