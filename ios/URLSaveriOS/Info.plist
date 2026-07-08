@@ -19,9 +19,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.11</string>
+	<string>1.0.14</string>
 	<key>CFBundleVersion</key>
-	<string>11</string>
+	<string>15</string>
 	<key>SharedTagCloudEnabled</key>
 	<string>$(URLSAVER_SHARED_TAG_CLOUD_ENABLED)</string>
 	<key>SupabaseURL</key>
@@ -52,6 +52,8 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>
