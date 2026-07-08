@@ -145,6 +145,28 @@ def _is_instagram_media_url(value: str) -> bool:
         return False
 
 
+def _decode_instagram_media_url(value: str) -> str:
+    decoded = value.replace(r"\/", "/").replace("&amp;", "&")
+    for _ in range(2):
+        decoded = (
+            decoded
+            .replace(r"\\u002F", "/")
+            .replace(r"\u002F", "/")
+            .replace(r"\\u0026", "&")
+            .replace(r"\u0026", "&")
+            .replace(r"\\u0025", "%")
+            .replace(r"\u0025", "%")
+        )
+        try:
+            unescaped = decoded.encode("utf-8").decode("unicode_escape")
+        except Exception:
+            break
+        if unescaped == decoded:
+            break
+        decoded = unescaped
+    return decoded
+
+
 def _stable_unique(values: list[str]) -> list[str]:
     seen = set()
     result = []
@@ -644,6 +666,7 @@ class MediaResolver:
                     author_name=author_name,
                     thumbnail_url=media_url,
                     preferred=index == 0,
+                    sort_index=index,
                 )
             )
         play_url = data.get("play")
@@ -688,8 +711,23 @@ class MediaResolver:
             with yt_dlp.YoutubeDL(options) as ydl:  # type: ignore[attr-defined]
                 ydl.extract_info(url, download=True)
             files = self._cached_provider_files(stable)
+        info = {}
+        if files:
+            try:
+                with yt_dlp.YoutubeDL(
+                    {
+                        "quiet": True,
+                        "no_warnings": True,
+                        "noplaylist": False,
+                        **_yt_dlp_cookie_options("instagram"),
+                    }
+                ) as ydl:  # type: ignore[attr-defined]
+                    info = ydl.extract_info(url, download=False) or {}
+            except Exception:
+                info = {}
+        ordered_files, order_verified = self._ordered_instagram_cached_files(stable, files, info)
         assets = []
-        for index, path in enumerate(files):
+        for index, path in enumerate(ordered_files):
             if path.suffix.lower() in AUDIO_EXTENSIONS:
                 continue
             media_type = _media_type(path)
@@ -700,7 +738,7 @@ class MediaResolver:
             assets.append(
                 {
                     "provider": "instagram",
-                    "providerAssetId": f"{path.stem}:backend:{index}",
+                    "providerAssetId": f"{path.stem}:item:{index}",
                     "canonicalPostUrl": url,
                     "authorName": None,
                     "title": None,
@@ -713,6 +751,8 @@ class MediaResolver:
                     "width": None,
                     "height": None,
                     "bitrate": None,
+                    "sortIndex": index,
+                    "orderVerified": order_verified,
                     "isPreferred": index == 0,
                 }
             )
@@ -1192,67 +1232,62 @@ class MediaResolver:
             section = parts[1] if len(parts) > 1 else decoded
         elif "edge_sidecar_to_children" in decoded:
             section = decoded.split("edge_sidecar_to_children", 1)[1]
-        image_urls = [] if kind == "reel" else self._instagram_graph_urls(section, "GraphImage", "display_url")
-        video_urls = self._instagram_graph_urls(section, "GraphVideo", "video_url")
-        if not image_urls and kind != "reel":
-            image_urls = self._instagram_embed_image_urls(section)
-        if not video_urls:
-            video_urls = self._instagram_embed_video_urls(section)
-        assets = [
-            self._direct_asset(
-                provider="instagram",
-                provider_asset_id=f"{shortcode}:image:{index}",
-                canonical=url,
-                media_url=media_url,
-                media_type="IMAGE",
-                mime_type="image/jpeg",
-                title=None,
-                author_name=None,
-                thumbnail_url=media_url,
-                preferred=not video_urls and index == 0,
+        ordered_media = self._instagram_graph_media(section, include_images=kind != "reel")
+        order_verified = bool(ordered_media)
+        if not ordered_media:
+            ordered_media = self._instagram_embed_fallback_media(section, include_images=kind != "reel")
+        assets = []
+        for index, media in enumerate(ordered_media):
+            media_type, media_url, mime_type = media
+            assets.append(
+                self._direct_asset(
+                    provider="instagram",
+                    provider_asset_id=f"{shortcode}:item:{index}",
+                    canonical=url,
+                    media_url=media_url,
+                    media_type=media_type,
+                    mime_type=mime_type,
+                    title=None,
+                    author_name=None,
+                    thumbnail_url=media_url if media_type == "IMAGE" else None,
+                    preferred=index == 0,
+                    sort_index=index,
+                    order_verified=order_verified,
+                )
             )
-            for index, media_url in enumerate(_stable_unique(image_urls))
-        ]
-        assets.extend(
-            self._direct_asset(
-                provider="instagram",
-                provider_asset_id=f"{shortcode}:video:{index}",
-                canonical=url,
-                media_url=media_url,
-                media_type="VIDEO",
-                mime_type="video/mp4",
-                title=None,
-                author_name=None,
-                thumbnail_url=None,
-                preferred=index == 0,
-            )
-            for index, media_url in enumerate(_stable_unique(video_urls))
-        )
         return assets
 
     @staticmethod
-    def _instagram_graph_urls(html: str, typename: str, field: str) -> list[str]:
-        results = []
-        for match in re.finditer(rf'"__typename":"{typename}"', html):
+    def _instagram_graph_media(html: str, include_images: bool) -> list[tuple[str, str, str]]:
+        results: list[tuple[str, str, str]] = []
+        seen: set[str] = set()
+        for match in re.finditer(r'"__typename":"(GraphImage|GraphVideo)"', html):
+            typename = match.group(1)
+            if typename == "GraphImage" and not include_images:
+                continue
             chunk = html[match.start() : match.start() + 16000]
             if "profile_pic" in chunk or "video_default_cover_frame" in chunk:
                 continue
+            field = "display_url" if typename == "GraphImage" else "video_url"
             url_match = re.search(rf'"{field}":"(https:[^"]+)"', chunk)
-            if url_match and _is_instagram_media_url(url_match.group(1)):
-                results.append(url_match.group(1))
+            if not url_match:
+                continue
+            media_url = _decode_instagram_media_url(url_match.group(1))
+            if not _is_instagram_media_url(media_url) or media_url in seen:
+                continue
+            seen.add(media_url)
+            results.append(("IMAGE", media_url, "image/jpeg") if typename == "GraphImage" else ("VIDEO", media_url, "video/mp4"))
         return results
 
     @staticmethod
-    def _instagram_embed_image_urls(html: str) -> list[str]:
-        candidates: dict[str, tuple[int, str]] = {}
+    def _instagram_embed_fallback_media(html: str, include_images: bool) -> list[tuple[str, str, str]]:
+        image_candidates: dict[str, tuple[int, int, str]] = {}
+        video_candidates: list[tuple[int, str]] = []
+        seen_videos: set[str] = set()
         for match in re.finditer(r'https:(?:\\?/\\?/|//)[^"<> ]+?\.jpg[^"<> ]*', html):
-            media_url = (
-                match.group(0)
-                .replace(r"\/", "/")
-                .replace(r"\u0026", "&")
-                .replace("\\u00253D", "%3D")
-                .replace("&amp;", "&")
-            )
+            if not include_images:
+                continue
+            media_url = _decode_instagram_media_url(match.group(0))
             if not _is_instagram_media_url(media_url):
                 continue
             if "t51.2885-19" in media_url or "profile_pic" in media_url:
@@ -1263,24 +1298,23 @@ class MediaResolver:
             if not key:
                 continue
             score = MediaResolver._instagram_image_score(media_url)
-            current = candidates.get(key)
-            if current is None or score > current[0]:
-                candidates[key] = (score, media_url)
-        return [item[1] for item in sorted(candidates.values(), key=lambda item: item[0], reverse=True)]
-
-    @staticmethod
-    def _instagram_embed_video_urls(html: str) -> list[str]:
-        results = []
+            current = image_candidates.get(key)
+            if current is None or score > current[1]:
+                first_pos = current[0] if current is not None else match.start()
+                image_candidates[key] = (first_pos, score, media_url)
         for match in re.finditer(r'https:(?:\\?/\\?/|//)[^"<> ]+?\.mp4[^"<> ]*', html):
-            media_url = (
-                match.group(0)
-                .replace(r"\/", "/")
-                .replace(r"\u0026", "&")
-                .replace("&amp;", "&")
-            )
-            if _is_instagram_media_url(media_url):
-                results.append(media_url)
-        return _stable_unique(results)
+            media_url = _decode_instagram_media_url(match.group(0))
+            if _is_instagram_media_url(media_url) and media_url not in seen_videos:
+                seen_videos.add(media_url)
+                video_candidates.append((match.start(), media_url))
+        combined = [
+            (position, "IMAGE", url, "image/jpeg")
+            for position, _score, url in image_candidates.values()
+        ] + [
+            (position, "VIDEO", url, "video/mp4")
+            for position, url in video_candidates
+        ]
+        return [(media_type, url, mime_type) for position, media_type, url, mime_type in sorted(combined, key=lambda item: item[0])]
 
     @staticmethod
     def _instagram_image_score(media_url: str) -> int:
@@ -1318,6 +1352,8 @@ class MediaResolver:
         author_name: str | None,
         thumbnail_url: str | None,
         preferred: bool,
+        sort_index: int = 0,
+        order_verified: bool = True,
     ) -> dict:
         return {
             "provider": provider,
@@ -1334,8 +1370,38 @@ class MediaResolver:
             "width": None,
             "height": None,
             "bitrate": None,
+            "sortIndex": sort_index,
+            "orderVerified": order_verified,
             "isPreferred": preferred,
         }
+
+    @staticmethod
+    def _ordered_instagram_cached_files(stable: str, files: list[pathlib.Path], info: dict) -> tuple[list[pathlib.Path], bool]:
+        entries = info.get("entries")
+        if not isinstance(entries, list) or not entries:
+            return files, False
+        remaining = list(files)
+        ordered: list[pathlib.Path] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            entry_id = str(entry.get("id") or "").strip()
+            if not entry_id:
+                continue
+            candidates = [
+                path
+                for path in remaining
+                if path.name.startswith(f"{stable}_{entry_id}_") or path.name.startswith(f"{stable}_{entry_id}.")
+            ]
+            if not candidates:
+                continue
+            path = sorted(candidates, key=lambda item: item.name)[0]
+            ordered.append(path)
+            remaining.remove(path)
+        if not ordered:
+            return files, False
+        ordered.extend(remaining)
+        return ordered, len(remaining) == 0
 
     def file_path(self, name: str) -> pathlib.Path | None:
         safe_name = pathlib.Path(unquote(name)).name
