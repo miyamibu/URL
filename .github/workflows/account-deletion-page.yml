@@ -2,12 +2,6 @@ name: Account Deletion Page
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - "docs/account-deletion-request.html"
-      - ".github/workflows/account-deletion-page.yml"
 
 permissions:
   contents: read
