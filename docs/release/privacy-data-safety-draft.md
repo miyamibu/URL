@@ -1,15 +1,16 @@
 # Privacy And Data Safety Draft
 
 ## Goal
-提出版 `1.0.11` の privacy / Data safety 回答を、cloud 有効 binary と照合できる状態にする。
+現在の source baseline `1.0.14 (15)` から次回提出する privacy / Data safety 回答を、選択した release mode と照合できる状態にする。過去の `1.0.11` 提出証跡は履歴として残すが、現在の提出可否の証明には使わない。
 
 ## Release Assumption
 - Ads: disabled.
 - Billing: enabled for Standard / Pro subscriptions through Google Play Billing and StoreKit.
 - Third-party analytics: not used.
 - Third-party crash reporting: not used.
-- Shared-tag cloud: enabled for `1.0.11`.
-- Account sign-in: enabled for shared-tag sync and collaboration.
+- Shared-tag cloud: release mode dependent. Android reads release local/env config; iOS defaults to tracked local-only xcconfig and requires an explicit secrets xcconfig for cloud-sharing Archive/TestFlight.
+- Account sign-in: enabled only when shared-tag cloud is enabled for the submitted binary.
+- Current release status: `BLOCKED_INTERNAL` until `docs/release/release-ops-readiness-2026-07-09.md` P1 blockers and external live/store verification are closed.
 
 ## Data Stored Locally
 - Saved URL, normalized URL, display URL.
@@ -52,6 +53,7 @@
 - If the submitted binary disables shared-tag cloud, do not use the cloud-enabled privacy answers.
 - If ads are re-enabled or billing behavior changes, stop and rewrite this draft before submission.
 - If any production value is missing, mark the submission as blocked rather than guessing.
+- If admin audit/support/moderation handling, ChatGPT sync boundaries, or media-resolver wording remain unresolved, keep release status `BLOCKED_INTERNAL` rather than treating this draft as ready.
 
 ## Evidence From Current Repo
 
@@ -60,9 +62,9 @@
 | Android backup | `app/src/main/AndroidManifest.xml` has `android:allowBackup="false"` and `android:fullBackupContent="false"`. | Local saved URLs are not configured for Android cloud backup. | DONE |
 | Android network | `android.permission.INTERNET` is present. | Required for metadata fetch and invite/shared-tag flows. | DONE |
 | Android ads | `app/build.gradle.kts` release sets `ADS_ENABLED=false` and empty AdMob IDs; `app/src/release/AndroidManifest.xml` removes ad IDs/providers. | Release can be no-ads if built with default release settings. | DONE |
-| Android shared-tag cloud | `app/build.gradle.kts` release reads `release.shared.tag.cloud.enabled`; current local release config sets it true. | Android submitted build is cloud-enabled when built from this machine's release config. | DONE |
+| Android shared-tag cloud | `app/build.gradle.kts` release reads `release.shared.tag.cloud.enabled` from local/env config. | Submitted binary mode must be checked from generated BuildConfig before copying store answers. | NEEDS_RELEASE_RECHECK |
 | iOS privacy manifest | `ios/URLSaveriOS/PrivacyInfo.xcprivacy` and share extension privacy manifest have empty tracking arrays. | App Store privacy labels must disclose cloud account/contact/user-content data even though no tracking SDK is present. | DONE |
-| iOS shared-tag cloud | `ios/URLSaveriOS.xcodeproj/project.pbxproj` app Debug/Release use `ios/Config/URLSaverSecrets.xcconfig`; current Release build settings show cloud true and production Supabase/contact-support values. | iOS submitted build is cloud-enabled on this machine. | DONE |
+| iOS shared-tag cloud | `ios/URLSaveriOS.xcodeproj/project.pbxproj` app Debug/Release default to tracked `ios/Config/URLSaverSecrets.local-only.xcconfig`; cloud builds must pass ignored `ios/Config/URLSaverSecrets.xcconfig` explicitly. | Submitted binary mode must be checked from build settings or archive before copying store answers. | NEEDS_RELEASE_RECHECK |
 | Account deletion | `docs/account-deletion.md` and `web/invite-link/account-deletion/index.html` exist for cloud release; `https://miyamibu.xyz/account-deletion/` returned HTTP 200 on 2026-06-29. | Public deletion route is reachable; enter the URL in store consoles and keep it aligned with account features. | DONE_PUBLIC_200 |
 | Public privacy policy | `web/invite-link/privacy/index.html` source discloses Standard / Pro subscriptions, Google Play Billing, and StoreKit. | `./scripts/verify_public_web_release.sh` passed on 2026-06-29; live `https://miyamibu.xyz/privacy/` returns HTTP 200 and no longer contains stale no-real-billing wording. | DONE_PUBLIC_VERIFIED |
 

@@ -44,6 +44,10 @@ Phase 1a/1b の URL 保存契約をコア不変条件として守りつつ、承
 - Lint: `./gradlew lintDebug`
 - Instrumentation: `./gradlew connectedDebugAndroidTest`
 
+## AI / Release Work
+- AI/release作業では `docs/release/launch-go-checklist.md` と `.agents/skills/ai-release-gate/` を確認する。
+- commit/push/deploy/store/OpenAI submission/production secrets投入はユーザー明示指示なしに行わない。
+
 ## Android Device Data Guard
 - Never run `connectedDebugAndroidTest`, `pm clear`, uninstall/reinstall, or any command/test that can clear app data on the user's normal physical Android device when saved URLs may matter.
 - Treat Android app data on real devices as user data. DB resets inside instrumentation tests, including `clearAllTables()`, are destructive on that device.

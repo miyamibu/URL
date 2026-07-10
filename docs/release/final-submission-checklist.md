@@ -1,10 +1,28 @@
 # Final Store Submission Checklist
 
 ## Date
-2026-06-28
+2026-06-28 historical submission log; current source re-baseline added 2026-07-09.
 
 ## Goal
-りんばむ `1.0.11` を Google Play / App Store へ提出するため、repo内で確認・作成できる提出素材、設定、検証結果、外部待ちを一箇所にまとめる。
+この文書の下部に残る `1.0.11` の表は、2026-06-27/28 の Google Play / App Store 提出時点の履歴ログとして扱う。現在の repo source は `1.0.14 (15)` であり、この履歴ログだけでは次回提出可否を判断しない。
+
+## Current Source Snapshot (2026-07-10 Repo Gate)
+- Android source: `versionName = "1.0.14"`, `versionCode = 15`, package `jp.miyamibu.urlalbum`.
+- iOS source: `CFBundleShortVersionString = 1.0.14`, `CFBundleVersion = 15`, bundle `com.mibu.codebridge.ios`.
+- Current release/ops readiness tracker: `docs/release/release-ops-readiness-2026-07-09.md`.
+- Current repo gate is `REPO_GO` when local code, docs, scripts, tests, build, and release hygiene pass. This is a repo-only status, not store/public/OpenAI publication.
+- AI-safe export/MCP source contracts are tracked under `docs/ai/`; these local docs do not mean production MCP deployment, production OAuth registration, OpenAI submission, store submission, production secret entry, or store/live recheck is complete.
+- The `1.0.11` store submission, public URL, screenshot, signing, and console rows below are not current proof for `1.0.14 (15)`.
+
+## Manual Steps Not Done By Codex
+| Step | Reason |
+|---|---|
+| production deploy | External publication action. |
+| production MCP/OAuth registration | Requires owner-controlled provider console and secrets. |
+| OpenAI submission | Requires deployed endpoint and owner submission. |
+| App Store / Play Console submission | Store-console action. |
+| production secret投入 | Secrets must stay outside repo/chat. |
+| store/live再確認 | External state can change and must be checked at release time. |
 
 ## Official Requirements Checked
 - Google Play User Data policy: privacy policy URL is required for all apps, must be public/non-geofenced/non-PDF, and Data safety must match the privacy policy.
@@ -16,8 +34,8 @@
 - App Store privacy: App Privacy responses and privacy policy URL are required and must include third-party partner practices.
 - Apple account deletion: apps with account creation must let users initiate deletion in app.
 
-## Current Release Mode Finding
-Current repo is aligned to cloud-enabled `1.0.11`:
+## Historical Release Mode Finding (2026-06-28)
+Historical `1.0.11` repo snapshot was aligned to cloud-enabled submission:
 
 - Android release config has `release.shared.tag.cloud.enabled=true` and production Supabase values in local release configuration.
 - iOS Release build settings read `ios/Config/URLSaverSecrets.xcconfig` and show `URLSAVER_SHARED_TAG_CLOUD_ENABLED=true` plus production Supabase/contact-support values on this machine.
@@ -42,7 +60,7 @@ The repo-side cloud-enabled alignment is fixed. Google Play and App Store Connec
 | Billing declaration | DONE | `app/build.gradle.kts` includes `com.android.billingclient:billing:8.3.0`; iOS has `StoreKitPurchaseService.swift`. | Keep Play Console / App Store Connect IAP metadata aligned with Standard / Pro subscriptions. |
 | App icon | DONE | Android mipmap densities exist under `app/src/main/res/mipmap-*`. | Final visual approval still owner decision. |
 | Feature graphic | DONE | `artifacts/store-assets/google-play-feature-graphic-1024x500.png`, verified 1024 x 500. | Owner can approve or replace before upload. |
-| Phone screenshots | BLOCKED_INTERNAL | Existing Android screenshots predate cloud-enabled `1.0.11`; local AVD `urlsaverApi35` exited immediately with no adb device or emulator log on 2026-06-27. | Capture/approve final screenshots from a release-equivalent cloud-enabled build before final store listing update if screenshots are being replaced. |
+| Phone screenshots | MANUAL_STEP | Existing Android screenshots predate cloud-enabled `1.0.11`; local AVD `urlsaverApi35` exited immediately with no adb device or emulator log on 2026-06-27. | Capture/approve final screenshots from a release-equivalent cloud-enabled build before final store listing update if screenshots are being replaced. |
 | Release AAB | DONE | `./gradlew testDebugUnitTest lintDebug bundleRelease` passed on 2026-06-27; signed AAB created at `/Users/mimac/.urlsaver-signing/app-release-1.0.11-11-upload-signed.aab`; uploaded to Play Console production release 9 as `11 (1.0.11)` and submitted for review on 2026-06-27. | Monitor review result. |
 | Release signing / upload key | DONE | Signed with `urlsaver-upload-reset-20260526-122511.jks`, alias `urlsaver-upload`; `jarsigner` verified signer `CN=URLSaver Upload, OU=URLSaver, O=Miyamibu`. | Keep keystore and passwords outside repo/chat. |
 | Play App Signing SHA-256 | NEEDS_USER_ACTION | `web/invite-link/.well-known/assetlinks.json` has beta/debug fingerprint. | Replace with Play App Signing SHA-256 after enrollment. |
@@ -85,7 +103,7 @@ The repo-side cloud-enabled alignment is fixed. Google Play and App Store Connec
 | App Links / Universal Links placeholders | DONE | `docs/release/link-and-signing-placeholders.md` | Replace only issued external IDs after account setup. |
 | Public web privacy page | DONE_PUBLIC_VERIFIED | `./scripts/verify_public_web_release.sh` passed on 2026-06-29; live `https://miyamibu.xyz/privacy/` matches billing-enabled `1.0.11` wording. | Re-run verifier after any privacy or billing copy change. |
 | Public account deletion page | DONE | Source added and `https://miyamibu.xyz/account-deletion/` returned HTTP 200 on 2026-06-27. | Use this URL in store consoles. |
-| Android screenshot evidence | BLOCKED_INTERNAL | Older local-only screenshot evidence exists but does not prove cloud-enabled `1.0.11`; local AVD startup failed before adb registration. | Capture later on a working emulator/device if replacing Play screenshots. |
+| Android screenshot evidence | MANUAL_STEP | Older local-only screenshot evidence exists but does not prove cloud-enabled `1.0.11`; local AVD startup failed before adb registration. | Capture later on a working emulator/device if replacing Play screenshots. |
 | iOS screenshot evidence | PARTIAL | Cloud-enabled `1.0.11` simulator screenshot was captured during review, but the temporary artifact was intentionally left out of git. | Capture remaining store-size screenshots if replacing App Store screenshots. |
 
 ## External / User Action Checklist
@@ -112,7 +130,7 @@ The repo-side cloud-enabled alignment is fixed. Google Play and App Store Connec
 | Android release AAB | DONE | `./gradlew testDebugUnitTest lintDebug bundleRelease` passed on 2026-06-27; `/Users/mimac/.urlsaver-signing/app-release-1.0.11-11-upload-signed.aab` verified with `jarsigner`; Play Console production release 9 contains `11 (1.0.11)` and is in review. |
 | Android final build command | DONE | `./gradlew assembleDebug testDebugUnitTest lintDebug bundleRelease assembleRelease` passed on 2026-05-11. |
 | Android release artifact scan | DONE | Release BuildConfig/manifest inspected on 2026-05-11; signed AAB certificate and version were verified on 2026-06-27. |
-| Android screenshot set | BLOCKED_INTERNAL | Older release-equivalent screenshots with demo data are saved under `artifacts/store-assets/screenshots/2026-05-13/android/`, but they do not prove cloud-enabled `1.0.11`; AVD launch failed on 2026-06-27. |
+| Android screenshot set | MANUAL_STEP | Older release-equivalent screenshots with demo data are saved under `artifacts/store-assets/screenshots/2026-05-13/android/`, but they do not prove cloud-enabled `1.0.11`; AVD launch failed on 2026-06-27. |
 | iOS simulator build | DONE | Debug simulator build installed and launched on `URLSaverStoreShot-iOS26-5` on 2026-06-27 for cloud-enabled `1.0.11` screenshot capture. |
 | iOS tests | DONE | `xcodebuild ... test` passed on 2026-05-11. |
 | iOS release settings | DONE | `xcodebuild ... -configuration Release -showBuildSettings` on 2026-06-27 reported `URLSAVER_SHARED_TAG_CLOUD_ENABLED=true` and production Supabase/contact-support values. |

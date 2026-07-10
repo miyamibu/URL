@@ -281,8 +281,7 @@
 - エクスポートはバックアップではなく、外部利用向け出力にする。
 - 対象は保存中URL、アーカイブURL、テキストカード、自作タグ、共有タグ、メモ、投稿内容。
 - メディアファイル本体は含めない。
-- メディア保存済みかどうかは含める。
-- Markdown、JSON、CSV を用意する。
+- 現在の local 実装契約は Markdown entries、`schema.json`、`README_FOR_AI.md`、`redaction_report.json` を含む ZIP と JSON。CSV、メディア保存済み状態の明示出力、UI統合済みAI receipt/draft/diff、production MCP/OpenAI提出は未実装の P1 follow-up とし、実装/検証するまで提供済みと扱わない。
 - AI向けエクスポートではタイトル、URL、投稿内容、メモ、タグ、共有タグ、保存時刻を整理して出す。
 - テキストカードもAI向けエクスポートに含める。
 - 範囲選択を用意する。全件、保存中のみ、アーカイブのみ、現在の検索・タグ絞り込み結果のみ。

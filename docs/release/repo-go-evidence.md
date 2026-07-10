@@ -1,0 +1,45 @@
+# REPO_GO Evidence
+
+## Final status: REPO_GO
+
+This file preserves the repo-local evidence from the 2026-07-10 remediation. `REPO_GO` means the repository implementation, docs, scripts, tests, build checks, and release hygiene are ready for pre-publication operations. It does not mean production deploy, store submission, OpenAI submission, production secret entry, or live/store verification is complete.
+
+## Verified Areas
+
+| Area | Result | Evidence |
+|---|---|---|
+| Android | PASS | `./gradlew testDebugUnitTest lintDebug assembleDebug` passed. |
+| iOS | PASS | `xcodebuild -list`, dedicated Simulator `build-for-testing`, `test-without-building`, and unsigned Release build passed. Signed Release build requires owner signing setup. |
+| MCP contract | PASS | `python3 scripts/verify_mcp_contract.py` passed. |
+| Web/admin | PASS | `cd web/admin && npm run typecheck` passed. |
+| Mobile UI contract | PASS | `python3 scripts/verify_mobile_ui_contract.py` passed. |
+| AI-safe Export | PASS | Android/iOS export tests cover `schema.json`, `README_FOR_AI.md`, `redaction_report.json`, `publicSafeId`, `aiEligible`, excerpts, and saved snapshot notice. |
+| AI Preview / Receipt / Draft / Diff | PASS | Android Room and iOS SQLite persist local-only receipts/drafts/diff proposals; feature flag default off; mock provider deterministic; apply requires explicit confirmation. |
+| Link death insurance | PASS | Export/MCP include saved-time metadata, `metadataSource`, excerpt/summary, and `savedSnapshotNotice`; raw `fetchedBody` is not default output. |
+| Release hygiene | PASS | `bash scripts/check_release_hygiene.sh` passed. |
+| Clean review archive | PASS | `bash scripts/create_clean_review_archive.sh` creates the archive under the OS temp directory, not repo root. Forbidden-file grep returned OK. |
+| Secret scan | PASS_WITH_EXPECTED_TEXT_HITS | Search hits were docs, example names, redaction patterns, Supabase role names in migrations, and local config references. No production secret values were found. |
+
+## Manual Steps Remaining After REPO_GO
+
+| Manual step | Why it remains manual |
+|---|---|
+| Production deploy | External publication action. |
+| Production MCP/OAuth registration | Requires owner-controlled provider console and secret entry. |
+| OpenAI Apps Developer Mode connection and submission | Requires owner ChatGPT/OpenAI account and deployed HTTPS MCP endpoint. |
+| App Store / Play Console upload or submission | Store-console action. |
+| Production secrets | Must be entered outside repo and chat. |
+| Store/live verification | External state changes over time and must be verified at release time. |
+| Signed iOS archive/upload | Requires Apple team, signing identity, provisioning, and App Store Connect access. |
+
+## REPO_GO vs LAUNCH_READY_REPO
+
+| Status | Meaning |
+|---|---|
+| `REPO_GO` | Repo implementation is internally consistent and validated. External publication work is still manual. |
+| `LAUNCH_READY_REPO` | Repo also contains the launch-operation artifacts: staging/internal/TestFlight procedures, OpenAI Developer Mode test plan, privacy/store disclosure checklist, production secrets/flags checklist, rollback plan, manual QA matrix, and readiness scripts. |
+
+## Stop Conditions
+
+- Any test weakening, removed redaction, noauth MCP personal data, raw body/prompt/token output, AI feature flag default on, shared-tag default inclusion, or root review archive returns the repo to `NO_GO_INTERNAL`.
+- CoreSimulator-only failures after build-for-testing passes are not automatically internal blockers; classify as `NOT_VERIFIED` unless a code/test failure is found.

@@ -65,10 +65,18 @@ Done when
   - 環境変数 `URLSAVER_INVITE_LINK_BASE_URL`
   - `ios/URLSaveriOS/Info.plist` の `SharedTagCloudEnabled` / `SupabaseURL` / `SupabaseAnonKey` / `InviteLinkBaseURL`
 - 未設定時は cloud シート内で未設定メッセージを出し、既存の local saver 契約はそのまま保ちます。
-- `URLSaveriOS.xcodeproj` には dev LAN URL や dev key を固定しません。cloud-sharing の Archive/TestFlight では `ios/Config/URLSaverSecrets.xcconfig.example` を `ios/Config/URLSaverSecrets.xcconfig` にコピーし、実値を入れて `xcodebuild ... -xcconfig ios/Config/URLSaverSecrets.xcconfig archive` のように渡してください。実値入り xcconfig は gitignore 済みです。
-- local-only v1.0 の App Store / Release 検証では、dev Supabase 向け `ios/Config/URLSaverSecrets.xcconfig` を `-xcconfig` で渡さないでください。必要な場合は `ios/Config/URLSaverSecrets.local-only.xcconfig` を渡し、`URLSAVER_SHARED_TAG_CLOUD_ENABLED=false` と空の Supabase URL/key を確認してください。
+- `URLSaveriOS.xcodeproj` には dev LAN URL や dev key を固定しません。project の標準 base configuration は secret を含まない `ios/Config/URLSaverSecrets.local-only.xcconfig` です。cloud-sharing の Archive/TestFlight では `ios/Config/URLSaverSecrets.xcconfig.example` を `ios/Config/URLSaverSecrets.xcconfig` にコピーし、実値を入れて `xcodebuild ... -xcconfig ios/Config/URLSaverSecrets.xcconfig archive` のように明示的に渡してください。実値入り xcconfig は gitignore 済みです。
+- local-only v1.0 の App Store / Release 検証では、dev Supabase 向け `ios/Config/URLSaverSecrets.xcconfig` を `-xcconfig` で渡さないでください。標準の `ios/Config/URLSaverSecrets.local-only.xcconfig` で `URLSAVER_SHARED_TAG_CLOUD_ENABLED=false` と空の Supabase URL/key を確認してください。
 - Supabase key は publishable key または legacy anon key のみを使い、`service_role` / `sb_secret` は app binary に入れません。
 - βの招待リンクの正本は `https://miyamibu.xyz/invite/{token}` です。`urlsaver://invite/{token}` は fallback deep link として残します。
+
+## AI-friendly Export
+
+- iOS の Export は ZIP / JSON を出力します。
+- ZIP には `manifest.json`, `entries.jsonl`, `entries/*.md`, `schema.json`, `README_FOR_AI.md`, `redaction_report.json` を含めます。
+- AI-safe 出力では raw `fetchedBody` を出さず、`bodyExcerpt` / `memoExcerpt`、`publicSafeId`、`aiEligible`、`redactionApplied` を含めます。
+- 共有タグ付きentryはデフォルトで `aiEligible=false` とし、参加者情報は含めません。
+- production MCP/OpenAI提出、UI統合済みAI receipt/draft/diff、メディア保存状態の明示出力は未完了ゲートとして扱います。
 
 ## Known iOS-specific notes
 
