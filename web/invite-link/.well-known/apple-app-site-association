@@ -1,0 +1,11 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "8R3B5675ZJ.com.mibu.codebridge.ios",
+        "paths": ["/invite/*", "/promo"]
+      }
+    ]
+  }
+}

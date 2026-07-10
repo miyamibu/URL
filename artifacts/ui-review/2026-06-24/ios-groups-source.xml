@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<AppiumAUT>
+  <XCUIElementTypeApplication type="XCUIElementTypeApplication" name="りんばむ" label="りんばむ" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="" processId="12923" bundleId="com.mibu.codebridge.ios">
+    <XCUIElementTypeWindow type="XCUIElementTypeWindow" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="">
+      <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="">
+        <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="">
+          <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="">
+            <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="">
+              <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="">
+                <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="">
+                  <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="">
+                    <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="">
+                      <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="">
+                        <XCUIElementTypeScrollView type="XCUIElementTypeScrollView" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="">
+                          <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="47" width="390" height="283" index="0" traits="">
+                            <XCUIElementTypeButton type="XCUIElementTypeButton" name="chevron.left" label="戻る" enabled="true" visible="true" accessible="true" x="16" y="57" width="40" height="40" index="0" traits="Button"/>
+                            <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="グループ" name="グループ" label="グループ" enabled="true" visible="true" accessible="true" x="68" y="60" width="103" height="34" index="1" traits="StaticText"/>
+                            <XCUIElementTypeButton type="XCUIElementTypeButton" name="arrow.clockwise" label="グループを再読み込み" enabled="false" visible="true" accessible="true" x="334" y="57" width="40" height="40" index="2" traits="NotEnabled, Button"/>
+                            <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="サインインが必要です" name="サインインが必要です" label="サインインが必要です" enabled="true" visible="true" accessible="true" x="36" y="133" width="188" height="24" index="3" traits="StaticText"/>
+                            <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="グループを作成したり招待リンクを作るには、共有タグクラウドへサインインしてください。" name="グループを作成したり招待リンクを作るには、共有タグクラウドへサインインしてください。" label="グループを作成したり招待リンクを作るには、共有タグクラウドへサインインしてください。" enabled="true" visible="true" accessible="true" x="36" y="171" width="310" height="36" index="4" traits="StaticText"/>
+                            <XCUIElementTypeButton type="XCUIElementTypeButton" name="プロフィールを開く" label="プロフィールを開く" enabled="true" visible="true" accessible="true" x="36" y="221" width="318" height="59" index="5" traits="Button"/>
+                          </XCUIElementTypeOther>
+                        </XCUIElementTypeScrollView>
+                      </XCUIElementTypeOther>
+                    </XCUIElementTypeOther>
+                  </XCUIElementTypeOther>
+                </XCUIElementTypeOther>
+                <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="390" height="844" index="1" traits="">
+                  <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="390" height="844" index="0" traits=""/>
+                </XCUIElementTypeOther>
+              </XCUIElementTypeOther>
+            </XCUIElementTypeOther>
+          </XCUIElementTypeOther>
+        </XCUIElementTypeOther>
+      </XCUIElementTypeOther>
+    </XCUIElementTypeWindow>
+  </XCUIElementTypeApplication>
+</AppiumAUT>
+

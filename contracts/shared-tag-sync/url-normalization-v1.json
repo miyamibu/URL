@@ -1,0 +1,62 @@
+[
+  {
+    "input": "HTTPS://Example.COM:443/path/?a=1#frag",
+    "expectedNormalizedUrl": "https://example.com/path?a=1",
+    "reason": "lowercase scheme and host, drop default https port, trim trailing slash, drop fragment"
+  },
+  {
+    "input": "HTTPS://Example.com:443/?q=1",
+    "expectedNormalizedUrl": "https://example.com/?q=1",
+    "reason": "root path keeps slash while preserving query"
+  },
+  {
+    "input": "https://example.com/path/",
+    "expectedNormalizedUrl": "https://example.com/path",
+    "reason": "non-root trailing slash is removed"
+  },
+  {
+    "input": "https://example.com/path?x=1&y=2#section",
+    "expectedNormalizedUrl": "https://example.com/path?x=1&y=2",
+    "reason": "query is preserved and fragment is removed"
+  },
+  {
+    "input": "http://127.0.0.1:80/path",
+    "expectedNormalizedUrl": "http://127.0.0.1/path",
+    "reason": "loopback http is allowed and default port is removed"
+  },
+  {
+    "input": "http://localhost/demo/",
+    "expectedNormalizedUrl": "http://localhost/demo",
+    "reason": "localhost loopback is allowed for local test infra"
+  },
+  {
+    "input": "https://www.youtube.com/watch?v=abc123&t=9",
+    "expectedNormalizedUrl": "https://www.youtube.com/watch?v=abc123&t=9",
+    "reason": "non-default query parameters remain part of the normalized URL"
+  },
+  {
+    "input": "https://x.com/openai/status/111222333?s=20",
+    "expectedNormalizedUrl": "https://x.com/openai/status/111222333?s=20",
+    "reason": "service-specific query values are preserved in normalization"
+  },
+  {
+    "input": "example.com/path",
+    "expectedNormalizedUrl": null,
+    "reason": "missing scheme is rejected"
+  },
+  {
+    "input": "http://example.com/path",
+    "expectedNormalizedUrl": null,
+    "reason": "non-loopback http is rejected"
+  },
+  {
+    "input": "ftp://example.com/path",
+    "expectedNormalizedUrl": null,
+    "reason": "non-http(s) schemes are rejected"
+  },
+  {
+    "input": "https:///broken",
+    "expectedNormalizedUrl": null,
+    "reason": "absolute URL without a valid host is rejected"
+  }
+]

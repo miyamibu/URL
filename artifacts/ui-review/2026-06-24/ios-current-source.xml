@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<AppiumAUT>
+  <XCUIElementTypeApplication type="XCUIElementTypeApplication" name="りんばむ" label="りんばむ" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="" processId="12923" bundleId="com.mibu.codebridge.ios">
+    <XCUIElementTypeWindow type="XCUIElementTypeWindow" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="">
+      <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="">
+        <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="">
+          <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="">
+            <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="">
+              <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="">
+                <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="">
+                  <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="">
+                    <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="">
+                      <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="">
+                        <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="りんばむ" name="りんばむ" label="りんばむ" enabled="true" visible="true" accessible="true" x="12" y="59" width="120" height="40" index="0" traits="StaticText"/>
+                        <XCUIElementTypeButton type="XCUIElementTypeButton" name="rectangle.grid.1x2" label="画像つき表示へ切り替える" enabled="true" visible="true" accessible="true" x="156" y="55" width="44" height="48" index="1" traits="Button"/>
+                        <XCUIElementTypeButton type="XCUIElementTypeButton" name="person.crop.circle" label="プロフィール" enabled="true" visible="true" accessible="true" x="202" y="55" width="44" height="48" index="2" traits="Button"/>
+                        <XCUIElementTypeButton type="XCUIElementTypeButton" value="1" name="checkmark.square" label="選択" enabled="true" visible="true" accessible="true" x="248" y="55" width="44" height="48" index="3" traits="Selected, Button"/>
+                        <XCUIElementTypeButton type="XCUIElementTypeButton" name="book.fill" label="使い方" enabled="true" visible="true" accessible="true" x="294" y="55" width="44" height="48" index="4" traits="Button"/>
+                        <XCUIElementTypeButton type="XCUIElementTypeButton" name="magnifyingglass" label="検索" enabled="true" visible="true" accessible="true" x="340" y="55" width="44" height="48" index="5" traits="Button"/>
+                        <XCUIElementTypeScrollView type="XCUIElementTypeScrollView" enabled="true" visible="true" accessible="false" x="0" y="115" width="390" height="39" index="6" traits="">
+                          <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="115" width="656" height="39" index="0" traits="">
+                            <XCUIElementTypeButton type="XCUIElementTypeButton" name="+, +" label="+, +" enabled="true" visible="true" accessible="true" x="14" y="115" width="63" height="39" index="0" traits="Button">
+                              <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="+" name="+" label="+" enabled="true" visible="true" accessible="false" x="40" y="126" width="11" height="17" index="0" traits="StaticText"/>
+                              <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="+" name="+" label="+" enabled="true" visible="true" accessible="false" x="37" y="121" width="16" height="27" index="1" traits="StaticText"/>
+                            </XCUIElementTypeButton>
+                            <XCUIElementTypeButton type="XCUIElementTypeButton" value="1" name="すべて" label="すべて" enabled="true" visible="true" accessible="true" x="84" y="115" width="76" height="39" index="1" traits="Selected, Button">
+                              <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="すべて" name="すべて" label="すべて" enabled="true" visible="false" accessible="false" x="102" y="126" width="40" height="17" index="0" traits="StaticText"/>
+                            </XCUIElementTypeButton>
+                            <XCUIElementTypeButton type="XCUIElementTypeButton" name="YOUTUBE" label="YOUTUBE" enabled="true" visible="true" accessible="true" x="167" y="115" width="108" height="39" index="2" traits="Button">
+                              <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="YOUTUBE" name="YOUTUBE" label="YOUTUBE" enabled="true" visible="false" accessible="false" x="185" y="126" width="72" height="17" index="0" traits="StaticText"/>
+                            </XCUIElementTypeButton>
+                            <XCUIElementTypeButton type="XCUIElementTypeButton" name="X" label="X" enabled="true" visible="true" accessible="true" x="282" y="115" width="48" height="39" index="3" traits="Button">
+                              <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="X" name="X" label="X" enabled="true" visible="false" accessible="false" x="300" y="126" width="12" height="17" index="0" traits="StaticText"/>
+                            </XCUIElementTypeButton>
+                            <XCUIElementTypeButton type="XCUIElementTypeButton" name="INSTAGRAM" label="INSTAGRAM" enabled="true" visible="true" accessible="true" x="337" y="115" width="127" height="39" index="4" traits="Button">
+                              <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="INSTAGRAM" name="INSTAGRAM" label="INSTAGRAM" enabled="true" visible="false" accessible="false" x="355" y="126" width="91" height="17" index="0" traits="StaticText"/>
+                            </XCUIElementTypeButton>
+                            <XCUIElementTypeButton type="XCUIElementTypeButton" name="TIKTOK" label="TIKTOK" enabled="true" visible="false" accessible="true" x="471" y="115" width="93" height="39" index="5" traits="Button">
+                              <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="TIKTOK" name="TIKTOK" label="TIKTOK" enabled="true" visible="false" accessible="false" x="489" y="126" width="57" height="17" index="0" traits="StaticText"/>
+                            </XCUIElementTypeButton>
+                            <XCUIElementTypeButton type="XCUIElementTypeButton" name="WEB" label="WEB" enabled="true" visible="false" accessible="true" x="571" y="115" width="71" height="39" index="6" traits="Button">
+                              <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="WEB" name="WEB" label="WEB" enabled="true" visible="false" accessible="false" x="589" y="126" width="35" height="17" index="0" traits="StaticText"/>
+                            </XCUIElementTypeButton>
+                          </XCUIElementTypeOther>
+                        </XCUIElementTypeScrollView>
+                        <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="共有タグ" name="共有タグ" label="共有タグ" enabled="true" visible="true" accessible="true" x="14" y="159" width="57" height="18" index="7" traits="StaticText"/>
+                        <XCUIElementTypeScrollView type="XCUIElementTypeScrollView" enabled="true" visible="true" accessible="false" x="0" y="185" width="390" height="39" index="8" traits="">
+                          <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="185" width="91" height="39" index="0" traits="">
+                            <XCUIElementTypeButton type="XCUIElementTypeButton" name="+, +" label="+, +" enabled="true" visible="true" accessible="true" x="14" y="185" width="63" height="39" index="0" traits="Button">
+                              <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="+" name="+" label="+" enabled="true" visible="true" accessible="false" x="40" y="196" width="11" height="17" index="0" traits="StaticText"/>
+                              <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="+" name="+" label="+" enabled="true" visible="true" accessible="false" x="37" y="191" width="16" height="27" index="1" traits="StaticText"/>
+                            </XCUIElementTypeButton>
+                          </XCUIElementTypeOther>
+                        </XCUIElementTypeScrollView>
+                        <XCUIElementTypeScrollView type="XCUIElementTypeScrollView" enabled="true" visible="true" accessible="false" x="0" y="230" width="390" height="614" index="9" traits="">
+                          <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="230" width="390" height="142" index="0" traits="">
+                            <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="16" y="240" width="358" height="108" index="0" traits="">
+                              <XCUIElementTypeImage type="XCUIElementTypeImage" name="archivebox.fill" label="Archive" enabled="true" visible="true" accessible="false" x="66" y="273" width="20" height="19" index="0" traits="Image"/>
+                              <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="アーカイブ" name="アーカイブ" label="アーカイブ" enabled="true" visible="true" accessible="false" x="63" y="300" width="62" height="17" index="1" traits="StaticText"/>
+                              <XCUIElementTypeImage type="XCUIElementTypeImage" name="trash.fill" label="Trash" enabled="true" visible="true" accessible="false" x="287" y="271" width="20" height="22" index="2" traits="Image"/>
+                              <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="削除" name="削除" label="削除" enabled="true" visible="true" accessible="false" x="283" y="302" width="26" height="17" index="3" traits="StaticText"/>
+                              <XCUIElementTypeImage type="XCUIElementTypeImage" enabled="true" visible="true" accessible="true" x="55" y="260" width="36" height="36" index="4" traits="Image"/>
+                              <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="椿、魂のバース #罵倒サイファー" name="椿、魂のバース #罵倒サイファー" label="椿、魂のバース #罵倒サイファー" enabled="true" visible="true" accessible="true" x="55" y="306" width="224" height="20" index="5" traits="StaticText"/>
+                              <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="16" y="240" width="358" height="108" index="6" traits=""/>
+                            </XCUIElementTypeOther>
+                          </XCUIElementTypeOther>
+                        </XCUIElementTypeScrollView>
+                      </XCUIElementTypeOther>
+                    </XCUIElementTypeOther>
+                  </XCUIElementTypeOther>
+                </XCUIElementTypeOther>
+                <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="390" height="844" index="1" traits="">
+                  <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="390" height="844" index="0" traits=""/>
+                </XCUIElementTypeOther>
+              </XCUIElementTypeOther>
+              <XCUIElementTypeButton type="XCUIElementTypeButton" name="グループ" label="グループ" enabled="true" visible="true" accessible="true" x="15" y="788" width="61" height="41" index="1" traits="Button">
+                <XCUIElementTypeImage type="XCUIElementTypeImage" name="person.3" label="person.3" enabled="true" visible="true" accessible="false" x="26" y="790" width="39" height="21" index="0" traits="Image"/>
+                <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="グループ" name="グループ" label="グループ" enabled="true" visible="true" accessible="false" x="25" y="815" width="42" height="14" index="1" traits="StaticText"/>
+              </XCUIElementTypeButton>
+              <XCUIElementTypeButton type="XCUIElementTypeButton" name="エクスポート" label="エクスポート" enabled="true" visible="true" accessible="true" x="91" y="787" width="61" height="43" index="2" traits="Button">
+                <XCUIElementTypeImage type="XCUIElementTypeImage" name="tray.and.arrow.up" label="Outbox" enabled="true" visible="true" accessible="false" x="109" y="788" width="25" height="25" index="0" traits="Image"/>
+                <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="エクスポート" name="エクスポート" label="エクスポート" enabled="true" visible="true" accessible="false" x="91" y="817" width="60" height="14" index="1" traits="StaticText"/>
+              </XCUIElementTypeButton>
+              <XCUIElementTypeButton type="XCUIElementTypeButton" name="plus" label="追加" enabled="true" visible="true" accessible="true" x="167" y="766" width="56" height="57" index="3" traits="Button"/>
+              <XCUIElementTypeButton type="XCUIElementTypeButton" name="タグ" label="タグ" enabled="true" visible="true" accessible="true" x="238" y="787" width="61" height="43" index="4" traits="Button">
+                <XCUIElementTypeImage type="XCUIElementTypeImage" name="tag" label="Tag" enabled="true" visible="true" accessible="false" x="257" y="788" width="23" height="24" index="0" traits="Image"/>
+                <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="タグ" name="タグ" label="タグ" enabled="true" visible="true" accessible="false" x="258" y="816" width="21" height="14" index="1" traits="StaticText"/>
+              </XCUIElementTypeButton>
+              <XCUIElementTypeButton type="XCUIElementTypeButton" name="アーカイブ" label="アーカイブ" enabled="true" visible="true" accessible="true" x="314" y="789" width="61" height="39" index="5" traits="Button">
+                <XCUIElementTypeImage type="XCUIElementTypeImage" name="archivebox" label="Archive" enabled="true" visible="true" accessible="false" x="334" y="790" width="21" height="20" index="0" traits="Image"/>
+                <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="アーカイブ" name="アーカイブ" label="アーカイブ" enabled="true" visible="true" accessible="false" x="318" y="814" width="53" height="14" index="1" traits="StaticText"/>
+              </XCUIElementTypeButton>
+            </XCUIElementTypeOther>
+          </XCUIElementTypeOther>
+        </XCUIElementTypeOther>
+      </XCUIElementTypeOther>
+    </XCUIElementTypeWindow>
+  </XCUIElementTypeApplication>
+</AppiumAUT>
+

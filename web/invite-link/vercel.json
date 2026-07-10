@@ -1,0 +1,21 @@
+{
+  "rewrites": [
+    { "source": "/invite/:token*", "destination": "/invite/index.html" },
+    { "source": "/promo", "destination": "/promo/index.html" },
+    { "source": "/auth/reset-password", "destination": "/auth/reset-password/index.html" }
+  ],
+  "headers": [
+    {
+      "source": "/.well-known/apple-app-site-association",
+      "headers": [
+        { "key": "Content-Type", "value": "application/json" }
+      ]
+    },
+    {
+      "source": "/.well-known/assetlinks.json",
+      "headers": [
+        { "key": "Content-Type", "value": "application/json" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,453 @@
+package jp.mimac.urlsaver.data
+
+import jp.mimac.urlsaver.domain.ApplySharedTagOpsResponse
+import jp.mimac.urlsaver.domain.AcceptSharedTagInviteResponse
+import jp.mimac.urlsaver.domain.CreateSharedTagGroupInviteResponse
+import jp.mimac.urlsaver.domain.CreateSharedTagGroupResponse
+import jp.mimac.urlsaver.domain.CreateSharedTagInviteResponse
+import jp.mimac.urlsaver.domain.PreviewSharedTagInviteResponse
+import jp.mimac.urlsaver.domain.PullSharedTagSnapshotResponse
+import jp.mimac.urlsaver.domain.SharedTagGroupMutationResponse
+import jp.mimac.urlsaver.domain.SharedTagSyncOperation
+import jp.mimac.urlsaver.domain.TransferSharedTagOwnershipResponse
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URL
+
+interface SharedTagSyncRemoteDataSource {
+    suspend fun applyOps(
+        session: SharedTagAuthSession,
+        operations: List<SharedTagSyncOperation>,
+    ): ApplySharedTagOpsResponse
+
+    suspend fun pullSnapshot(session: SharedTagAuthSession): PullSharedTagSnapshotResponse
+
+    suspend fun createInvite(
+        session: SharedTagAuthSession,
+        remoteTagId: String,
+        role: String,
+    ): CreateSharedTagInviteResponse
+
+    suspend fun previewInvite(inviteToken: String): PreviewSharedTagInviteResponse
+
+    suspend fun acceptInvite(
+        session: SharedTagAuthSession,
+        inviteToken: String,
+    ): AcceptSharedTagInviteResponse
+
+    suspend fun createGroup(
+        session: SharedTagAuthSession,
+        name: String,
+    ): CreateSharedTagGroupResponse = throw UnsupportedOperationException("Shared tag groups are not supported by this data source.")
+
+    suspend fun addTagToGroup(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+        remoteTagId: String,
+    ): SharedTagGroupMutationResponse = throw UnsupportedOperationException("Shared tag groups are not supported by this data source.")
+
+    suspend fun removeTagFromGroup(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+        remoteTagId: String,
+    ): SharedTagGroupMutationResponse = throw UnsupportedOperationException("Shared tag groups are not supported by this data source.")
+
+    suspend fun createGroupInvite(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+        role: String,
+    ): CreateSharedTagGroupInviteResponse = throw UnsupportedOperationException("Shared tag groups are not supported by this data source.")
+
+    suspend fun renameGroup(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+        name: String,
+    ): SharedTagGroupMutationResponse = throw UnsupportedOperationException("Shared tag groups are not supported by this data source.")
+
+    suspend fun deleteGroup(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+    ): SharedTagGroupMutationResponse = throw UnsupportedOperationException("Shared tag groups are not supported by this data source.")
+
+    suspend fun changeGroupMemberRole(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+        userId: String,
+        role: String,
+    ): SharedTagGroupMutationResponse = throw UnsupportedOperationException("Shared tag groups are not supported by this data source.")
+
+    suspend fun transferGroupOwnership(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+        newOwnerUserId: String,
+    ): SharedTagGroupMutationResponse = throw UnsupportedOperationException("Shared tag groups are not supported by this data source.")
+
+    suspend fun removeGroupMember(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+        userId: String,
+    ): SharedTagGroupMutationResponse = throw UnsupportedOperationException("Shared tag groups are not supported by this data source.")
+
+    suspend fun upsertSharedProfile(
+        session: SharedTagAuthSession,
+        displayName: String,
+    ): Unit = Unit
+
+    suspend fun transferOwnership(
+        session: SharedTagAuthSession,
+        remoteTagId: String,
+        newOwnerUserId: String,
+    ): TransferSharedTagOwnershipResponse
+
+    suspend fun deleteAccount(
+        session: SharedTagAuthSession,
+    )
+}
+
+data class SharedTagSyncRemoteConfig(
+    val enabled: Boolean,
+    val supabaseUrl: String,
+    val anonKey: String,
+    val inviteLinkBaseUrl: String = DEFAULT_INVITE_LINK_BASE_URL,
+) {
+    val isConfigured: Boolean
+        get() = enabled && supabaseUrl.isNotBlank() && anonKey.isNotBlank()
+
+    val normalizedInviteLinkBaseUrl: String
+        get() = inviteLinkBaseUrl.trim().trimEnd('/').ifBlank { DEFAULT_INVITE_LINK_BASE_URL }
+
+    companion object {
+        const val DEFAULT_INVITE_LINK_BASE_URL = "https://miyamibu.xyz"
+    }
+}
+
+class SupabaseSharedTagSyncRemoteDataSource(
+    private val config: SharedTagSyncRemoteConfig,
+    private val authSessionProvider: SharedTagAuthSessionProvider,
+    private val authRemoteDataSource: SharedTagAuthRemoteDataSource,
+    private val json: Json = Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+    },
+) : SharedTagSyncRemoteDataSource {
+    override suspend fun applyOps(
+        session: SharedTagAuthSession,
+        operations: List<SharedTagSyncOperation>,
+    ): ApplySharedTagOpsResponse {
+        val payload = json.encodeToString(mapOf("payload" to operations))
+        val response = withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/apply_shared_tag_ops",
+                session = session,
+                requestBody = payload,
+            )
+        }
+        return json.decodeFromString(response)
+    }
+
+    override suspend fun pullSnapshot(session: SharedTagAuthSession): PullSharedTagSnapshotResponse {
+        val response = withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/pull_shared_tag_snapshot",
+                session = session,
+                requestBody = "{}",
+            )
+        }
+        return json.decodeFromString(response)
+    }
+
+    override suspend fun createInvite(
+        session: SharedTagAuthSession,
+        remoteTagId: String,
+        role: String,
+    ): CreateSharedTagInviteResponse {
+        val response = withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/create_shared_tag_invite",
+                session = session,
+                requestBody = json.encodeToString(
+                    mapOf(
+                        "p_tag_id" to remoteTagId,
+                        "p_role" to role,
+                    ),
+                ),
+            )
+        }
+        return json.decodeFromString(response)
+    }
+
+    override suspend fun previewInvite(inviteToken: String): PreviewSharedTagInviteResponse {
+        val response = withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/preview_shared_invite",
+                session = null,
+                requestBody = json.encodeToString(
+                    mapOf("p_token" to inviteToken),
+                ),
+            )
+        }
+        return json.decodeFromString(response)
+    }
+
+    override suspend fun acceptInvite(
+        session: SharedTagAuthSession,
+        inviteToken: String,
+    ): AcceptSharedTagInviteResponse {
+        val response = withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/accept_shared_invite",
+                session = session,
+                requestBody = json.encodeToString(
+                    mapOf("p_token" to inviteToken),
+                ),
+            )
+        }
+        return json.decodeFromString(response)
+    }
+
+    override suspend fun createGroup(
+        session: SharedTagAuthSession,
+        name: String,
+    ): CreateSharedTagGroupResponse {
+        val response = withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/create_shared_tag_group",
+                session = session,
+                requestBody = json.encodeToString(mapOf("p_name" to name)),
+            )
+        }
+        return json.decodeFromString(response)
+    }
+
+    override suspend fun addTagToGroup(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+        remoteTagId: String,
+    ): SharedTagGroupMutationResponse {
+        val response = withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/add_shared_tag_to_group",
+                session = session,
+                requestBody = json.encodeToString(
+                    mapOf(
+                        "p_group_id" to remoteGroupId,
+                        "p_tag_id" to remoteTagId,
+                    ),
+                ),
+            )
+        }
+        return json.decodeFromString(response)
+    }
+
+    override suspend fun removeTagFromGroup(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+        remoteTagId: String,
+    ): SharedTagGroupMutationResponse {
+        val response = withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/remove_shared_tag_from_group",
+                session = session,
+                requestBody = json.encodeToString(
+                    mapOf(
+                        "p_group_id" to remoteGroupId,
+                        "p_tag_id" to remoteTagId,
+                    ),
+                ),
+            )
+        }
+        return json.decodeFromString(response)
+    }
+
+    override suspend fun createGroupInvite(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+        role: String,
+    ): CreateSharedTagGroupInviteResponse {
+        val response = withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/create_shared_tag_group_invite",
+                session = session,
+                requestBody = json.encodeToString(
+                    mapOf(
+                        "p_group_id" to remoteGroupId,
+                        "p_role" to role,
+                    ),
+                ),
+            )
+        }
+        return json.decodeFromString(response)
+    }
+
+    override suspend fun renameGroup(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+        name: String,
+    ): SharedTagGroupMutationResponse {
+        val response = withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/rename_shared_tag_group",
+                session = session,
+                requestBody = json.encodeToString(mapOf("p_group_id" to remoteGroupId, "p_name" to name)),
+            )
+        }
+        return json.decodeFromString(response)
+    }
+
+    override suspend fun deleteGroup(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+    ): SharedTagGroupMutationResponse {
+        val response = withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/delete_shared_tag_group",
+                session = session,
+                requestBody = json.encodeToString(mapOf("p_group_id" to remoteGroupId)),
+            )
+        }
+        return json.decodeFromString(response)
+    }
+
+    override suspend fun changeGroupMemberRole(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+        userId: String,
+        role: String,
+    ): SharedTagGroupMutationResponse {
+        val response = withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/change_shared_tag_group_member_role",
+                session = session,
+                requestBody = json.encodeToString(
+                    mapOf("p_group_id" to remoteGroupId, "p_user_id" to userId, "p_role" to role),
+                ),
+            )
+        }
+        return json.decodeFromString(response)
+    }
+
+    override suspend fun transferGroupOwnership(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+        newOwnerUserId: String,
+    ): SharedTagGroupMutationResponse {
+        val response = withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/transfer_shared_tag_group_ownership",
+                session = session,
+                requestBody = json.encodeToString(
+                    mapOf("p_group_id" to remoteGroupId, "p_new_owner_user_id" to newOwnerUserId),
+                ),
+            )
+        }
+        return json.decodeFromString(response)
+    }
+
+    override suspend fun removeGroupMember(
+        session: SharedTagAuthSession,
+        remoteGroupId: String,
+        userId: String,
+    ): SharedTagGroupMutationResponse {
+        val response = withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/remove_shared_tag_group_member",
+                session = session,
+                requestBody = json.encodeToString(mapOf("p_group_id" to remoteGroupId, "p_user_id" to userId)),
+            )
+        }
+        return json.decodeFromString(response)
+    }
+
+    override suspend fun upsertSharedProfile(session: SharedTagAuthSession, displayName: String) {
+        withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/upsert_my_shared_profile",
+                session = session,
+                requestBody = json.encodeToString(mapOf("p_display_name" to displayName)),
+            )
+        }
+    }
+
+    override suspend fun transferOwnership(
+        session: SharedTagAuthSession,
+        remoteTagId: String,
+        newOwnerUserId: String,
+    ): TransferSharedTagOwnershipResponse {
+        val response = withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/transfer_shared_tag_ownership",
+                session = session,
+                requestBody = json.encodeToString(
+                    mapOf(
+                        "p_tag_id" to remoteTagId,
+                        "p_new_owner_user_id" to newOwnerUserId,
+                    ),
+                ),
+            )
+        }
+        return json.decodeFromString(response)
+    }
+
+    override suspend fun deleteAccount(session: SharedTagAuthSession) {
+        withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/delete_my_account",
+                session = session,
+                requestBody = "{}",
+            )
+        }
+    }
+
+    private suspend fun executeRpc(
+        path: String,
+        session: SharedTagAuthSession?,
+        requestBody: String,
+        allowRefresh: Boolean = true,
+    ): String {
+        check(config.isConfigured) { "Supabase shared tag sync is not configured." }
+        val url = URL(config.supabaseUrl.trimEnd('/') + path)
+        val connection = (url.openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            doOutput = true
+            connectTimeout = CONNECT_TIMEOUT_MS
+            readTimeout = READ_TIMEOUT_MS
+            setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("apikey", config.anonKey)
+            setRequestProperty("Authorization", "Bearer ${session?.accessToken ?: config.anonKey}")
+        }
+
+        connection.outputStream.use { it.write(requestBody.toByteArray(Charsets.UTF_8)) }
+        val responseCode = connection.responseCode
+        val body = runCatching {
+            val stream = if (responseCode in 200..299) connection.inputStream else connection.errorStream
+            stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+        }.getOrDefault("")
+        if (responseCode == HttpURLConnection.HTTP_UNAUTHORIZED &&
+            allowRefresh &&
+            !session?.refreshToken.isNullOrBlank()
+        ) {
+            val refreshedSession = authRemoteDataSource.refreshSession(requireNotNull(session?.refreshToken))
+            authSessionProvider.updateSession(refreshedSession)
+            return executeRpc(
+                path = path,
+                session = refreshedSession,
+                requestBody = requestBody,
+                allowRefresh = false,
+            )
+        }
+        if (responseCode !in 200..299) {
+            throw IOException("Supabase RPC failed ($responseCode): $body")
+        }
+        return body
+    }
+
+    private companion object {
+        const val CONNECT_TIMEOUT_MS = 15_000
+        const val READ_TIMEOUT_MS = 30_000
+    }
+}

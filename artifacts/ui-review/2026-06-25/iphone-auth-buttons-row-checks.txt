@@ -1,0 +1,2 @@
+{'Googleで続ける': True, 'Appleで続ける': True, 'Continue with Apple': False, '新規登録が完了すると': False, '優待コード': True}
+[]

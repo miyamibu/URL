@@ -1,0 +1,50 @@
+.gradle/
+.idea/
+local.properties
+/build/
+app/build/
+*.iml
+.DS_Store
+
+# Local agent/tooling state
+.claude/
+.codex/
+.understand-anything/
+
+# Generated evidence and temporary outputs
+artifacts/pre-edit/
+artifacts/compile*.txt
+artifacts/*.log
+artifacts/*classpath*.txt
+artifacts/device-backups/
+artifacts/device-verification/
+artifacts/recovery/
+artifacts/render-verification/
+artifacts/store-submission-logs/
+artifacts/ui-review/2026-06-30/
+artifacts/ui-review/**/*.jpg
+artifacts/ui-review/**/*.jpeg
+artifacts/ui-review/**/*.png
+artifacts/ui-review/**/*.xml
+artifacts/tiktok-live/
+__pycache__/
+tmp_main.png
+
+# Web app generated/local outputs
+web/admin/node_modules/
+web/admin/.next/
+web/admin/tsconfig.tsbuildinfo
+
+# Supabase CLI local state
+supabase/.temp/
+supabase/.branches/
+
+# Xcode local/build outputs
+ios/build-*/
+ios/**/xcuserdata/
+ios/**/*.xcuserstate
+ios/**/DerivedData/
+ios/**/Index.noindex/
+ios/**/ModuleCache.noindex/
+ios/**/SDKStatCaches.noindex/
+ios/Config/URLSaverSecrets.xcconfig

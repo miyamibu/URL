@@ -1,6 +1,8 @@
 import importlib.util
+import http.client
 import os
 import pathlib
+import threading
 import tempfile
 import unittest
 from unittest import mock
@@ -14,6 +16,16 @@ spec = importlib.util.spec_from_file_location("media_resolver_backend", MODULE_P
 media_resolver_backend = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(media_resolver_backend)
+
+
+class SupportedUrlTest(unittest.TestCase):
+    def test_x_links_are_not_media_resolver_targets(self):
+        resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://example.test")
+
+        result = resolver.resolve("https://x.com/i/status/2061285320088523185", None)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "UNSUPPORTED_URL")
 
 
 class CookieOptionsTest(unittest.TestCase):
@@ -37,6 +49,26 @@ class CookieOptionsTest(unittest.TestCase):
             self.assertEqual(copied.parent, runtime)
             self.assertEqual(copied.read_text(encoding="utf-8"), source.read_text(encoding="utf-8"))
 
+    def test_provider_specific_cookie_file_replaces_stale_runtime_copy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = pathlib.Path(tmp) / "youtube-cookies.txt"
+            source.write_text("# Netscape HTTP Cookie File\nold\n", encoding="utf-8")
+            runtime = pathlib.Path(tmp) / "runtime"
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "MEDIA_RESOLVER_YOUTUBE_COOKIES_FILE": str(source),
+                    "MEDIA_RESOLVER_COOKIES_RUNTIME_DIR": str(runtime),
+                },
+                clear=True,
+            ):
+                first = pathlib.Path(media_resolver_backend._yt_dlp_cookie_options("youtube")["cookiefile"])
+                source.write_text("# Netscape HTTP Cookie File\nnew\n", encoding="utf-8")
+                second = pathlib.Path(media_resolver_backend._yt_dlp_cookie_options("youtube")["cookiefile"])
+
+            self.assertEqual(first, second)
+            self.assertEqual(second.read_text(encoding="utf-8"), source.read_text(encoding="utf-8"))
+
     def test_shared_cookie_file_is_used_for_youtube_when_provider_specific_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = pathlib.Path(tmp) / "shared-cookies.txt"
@@ -53,6 +85,24 @@ class CookieOptionsTest(unittest.TestCase):
                 options = media_resolver_backend._yt_dlp_cookie_options("youtube")
 
             self.assertTrue(pathlib.Path(options["cookiefile"]).is_file())
+
+    def test_cookie_cli_args_include_runtime_cookie_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = pathlib.Path(tmp) / "youtube-cookies.txt"
+            source.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+            runtime = pathlib.Path(tmp) / "runtime"
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "MEDIA_RESOLVER_YOUTUBE_COOKIES_FILE": str(source),
+                    "MEDIA_RESOLVER_COOKIES_RUNTIME_DIR": str(runtime),
+                },
+                clear=True,
+            ):
+                args = media_resolver_backend._yt_dlp_cookie_cli_args("youtube")
+
+            self.assertEqual(args[0], "--cookies")
+            self.assertTrue(pathlib.Path(args[1]).is_file())
 
     def test_missing_cookie_file_is_ignored(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -79,6 +129,365 @@ class CookieOptionsTest(unittest.TestCase):
             copied = pathlib.Path(options["cookiefile"])
             self.assertTrue(copied.is_file())
             self.assertEqual(copied.read_text(encoding="utf-8"), content)
+
+    def test_cookie_status_reports_safe_diagnostics_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = pathlib.Path(tmp) / "youtube-cookies.txt"
+            source.write_text(
+                "# Netscape HTTP Cookie File\n"
+                ".youtube.com\tTRUE\t/\tTRUE\t0\tSID\tsecret-value\n"
+                ".google.com\tTRUE\t/\tTRUE\t0\tLOGIN_INFO\tsecret-value\n",
+                encoding="utf-8",
+            )
+            with mock.patch.dict(
+                os.environ,
+                {"MEDIA_RESOLVER_YOUTUBE_COOKIES_FILE": str(source)},
+                clear=True,
+            ):
+                status = media_resolver_backend._yt_dlp_cookie_status("youtube")
+
+            self.assertTrue(status["fileConfigured"])
+            self.assertTrue(status["fileReadable"])
+            self.assertEqual(status["lineCount"], 2)
+            self.assertEqual(status["domainCount"], 2)
+            self.assertEqual(status["domains"], ["google.com", "youtube.com"])
+            self.assertNotIn("secret-value", repr(status))
+
+
+class FormatSelectionTest(unittest.TestCase):
+    def test_youtube_format_prefers_low_resolution_combined_video(self):
+        selected = media_resolver_backend._yt_dlp_format("youtube")
+
+        self.assertIn("height<=360", selected)
+        self.assertIn("ext=mp4", selected)
+        self.assertIn("/18/", selected)
+
+    def test_youtube_extractor_args_combine_po_token_and_client(self):
+        with mock.patch.dict(
+            os.environ,
+            {"MEDIA_RESOLVER_YOUTUBE_PO_TOKEN": "token-value"},
+            clear=True,
+        ):
+            args = media_resolver_backend._youtube_extractor_args_cli("ios")
+
+        self.assertEqual(args, ["--extractor-args", "youtube:po_token=token-value;player_client=ios"])
+
+
+class YouTubeDelegateTest(unittest.TestCase):
+    def test_youtube_resolve_uses_delegate_when_configured(self):
+        resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://render.example.test")
+        response = mock.Mock()
+        response.__enter__ = mock.Mock(return_value=response)
+        response.__exit__ = mock.Mock(return_value=None)
+        response.read.return_value = (
+            b'{"ok": true, "provider": "youtube", "assets": '
+            b'[{"mediaType": "VIDEO", "downloadUrl": "https://railway.example.test/proxy/abc"}]}'
+        )
+
+        with mock.patch.dict(
+            os.environ,
+            {"MEDIA_RESOLVER_YOUTUBE_DELEGATE_URL": "https://railway.example.test/"},
+            clear=True,
+        ), mock.patch.object(media_resolver_backend.urllib.request, "urlopen", return_value=response) as urlopen:
+            result = resolver.resolve("https://youtu.be/abc123", "youtube")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["provider"], "youtube")
+        self.assertEqual(result["assets"][0]["mediaType"], "VIDEO")
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, "https://railway.example.test/resolve")
+        self.assertEqual(
+            request.get_header("X-rinbam-resolver-hop"),
+            media_resolver_backend.YOUTUBE_DELEGATE_HEADER_VALUE,
+        )
+
+    def test_youtube_delegate_is_skipped_when_loop_guard_is_disabled(self):
+        resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://render.example.test")
+        with mock.patch.dict(
+            os.environ,
+            {"MEDIA_RESOLVER_YOUTUBE_DELEGATE_URL": "https://railway.example.test"},
+            clear=True,
+        ), mock.patch.object(media_resolver_backend, "_load_tools", return_value=(mock.Mock(), None)), mock.patch.object(
+            resolver, "_resolve_youtube_direct_asset", return_value=(None, "no formats")
+        ), mock.patch.object(
+            media_resolver_backend.urllib.request, "urlopen"
+        ) as urlopen:
+            result = resolver.resolve("https://youtu.be/abc123", "youtube", allow_delegate=False)
+
+        urlopen.assert_not_called()
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["provider"], "youtube")
+
+    def test_youtube_delegate_is_skipped_when_host_matches_current_resolver(self):
+        resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://render.example.test")
+        with mock.patch.dict(
+            os.environ,
+            {"MEDIA_RESOLVER_YOUTUBE_DELEGATE_URL": "https://render.example.test"},
+            clear=True,
+        ), mock.patch.object(media_resolver_backend, "_load_tools", return_value=(mock.Mock(), None)), mock.patch.object(
+            resolver, "_resolve_youtube_direct_asset", return_value=(None, "no formats")
+        ), mock.patch.object(
+            media_resolver_backend.urllib.request, "urlopen"
+        ) as urlopen:
+            result = resolver.resolve("https://youtu.be/abc123", "youtube")
+
+        urlopen.assert_not_called()
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["provider"], "youtube")
+
+
+class YouTubeDirectResultTest(unittest.TestCase):
+    def setUp(self):
+        media_resolver_backend.DIRECT_MEDIA_PROXIES.clear()
+
+    def test_cli_direct_resolver_does_not_pin_format_selection(self):
+        calls = []
+
+        def fake_run(command, **kwargs):
+            calls.append(command)
+            return mock.Mock(
+                stdout=(
+                    '{"id":"abc123","url":"https://video.example.test/audio.m4a","ext":"m4a","vcodec":"none","acodec":"mp4a"}\n'
+                    '{"id":"abc123","url":"https://video.example.test/media.mp4","ext":"mp4","vcodec":"avc1","acodec":"mp4a"}\n'
+                ),
+                stderr="",
+            )
+
+        with mock.patch.object(media_resolver_backend.subprocess, "run", side_effect=fake_run):
+            info, error = media_resolver_backend.MediaResolver._resolve_youtube_direct_info_cli(
+                "https://youtu.be/abc123"
+            )
+
+        self.assertIsNone(error)
+        self.assertEqual(info["id"], "abc123")
+        self.assertEqual(len(info["formats"]), 2)
+        self.assertEqual(len(calls), 1)
+        format_index = calls[0].index("--format")
+        self.assertEqual(calls[0][format_index + 1], "all")
+
+    def test_top_level_url_is_returned_as_preferred_asset(self):
+        resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://example.test")
+        result = resolver._youtube_direct_result(
+            {
+                "id": "abc123",
+                "url": "https://video.example.test/media.mp4",
+                "ext": "mp4",
+                "format_id": "18",
+                "vcodec": "avc1",
+                "acodec": "mp4a",
+                "title": "Video title",
+                "duration": 12,
+                "http_headers": {
+                    "User-Agent": "yt-dlp-user-agent",
+                    "Referer": "https://www.youtube.com/",
+                    "Cookie": "secret=value",
+                },
+            },
+            "https://youtu.be/abc123",
+            "stable",
+        )
+
+        self.assertIsNotNone(result)
+        asset = result["assets"][0]
+        self.assertTrue(asset["downloadUrl"].startswith("https://example.test/proxy/"))
+        self.assertEqual(len(media_resolver_backend.DIRECT_MEDIA_PROXIES), 1)
+        proxy_item = next(iter(media_resolver_backend.DIRECT_MEDIA_PROXIES.values()))
+        self.assertEqual(proxy_item["headers"]["User-Agent"], "yt-dlp-user-agent")
+        self.assertEqual(proxy_item["headers"]["Referer"], "https://www.youtube.com/")
+        self.assertNotIn("Cookie", proxy_item["headers"])
+        self.assertEqual(asset["mediaType"], "VIDEO")
+        self.assertEqual(asset["providerAssetId"], "abc123:direct:18")
+
+    def test_video_only_top_level_url_uses_combined_format_candidate(self):
+        resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://example.test")
+        result = resolver._youtube_direct_result(
+            {
+                "id": "abc123",
+                "url": "https://video.example.test/video-only.mp4",
+                "ext": "mp4",
+                "format_id": "401",
+                "vcodec": "av01",
+                "acodec": "none",
+                "formats": [
+                    {
+                        "format_id": "91",
+                        "url": "https://video.example.test/combined.mp4",
+                        "ext": "mp4",
+                        "vcodec": "avc1",
+                        "acodec": "mp4a",
+                        "height": 256,
+                    }
+                ],
+            },
+            "https://youtu.be/abc123",
+            "stable",
+        )
+
+        self.assertIsNotNone(result)
+        self.assertTrue(result["assets"][0]["downloadUrl"].startswith("https://example.test/proxy/"))
+        self.assertEqual(result["assets"][0]["providerAssetId"], "abc123:direct:91")
+
+    def test_codec_missing_format_candidate_is_rejected(self):
+        resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://example.test")
+        result = resolver._youtube_direct_result(
+            {
+                "id": "abc123",
+                "formats": [
+                    {
+                        "format_id": "fallback",
+                        "url": "https://video.example.test/fallback.mp4",
+                        "ext": "mp4",
+                        "height": 360,
+                    }
+                ],
+            },
+            "https://youtu.be/abc123",
+            "stable",
+        )
+
+        self.assertIsNone(result)
+
+    def test_mhtml_format_candidate_is_rejected(self):
+        resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://example.test")
+        result = resolver._youtube_direct_result(
+            {
+                "id": "abc123",
+                "formats": [
+                    {
+                        "format_id": "sb0",
+                        "url": "https://video.example.test/storyboard.mhtml",
+                        "ext": "mhtml",
+                        "mime_type": "video/mhtml",
+                        "vcodec": "none",
+                        "height": 45,
+                    }
+                ],
+            },
+            "https://youtu.be/abc123",
+            "stable",
+        )
+
+        self.assertIsNone(result)
+
+    def test_youtube_resolve_fails_fast_without_server_download_flag(self):
+        resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://example.test")
+        with (
+            mock.patch.object(media_resolver_backend, "_load_tools", return_value=(mock.Mock(), None)),
+            mock.patch.object(resolver, "_resolve_youtube_direct_asset", return_value=(None, "bot challenge")),
+            mock.patch.object(resolver, "_resolve_youtube_cli_download") as cli_download,
+            mock.patch.dict(os.environ, {}, clear=True),
+        ):
+            result = resolver.resolve("https://youtu.be/abc123", "youtube")
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "RESOLVE_FAILED")
+        cli_download.assert_not_called()
+
+    def test_youtube_server_download_flag_prefers_cached_file_over_proxy(self):
+        cache_dir = pathlib.Path(tempfile.mkdtemp())
+        stable = media_resolver_backend._safe_id("https://youtu.be/abc123")
+        (cache_dir / f"{stable}.mp4").write_bytes(b"media")
+        resolver = media_resolver_backend.MediaResolver(cache_dir, "https://example.test")
+        ydl = mock.Mock()
+        ydl.__enter__ = mock.Mock(return_value=ydl)
+        ydl.__exit__ = mock.Mock(return_value=None)
+        ydl.extract_info.return_value = {"id": "abc123", "title": "Video title"}
+        yt_dlp = mock.Mock()
+        yt_dlp.YoutubeDL.return_value = ydl
+
+        with (
+            mock.patch.object(media_resolver_backend, "_load_tools", return_value=(yt_dlp, None)),
+            mock.patch.object(resolver, "_resolve_youtube_direct_asset") as direct_asset,
+            mock.patch.dict(os.environ, {"MEDIA_RESOLVER_YOUTUBE_SERVER_DOWNLOAD_ENABLED": "true"}, clear=True),
+        ):
+            result = resolver.resolve("https://youtu.be/abc123", "youtube")
+
+        direct_asset.assert_not_called()
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["assets"][0]["downloadUrl"].startswith("https://example.test/files/"))
+
+
+class InstagramOrderTest(unittest.TestCase):
+    def test_graph_sidecar_preserves_mixed_media_order(self):
+        html = (
+            '"edge_sidecar_to_children":{"edges":['
+            '{"node":{"__typename":"GraphImage","display_url":"https://scontent.cdninstagram.com/v/t51.29350-15/first.jpg"}},'
+            '{"node":{"__typename":"GraphVideo","video_url":"https://scontent.cdninstagram.com/o1/v/t16/f1/video.mp4"}},'
+            '{"node":{"__typename":"GraphImage","display_url":"https://scontent.cdninstagram.com/v/t51.29350-15/second.jpg"}}'
+            "]}"
+        )
+
+        media = media_resolver_backend.MediaResolver._instagram_graph_media(html, include_images=True)
+
+        self.assertEqual([item[0] for item in media], ["IMAGE", "VIDEO", "IMAGE"])
+        self.assertEqual([item[1] for item in media], [
+            "https://scontent.cdninstagram.com/v/t51.29350-15/first.jpg",
+            "https://scontent.cdninstagram.com/o1/v/t16/f1/video.mp4",
+            "https://scontent.cdninstagram.com/v/t51.29350-15/second.jpg",
+        ])
+
+    def test_instagram_embed_assets_include_sort_index(self):
+        resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://example.test")
+        response = mock.Mock()
+        response.__enter__ = mock.Mock(return_value=response)
+        response.__exit__ = mock.Mock(return_value=None)
+        response.read.return_value = (
+            b'"edge_sidecar_to_children":{"edges":['
+            b'{"node":{"__typename":"GraphImage","display_url":"https://scontent.cdninstagram.com/v/t51.29350-15/first.jpg"}},'
+            b'{"node":{"__typename":"GraphVideo","video_url":"https://scontent.cdninstagram.com/o1/v/t16/f1/video.mp4"}},'
+            b'{"node":{"__typename":"GraphImage","display_url":"https://scontent.cdninstagram.com/v/t51.29350-15/second.jpg"}}'
+            b"]}"
+        )
+
+        with mock.patch.object(media_resolver_backend.urllib.request, "urlopen", return_value=response):
+            assets = resolver._resolve_instagram_embed("https://www.instagram.com/p/SHORTCODE/")
+
+        self.assertEqual([asset["mediaType"] for asset in assets], ["IMAGE", "VIDEO", "IMAGE"])
+        self.assertEqual([asset["sortIndex"] for asset in assets], [0, 1, 2])
+        self.assertEqual([asset["providerAssetId"] for asset in assets], [
+            "SHORTCODE:item:0",
+            "SHORTCODE:item:1",
+            "SHORTCODE:item:2",
+        ])
+        self.assertEqual([asset["isPreferred"] for asset in assets], [True, False, False])
+
+    def test_instagram_media_url_decodes_double_escaped_percent_sequences(self):
+        url = (
+            "https:\\/\\/scontent.cdninstagram.com\\/o1\\/v\\/t16\\/f2\\/video.mp4"
+            "?efg=abc\\u00253D\\u00253D&amp;ccb=17-1"
+        )
+
+        decoded = media_resolver_backend._decode_instagram_media_url(url)
+
+        self.assertEqual(decoded, "https://scontent.cdninstagram.com/o1/v/t16/f2/video.mp4?efg=abc%3D%3D&ccb=17-1")
+        self.assertNotIn("\\u0025", decoded)
+
+
+class HandlerTest(unittest.TestCase):
+    def test_head_health_returns_ok_for_render_readiness(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            media_resolver_backend.Handler.resolver = media_resolver_backend.MediaResolver(
+                pathlib.Path(tmp),
+                "https://example.test",
+            )
+            server = media_resolver_backend.ThreadingHTTPServer(
+                ("127.0.0.1", 0),
+                media_resolver_backend.Handler,
+            )
+            thread = threading.Thread(target=server.serve_forever)
+            thread.daemon = True
+            thread.start()
+            try:
+                connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                connection.request("HEAD", "/health")
+                response = connection.getresponse()
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.read(), b"")
+                connection.close()
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
 
 
 if __name__ == "__main__":

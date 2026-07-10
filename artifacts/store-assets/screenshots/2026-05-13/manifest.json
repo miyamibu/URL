@@ -1,0 +1,187 @@
+{
+  "date": "2026-05-13",
+  "releaseMode": "local-only v1.0",
+  "featureGraphic": {
+    "path": "artifacts/store-assets/google-play-feature-graphic-1024x500.png",
+    "pixelWidth": 1024,
+    "pixelHeight": 500,
+    "fileType": "PNG",
+    "status": "FINAL_ADOPTED_NOT_COMMITTED"
+  },
+  "constraintsObserved": {
+    "physicalAndroidInstall": true,
+    "physicalAndroidDataReset": false,
+    "physicalIPhoneInstall": false,
+    "sourceOrConfigChanges": true,
+    "storeSubmission": false,
+    "deploy": false,
+    "push": false,
+    "stageOrCommit": "separate_validation_commits"
+  },
+  "android": {
+    "directory": "artifacts/store-assets/screenshots/2026-05-13/android",
+    "verdict": "READY_FOR_STORE_UPLOAD",
+    "sourceDevice": "Android Emulator urlsaverApi35, emulator-5554, model sdk_gphone64_arm64",
+    "buildType": "Release APK signed with local debug key for screenshot capture",
+    "localOnlyConfigConfirmation": {
+      "ADS_ENABLED": false,
+      "ADS_TRIAL_LAUNCH_ADS_ENABLED": false,
+      "SHARED_TAG_CLOUD_ENABLED": false,
+      "SUPABASE_URL": "",
+      "SUPABASE_ANON_KEY": "",
+      "ADMOB_APP_ID": "",
+      "ADMOB_BANNER_AD_UNIT_ID": "",
+      "ADMOB_INTERSTITIAL_AD_UNIT_ID": "",
+      "packageDebuggableFlagVisible": false
+    },
+    "emulatorRecovery": [
+      "Restarted adb server.",
+      "Started urlsaverApi35 with no-window, no-audio, no-boot-anim, no-snapshot-save, no-snapshot-load, and swiftshader rendering.",
+      "Waited until emulator-5554 reported sys.boot_completed=1.",
+      "Did not wipe AVD data."
+    ],
+    "physicalAndroidValidation": [
+      "Installed the release-equivalent APK on Pixel 9a 55211JEBF16639 with adb install -r only.",
+      "Did not run pm clear, uninstall, connectedDebugAndroidTest, or any data reset.",
+      "Rejected physical Pixel screenshots for store use because existing user data and shared-tag UI were visible."
+    ],
+    "demoData": [
+      "https://developer.android.com/",
+      "Local tag: Docs",
+      "The entry was later archived to capture the archive screen."
+    ],
+    "screenshots": [
+      {
+        "file": "01-home.png",
+        "pixelWidth": 1080,
+        "pixelHeight": 2400,
+        "fileType": "PNG",
+        "content": "Old empty home candidate",
+        "adoptionStatus": "SUPERSEDED",
+        "rejectionReason": "Replaced by 01-home-final.png because the old image was an empty state."
+      },
+      {
+        "file": "01-home-final.png",
+        "pixelWidth": 1080,
+        "pixelHeight": 2400,
+        "fileType": "PNG",
+        "content": "Home list with demo Android Developers URL",
+        "adoptionStatus": "READY_FOR_STORE_UPLOAD"
+      },
+      {
+        "file": "02-add-url-final.png",
+        "pixelWidth": 1080,
+        "pixelHeight": 2400,
+        "fileType": "PNG",
+        "content": "Manual URL add sheet with demo URL",
+        "adoptionStatus": "READY_FOR_STORE_UPLOAD"
+      },
+      {
+        "file": "03-detail-final.png",
+        "pixelWidth": 1080,
+        "pixelHeight": 2400,
+        "fileType": "PNG",
+        "content": "Detail screen for demo Android Developers URL",
+        "adoptionStatus": "READY_FOR_STORE_UPLOAD"
+      },
+      {
+        "file": "04-tags-final.png",
+        "pixelWidth": 1080,
+        "pixelHeight": 2400,
+        "fileType": "PNG",
+        "content": "Local tag management sheet showing Docs tag",
+        "adoptionStatus": "READY_FOR_STORE_UPLOAD"
+      },
+      {
+        "file": "05-archive-final.png",
+        "pixelWidth": 1080,
+        "pixelHeight": 2400,
+        "fileType": "PNG",
+        "content": "Archive list with demo Android Developers URL",
+        "adoptionStatus": "READY_FOR_STORE_UPLOAD"
+      },
+      {
+        "file": "06-export-superseded-shared-tag.png",
+        "pixelWidth": 1080,
+        "pixelHeight": 2400,
+        "fileType": "PNG",
+        "content": "Superseded export sheet from before the local-only export fix",
+        "adoptionStatus": "SUPERSEDED",
+        "rejectionReason": "Preserved as the replaced candidate because shared-tag wording was visible."
+      },
+      {
+        "file": "06-export-final.png",
+        "pixelWidth": 1080,
+        "pixelHeight": 2400,
+        "fileType": "PNG",
+        "content": "Export sheet after hiding the shared-tag quick-selection in local-only builds",
+        "adoptionStatus": "READY_FOR_STORE_UPLOAD",
+        "rejectionReason": null
+      }
+    ],
+    "localOnlyConflictCheck": {
+      "accountOrLoginUIVisible": false,
+      "sharedTagCloudOrSyncUIVisible": false,
+      "adsOrBillingVisible": false,
+      "debugLabelVisible": false,
+      "personalInfoOrDevSecretVisible": false
+    }
+  },
+  "ios": {
+    "directory": "artifacts/store-assets/screenshots/2026-05-13/ios",
+    "verdict": "BLOCKED",
+    "sourceDevice": "No new iOS simulator capture",
+    "buildType": "Release simulator build/run blocked",
+    "localOnlyConfigConfirmation": {
+      "URLSAVER_SHARED_TAG_CLOUD_ENABLED": false,
+      "normalReleaseSettingsChecked": true,
+      "debugSimulatorAppRejected": true
+    },
+    "simulatorRuntimeRecovery": [
+      "Listed available simulators and runtimes: installed simulator runtimes are iOS 26.4 / 26.4.1.",
+      "Checked Xcode SDKs: installed SDK is iOS Simulator 26.5.",
+      "Retried xcodebuild Release build-settings resolution for iPhone 17.",
+      "The Release simulator destination attempt failed because Xcode requires an iOS 26.5 platform/runtime.",
+      "Checked existing Debug simulator app and rejected it because Info.plist contains SharedTagCloudEnabled=true and dev Supabase values."
+    ],
+    "physicalIPhoneValidation": [
+      "Read .agents/skills/iphone-device-install/SKILL.md before physical iPhone install work.",
+      "Detected paired iPhone 12 E9D5CA0F-0729-5DFD-94B9-EFE2AB589C0E.",
+      "devicectl app inspection was blocked because the device was locked.",
+      "Rejected the existing signed Debug-iphoneos app for store screenshots because Info.plist contains SharedTagCloudEnabled=true and dev Supabase values.",
+      "Did not install on the physical iPhone and did not change signing or provisioning."
+    ],
+    "screenshots": [
+      {
+        "file": "01-home.png",
+        "pixelWidth": 1206,
+        "pixelHeight": 2622,
+        "fileType": "PNG",
+        "content": "Old Release simulator empty home candidate",
+        "adoptionStatus": "NOT_READY",
+        "rejectionReason": "Only an empty home screen is available; no new release-equivalent iOS capture could be made because simulator runtime mismatch remains unresolved."
+      }
+    ],
+    "missingRequiredScreens": [
+      "01-home-final.png",
+      "02-add-url-final.png",
+      "03-detail-final.png",
+      "04-tags-final.png",
+      "05-archive-final.png",
+      "06-export-final.png"
+    ],
+    "localOnlyConflictCheck": {
+      "accountOrLoginUIVisible": false,
+      "sharedTagCloudOrSyncUIVisible": false,
+      "adsOrBillingVisible": false,
+      "debugLabelVisible": false,
+      "personalInfoOrDevSecretVisible": false
+    }
+  },
+  "secretScan": "Checked separately against requested dev and secret indicators; no positive hits in manifest or copied screenshot PNG string metadata after manifest update.",
+  "finalVerdict": {
+    "android": "READY_FOR_STORE_UPLOAD",
+    "ios": "BLOCKED",
+    "completeSetReady": false
+  }
+}

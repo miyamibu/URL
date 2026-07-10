@@ -1,0 +1,16 @@
+<resources>
+    <string name="app_name">りんばむ</string>
+    <string name="main_empty_title">保存したURLはまだありません</string>
+    <string name="main_empty_body">共有または手動追加であとから開くURLを保存できます</string>
+    <string name="main_filtered_empty_title">この条件に一致するURLはありません</string>
+    <string name="main_filtered_empty_body">フィルターを切り替えるか、URLを新しく追加してください</string>
+    <string name="main_add_url">URLを追加</string>
+    <string name="main_privacy_info">プライバシー情報</string>
+    <string name="privacy_dialog_title">データの取り扱い</string>
+    <string name="privacy_dialog_body">保存したURL、タイトル、メモ、ローカルタグは端末内に保存されます。\n\n保存後はメタデータ取得のためにバックグラウンド通信を行い、ページのタイトルやサムネイルを取得します。\n\nサインインして共有タグクラウドを使う場合は、メールアドレス、共有タグ、共有タグ内のURL、メンバー情報を同期します。問い合わせを送信した場合は、入力内容をサポート対応のために送信します。\n\nStandard / Pro のアプリ内サブスクリプション購入は Google Play Billing を通じて処理し、権限付与の確認に使います。\n\n広告表示、外部アナリティクス、第三者クラッシュ収集サービスは現時点で使用していません。</string>
+    <string name="privacy_dialog_close">閉じる</string>
+    <string name="detail_not_found_title">このURLは見つかりませんでした</string>
+    <string name="detail_not_found_body">すでに削除された可能性があります。一覧から確認してください。</string>
+    <string name="detail_back_to_list">一覧に戻る</string>
+    <string name="detail_memo_empty">メモなし</string>
+</resources>

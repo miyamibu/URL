@@ -1,0 +1,19 @@
+# Copy selected values to local.properties or provide the matching environment variables.
+# Do not put service_role, secret keys, or production credentials in git.
+
+# Android SDK path is local-machine specific.
+# sdk.dir=/Users/you/Library/Android/sdk
+
+# Debug/internal shared-tag cloud.
+# supabase.url=https://<project-ref>.supabase.co
+# supabase.anon.key=<supabase publishable or legacy anon key>
+# shared.tag.cloud.enabled=true
+
+# Beta/release shared-tag cloud. Required only when release.shared.tag.cloud.enabled=true.
+# Leave release.shared.tag.cloud.enabled unset or false for a pre-contract local-only release build.
+# release.supabase.url=https://<project-ref>.supabase.co
+# release.supabase.anon.key=<supabase publishable or legacy anon key>
+# release.shared.tag.cloud.enabled=true
+
+# Public invite links. Defaults to the beta Vercel URL until urlsaver.app is active.
+# invite.link.base.url=https://miyamibu.xyz

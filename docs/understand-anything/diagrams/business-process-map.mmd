@@ -1,0 +1,46 @@
+flowchart TD
+  Start[ユーザー操作\n共有保存 or 手動保存]:::ui
+  AndroidShare[Android ACTION_SEND\nShareReceiverActivity.kt]:::ui
+  iOSShare[iOS Share Extension\nShareViewController.swift]:::ui
+  Manual[手動入力\nMain画面]:::ui
+  Extract[URL抽出]:::service
+  Normalize[URL正規化\nnormalizedUrl]:::service
+  Duplicate[重複判定\nnormalizedUrl unique]:::service
+  Save[DB保存\nurl_entries]:::db
+  Pending[metadata PENDING]:::db
+  Worker[metadata取得\nWorker / BGTask]:::worker
+  External[外部サイト\noEmbed / OG / HTML]:::external
+  Ready[READY / FAILED / UNAVAILABLE]:::db
+  Main[Main一覧表示]:::ui
+  Detail[Detail表示\n再取得ボタン]:::ui
+  Archive[Archive / Restore]:::ui
+  SharedAction[共有タグへ追加/削除]:::ui
+  Outbox[outboxへ操作保存]:::db
+  Apply[apply_shared_tag_ops]:::api
+  Pull[pull_shared_tag_snapshot]:::api
+  Reconcile[local projection反映]:::service
+  TagList[共有タグカード一覧]:::ui
+
+  Start --> AndroidShare
+  Start --> iOSShare
+  Start --> Manual
+  AndroidShare --> Extract
+  iOSShare --> Extract
+  Manual --> Extract
+  Extract --> Normalize --> Duplicate
+  Duplicate -->|新規| Save --> Pending --> Worker --> External --> Ready --> Main
+  Duplicate -->|既存| Main
+  Main --> Detail
+  Main --> Archive
+  Detail --> SharedAction
+  SharedAction --> Outbox --> Apply --> Pull --> Reconcile --> TagList
+  TagList --> Detail
+
+  classDef ui fill:#dbeafe,stroke:#2563eb,color:#111827;
+  classDef api fill:#ede9fe,stroke:#7c3aed,color:#111827;
+  classDef service fill:#dcfce7,stroke:#16a34a,color:#111827;
+  classDef db fill:#ffedd5,stroke:#f97316,color:#111827;
+  classDef worker fill:#fef9c3,stroke:#ca8a04,color:#111827;
+  classDef config fill:#e5e7eb,stroke:#6b7280,color:#111827;
+  classDef external fill:#fee2e2,stroke:#dc2626,color:#111827;
+  classDef test fill:#f3f4f6,stroke:#9ca3af,color:#111827;

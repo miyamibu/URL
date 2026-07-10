@@ -1,0 +1,7 @@
+保存タグ: True
+共有タグ: True
+グループ: True
+通常タグで保存URL: False
+共有タグURL: False
+/ 2: False
+/ 200: False
