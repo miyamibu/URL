@@ -324,6 +324,27 @@ interface TagDao {
 
     @Query(
         """
+        SELECT
+            t.id AS id,
+            t.name AS name,
+            t.scope AS scope,
+            t.authUserId AS authUserId,
+            t.remoteTagId AS remoteTagId,
+            t.syncStatus AS syncStatus,
+            NULL AS currentUserRole
+        FROM tags AS t
+        INNER JOIN tag_url_cross_refs AS r ON r.tagId = t.id
+        WHERE r.entryId = :entryId
+          AND r.deletedAt IS NULL
+          AND t.deletedAt IS NULL
+          AND t.scope = 'LOCAL_ONLY'
+        ORDER BY t.name ASC
+        """
+    )
+    suspend fun getLocalOnlyTagsForEntry(entryId: Long): List<SharedTagRecord>
+
+    @Query(
+        """
         SELECT * FROM tag_url_cross_refs
         WHERE tagId = :tagId
           AND entryId = :entryId

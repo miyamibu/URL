@@ -36,6 +36,7 @@ extension_group = project.main_group.new_group("URLSaverShareExtension", "URLSav
 tests_group = project.main_group.new_group("URLSaveriOSTests", "URLSaveriOSTests")
 config_group = project.main_group.new_group("Config", "Config")
 secrets_config = config_group.new_file("URLSaverSecrets.xcconfig")
+local_only_config = config_group.new_file("URLSaverSecrets.local-only.xcconfig")
 
 app_target = project.new_target(:application, "URLSaveriOS", :ios, "17.0")
 extension_target = project.new_target(:app_extension, "URLSaverShareExtension", :ios, "17.0")
@@ -73,7 +74,7 @@ project.root_object.attributes["TargetAttributes"] = {
 end
 
 app_target.build_configurations.each do |config|
-  config.base_configuration_reference = secrets_config
+  config.base_configuration_reference = local_only_config
   config.build_settings["PRODUCT_BUNDLE_IDENTIFIER"] = "com.mibu.codebridge.ios"
   config.build_settings["INFOPLIST_FILE"] = "URLSaveriOS/Info.plist"
   config.build_settings["ASSETCATALOG_COMPILER_APPICON_NAME"] = "AppIcon"

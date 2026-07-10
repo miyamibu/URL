@@ -69,6 +69,10 @@ val debugContactSupportEndpointUrl = contactSupportEndpointUrl.ifBlank {
 val releaseContactSupportEndpointUrl = contactSupportEndpointUrl.ifBlank {
     contactSupportEndpointFromSupabaseUrl(releaseSupabaseUrl)
 }
+val debugAiTransparencyEnabled = configBoolean(
+    propertyName = "ai.transparency.enabled",
+    envName = "URLSAVER_AI_TRANSPARENCY_ENABLED",
+)
 val releaseBuildRequested = gradle.startParameter.taskNames.any { taskName ->
     taskName.contains("Release", ignoreCase = true) || taskName == "build"
 }
@@ -119,6 +123,7 @@ android {
             buildConfigField("String", "MEDIA_RESOLVER_BACKEND_URL", buildConfigString(mediaResolverBackendUrl))
             buildConfigField("String", "CONTACT_SUPPORT_ENDPOINT_URL", buildConfigString(debugContactSupportEndpointUrl))
             buildConfigField("boolean", "ALLOW_LOCAL_MEDIA_DOWNLOADS", "true")
+            buildConfigField("boolean", "AI_TRANSPARENCY_ENABLED", debugAiTransparencyEnabled.toString())
         }
         release {
             isMinifyEnabled = false
@@ -135,6 +140,7 @@ android {
             buildConfigField("String", "MEDIA_RESOLVER_BACKEND_URL", buildConfigString(mediaResolverBackendUrl))
             buildConfigField("String", "CONTACT_SUPPORT_ENDPOINT_URL", buildConfigString(releaseContactSupportEndpointUrl))
             buildConfigField("boolean", "ALLOW_LOCAL_MEDIA_DOWNLOADS", "false")
+            buildConfigField("boolean", "AI_TRANSPARENCY_ENABLED", "false")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

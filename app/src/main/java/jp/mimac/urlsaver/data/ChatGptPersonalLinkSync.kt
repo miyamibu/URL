@@ -215,7 +215,7 @@ class ChatGptPersonalLinkSyncRepository(
         val operations = urlEntryDao.loadAllEntries()
             .filter { it.localProvenanceCount > 0 && it.recordState in setOf(RecordState.ACTIVE, RecordState.ARCHIVED) }
             .map { entry ->
-                val tags = tagDao.getVisibleTagsForEntry(entry.id, session.authUserId).map { it.name }
+                val tags = tagDao.getLocalOnlyTagsForEntry(entry.id).map { it.name }
                 entry.toChatGptOperation(tags, contentFetchEnabled)
             }
         if (operations.isNotEmpty()) {

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 enum URLExportScope: String, CaseIterable, Codable, Sendable {
@@ -137,6 +138,7 @@ enum URLExportArchiveBuilder {
             .map { $0.toDocument() }
 
         let generatedAt = isoString(now)
+        let redactionReport = ExportRedactionReport.from(generatedAt: generatedAt, documents: documents)
         let selectedNames = request.selectedTagIDs.compactMap { tagNamesByID[$0] }.sorted()
         let manifest = ExportManifest(
             generatedAt: generatedAt,
@@ -158,12 +160,14 @@ enum URLExportArchiveBuilder {
             return try buildZipExport(
                 manifest: manifest,
                 documents: documents,
+                redactionReport: redactionReport,
                 now: now
             )
         case .json:
             return try buildJSONExport(
                 manifest: manifest,
                 documents: documents,
+                redactionReport: redactionReport,
                 now: now
             )
         }
@@ -255,10 +259,14 @@ enum URLExportArchiveBuilder {
     private static func buildZipExport(
         manifest: ExportManifest,
         documents: [ExportEntryDocument],
+        redactionReport: ExportRedactionReport,
         now: Date
     ) throws -> PreparedExportArchive {
         var zip = SimpleZipWriter()
         zip.addFile(path: "manifest.json", data: try prettyEncoder().encode(manifest))
+        zip.addFile(path: "schema.json", data: Data(aiSafeSchemaJSON.utf8))
+        zip.addFile(path: "README_FOR_AI.md", data: Data(buildReadmeForAi(manifest: manifest, report: redactionReport).utf8))
+        zip.addFile(path: "redaction_report.json", data: try prettyEncoder().encode(redactionReport))
         let encoder = lineEncoder()
         let jsonl = try documents.map { document in
             String(data: try encoder.encode(document), encoding: .utf8) ?? "{}"
@@ -280,9 +288,15 @@ enum URLExportArchiveBuilder {
     private static func buildJSONExport(
         manifest: ExportManifest,
         documents: [ExportEntryDocument],
+        redactionReport: ExportRedactionReport,
         now: Date
     ) throws -> PreparedExportArchive {
-        let payload = ExportJSONDocument(manifest: manifest, entries: documents)
+        let payload = ExportJSONDocument(
+            manifest: manifest,
+            entries: documents,
+            readmeForAi: buildReadmeForAi(manifest: manifest, report: redactionReport),
+            redactionReport: redactionReport
+        )
         let bytes = try prettyEncoder().encode(payload)
         return PreparedExportArchive(
             fileName: buildArchiveFileName(now, format: .json),
@@ -294,10 +308,13 @@ enum URLExportArchiveBuilder {
 
     private static let exportFields = [
         "id",
+        "publicSafeId",
         "originalUrl",
         "normalizedUrl",
         "displayUrl",
         "openUrl",
+        "providerPermalink",
+        "providerCanonicalId",
         "serviceType",
         "contentContext",
         "recordState",
@@ -306,10 +323,12 @@ enum URLExportArchiveBuilder {
         "archivedAt",
         "userTitle",
         "fetchedTitle",
-        "fetchedBody",
+        "fetchedAuthorName",
+        "fetchedBodyKind",
         "bodySummary",
+        "bodyExcerpt",
         "description",
-        "memo",
+        "memoExcerpt",
         "thumbnailUrl",
         "badgeImageUrl",
         "canonicalId",
@@ -317,10 +336,124 @@ enum URLExportArchiveBuilder {
         "rawSourceHost",
         "metadataState",
         "metadataError",
+        "metadataFetchedAt",
+        "metadataSource",
+        "savedSnapshotNotice",
         "collection",
         "tags",
         "tagScopes",
+        "sharedTagBoundary",
+        "aiEligible",
+        "aiExclusionReason",
+        "redactionApplied",
     ]
+
+    fileprivate static let bodyExcerptMaxCharacters = 1_000
+    fileprivate static let memoExcerptMaxCharacters = 1_000
+
+    fileprivate static func publicSafeId(entryID: Int64, normalizedURL: String) -> String {
+        let digest = SHA256.hash(data: Data("ios-ai-export-v1:\(entryID):\(normalizedURL)".utf8))
+        return digest.map { String(format: "%02x", $0) }.joined().prefix(32).description
+    }
+
+    fileprivate static func clipText(_ value: String, maxCharacters: Int) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > maxCharacters else { return trimmed }
+        return String(trimmed.prefix(maxCharacters - 1)) + "…"
+    }
+
+    fileprivate static func providerPermalink(for entry: URLRecord) -> String {
+        guard let canonicalID = entry.canonicalID, !canonicalID.isEmpty else { return entry.openURL }
+        switch entry.serviceType {
+        case .youtube:
+            return "https://www.youtube.com/watch?v=\(canonicalID)"
+        case .x:
+            return "https://x.com/i/web/status/\(canonicalID)"
+        default:
+            return entry.openURL
+        }
+    }
+
+    fileprivate static func metadataSource(for entry: URLRecord) -> String {
+        if entry.metadataFetchedAt != nil { return "metadata_fetcher" }
+        if entry.fetchedTitle?.isEmpty == false || entry.bodySummary?.isEmpty == false {
+            return "metadata_cache"
+        }
+        return "user_saved_url"
+    }
+
+    fileprivate static func savedSnapshotNotice(for entry: URLRecord) -> String? {
+        let hasSavedMetadata = entry.metadataFetchedAt != nil ||
+            entry.fetchedTitle?.isEmpty == false ||
+            entry.fetchedAuthorName?.isEmpty == false ||
+            entry.bodySummary?.isEmpty == false ||
+            entry.description?.isEmpty == false ||
+            entry.thumbnailURL?.isEmpty == false
+        return hasSavedMetadata ? AiTransparencyPolicy.savedSnapshotNotice : nil
+    }
+
+    fileprivate static func redact(_ value: String?) -> RedactedText {
+        guard var output = value?.trimmingCharacters(in: .whitespacesAndNewlines), !output.isEmpty else {
+            return RedactedText(value: nil, redactions: [])
+        }
+        var redactions: Set<String> = []
+        func apply(_ pattern: String, label: String) {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return }
+            let range = NSRange(output.startIndex..<output.endIndex, in: output)
+            guard regex.firstMatch(in: output, range: range) != nil else { return }
+            output = regex.stringByReplacingMatches(in: output, range: range, withTemplate: "[redacted:\(label)]")
+            redactions.insert(label)
+        }
+        apply("[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}", label: "email")
+        apply("(?<!\\d)(?:\\+?\\d[\\d\\s().-]{8,}\\d)(?!\\d)", label: "phone")
+        apply("\\b(?:refresh_token|access_token|service_role|sb_secret|invite[_-]?token|token)\\s*[:=]\\s*[\"']?[A-Za-z0-9._~+/=-]{8,}", label: "token")
+        apply("https://[a-z0-9-]+\\.supabase\\.co|eyJ[A-Za-z0-9_-]{20,}\\.[A-Za-z0-9_-]{20,}\\.[A-Za-z0-9_-]{10,}", label: "supabase")
+        apply("(?:/Users/|/private/var/|file://)[^\\s)]+", label: "local_path")
+        return RedactedText(value: output, redactions: redactions)
+    }
+
+    private static let aiSafeSchemaJSON = """
+    {
+      "schemaVersion": "ai-safe-v1",
+      "fetchedBodyDefault": "excluded",
+      "requiredFiles": ["manifest.json", "entries.jsonl", "schema.json", "README_FOR_AI.md", "redaction_report.json"],
+      "entryRequiredFields": ["publicSafeId", "originalUrl", "normalizedUrl", "openUrl", "effectiveTitle", "recordState", "aiEligible", "sharedTagBoundary", "redactionApplied"],
+      "privacyDefaults": {
+        "sharedTags": "excluded_from_ai_by_default",
+        "pendingDelete": "excluded_from_ai",
+        "archived": "excluded_from_ai_by_default",
+        "body": "summary_or_excerpt_only"
+      }
+    }
+    """
+
+    private static func buildReadmeForAi(manifest: ExportManifest, report: ExportRedactionReport) -> String {
+        """
+        # りんばむ AI-safe Export
+
+        Generated at: \(manifest.generatedAt)
+        App version: \(manifest.appVersion)
+        Entry count: \(manifest.entryCount)
+
+        This archive is intended for AI-assisted review of user-selected saved links.
+        It is not a restore backup. Full fetched bodies are excluded by default.
+
+        ## Files
+        - `manifest.json`: export metadata and selected filters.
+        - `entries.jsonl`: one AI-safe JSON document per saved link.
+        - `entries/*.md`: readable Markdown summaries.
+        - `schema.json`: compact schema contract.
+        - `redaction_report.json`: redaction profile and counts.
+
+        ## Privacy defaults
+        - Shared-tag entries are marked `aiEligible=false` by default.
+        - Pending-delete entries are marked `aiEligible=false`.
+        - Archived entries are marked `aiEligible=false` unless a future explicit flow opts them in.
+        - `bodyExcerpt` and `memoExcerpt` are capped at \(report.bodyExcerptMaxChars) and \(report.memoExcerptMaxChars) characters.
+        - `savedSnapshotNotice` means title/author/summary/excerpt/thumbnail/metadata are saved-time data and may differ from the current live URL.
+        - Raw fetched body, raw prompt text, tokens, local paths, and secrets are not intended to appear in this archive.
+        """
+    }
 }
 
 enum URLExportError: LocalizedError {
@@ -380,12 +513,40 @@ private struct ExportSourceEntry {
     }
 
     func toDocument() -> ExportEntryDocument {
-        ExportEntryDocument(
+        let hasSharedTag = tags.contains { $0.scope == URLExportTagScope.synced.rawValue }
+        var exclusionReasons: [String] = []
+        if hasSharedTag { exclusionReasons.append("shared_tag_default_excluded") }
+        if entry.recordState == .archived { exclusionReasons.append("archived_default_excluded") }
+        if entry.recordState == .pendingDelete || entry.pendingDeletionUntil != nil {
+            exclusionReasons.append("pending_delete_excluded")
+        }
+        let bodySummary = URLExportArchiveBuilder.redact(entry.bodySummary)
+        let bodyExcerpt = URLExportArchiveBuilder.redact(
+            entry.fetchedBody.map {
+                URLExportArchiveBuilder.clipText($0, maxCharacters: URLExportArchiveBuilder.bodyExcerptMaxCharacters)
+            }
+        )
+        let description = URLExportArchiveBuilder.redact(entry.description)
+        let memoExcerpt = URLExportArchiveBuilder.redact(
+            entry.memo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil :
+                URLExportArchiveBuilder.clipText(entry.memo, maxCharacters: URLExportArchiveBuilder.memoExcerptMaxCharacters)
+        )
+        let redactionApplied = Array(
+            bodySummary.redactions
+                .union(bodyExcerpt.redactions)
+                .union(description.redactions)
+                .union(memoExcerpt.redactions)
+        ).sorted()
+
+        return ExportEntryDocument(
             id: entry.id,
+            publicSafeId: URLExportArchiveBuilder.publicSafeId(entryID: entry.id, normalizedURL: entry.normalizedURL),
             originalUrl: entry.originalURL,
             normalizedUrl: entry.normalizedURL,
             displayUrl: entry.displayURL,
             openUrl: entry.openURL,
+            providerPermalink: URLExportArchiveBuilder.providerPermalink(for: entry),
+            providerCanonicalId: entry.canonicalID,
             serviceType: entry.serviceType.rawValue.uppercased(),
             contentContext: entry.contentContext.rawValue.uppercased(),
             recordState: entry.recordState.rawValue,
@@ -394,10 +555,12 @@ private struct ExportSourceEntry {
             archivedAt: entry.archivedAt.map(URLExportArchiveBuilder.isoString(_:)),
             userTitle: entry.userTitle,
             fetchedTitle: entry.fetchedTitle,
-            fetchedBody: entry.fetchedBody,
-            bodySummary: entry.bodySummary,
-            description: entry.description,
-            memo: entry.memo,
+            fetchedAuthorName: entry.fetchedAuthorName,
+            fetchedBodyKind: entry.fetchedBodyKind?.rawValue.uppercased(),
+            bodySummary: bodySummary.value,
+            bodyExcerpt: bodyExcerpt.value,
+            description: description.value,
+            memoExcerpt: memoExcerpt.value,
             thumbnailUrl: entry.thumbnailURL,
             badgeImageUrl: entry.badgeImageURL,
             canonicalId: entry.canonicalID,
@@ -405,9 +568,16 @@ private struct ExportSourceEntry {
             rawSourceHost: entry.rawSourceHost,
             metadataState: entry.metadataState.rawValue,
             metadataError: entry.metadataError?.rawValue,
+            metadataFetchedAt: entry.metadataFetchedAt.map(URLExportArchiveBuilder.isoString(_:)),
+            metadataSource: URLExportArchiveBuilder.metadataSource(for: entry),
+            savedSnapshotNotice: URLExportArchiveBuilder.savedSnapshotNotice(for: entry),
             collection: nil,
             tags: tags.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending },
-            effectiveTitle: entry.effectiveTitle
+            effectiveTitle: entry.effectiveTitle,
+            sharedTagBoundary: hasSharedTag ? "contains_shared_tag" : "local_or_untagged",
+            aiEligible: exclusionReasons.isEmpty,
+            aiExclusionReason: exclusionReasons,
+            redactionApplied: redactionApplied
         )
     }
 }
@@ -430,6 +600,8 @@ private struct ExportManifest: Codable {
 private struct ExportJSONDocument: Codable {
     let manifest: ExportManifest
     let entries: [ExportEntryDocument]
+    let readmeForAi: String
+    let redactionReport: ExportRedactionReport
 }
 
 private struct ExportTagSummary: Codable {
@@ -438,12 +610,15 @@ private struct ExportTagSummary: Codable {
     let scope: String
 }
 
-private struct ExportEntryDocument: Codable {
+fileprivate struct ExportEntryDocument: Codable {
     let id: Int64
+    let publicSafeId: String
     let originalUrl: String
     let normalizedUrl: String
     let displayUrl: String
     let openUrl: String
+    let providerPermalink: String
+    let providerCanonicalId: String?
     let serviceType: String
     let contentContext: String
     let recordState: String
@@ -452,10 +627,12 @@ private struct ExportEntryDocument: Codable {
     let archivedAt: String?
     let userTitle: String?
     let fetchedTitle: String?
-    let fetchedBody: String?
+    let fetchedAuthorName: String?
+    let fetchedBodyKind: String?
     let bodySummary: String?
+    let bodyExcerpt: String?
     let description: String?
-    let memo: String
+    let memoExcerpt: String?
     let thumbnailUrl: String?
     let badgeImageUrl: String?
     let canonicalId: String?
@@ -463,18 +640,28 @@ private struct ExportEntryDocument: Codable {
     let rawSourceHost: String
     let metadataState: String
     let metadataError: String?
+    let metadataFetchedAt: String?
+    let metadataSource: String
+    let savedSnapshotNotice: String?
     let collection: String?
     let tags: [ExportTagSummary]
     let effectiveTitle: String
+    let sharedTagBoundary: String
+    let aiEligible: Bool
+    let aiExclusionReason: [String]
+    let redactionApplied: [String]
 
     func toMarkdown() -> String {
         var lines: [String] = []
         lines.append("# \(effectiveTitle)")
         lines.append("")
+        lines.append("- Public Safe ID: \(publicSafeId)")
         lines.append("- URL: \(normalizedUrl)")
         lines.append("- Original URL: \(originalUrl)")
         lines.append("- Display URL: \(displayUrl)")
         lines.append("- Open URL: \(openUrl)")
+        lines.append("- Provider Permalink: \(providerPermalink)")
+        if let providerCanonicalId { lines.append("- Provider Canonical ID: \(providerCanonicalId)") }
         lines.append("- Service: \(serviceType)")
         lines.append("- Context: \(contentContext)")
         lines.append("- State: \(recordState)")
@@ -489,25 +676,64 @@ private struct ExportEntryDocument: Codable {
         }
         if let userTitle { lines.append("- User Title: \(userTitle)") }
         if let fetchedTitle { lines.append("- Fetched Title: \(fetchedTitle)") }
+        if let fetchedAuthorName { lines.append("- Author: \(fetchedAuthorName)") }
+        if let fetchedBodyKind { lines.append("- Body Kind: \(fetchedBodyKind)") }
         if let bodySummary { lines.append("- Summary: \(bodySummary)") }
+        if let bodyExcerpt { lines.append("- Body Excerpt: \(bodyExcerpt)") }
         if let description { lines.append("- Description: \(description)") }
-        if !memo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            lines.append("- Memo: \(memo)")
-        }
+        if let memoExcerpt { lines.append("- Memo Excerpt: \(memoExcerpt)") }
         if let thumbnailUrl { lines.append("- Thumbnail URL: \(thumbnailUrl)") }
         if let badgeImageUrl { lines.append("- Badge Image URL: \(badgeImageUrl)") }
         if let canonicalId { lines.append("- Canonical ID: \(canonicalId)") }
         lines.append("- Metadata State: \(metadataState)")
         if let metadataError { lines.append("- Metadata Error: \(metadataError)") }
+        if let metadataFetchedAt { lines.append("- Metadata Fetched At: \(metadataFetchedAt)") }
+        lines.append("- Metadata Source: \(metadataSource)")
+        if let savedSnapshotNotice { lines.append("- Saved Snapshot Notice: \(savedSnapshotNotice)") }
         lines.append("- Normalized Host: \(normalizedHost)")
         lines.append("- Raw Source Host: \(rawSourceHost)")
-        if let fetchedBody, !fetchedBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            lines.append("")
-            lines.append("## Body")
-            lines.append("")
-            lines.append(fetchedBody)
+        lines.append("- Shared Tag Boundary: \(sharedTagBoundary)")
+        lines.append("- AI Eligible: \(aiEligible)")
+        if !aiExclusionReason.isEmpty {
+            lines.append("- AI Exclusion Reason: \(aiExclusionReason.joined(separator: ", "))")
+        }
+        if !redactionApplied.isEmpty {
+            lines.append("- Redaction Note: \(redactionApplied.joined(separator: ", "))")
         }
         return lines.joined(separator: "\n")
+    }
+}
+
+fileprivate struct RedactedText {
+    let value: String?
+    let redactions: Set<String>
+}
+
+fileprivate struct ExportRedactionReport: Codable {
+    let generatedAt: String
+    let profile: String
+    let fetchedBodyExported: Bool
+    let bodyExcerptMaxChars: Int
+    let memoExcerptMaxChars: Int
+    let entryCount: Int
+    let redactedEntryCount: Int
+    let redactionTypes: [String: Int]
+
+    static func from(generatedAt: String, documents: [ExportEntryDocument]) -> ExportRedactionReport {
+        var counts: [String: Int] = [:]
+        for redaction in documents.flatMap(\.redactionApplied) {
+            counts[redaction, default: 0] += 1
+        }
+        return ExportRedactionReport(
+            generatedAt: generatedAt,
+            profile: "ai-safe-v1",
+            fetchedBodyExported: false,
+            bodyExcerptMaxChars: URLExportArchiveBuilder.bodyExcerptMaxCharacters,
+            memoExcerptMaxChars: URLExportArchiveBuilder.memoExcerptMaxCharacters,
+            entryCount: documents.count,
+            redactedEntryCount: documents.filter { !$0.redactionApplied.isEmpty }.count,
+            redactionTypes: counts
+        )
     }
 }
 

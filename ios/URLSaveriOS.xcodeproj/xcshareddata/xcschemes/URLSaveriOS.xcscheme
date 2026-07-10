@@ -14,7 +14,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "F675DC6B0858ECB55BF80C8C"
+               BlueprintIdentifier = "BD014411A74780156AF88D5E"
                BuildableName = "URLSaveriOS.app"
                BlueprintName = "URLSaveriOS"
                ReferencedContainer = "container:URLSaveriOS.xcodeproj">
@@ -28,7 +28,7 @@
             buildForAnalyzing = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "F8113EC8C7F203DED9B8B613"
+               BlueprintIdentifier = "1A9102D689060139716CAE76"
                BuildableName = "URLSaveriOSTests.xctest"
                BlueprintName = "URLSaveriOSTests"
                ReferencedContainer = "container:URLSaveriOS.xcodeproj">
@@ -44,7 +44,7 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "F675DC6B0858ECB55BF80C8C"
+            BlueprintIdentifier = "BD014411A74780156AF88D5E"
             BuildableName = "URLSaveriOS.app"
             BlueprintName = "URLSaveriOS"
             ReferencedContainer = "container:URLSaveriOS.xcodeproj">
@@ -55,7 +55,7 @@
             skipped = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "F8113EC8C7F203DED9B8B613"
+               BlueprintIdentifier = "1A9102D689060139716CAE76"
                BuildableName = "URLSaveriOSTests.xctest"
                BlueprintName = "URLSaveriOSTests"
                ReferencedContainer = "container:URLSaveriOS.xcodeproj">
@@ -77,7 +77,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "F675DC6B0858ECB55BF80C8C"
+            BlueprintIdentifier = "BD014411A74780156AF88D5E"
             BuildableName = "URLSaveriOS.app"
             BlueprintName = "URLSaveriOS"
             ReferencedContainer = "container:URLSaveriOS.xcodeproj">
@@ -94,7 +94,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "F675DC6B0858ECB55BF80C8C"
+            BlueprintIdentifier = "BD014411A74780156AF88D5E"
             BuildableName = "URLSaveriOS.app"
             BlueprintName = "URLSaveriOS"
             ReferencedContainer = "container:URLSaveriOS.xcodeproj">

@@ -1180,6 +1180,52 @@ final class URLRepository: @unchecked Sendable {
             updated_at REAL NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_collections_sort_order ON collections(sort_order);
+        CREATE TABLE IF NOT EXISTS ai_receipts (
+            receipt_id TEXT PRIMARY KEY,
+            action_kind TEXT NOT NULL,
+            destination TEXT NOT NULL,
+            generated_at_iso TEXT NOT NULL,
+            redaction_profile TEXT NOT NULL,
+            request_size_bucket TEXT NOT NULL,
+            response_size_bucket TEXT NOT NULL,
+            raw_body_included INTEGER NOT NULL,
+            raw_prompt_included INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS ai_receipt_sources (
+            receipt_id TEXT NOT NULL,
+            public_safe_id TEXT NOT NULL,
+            entry_id INTEGER,
+            title TEXT NOT NULL,
+            normalized_url TEXT NOT NULL,
+            tag_names_json TEXT NOT NULL,
+            shared_tag_boundary TEXT NOT NULL,
+            ai_eligible INTEGER NOT NULL,
+            exclusion_reasons_json TEXT NOT NULL,
+            PRIMARY KEY (receipt_id, public_safe_id),
+            FOREIGN KEY (receipt_id) REFERENCES ai_receipts(receipt_id) ON DELETE CASCADE,
+            FOREIGN KEY (entry_id) REFERENCES url_entries(id) ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ai_receipt_sources_entry ON ai_receipt_sources(entry_id);
+        CREATE TABLE IF NOT EXISTS ai_drafts (
+            draft_id TEXT PRIMARY KEY,
+            receipt_id TEXT NOT NULL,
+            generated_at_iso TEXT NOT NULL,
+            title TEXT NOT NULL,
+            body TEXT NOT NULL,
+            cited_source_ids_json TEXT NOT NULL,
+            status TEXT NOT NULL,
+            FOREIGN KEY (receipt_id) REFERENCES ai_receipts(receipt_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_ai_drafts_receipt ON ai_drafts(receipt_id);
+        CREATE TABLE IF NOT EXISTS ai_diff_proposals (
+            proposal_id TEXT PRIMARY KEY,
+            draft_id TEXT NOT NULL,
+            generated_at_iso TEXT NOT NULL,
+            operations_json TEXT NOT NULL,
+            applied INTEGER NOT NULL,
+            FOREIGN KEY (draft_id) REFERENCES ai_drafts(draft_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_ai_diff_proposals_draft ON ai_diff_proposals(draft_id);
         """
         try executeBatch(createSQL)
         try ensureDefaultCollection()

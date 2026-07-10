@@ -5072,12 +5072,11 @@ private fun DetailScreen(
     }
     val detailZoneId = ZoneId.of("Asia/Tokyo")
     val supportedMediaService = current.serviceType in setOf(
-        ServiceType.TIKTOK,
         ServiceType.INSTAGRAM,
-        ServiceType.YOUTUBE,
     )
     val canOfferMediaAction = current.localProvenanceCount > 0 &&
         current.recordState == RecordState.ACTIVE &&
+        BuildConfig.ALLOW_LOCAL_MEDIA_DOWNLOADS &&
         supportedMediaService
     val hasSavedInternalMedia = savedMediaItems.isNotEmpty()
     val hasDownloadableMediaAsset = videoAssets.any { it.resolveStatus == "AVAILABLE" && !it.downloadUrl.isNullOrBlank() }

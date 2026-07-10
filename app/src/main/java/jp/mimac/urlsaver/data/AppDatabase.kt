@@ -23,8 +23,12 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         SharedTagSyncStateEntity::class,
         VideoAssetEntity::class,
         VideoDownloadEntity::class,
+        AiReceiptEntity::class,
+        AiReceiptSourceEntity::class,
+        AiDraftEntity::class,
+        AiDiffProposalEntity::class,
     ],
-    version = 21,
+    version = 22,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -36,6 +40,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun sharedTagSyncDao(): SharedTagSyncDao
     abstract fun videoAssetDao(): VideoAssetDao
     abstract fun videoDownloadDao(): VideoDownloadDao
+    abstract fun aiTransparencyDao(): AiTransparencyDao
 
     companion object {
         fun create(context: Context): AppDatabase {
@@ -61,6 +66,7 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_18_20,
                     MIGRATION_19_20,
                     MIGRATION_20_21,
+                    MIGRATION_21_22,
                 )
                 .addCallback(
                     object : Callback() {
@@ -424,6 +430,12 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_21_22 = object : Migration(21, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                ensureAiTransparencyTables(db)
+            }
+        }
+
         private fun dropPostPlanColumnsIfPresent(db: SupportSQLiteDatabase) {
             dropColumnIfPresent(db, "url_entries", "pendingDeleteOriginState")
         }
@@ -489,6 +501,74 @@ abstract class AppDatabase : RoomDatabase() {
             db.execSQL("CREATE INDEX IF NOT EXISTS index_video_downloads_entryId ON video_downloads(entryId)")
             db.execSQL("CREATE INDEX IF NOT EXISTS index_video_downloads_videoAssetId ON video_downloads(videoAssetId)")
             db.execSQL("CREATE INDEX IF NOT EXISTS index_video_downloads_status ON video_downloads(status)")
+        }
+
+        private fun ensureAiTransparencyTables(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS ai_receipts (
+                    receiptId TEXT NOT NULL,
+                    actionKind TEXT NOT NULL,
+                    destination TEXT NOT NULL,
+                    generatedAtIso TEXT NOT NULL,
+                    redactionProfile TEXT NOT NULL,
+                    requestSizeBucket TEXT NOT NULL,
+                    responseSizeBucket TEXT NOT NULL,
+                    rawBodyIncluded INTEGER NOT NULL,
+                    rawPromptIncluded INTEGER NOT NULL,
+                    PRIMARY KEY(receiptId)
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS ai_receipt_sources (
+                    receiptId TEXT NOT NULL,
+                    publicSafeId TEXT NOT NULL,
+                    entryId INTEGER,
+                    title TEXT NOT NULL,
+                    normalizedUrl TEXT NOT NULL,
+                    tagNamesJson TEXT NOT NULL,
+                    sharedTagBoundary TEXT NOT NULL,
+                    aiEligible INTEGER NOT NULL,
+                    exclusionReasonsJson TEXT NOT NULL,
+                    PRIMARY KEY(receiptId, publicSafeId),
+                    FOREIGN KEY(receiptId) REFERENCES ai_receipts(receiptId) ON UPDATE NO ACTION ON DELETE CASCADE,
+                    FOREIGN KEY(entryId) REFERENCES url_entries(id) ON UPDATE NO ACTION ON DELETE SET NULL
+                )
+                """.trimIndent(),
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_ai_receipt_sources_entryId ON ai_receipt_sources(entryId)")
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS ai_drafts (
+                    draftId TEXT NOT NULL,
+                    receiptId TEXT NOT NULL,
+                    generatedAtIso TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    citedSourceIdsJson TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    PRIMARY KEY(draftId),
+                    FOREIGN KEY(receiptId) REFERENCES ai_receipts(receiptId) ON UPDATE NO ACTION ON DELETE CASCADE
+                )
+                """.trimIndent(),
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_ai_drafts_receiptId ON ai_drafts(receiptId)")
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS ai_diff_proposals (
+                    proposalId TEXT NOT NULL,
+                    draftId TEXT NOT NULL,
+                    generatedAtIso TEXT NOT NULL,
+                    operationsJson TEXT NOT NULL,
+                    applied INTEGER NOT NULL,
+                    PRIMARY KEY(proposalId),
+                    FOREIGN KEY(draftId) REFERENCES ai_drafts(draftId) ON UPDATE NO ACTION ON DELETE CASCADE
+                )
+                """.trimIndent(),
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_ai_diff_proposals_draftId ON ai_diff_proposals(draftId)")
         }
 
         private fun ensureSharedTagGroupTables(db: SupportSQLiteDatabase) {

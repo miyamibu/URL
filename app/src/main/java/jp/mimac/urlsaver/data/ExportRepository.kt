@@ -13,6 +13,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.ByteArrayOutputStream
+import java.security.MessageDigest
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -135,6 +136,10 @@ class DefaultExportRepository(
         val entryDocuments = entries.map { source ->
             source.toDocument()
         }
+        val redactionReport = ExportRedactionReport.from(
+            generatedAt = exportedAtIso,
+            documents = entryDocuments,
+        )
 
         val manifest = ExportManifest(
             generatedAt = exportedAtIso,
@@ -155,10 +160,12 @@ class DefaultExportRepository(
             ExportOutputFormat.ZIP -> buildZipExportBytes(
                 manifest = manifest,
                 entryDocuments = entryDocuments,
+                redactionReport = redactionReport,
             )
             ExportOutputFormat.JSON -> buildJsonExportBytes(
                 manifest = manifest,
                 entryDocuments = entryDocuments,
+                redactionReport = redactionReport,
             )
         }
 
@@ -203,6 +210,7 @@ class DefaultExportRepository(
     private fun buildZipExportBytes(
         manifest: ExportManifest,
         entryDocuments: List<ExportEntryDocument>,
+        redactionReport: ExportRedactionReport,
     ): ByteArray {
         return ByteArrayOutputStream().use { output ->
             ZipOutputStream(output).use { zip ->
@@ -211,6 +219,9 @@ class DefaultExportRepository(
                     path = "manifest.json",
                     content = json.encodeToString(manifest),
                 )
+                addZipEntry(zip, "schema.json", AI_SAFE_SCHEMA_JSON)
+                addZipEntry(zip, "README_FOR_AI.md", buildReadmeForAi(manifest, redactionReport))
+                addZipEntry(zip, "redaction_report.json", json.encodeToString(redactionReport))
 
                 val jsonl = entryDocuments.joinToString(separator = "\n") { document ->
                     jsonLine.encodeToString(document)
@@ -233,10 +244,13 @@ class DefaultExportRepository(
     private fun buildJsonExportBytes(
         manifest: ExportManifest,
         entryDocuments: List<ExportEntryDocument>,
+        redactionReport: ExportRedactionReport,
     ): ByteArray {
         val payload = ExportJsonPayload(
             manifest = manifest,
             entries = entryDocuments,
+            readmeForAi = buildReadmeForAi(manifest, redactionReport),
+            redactionReport = redactionReport,
         )
         return json.encodeToString(payload).toByteArray(Charsets.UTF_8)
     }
@@ -306,12 +320,35 @@ class DefaultExportRepository(
                     scope = it.scope.name,
                 )
             }
+            val hasSharedTag = tags.any { it.scope == SharedTagScope.SYNCED }
+            val aiExclusionReasons = buildList {
+                if (hasSharedTag) add("shared_tag_default_excluded")
+                if (entry.recordState == jp.mimac.urlsaver.domain.RecordState.ARCHIVED) add("archived_default_excluded")
+                if (entry.recordState == jp.mimac.urlsaver.domain.RecordState.PENDING_DELETE ||
+                    entry.pendingDeletionUntil != null
+                ) {
+                    add("pending_delete_excluded")
+                }
+            }
+            val bodySummary = redact(entry.bodySummary)
+            val bodyExcerpt = redact(entry.fetchedBody?.let { clipText(it, BODY_EXCERPT_MAX_CHARS) })
+            val description = redact(entry.description)
+            val memoExcerpt = redact(entry.memo.takeIf { it.isNotBlank() }?.let { clipText(it, MEMO_EXCERPT_MAX_CHARS) })
+            val redactionApplied = (
+                bodySummary.redactions +
+                    bodyExcerpt.redactions +
+                    description.redactions +
+                    memoExcerpt.redactions
+                ).toSortedSet().toList()
             return ExportEntryDocument(
                 id = entry.id,
+                publicSafeId = publicSafeId(entry.id, entry.normalizedUrl),
                 originalUrl = entry.originalUrl,
                 normalizedUrl = entry.normalizedUrl,
                 displayUrl = entry.displayUrl,
                 openUrl = entry.openUrl,
+                providerPermalink = providerPermalink(entry),
+                providerCanonicalId = entry.canonicalId,
                 serviceType = entry.serviceType.name,
                 contentContext = entry.contentContext.name,
                 recordState = entry.recordState.name,
@@ -320,10 +357,12 @@ class DefaultExportRepository(
                 archivedAt = entry.archivedAt?.let { Instant.ofEpochMilli(it).toString() },
                 userTitle = entry.userTitle,
                 fetchedTitle = entry.fetchedTitle,
-                fetchedBody = entry.fetchedBody,
-                bodySummary = entry.bodySummary,
-                description = entry.description,
-                memo = entry.memo,
+                fetchedAuthorName = entry.fetchedAuthorName,
+                fetchedBodyKind = entry.fetchedBodyKind?.name,
+                bodySummary = bodySummary.value,
+                bodyExcerpt = bodyExcerpt.value,
+                description = description.value,
+                memoExcerpt = memoExcerpt.value,
                 thumbnailUrl = entry.thumbnailUrl,
                 badgeImageUrl = entry.badgeImageUrl,
                 canonicalId = entry.canonicalId,
@@ -331,9 +370,16 @@ class DefaultExportRepository(
                 rawSourceHost = entry.rawSourceHost,
                 metadataState = entry.metadataState.name,
                 metadataError = entry.metadataError?.name,
+                metadataFetchedAt = entry.metadataFetchedAt?.let { Instant.ofEpochMilli(it).toString() },
+                metadataSource = metadataSource(entry),
+                savedSnapshotNotice = savedSnapshotNotice(entry),
                 collection = collectionName,
                 tags = tagSummaries,
                 effectiveTitle = preferredTitle(entry),
+                sharedTagBoundary = if (hasSharedTag) "contains_shared_tag" else "local_or_untagged",
+                aiEligible = aiExclusionReasons.isEmpty(),
+                aiExclusionReason = aiExclusionReasons,
+                redactionApplied = redactionApplied,
             )
         }
 
@@ -343,6 +389,36 @@ class DefaultExportRepository(
                 !entry.fetchedTitle.isNullOrBlank() -> entry.fetchedTitle
                 else -> entry.normalizedHost.ifBlank { "保存したリンク" }
             }.orEmpty()
+        }
+
+        private fun providerPermalink(entry: UrlEntryEntity): String {
+            return when (entry.serviceType) {
+                ServiceType.YOUTUBE -> entry.canonicalId?.takeIf { it.isNotBlank() }
+                    ?.let { "https://www.youtube.com/watch?v=$it" }
+                    ?: entry.openUrl
+                ServiceType.X -> entry.canonicalId?.takeIf { it.isNotBlank() }
+                    ?.let { "https://x.com/i/web/status/$it" }
+                    ?: entry.openUrl
+                else -> entry.openUrl
+            }
+        }
+
+        private fun metadataSource(entry: UrlEntryEntity): String {
+            return when {
+                entry.metadataFetchedAt != null -> "metadata_fetcher"
+                !entry.fetchedTitle.isNullOrBlank() || !entry.bodySummary.isNullOrBlank() -> "metadata_cache"
+                else -> "user_saved_url"
+            }
+        }
+
+        private fun savedSnapshotNotice(entry: UrlEntryEntity): String? {
+            val hasSavedMetadata = entry.metadataFetchedAt != null ||
+                !entry.fetchedTitle.isNullOrBlank() ||
+                !entry.fetchedAuthorName.isNullOrBlank() ||
+                !entry.bodySummary.isNullOrBlank() ||
+                !entry.description.isNullOrBlank() ||
+                !entry.thumbnailUrl.isNullOrBlank()
+            return if (hasSavedMetadata) AiTransparencyPolicy.SAVED_SNAPSHOT_NOTICE else null
         }
     }
 
@@ -372,10 +448,13 @@ class DefaultExportRepository(
     @Serializable
     private data class ExportEntryDocument(
         val id: Long,
+        val publicSafeId: String,
         val originalUrl: String,
         val normalizedUrl: String,
         val displayUrl: String,
         val openUrl: String,
+        val providerPermalink: String,
+        val providerCanonicalId: String? = null,
         val serviceType: String,
         val contentContext: String,
         val recordState: String,
@@ -384,10 +463,12 @@ class DefaultExportRepository(
         val archivedAt: String? = null,
         val userTitle: String? = null,
         val fetchedTitle: String? = null,
-        val fetchedBody: String? = null,
+        val fetchedAuthorName: String? = null,
+        val fetchedBodyKind: String? = null,
         val bodySummary: String? = null,
+        val bodyExcerpt: String? = null,
         val description: String? = null,
-        val memo: String,
+        val memoExcerpt: String? = null,
         val thumbnailUrl: String? = null,
         val badgeImageUrl: String? = null,
         val canonicalId: String? = null,
@@ -395,18 +476,28 @@ class DefaultExportRepository(
         val rawSourceHost: String,
         val metadataState: String,
         val metadataError: String? = null,
+        val metadataFetchedAt: String? = null,
+        val metadataSource: String,
+        val savedSnapshotNotice: String? = null,
         val collection: String? = null,
         val tags: List<ExportTagSummary>,
         val effectiveTitle: String,
+        val sharedTagBoundary: String,
+        val aiEligible: Boolean,
+        val aiExclusionReason: List<String>,
+        val redactionApplied: List<String>,
     ) {
         fun toMarkdown(): String {
             val lines = mutableListOf<String>()
             lines += "# $effectiveTitle"
             lines += ""
+            lines += "- Public Safe ID: $publicSafeId"
             lines += "- URL: $normalizedUrl"
             lines += "- Original URL: $originalUrl"
             lines += "- Display URL: $displayUrl"
             lines += "- Open URL: $openUrl"
+            lines += "- Provider Permalink: $providerPermalink"
+            providerCanonicalId?.let { lines += "- Provider Canonical ID: $it" }
             lines += "- Service: $serviceType"
             lines += "- Context: $contentContext"
             lines += "- State: $recordState"
@@ -421,23 +512,29 @@ class DefaultExportRepository(
             }
             userTitle?.let { lines += "- User Title: $it" }
             fetchedTitle?.let { lines += "- Fetched Title: $it" }
+            fetchedAuthorName?.let { lines += "- Author: $it" }
+            fetchedBodyKind?.let { lines += "- Body Kind: $it" }
             bodySummary?.let { lines += "- Summary: $it" }
+            bodyExcerpt?.let { lines += "- Body Excerpt: $it" }
             description?.let { lines += "- Description: $it" }
-            if (memo.isNotBlank()) {
-                lines += "- Memo: $memo"
-            }
+            memoExcerpt?.let { lines += "- Memo Excerpt: $it" }
             thumbnailUrl?.let { lines += "- Thumbnail URL: $it" }
             badgeImageUrl?.let { lines += "- Badge Image URL: $it" }
             canonicalId?.let { lines += "- Canonical ID: $it" }
             lines += "- Metadata State: $metadataState"
             metadataError?.let { lines += "- Metadata Error: $it" }
+            metadataFetchedAt?.let { lines += "- Metadata Fetched At: $it" }
+            lines += "- Metadata Source: $metadataSource"
+            savedSnapshotNotice?.let { lines += "- Saved Snapshot Notice: $it" }
             lines += "- Normalized Host: $normalizedHost"
             lines += "- Raw Source Host: $rawSourceHost"
-            if (!fetchedBody.isNullOrBlank()) {
-                lines += ""
-                lines += "## Body"
-                lines += ""
-                lines += fetchedBody
+            lines += "- Shared Tag Boundary: $sharedTagBoundary"
+            lines += "- AI Eligible: $aiEligible"
+            if (aiExclusionReason.isNotEmpty()) {
+                lines += "- AI Exclusion Reason: ${aiExclusionReason.joinToString()}"
+            }
+            if (redactionApplied.isNotEmpty()) {
+                lines += "- Redaction Note: ${redactionApplied.joinToString()}"
             }
             return lines.joinToString(separator = "\n")
         }
@@ -447,15 +544,52 @@ class DefaultExportRepository(
     private data class ExportJsonPayload(
         val manifest: ExportManifest,
         val entries: List<ExportEntryDocument>,
+        val readmeForAi: String,
+        val redactionReport: ExportRedactionReport,
     )
+
+    @Serializable
+    private data class ExportRedactionReport(
+        val generatedAt: String,
+        val profile: String,
+        val fetchedBodyExported: Boolean,
+        val bodyExcerptMaxChars: Int,
+        val memoExcerptMaxChars: Int,
+        val entryCount: Int,
+        val redactedEntryCount: Int,
+        val redactionTypes: Map<String, Int>,
+    ) {
+        companion object {
+            fun from(generatedAt: String, documents: List<ExportEntryDocument>): ExportRedactionReport {
+                val redactionCounts = documents
+                    .flatMap { it.redactionApplied }
+                    .groupingBy { it }
+                    .eachCount()
+                    .toSortedMap()
+                return ExportRedactionReport(
+                    generatedAt = generatedAt,
+                    profile = "ai-safe-v1",
+                    fetchedBodyExported = false,
+                    bodyExcerptMaxChars = BODY_EXCERPT_MAX_CHARS,
+                    memoExcerptMaxChars = MEMO_EXCERPT_MAX_CHARS,
+                    entryCount = documents.size,
+                    redactedEntryCount = documents.count { it.redactionApplied.isNotEmpty() },
+                    redactionTypes = redactionCounts,
+                )
+            }
+        }
+    }
 
     private companion object {
         val EXPORT_FIELDS = listOf(
             "id",
+            "publicSafeId",
             "originalUrl",
             "normalizedUrl",
             "displayUrl",
             "openUrl",
+            "providerPermalink",
+            "providerCanonicalId",
             "serviceType",
             "contentContext",
             "recordState",
@@ -464,10 +598,12 @@ class DefaultExportRepository(
             "archivedAt",
             "userTitle",
             "fetchedTitle",
-            "fetchedBody",
+            "fetchedAuthorName",
+            "fetchedBodyKind",
             "bodySummary",
+            "bodyExcerpt",
             "description",
-            "memo",
+            "memoExcerpt",
             "thumbnailUrl",
             "badgeImageUrl",
             "canonicalId",
@@ -475,14 +611,104 @@ class DefaultExportRepository(
             "rawSourceHost",
             "metadataState",
             "metadataError",
+            "metadataFetchedAt",
+            "metadataSource",
+            "savedSnapshotNotice",
             "collection",
             "tags",
             "tagScopes",
+            "sharedTagBoundary",
+            "aiEligible",
+            "aiExclusionReason",
+            "redactionApplied",
         )
+        const val BODY_EXCERPT_MAX_CHARS = 1_000
+        const val MEMO_EXCERPT_MAX_CHARS = 1_000
         val FILE_TIMESTAMP_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")
         val SLUG_SANITIZE_REGEX = Regex("[^a-z0-9]+")
+        val EMAIL_REGEX = Regex("[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}", RegexOption.IGNORE_CASE)
+        val PHONE_REGEX = Regex("""(?<!\d)(?:\+?\d[\d\s().-]{8,}\d)(?!\d)""")
+        val TOKEN_REGEX = Regex("""(?i)\b(?:refresh_token|access_token|service_role|sb_secret|invite[_-]?token|token)\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{8,}""")
+        val SUPABASE_REGEX = Regex("""https://[a-z0-9-]+\.supabase\.co|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}""")
+        val LOCAL_PATH_REGEX = Regex("""(?:/Users/|/private/var/|file://)[^\s)]+""")
+        const val AI_SAFE_SCHEMA_JSON = """
+{
+  "schemaVersion": "ai-safe-v1",
+  "fetchedBodyDefault": "excluded",
+  "requiredFiles": ["manifest.json", "entries.jsonl", "schema.json", "README_FOR_AI.md", "redaction_report.json"],
+  "entryRequiredFields": ["publicSafeId", "originalUrl", "normalizedUrl", "openUrl", "effectiveTitle", "recordState", "aiEligible", "sharedTagBoundary", "redactionApplied"],
+  "privacyDefaults": {
+    "sharedTags": "excluded_from_ai_by_default",
+    "pendingDelete": "excluded_from_ai",
+    "archived": "excluded_from_ai_by_default",
+    "body": "summary_or_excerpt_only"
+  }
+}
+"""
+
+        fun publicSafeId(id: Long, normalizedUrl: String): String {
+            val input = "android-ai-export-v1:$id:$normalizedUrl"
+            val digest = MessageDigest.getInstance("SHA-256").digest(input.toByteArray(Charsets.UTF_8))
+            return digest.joinToString("") { "%02x".format(it) }.take(32)
+        }
+
+        fun clipText(value: String, maxChars: Int): String {
+            val trimmed = value.trim()
+            return if (trimmed.length <= maxChars) trimmed else trimmed.take(maxChars - 1) + "…"
+        }
+
+        fun redact(value: String?): RedactedText {
+            val input = value?.trim()?.takeIf { it.isNotBlank() } ?: return RedactedText(null, emptySet())
+            var output = input
+            val redactions = mutableSetOf<String>()
+            fun apply(regex: Regex, label: String) {
+                if (regex.containsMatchIn(output)) {
+                    output = regex.replace(output, "[redacted:$label]")
+                    redactions += label
+                }
+            }
+            apply(EMAIL_REGEX, "email")
+            apply(PHONE_REGEX, "phone")
+            apply(TOKEN_REGEX, "token")
+            apply(SUPABASE_REGEX, "supabase")
+            apply(LOCAL_PATH_REGEX, "local_path")
+            return RedactedText(output, redactions)
+        }
+
+        fun buildReadmeForAi(manifest: ExportManifest, report: ExportRedactionReport): String {
+            return """
+            # りんばむ AI-safe Export
+
+            Generated at: ${manifest.generatedAt}
+            App version: ${manifest.appVersion}
+            Entry count: ${manifest.entryCount}
+
+            This archive is intended for AI-assisted review of user-selected saved links.
+            It is not a restore backup. Full fetched bodies are excluded by default.
+
+            ## Files
+            - `manifest.json`: export metadata and selected filters.
+            - `entries.jsonl`: one AI-safe JSON document per saved link.
+            - `entries/*.md`: readable Markdown summaries.
+            - `schema.json`: compact schema contract.
+            - `redaction_report.json`: redaction profile and counts.
+
+            ## Privacy defaults
+            - Shared-tag entries are marked `aiEligible=false` by default.
+            - Pending-delete entries are marked `aiEligible=false`.
+            - Archived entries are marked `aiEligible=false` unless a future explicit flow opts them in.
+            - `bodyExcerpt` and `memoExcerpt` are capped at ${report.bodyExcerptMaxChars} and ${report.memoExcerptMaxChars} characters.
+            - `savedSnapshotNotice` means title/author/summary/excerpt/thumbnail/metadata are saved-time data and may differ from the current live URL.
+            - Raw fetched body, raw prompt text, tokens, local paths, and secrets are not intended to appear in this archive.
+            """.trimIndent()
+        }
     }
 }
+
+private data class RedactedText(
+    val value: String?,
+    val redactions: Set<String>,
+)
 
 private fun List<TagWithCount>.toExportTagOptions(): List<ExportTagOption> {
     return filter { it.urlCount > 0 }

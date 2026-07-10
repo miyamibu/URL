@@ -77,6 +77,9 @@ import jp.mimac.urlsaver.domain.ServiceType
 import jp.mimac.urlsaver.domain.SharedTagScope
 import kotlinx.coroutines.launch
 import java.io.File
+import java.time.LocalDate
+
+internal fun exportTodayDateInput(today: LocalDate = LocalDate.now()): String = today.toString()
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -218,8 +221,9 @@ fun ExportScreen(
                         }
                     }
                     ExportPresetTile("今日", Icons.Outlined.Today, false) {
-                        viewModel.setDateFromInput("2026-04-30")
-                        viewModel.setDateToInput("2026-04-30")
+                        val today = exportTodayDateInput()
+                        viewModel.setDateFromInput(today)
+                        viewModel.setDateToInput(today)
                     }
                     servicePresetOrder.forEach { serviceType ->
                         ExportPresetTile(serviceType.displayName, Icons.AutoMirrored.Outlined.Label, uiState.serviceType == serviceType) {

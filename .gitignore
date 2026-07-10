@@ -20,6 +20,7 @@ artifacts/device-backups/
 artifacts/device-verification/
 artifacts/recovery/
 artifacts/render-verification/
+artifacts/store-submission-logs/
 artifacts/ui-review/2026-06-30/
 artifacts/ui-review/**/*.jpg
 artifacts/ui-review/**/*.jpeg
@@ -47,4 +48,3 @@ ios/**/Index.noindex/
 ios/**/ModuleCache.noindex/
 ios/**/SDKStatCaches.noindex/
 ios/Config/URLSaverSecrets.xcconfig
-ios/Config/URLSaverSecrets.local-only.xcconfig

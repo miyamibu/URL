@@ -1,5 +1,15 @@
+import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
+
+func exportTodayDateInput(now: Date = Date(), calendar: Calendar = .current) -> String {
+    let formatter = DateFormatter()
+    formatter.calendar = calendar
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = calendar.timeZone
+    formatter.dateFormat = "yyyy-MM-dd"
+    return formatter.string(from: now)
+}
 
 struct ExportSheet: View {
     @Environment(\.dismiss) private var dismiss
@@ -85,8 +95,9 @@ struct ExportSheet: View {
                                     selectedTagIDs.removeAll()
                                 }
                                 presetTile(label: "今日", icon: "calendar", selected: false) {
-                                    dateFromInput = "2026-04-30"
-                                    dateToInput = "2026-04-30"
+                                    let today = exportTodayDateInput()
+                                    dateFromInput = today
+                                    dateToInput = today
                                 }
                                 ForEach(servicePresetOrder, id: \.self) { item in
                                     presetTile(label: item.displayName, icon: "tag", selected: serviceType == item) {

@@ -15,6 +15,7 @@ import jp.mimac.urlsaver.data.TagEntity
 import jp.mimac.urlsaver.data.TagUrlCrossRef
 import jp.mimac.urlsaver.data.UrlEntryEntity
 import jp.mimac.urlsaver.domain.ContentContext
+import jp.mimac.urlsaver.domain.MetadataBodyKind
 import jp.mimac.urlsaver.domain.MetadataState
 import jp.mimac.urlsaver.domain.RecordState
 import jp.mimac.urlsaver.domain.ServiceType
@@ -29,6 +30,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -99,7 +101,7 @@ class ExportRepositoryTest {
         assertTrue(payload.files.containsKey("manifest.json"))
         assertTrue(payload.files.containsKey("entries.jsonl"))
         assertTrue(payload.markdownFiles.isNotEmpty())
-        assertTrue(payload.markdownFiles.values.any { it.contains("Memo: keep") })
+        assertTrue(payload.markdownFiles.values.any { it.contains("Memo Excerpt: keep") })
     }
 
     @Test
@@ -183,6 +185,86 @@ class ExportRepositoryTest {
         assertEquals(1, archive.entryCount)
         assertTrue(payload.files.getValue("entries.jsonl").contains(sharedOnlyUrl))
         assertTrue(payload.files.getValue("entries.jsonl").contains("shared export"))
+    }
+
+    @Test
+    fun prepareExport_zipIncludesAiSafeFilesAndExcludesRawFetchedBody() = runBlocking {
+        insertEntry(
+            normalizedUrl = "https://example.com/ai-safe",
+            recordState = RecordState.ACTIVE,
+            memo = "memo has local path /Users/mimac/private.txt",
+            serviceType = ServiceType.X,
+            createdAt = 400L,
+            fetchedTitle = "Fetched title",
+            fetchedAuthorName = "Author",
+            fetchedBody = "Contact alice@example.com with token=abcdef1234567890. This is the body.",
+            fetchedBodyKind = MetadataBodyKind.X_POST_TEXT,
+            bodySummary = "Summary for alice@example.com",
+            canonicalId = "123456789",
+            metadataFetchedAt = 450L,
+        )
+
+        val archive = repository.prepareExport(
+            ExportRequest(
+                scope = ExportScope.ALL,
+                recordStateFilter = ExportRecordStateFilter.BOTH,
+                outputFormat = ExportOutputFormat.ZIP,
+            ),
+        )
+
+        val payload = parseZipPayload(archive.bytes)
+        assertTrue(payload.files.containsKey("schema.json"))
+        assertTrue(payload.files.containsKey("README_FOR_AI.md"))
+        assertTrue(payload.files.containsKey("redaction_report.json"))
+
+        val entry = payload.entries.single()
+        assertTrue(entry.getValue("aiEligible").jsonPrimitive.boolean)
+        assertEquals("Author", entry.stringValue("fetchedAuthorName"))
+        assertEquals("X_POST_TEXT", entry.stringValue("fetchedBodyKind"))
+        assertEquals("https://x.com/i/web/status/123456789", entry.stringValue("providerPermalink"))
+        assertEquals(
+            "保存時点の情報であり、現在の内容とは異なる可能性があります",
+            entry.stringValue("savedSnapshotNotice"),
+        )
+        assertFalse(entry.containsKey("fetchedBody"))
+        assertFalse(payload.files.getValue("entries.jsonl").contains("alice@example.com"))
+        assertFalse(payload.markdownFiles.values.single().contains("## Body"))
+        assertTrue(payload.markdownFiles.values.single().contains("Author: Author"))
+        assertTrue(payload.markdownFiles.values.single().contains("Body Kind: X_POST_TEXT"))
+        assertTrue(payload.markdownFiles.values.single().contains("Saved Snapshot Notice:"))
+        val markdown = payload.markdownFiles.values.single()
+        assertTrue(markdown.contains("Redaction Note:"))
+        assertTrue(markdown.contains("email"))
+        assertTrue(markdown.contains("local_path"))
+        assertTrue(markdown.contains("token"))
+
+        val report = parseJsonObject(payload.files.getValue("redaction_report.json"))
+        assertEquals("ai-safe-v1", report.stringValue("profile"))
+        assertFalse(report.getValue("fetchedBodyExported").jsonPrimitive.boolean)
+    }
+
+    @Test
+    fun prepareExport_sharedTagEntryIsMarkedAiIneligibleByDefault() = runBlocking {
+        val fixture = seedSharedTagMemoFixture()
+
+        val archive = repository.prepareExport(
+            ExportRequest(
+                scope = ExportScope.SHARED_TAGS_ONLY,
+                recordStateFilter = ExportRecordStateFilter.BOTH,
+                onlyWithMemo = true,
+                outputFormat = ExportOutputFormat.ZIP,
+            ),
+        )
+
+        val payload = parseZipPayload(archive.bytes)
+        val entry = payload.entries.single()
+        assertEquals(fixture.sharedUrl, entry.stringValue("normalizedUrl"))
+        assertFalse(entry.getValue("aiEligible").jsonPrimitive.boolean)
+        assertTrue(
+            entry.getValue("aiExclusionReason").jsonArray.any {
+                it.jsonPrimitive.content == "shared_tag_default_excluded"
+            },
+        )
     }
 
     @Test
@@ -411,6 +493,13 @@ class ExportRepositoryTest {
         createdAt: Long,
         archivedAt: Long? = null,
         localProvenanceCount: Int = 1,
+        fetchedTitle: String? = null,
+        fetchedAuthorName: String? = null,
+        fetchedBody: String? = null,
+        fetchedBodyKind: MetadataBodyKind? = null,
+        bodySummary: String? = null,
+        canonicalId: String? = null,
+        metadataFetchedAt: Long? = null,
     ): Long {
         return db.urlEntryDao().insert(
             UrlEntryEntity(
@@ -422,8 +511,15 @@ class ExportRepositoryTest {
                 rawSourceHost = "example.com",
                 serviceType = serviceType,
                 contentContext = ContentContext.STANDARD,
+                fetchedTitle = fetchedTitle,
+                fetchedAuthorName = fetchedAuthorName,
+                fetchedBody = fetchedBody,
+                fetchedBodyKind = fetchedBodyKind,
+                bodySummary = bodySummary,
                 memo = memo,
+                canonicalId = canonicalId,
                 metadataState = MetadataState.PENDING,
+                metadataFetchedAt = metadataFetchedAt,
                 recordState = recordState,
                 localProvenanceCount = localProvenanceCount,
                 createdAt = createdAt,

@@ -20,6 +20,9 @@ final class ExportArchiveBuilderTests: XCTestCase {
         let files = try extractZIPFiles(from: archive.bytes)
         XCTAssertNotNil(files["manifest.json"])
         XCTAssertNotNil(files["entries.jsonl"])
+        XCTAssertNotNil(files["schema.json"])
+        XCTAssertNotNil(files["README_FOR_AI.md"])
+        XCTAssertNotNil(files["redaction_report.json"])
         XCTAssertTrue(files.keys.contains(where: { $0.hasPrefix("entries/") && $0.hasSuffix(".md") }))
     }
 
@@ -44,6 +47,93 @@ final class ExportArchiveBuilderTests: XCTestCase {
         XCTAssertEqual(manifest["entryCount"] as? Int, 1)
         XCTAssertEqual(entries.count, 1)
         XCTAssertEqual(entries.first?["normalizedUrl"] as? String, "https://example.com/")
+        XCTAssertNotNil(payload["readmeForAi"] as? String)
+        XCTAssertNotNil(payload["redactionReport"] as? [String: Any])
+    }
+
+    func testZipOutputIsAiSafeAndDoesNotExportRawFetchedBody() throws {
+        let archive = try URLSaveriOS.URLExportArchiveBuilder.prepareExport(
+            request: makeRequest(outputFormat: .zip),
+            entries: [
+                makeRecord(
+                    id: 12,
+                    host: "x.com",
+                    memo: "memo path /Users/mimac/private.txt",
+                    serviceType: .x,
+                    fetchedAuthorName: "Author",
+                    fetchedBody: "Email alice@example.com token=abcdef1234567890. This is raw body.",
+                    fetchedBodyKind: .xPostText,
+                    bodySummary: "Summary alice@example.com",
+                    canonicalID: "123456789",
+                    metadataFetchedAt: Date(timeIntervalSince1970: 1_714_000_100)
+                )
+            ],
+            localTags: [],
+            localTagAssignments: [:],
+            sharedTagsByEntryID: [:],
+            appVersion: "test",
+            now: Date(timeIntervalSince1970: 1_714_000_000)
+        )
+
+        let files = try extractZIPFiles(from: archive.bytes)
+        let entriesText = try XCTUnwrap(String(data: try XCTUnwrap(files["entries.jsonl"]), encoding: .utf8))
+        let entry = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(entriesText.utf8)) as? [String: Any])
+        let entryMarkdownData = try XCTUnwrap(
+            files.first { path, _ in path.hasPrefix("entries/") && path.hasSuffix(".md") }?.value
+        )
+        let markdown = try XCTUnwrap(String(data: entryMarkdownData, encoding: .utf8))
+
+        XCTAssertEqual(entry["aiEligible"] as? Bool, true)
+        XCTAssertEqual(entry["fetchedAuthorName"] as? String, "Author")
+        XCTAssertEqual(entry["fetchedBodyKind"] as? String, "X_POST_TEXT")
+        XCTAssertEqual(entry["providerPermalink"] as? String, "https://x.com/i/web/status/123456789")
+        XCTAssertEqual(
+            entry["savedSnapshotNotice"] as? String,
+            "保存時点の情報であり、現在の内容とは異なる可能性があります"
+        )
+        XCTAssertNil(entry["fetchedBody"])
+        XCTAssertFalse(entriesText.contains("alice@example.com"))
+        XCTAssertFalse(markdown.contains("## Body"))
+        XCTAssertTrue(markdown.contains("Author: Author"))
+        XCTAssertTrue(markdown.contains("Body Kind: X_POST_TEXT"))
+        XCTAssertTrue(markdown.contains("Saved Snapshot Notice:"))
+        XCTAssertTrue(markdown.contains("Redaction Note:"))
+        XCTAssertTrue(markdown.contains("email"))
+        XCTAssertTrue(markdown.contains("local_path"))
+        XCTAssertTrue(markdown.contains("token"))
+    }
+
+    func testSharedTagEntryIsMarkedAiIneligibleByDefault() throws {
+        let shared = URLSaveriOS.SharedTagSummary(
+            remoteTagID: "remote-tag",
+            name: "共有",
+            currentUserRole: .owner,
+            activeURLCount: 1,
+            lastSyncedAt: Date(timeIntervalSince1970: 1_714_000_000)
+        )
+        let archive = try URLSaveriOS.URLExportArchiveBuilder.prepareExport(
+            request: URLSaveriOS.URLExportRequest(
+                scope: .sharedTagsOnly,
+                selectedTagIDs: [],
+                recordStateFilter: .both,
+                serviceType: nil,
+                onlyWithMemo: false,
+                dateFrom: nil,
+                dateTo: nil,
+                outputFormat: .json
+            ),
+            entries: [makeRecord(id: 33, host: "example.com", localProvenanceCount: 0)],
+            localTags: [],
+            localTagAssignments: [:],
+            sharedTagsByEntryID: [33: [shared]],
+            appVersion: "test"
+        )
+
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: archive.bytes) as? [String: Any])
+        let entries = try XCTUnwrap(payload["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        XCTAssertEqual(entry["aiEligible"] as? Bool, false)
+        XCTAssertTrue((entry["aiExclusionReason"] as? [String])?.contains("shared_tag_default_excluded") == true)
     }
 
     func testOutputFormatListOnlyExposesZipAndJson() {
@@ -52,6 +142,23 @@ final class ExportArchiveBuilderTests: XCTestCase {
         XCTAssertEqual(rawValues, Set(["ZIP", "JSON"]))
         XCTAssertFalse(rawValues.contains("CSV"))
         XCTAssertFalse(rawValues.contains("HTML"))
+    }
+
+    func testExportTodayDateInputFormatsProvidedDateWithoutStaleFixtureDate() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let date = try XCTUnwrap(DateComponents(
+            calendar: calendar,
+            timeZone: calendar.timeZone,
+            year: 2026,
+            month: 7,
+            day: 9
+        ).date)
+
+        XCTAssertEqual(exportTodayDateInput(now: date, calendar: calendar), "2026-07-09")
+
+        let source = try String(contentsOf: exportSheetSourceURL(), encoding: .utf8)
+        XCTAssertFalse(source.contains("2026-04-30"))
     }
 
     func testExportSheetSourceDoesNotContainLegacyCSVHtmlOrCopyOptions() throws {
@@ -75,7 +182,19 @@ final class ExportArchiveBuilderTests: XCTestCase {
         )
     }
 
-    private func makeRecord(id: Int64, host: String, memo: String = "") -> URLSaveriOS.URLRecord {
+    private func makeRecord(
+        id: Int64,
+        host: String,
+        memo: String = "",
+        serviceType: URLSaveriOS.ServiceType = .web,
+        localProvenanceCount: Int = 1,
+        fetchedAuthorName: String? = nil,
+        fetchedBody: String? = nil,
+        fetchedBodyKind: URLSaveriOS.MetadataBodyKind? = nil,
+        bodySummary: String? = nil,
+        canonicalID: String? = nil,
+        metadataFetchedAt: Date? = nil
+    ) -> URLSaveriOS.URLRecord {
         URLSaveriOS.URLRecord(
             id: id,
             originalURL: "https://\(host)/",
@@ -85,24 +204,25 @@ final class ExportArchiveBuilderTests: XCTestCase {
             normalizedHost: host,
             rawSourceHost: host,
             collectionID: 1,
-            serviceType: .web,
+            serviceType: serviceType,
             contentContext: .standard,
             userTitle: nil,
             fetchedTitle: nil,
-            fetchedBody: nil,
-            fetchedBodyKind: nil,
-            bodySummary: nil,
+            fetchedAuthorName: fetchedAuthorName,
+            fetchedBody: fetchedBody,
+            fetchedBodyKind: fetchedBodyKind,
+            bodySummary: bodySummary,
             description: nil,
             memo: memo,
             thumbnailURL: nil,
             badgeImageURL: nil,
-            canonicalID: nil,
+            canonicalID: canonicalID,
             metadataState: .ready,
             metadataError: nil,
             metadataRequestedAt: nil,
-            metadataFetchedAt: nil,
+            metadataFetchedAt: metadataFetchedAt,
             recordState: .active,
-            localProvenanceCount: 1,
+            localProvenanceCount: localProvenanceCount,
             sharedReferenceCount: 0,
             createdAt: .distantPast,
             updatedAt: .distantPast,
