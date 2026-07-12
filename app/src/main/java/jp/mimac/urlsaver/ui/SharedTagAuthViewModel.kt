@@ -31,8 +31,10 @@ import jp.mimac.urlsaver.domain.UserProfile
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import java.util.Base64
 
 class SharedTagAuthViewModel(
@@ -49,6 +51,26 @@ class SharedTagAuthViewModel(
     private val authSessionProvider: SharedTagAuthSessionProvider? = null,
     private val pendingInviteStore: PendingInviteStore? = null,
 ) : ViewModel() {
+
+    private var lastBillingRefreshUserId: String? = null
+
+    init {
+        val sessionProvider = authSessionProvider
+        val billingService = googlePlayBillingService
+        if (sessionProvider != null && billingService != null) {
+            viewModelScope.launch {
+                sessionProvider.session.collect { session ->
+                    val userId = session?.authUserId
+                    if (userId == null) {
+                        lastBillingRefreshUserId = null
+                    } else if (lastBillingRefreshUserId != userId) {
+                        val refreshed = runCatching { billingService.processCurrentPurchases() }.isSuccess
+                        if (refreshed) lastBillingRefreshUserId = userId
+                    }
+                }
+            }
+        }
+    }
 
     val cloudState: StateFlow<SharedTagCloudState> = tagRepository.cloudState
         .stateIn(

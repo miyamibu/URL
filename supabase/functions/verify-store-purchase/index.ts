@@ -1,10 +1,14 @@
-import { importX509, jwtVerify, SignJWT } from "npm:jose@5.9.6";
+import { SignJWT } from "npm:jose@5.9.6";
+import { SignedDataVerifier, Environment } from "npm:@apple/app-store-server-library@3.1.0";
+import { Buffer } from "node:buffer";
+import { APPLE_ROOT_CERTIFICATES } from "./apple-root-certificates.ts";
 
 type StorePurchaseRequest = {
   storePlatform?: unknown;
   storeProductId?: unknown;
   purchaseToken?: unknown;
   storeTransactionId?: unknown;
+  appAccountToken?: unknown;
 };
 
 type NormalizedStorePurchaseRequest = {
@@ -23,6 +27,8 @@ type VerifiedPurchase = ProductPlan & {
   storePlatform: "google_play" | "app_store";
   storeProductId: string;
   storeTransactionId: string;
+  originalTransactionId: string | null;
+  subscriptionKey: string;
   expiresAt: string | null;
 };
 
@@ -37,7 +43,11 @@ const JSON_HEADERS = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-Deno.serve(async (request) => {
+const CANONICAL_APP_STORE_BUNDLE_ID = "com.mibu.codebridge.ios";
+
+let appleVerifierPromise: Promise<SignedDataVerifier> | null = null;
+
+export async function handleRequest(request: Request): Promise<Response> {
   if (request.method === "OPTIONS") return jsonResponse(null, 204);
   if (request.method !== "POST") return jsonResponse({ error: "method_not_allowed" }, 405);
 
@@ -50,15 +60,20 @@ Deno.serve(async (request) => {
     user = await requireUser(supabaseUrl, serviceRoleKey, authorization);
 
     normalized = normalizeRequest(await readJson(request));
-    const expected = expectedPlanForProduct(normalized.storeProductId);
+    const expected = await activePlanForProduct(
+      supabaseUrl,
+      serviceRoleKey,
+      normalized.storePlatform,
+      normalized.storeProductId,
+    );
     if (!expected) {
       await recordVerification(supabaseUrl, serviceRoleKey, user.id, normalized, null, "failed", "unknown_product", null);
       return jsonResponse({ error: "unknown_product" }, 400);
     }
 
     const verified = normalized.storePlatform === "app_store"
-      ? await verifyAppStorePurchase(normalized, expected)
-      : await verifyGooglePlayPurchase(normalized, expected);
+      ? await verifyAppStorePurchase(normalized, expected, user.id)
+      : await verifyGooglePlayPurchase(normalized, expected, user.id);
 
     const verificationId = await recordVerification(
       supabaseUrl,
@@ -82,20 +97,32 @@ Deno.serve(async (request) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "server_error";
-    console.error("verify-store-purchase failed", message);
+    const safeReason = publicFailureReason(message);
+    console.error("verify-store-purchase failed", safeReason);
     if (user && normalized) {
       try {
         const supabaseUrl = requiredEnv("SUPABASE_URL").replace(/\/+$/, "");
         const serviceRoleKey = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
         await recordVerification(supabaseUrl, serviceRoleKey, user.id, normalized, null, "failed", publicFailureReason(message), null);
       } catch (recordError) {
-        console.error("failed to record purchase failure", recordError);
+        console.error(
+          "failed to record purchase failure",
+          publicFailureReason(recordError instanceof Error ? recordError.message : "record_failed"),
+        );
       }
     }
-    const status = message === "auth_required" ? 401 : message === "invalid_request" ? 400 : 502;
-    return jsonResponse({ error: publicFailureReason(message) }, status);
+    const status = safeReason === "auth_required"
+      ? 401
+      : safeReason === "invalid_request"
+      ? 400
+      : safeReason === "purchase_already_claimed"
+      ? 409
+      : 502;
+    return jsonResponse({ error: safeReason }, status);
   }
-});
+}
+
+if (import.meta.main) Deno.serve(handleRequest);
 
 async function readJson(request: Request): Promise<StorePurchaseRequest> {
   try {
@@ -106,7 +133,7 @@ async function readJson(request: Request): Promise<StorePurchaseRequest> {
   }
 }
 
-function normalizeRequest(body: StorePurchaseRequest): NormalizedStorePurchaseRequest {
+export function normalizeRequest(body: StorePurchaseRequest): NormalizedStorePurchaseRequest {
   const storePlatform = stringValue(body.storePlatform);
   const storeProductId = stringValue(body.storeProductId);
   const purchaseToken = stringValue(body.purchaseToken);
@@ -122,10 +149,31 @@ function normalizeRequest(body: StorePurchaseRequest): NormalizedStorePurchaseRe
   };
 }
 
-function expectedPlanForProduct(productId: string): ProductPlan | null {
+export function expectedPlanForProduct(productId: string): ProductPlan | null {
   const match = /^urlsaver\.(standard|pro)\.(monthly|yearly)$/.exec(productId);
   if (!match) return null;
   return { plan: match[1] as ProductPlan["plan"], billingPeriod: match[2] as ProductPlan["billingPeriod"] };
+}
+
+async function activePlanForProduct(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  storePlatform: NormalizedStorePurchaseRequest["storePlatform"],
+  storeProductId: string,
+): Promise<ProductPlan | null> {
+  const response = await fetch(
+    `${supabaseUrl}/rest/v1/subscription_products?select=plan,billing_period&store_platform=eq.${storePlatform}&store_product_id=eq.${encodeURIComponent(storeProductId)}&is_active=eq.true&limit=1`,
+    { headers: restHeaders(serviceRoleKey) },
+  );
+  if (!response.ok) throw new Error(`product_catalog_lookup_failed:${response.status}`);
+  const row = (await response.json())?.[0];
+  const catalogPlan = stringValue(row?.plan);
+  const catalogPeriod = stringValue(row?.billing_period);
+  const parsed = expectedPlanForProduct(storeProductId);
+  if (!parsed || catalogPlan !== parsed.plan || catalogPeriod !== parsed.billingPeriod) return null;
+  if (catalogPlan !== "standard" && catalogPlan !== "pro") return null;
+  if (catalogPeriod !== "monthly" && catalogPeriod !== "yearly") return null;
+  return { plan: catalogPlan, billingPeriod: catalogPeriod };
 }
 
 async function requireUser(supabaseUrl: string, serviceRoleKey: string, authorization: string): Promise<AuthUser> {
@@ -145,45 +193,78 @@ async function requireUser(supabaseUrl: string, serviceRoleKey: string, authoriz
 async function verifyAppStorePurchase(
   request: NormalizedStorePurchaseRequest,
   expected: ProductPlan,
+  userId: string,
 ): Promise<VerifiedPurchase> {
-  const bundleId = requiredEnv("APP_STORE_BUNDLE_ID");
-  const { protectedHeader, payload } = await jwtVerifyWithX5C(request.purchaseToken);
-  if (protectedHeader.alg !== "ES256") throw new Error("app_store_invalid_algorithm");
+  const verifier = await appleVerifier();
+  const payload = await verifier.verifyAndDecodeTransaction(request.purchaseToken);
 
   const productId = stringValue(payload.productId);
   const transactionId = stringValue(payload.transactionId);
-  const payloadBundleId = stringValue(payload.bundleId);
-  if (payloadBundleId !== bundleId) throw new Error("app_store_bundle_mismatch");
+  const originalTransactionId = stringValue(payload.originalTransactionId);
   if (!transactionId) throw new Error("transaction_missing");
+  if (!originalTransactionId) throw new Error("original_transaction_missing");
   if (productId !== request.storeProductId) throw new Error("product_mismatch");
   if (request.storeTransactionId && transactionId !== request.storeTransactionId) throw new Error("transaction_mismatch");
   if (productId !== `urlsaver.${expected.plan}.${expected.billingPeriod}`) throw new Error("product_mismatch");
+  if (stringValue(payload.type) !== "Auto-Renewable Subscription") throw new Error("app_store_product_type_mismatch");
+  if (payload.revocationDate !== undefined && payload.revocationDate !== null) throw new Error("transaction_revoked");
+  if (!(await constantTimeStringEqual(stringValue(payload.appAccountToken).toLowerCase(), userId.toLowerCase()))) {
+    throw new Error("app_store_account_binding_mismatch");
+  }
 
   const expiresAt = millisToIso(payload.expiresDate);
-  if (expiresAt && Date.parse(expiresAt) <= Date.now()) throw new Error("subscription_expired");
+  if (!expiresAt) throw new Error("subscription_expiry_missing");
+  if (Date.parse(expiresAt) <= Date.now()) throw new Error("subscription_expired");
 
   return {
     ...expected,
     storePlatform: "app_store",
     storeProductId: productId,
     storeTransactionId: transactionId,
+    originalTransactionId,
+    subscriptionKey: `app_store:${originalTransactionId}`,
     expiresAt,
   };
 }
 
-async function jwtVerifyWithX5C(jws: string) {
-  const headerSegment = jws.split(".")[0];
-  const protectedHeader = JSON.parse(new TextDecoder().decode(base64UrlDecode(headerSegment)));
-  const certificate = protectedHeader.x5c?.[0];
-  if (typeof certificate !== "string" || !certificate) throw new Error("app_store_missing_certificate");
-  const pem = `-----BEGIN CERTIFICATE-----\n${certificate.match(/.{1,64}/g)?.join("\n")}\n-----END CERTIFICATE-----`;
-  const key = await importX509(pem, protectedHeader.alg ?? "ES256");
-  return await jwtVerify(jws, key, { algorithms: ["ES256"] });
+async function appleVerifier(): Promise<SignedDataVerifier> {
+  if (!appleVerifierPromise) appleVerifierPromise = createAppleVerifier();
+  return appleVerifierPromise;
+}
+
+async function createAppleVerifier(): Promise<SignedDataVerifier> {
+  const environmentValue = requiredEnv("APP_STORE_ENVIRONMENT");
+  const environment = environmentValue === Environment.SANDBOX
+    ? Environment.SANDBOX
+    : environmentValue === Environment.PRODUCTION
+    ? Environment.PRODUCTION
+    : (() => {
+      throw new Error("invalid_app_store_environment");
+    })();
+  const appAppleId = environment === Environment.PRODUCTION
+    ? requiredPositiveIntegerEnv("APP_STORE_APPLE_ID")
+    : undefined;
+  const bundleId = requiredEnv("APP_STORE_BUNDLE_ID");
+  if (bundleId !== CANONICAL_APP_STORE_BUNDLE_ID) throw new Error("invalid_app_store_bundle_id");
+  const rootCertificates = await Promise.all(APPLE_ROOT_CERTIFICATES.map(async (certificate) => {
+    const der = Buffer.from(certificate.derBase64.replace(/\s+/g, ""), "base64");
+    const actualHash = await sha256Hex(der);
+    if (actualHash !== certificate.sha256) throw new Error("apple_root_certificate_integrity_failed");
+    return der;
+  }));
+  return new SignedDataVerifier(
+    rootCertificates,
+    true,
+    environment,
+    bundleId,
+    appAppleId,
+  );
 }
 
 async function verifyGooglePlayPurchase(
   request: NormalizedStorePurchaseRequest,
   expected: ProductPlan,
+  userId: string,
 ): Promise<VerifiedPurchase> {
   const packageName = requiredEnv("GOOGLE_PLAY_PACKAGE_NAME");
   const accessToken = await googleAccessToken();
@@ -195,21 +276,40 @@ async function verifyGooglePlayPurchase(
   });
   if (!response.ok) throw new Error("google_play_verification_failed");
   const body = await response.json();
+  const externalAccountIdentifiers = body?.externalAccountIdentifiers;
+  const expectedObfuscatedAccountId = await sha256Hex(userId);
+  const accountBinding = stringValue(externalAccountIdentifiers?.obfuscatedExternalAccountId);
+  if (!(await constantTimeStringEqual(accountBinding, expectedObfuscatedAccountId)) &&
+    !(await constantTimeStringEqual(accountBinding, userId))) {
+    throw new Error("google_play_account_binding_mismatch");
+  }
+  const obfuscatedProfileId = stringValue(externalAccountIdentifiers?.obfuscatedExternalProfileId);
+  if (obfuscatedProfileId &&
+    !(await constantTimeStringEqual(obfuscatedProfileId, expectedObfuscatedAccountId)) &&
+    !(await constantTimeStringEqual(obfuscatedProfileId, userId))) {
+    throw new Error("google_play_profile_binding_mismatch");
+  }
   const lineItems = Array.isArray(body.lineItems) ? body.lineItems : [];
   const matchingItem = lineItems.find((item: { productId?: unknown }) => item?.productId === request.storeProductId);
   if (!matchingItem) throw new Error("product_mismatch");
   if (!["SUBSCRIPTION_STATE_ACTIVE", "SUBSCRIPTION_STATE_IN_GRACE_PERIOD"].includes(String(body.subscriptionState))) {
     throw new Error("subscription_not_active");
   }
-  const expiresAt = stringValue(matchingItem.expiryTime) || null;
-  if (expiresAt && Date.parse(expiresAt) <= Date.now()) throw new Error("subscription_expired");
-  const storeTransactionId = request.storeTransactionId || stringValue(body.latestOrderId);
-  if (!storeTransactionId) throw new Error("transaction_missing");
+  const expiresAt = stringValue(matchingItem.expiryTime);
+  if (!expiresAt || !Number.isFinite(Date.parse(expiresAt))) throw new Error("subscription_expiry_missing");
+  if (Date.parse(expiresAt) <= Date.now()) throw new Error("subscription_expired");
+  const providerTransactionId = stringValue(matchingItem.latestSuccessfulOrderId) || stringValue(body.latestOrderId);
+  if (!providerTransactionId) throw new Error("transaction_missing");
+  if (request.storeTransactionId && request.storeTransactionId !== providerTransactionId) {
+    throw new Error("transaction_mismatch");
+  }
   return {
     ...expected,
     storePlatform: "google_play",
     storeProductId: request.storeProductId,
-    storeTransactionId,
+    storeTransactionId: providerTransactionId,
+    originalTransactionId: null,
+    subscriptionKey: `google_play:${await sha256Hex(request.purchaseToken)}`,
     expiresAt,
   };
 }
@@ -258,6 +358,46 @@ async function recordVerification(
   grantId: string | null,
 ): Promise<string> {
   const product = expectedPlanForProduct(request.storeProductId) ?? verified;
+  const purchaseTokenHash = await sha256Hex(request.purchaseToken);
+  const existing = await findExistingVerification(
+    supabaseUrl,
+    serviceRoleKey,
+    request,
+    purchaseTokenHash,
+    verified?.originalTransactionId ?? null,
+  );
+  if (existing?.id) {
+    if (existing.user_id !== userId) {
+      if (existing.status !== "failed") throw new Error("purchase_already_claimed");
+      if (status !== "verified") return existing.id;
+    }
+    if (status !== "verified" && existing.status === "verified") return existing.id;
+    const updateResponse = await fetch(
+      `${supabaseUrl}/rest/v1/store_purchase_verifications?id=eq.${encodeURIComponent(existing.id)}`,
+      {
+        method: "PATCH",
+        headers: restHeaders(serviceRoleKey, { Prefer: "return=representation" }),
+        body: JSON.stringify({
+          user_id: userId,
+          store_platform: request.storePlatform,
+          store_product_id: verified?.storeProductId ?? request.storeProductId,
+          store_transaction_id: verified?.storeTransactionId || request.storeTransactionId || null,
+          original_transaction_id: verified?.originalTransactionId ?? null,
+          purchase_token_hash: purchaseTokenHash,
+          plan: product?.plan ?? "standard",
+          billing_period: product?.billingPeriod ?? "monthly",
+          status,
+          failure_reason: failureReason,
+          grant_id: grantId,
+          expires_at: verified?.expiresAt ?? null,
+          verified_at: status === "verified" ? new Date().toISOString() : null,
+        }),
+      },
+    );
+    if (!updateResponse.ok) throw new Error(`verification_record_failed:${updateResponse.status}`);
+    return existing.id;
+  }
+
   const response = await fetch(`${supabaseUrl}/rest/v1/store_purchase_verifications`, {
     method: "POST",
     headers: restHeaders(serviceRoleKey, { Prefer: "return=representation" }),
@@ -266,7 +406,8 @@ async function recordVerification(
       store_platform: request.storePlatform,
       store_product_id: verified?.storeProductId ?? request.storeProductId,
       store_transaction_id: verified?.storeTransactionId || request.storeTransactionId || null,
-      purchase_token_hash: await sha256Hex(request.purchaseToken),
+      original_transaction_id: verified?.originalTransactionId ?? null,
+      purchase_token_hash: purchaseTokenHash,
       plan: product?.plan ?? "standard",
       billing_period: product?.billingPeriod ?? "monthly",
       status,
@@ -283,21 +424,42 @@ async function recordVerification(
   return id;
 }
 
+async function findExistingVerification(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  request: NormalizedStorePurchaseRequest,
+  purchaseTokenHash: string,
+  originalTransactionId: string | null,
+): Promise<{ id: string; user_id: string; status: string } | null> {
+  const byToken = await fetch(
+    `${supabaseUrl}/rest/v1/store_purchase_verifications?select=id,user_id,status&store_platform=eq.${request.storePlatform}&purchase_token_hash=eq.${purchaseTokenHash}&limit=1`,
+    { headers: restHeaders(serviceRoleKey) },
+  );
+  if (!byToken.ok) throw new Error(`verification_lookup_failed:${byToken.status}`);
+  const tokenRows = await byToken.json();
+  if (tokenRows?.[0]?.id) return tokenRows[0];
+  if (!originalTransactionId) return null;
+
+  const byOriginal = await fetch(
+    `${supabaseUrl}/rest/v1/store_purchase_verifications?select=id,user_id,status&store_platform=eq.${request.storePlatform}&original_transaction_id=eq.${encodeURIComponent(originalTransactionId)}&status=eq.verified&limit=1`,
+    { headers: restHeaders(serviceRoleKey) },
+  );
+  if (!byOriginal.ok) throw new Error(`verification_lookup_failed:${byOriginal.status}`);
+  const originalRows = await byOriginal.json();
+  return originalRows?.[0] ?? null;
+}
+
 async function upsertGrant(
   supabaseUrl: string,
   serviceRoleKey: string,
   userId: string,
   verified: VerifiedPurchase,
 ): Promise<string> {
-  const existing = await fetch(
-    `${supabaseUrl}/rest/v1/user_entitlement_grants?select=id&source=eq.store_subscription&store_platform=eq.${verified.storePlatform}&store_transaction_id=eq.${encodeURIComponent(verified.storeTransactionId)}&limit=1`,
-    {
-      headers: restHeaders(serviceRoleKey),
-    },
-  );
-  if (existing.ok) {
-    const rows = await existing.json();
-    if (rows?.[0]?.id) return rows[0].id;
+  const existing = await findGrantBySubscription(supabaseUrl, serviceRoleKey, verified);
+  if (existing?.id) {
+    if (existing.user_id !== userId) throw new Error("purchase_already_claimed");
+    await refreshExistingGrant(supabaseUrl, serviceRoleKey, existing.id, verified);
+    return existing.id;
   }
 
   const response = await fetch(`${supabaseUrl}/rest/v1/user_entitlement_grants`, {
@@ -309,16 +471,73 @@ async function upsertGrant(
       source: "store_subscription",
       store_platform: verified.storePlatform,
       store_transaction_id: verified.storeTransactionId,
+      store_subscription_key: verified.subscriptionKey,
       starts_at: new Date().toISOString(),
       expires_at: verified.expiresAt,
       status: "active",
     }),
   });
-  if (!response.ok) throw new Error(`grant_create_failed:${await response.text()}`);
+  if (!response.ok) {
+    const raced = await findGrantBySubscription(supabaseUrl, serviceRoleKey, verified);
+    if (raced?.id) {
+      if (raced.user_id !== userId) throw new Error("purchase_already_claimed");
+      await refreshExistingGrant(supabaseUrl, serviceRoleKey, raced.id, verified);
+      return raced.id;
+    }
+    throw new Error(`grant_create_failed:${response.status}`);
+  }
   const rows = await response.json();
   const id = rows?.[0]?.id;
   if (!id) throw new Error("grant_create_failed");
   return id;
+}
+
+async function refreshExistingGrant(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  grantId: string,
+  verified: VerifiedPurchase,
+): Promise<void> {
+  const response = await fetch(
+    `${supabaseUrl}/rest/v1/user_entitlement_grants?id=eq.${encodeURIComponent(grantId)}`,
+    {
+      method: "PATCH",
+      headers: restHeaders(serviceRoleKey),
+      body: JSON.stringify({
+        plan: verified.plan,
+        store_product_id: verified.storeProductId,
+        store_transaction_id: verified.storeTransactionId,
+        store_subscription_key: verified.subscriptionKey,
+        expires_at: verified.expiresAt,
+        status: "active",
+      }),
+    },
+  );
+  if (!response.ok) throw new Error(`grant_refresh_failed:${response.status}`);
+}
+
+async function findGrantBySubscription(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  verified: VerifiedPurchase,
+): Promise<{ id: string; user_id: string } | null> {
+  const response = await fetch(
+    `${supabaseUrl}/rest/v1/user_entitlement_grants?select=id,user_id&source=eq.store_subscription&store_platform=eq.${verified.storePlatform}&store_subscription_key=eq.${encodeURIComponent(verified.subscriptionKey)}&limit=1`,
+    { headers: restHeaders(serviceRoleKey) },
+  );
+  if (!response.ok) throw new Error(`grant_lookup_failed:${response.status}`);
+  const rows = await response.json();
+  const row = rows?.[0];
+  if (row?.id && row?.user_id) return { id: row.id, user_id: row.user_id };
+
+  const legacyResponse = await fetch(
+    `${supabaseUrl}/rest/v1/user_entitlement_grants?select=id,user_id&source=eq.store_subscription&store_platform=eq.${verified.storePlatform}&store_transaction_id=eq.${encodeURIComponent(verified.storeTransactionId)}&limit=1`,
+    { headers: restHeaders(serviceRoleKey) },
+  );
+  if (!legacyResponse.ok) throw new Error(`grant_lookup_failed:${legacyResponse.status}`);
+  const legacyRows = await legacyResponse.json();
+  const legacyRow = legacyRows?.[0];
+  return legacyRow?.id && legacyRow?.user_id ? { id: legacyRow.id, user_id: legacyRow.user_id } : null;
 }
 
 async function attachGrant(
@@ -344,8 +563,11 @@ function restHeaders(serviceRoleKey: string, extra: Record<string, string> = {})
   };
 }
 
-async function sha256Hex(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+async function sha256Hex(value: string | Uint8Array): Promise<string> {
+  const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  const digest = await crypto.subtle.digest("SHA-256", buffer);
   return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
@@ -364,10 +586,27 @@ function requiredEnv(name: string): string {
   return value;
 }
 
+function requiredPositiveIntegerEnv(name: string): number {
+  const value = Number(requiredEnv(name));
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`invalid_env_${name}`);
+  return value;
+}
+
+export async function constantTimeStringEqual(left: string, right: string): Promise<boolean> {
+  if (!left || !right) return false;
+  const leftDigest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(left));
+  const rightDigest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(right));
+  const leftBytes = new Uint8Array(leftDigest);
+  const rightBytes = new Uint8Array(rightDigest);
+  let difference = 0;
+  for (let index = 0; index < leftBytes.length; index += 1) difference |= leftBytes[index] ^ rightBytes[index];
+  return difference === 0;
+}
+
 function publicFailureReason(message: string): string {
   if (message.startsWith("missing_env_")) return "store_verification_not_configured";
-  if (message.includes(":")) return message.split(":")[0];
-  return message || "store_verification_failed";
+  const candidate = message.includes(":") ? message.split(":")[0] : message;
+  return /^[a-z0-9_]{1,80}$/.test(candidate) ? candidate : "store_verification_failed";
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -377,17 +616,12 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-function base64UrlDecode(value: string): Uint8Array {
-  const base64 = value.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
-  return Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
-}
-
 function pemToArrayBuffer(pem: string): ArrayBuffer {
   const base64 = pem
     .replace(/-----BEGIN PRIVATE KEY-----/g, "")
     .replace(/-----END PRIVATE KEY-----/g, "")
     .replace(/\s+/g, "");
-  const bytes = base64UrlDecode(base64);
+  const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
   const buffer = new ArrayBuffer(bytes.byteLength);
   new Uint8Array(buffer).set(bytes);
   return buffer;

@@ -97,6 +97,7 @@ final class URLSaverAppModel: ObservableObject {
         profile = (try? services.profileStore.load()) ?? .empty
         pendingInviteRecord = try? services.pendingInviteStore.load()
         try? services.repository.cleanupExpiredPendingDeletes()
+        services.storePurchaseService.startTransactionUpdates()
         await reload()
         await refreshSharedTagCloudState()
         await refreshEntitlements()
@@ -130,6 +131,7 @@ final class URLSaverAppModel: ObservableObject {
     }
 
     func refreshEntitlements() async {
+        await services.storePurchaseService.refreshCurrentEntitlements()
         entitlements = await services.entitlementService.refreshForCurrentSession()
     }
 
