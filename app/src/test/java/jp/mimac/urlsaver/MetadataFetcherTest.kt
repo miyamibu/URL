@@ -231,6 +231,59 @@ class MetadataFetcherTest {
     }
 
     @Test
+    fun fetch_xArticle_usesArticleTitlePreviewAndCoverInsteadOfShortUrl() {
+        withServer { server ->
+            server.enqueue(
+                MockResponse().setResponseCode(200).addHeader("Content-Type", "application/json").setBody(
+                    """{"author_name":"mana","html":"<blockquote><p><a href=\"https://t.co/example\">https://t.co/example</a></p></blockquote>"}""",
+                ),
+            )
+            server.enqueue(
+                MockResponse().setResponseCode(200).addHeader("Content-Type", "application/json").setBody(
+                    """
+                    {
+                      "id_str": "2075435864532852921",
+                      "text": "https://t.co/example",
+                      "user": {"name": "mana"},
+                      "article": {
+                        "title": "海外の天才が見つけたChatGPT活用大全",
+                        "preview_text": "OpenAIは新世代モデルを発表した。",
+                        "cover_media": {"media_info": {"original_img_url": "https://pbs.twimg.com/media/article.jpg"}}
+                      }
+                    }
+                    """.trimIndent(),
+                ),
+            )
+            server.enqueue(
+                MockResponse().setResponseCode(200).addHeader("Content-Type", "application/json").setBody(
+                    """{"guest_token":"guest-test-token"}""",
+                ),
+            )
+            server.enqueue(
+                MockResponse().setResponseCode(200).addHeader("Content-Type", "application/json").setBody(
+                    """
+                    {
+                      "data": {"tweetResult": {"result": {"article": {"article_results": {"result": {
+                        "content_state": {"blocks": []},
+                        "plain_text": "全文1行目。\n全文2行目。"
+                      }}}}}}
+                    }
+                    """.trimIndent(),
+                ),
+            )
+
+            val result = createXFetcher(server).fetch("https://x.com/i/status/2075435864532852921")
+
+            assertTrue(result is FetchOutcome.Ready)
+            result as FetchOutcome.Ready
+            assertEquals("全文1行目。\n全文2行目。", result.fetchedBody)
+            assertEquals("OpenAIは新世代モデルを発表した。", result.description)
+            assertEquals("https://pbs.twimg.com/media/article.jpg", result.thumbnailUrl)
+            assertEquals("mana", result.fetchedAuthorName)
+        }
+    }
+
+    @Test
     fun fetch_xSyndicationBody_isTrimmedToBodyLengthLimit() {
         withServer { server ->
             val longText = "A".repeat(4_500)
@@ -1678,6 +1731,78 @@ class MetadataFetcherTest {
     }
 
     @Test
+    fun fetch_tiktok_completeOEmbed_readsAuthorAvatarFromPostPageWhenProfileImageIsMissing() {
+        withServer { server ->
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "application/json")
+                    .setBody(
+                        """
+                        {
+                          "author_name": "Creator",
+                          "title": "TikTok caption",
+                          "thumbnail_url": "https://p16-sign-va.tiktokcdn.com/thumb.jpeg",
+                          "author_url": "https://www.tiktok.com/@creator",
+                          "embed_product_id": "7000000000000000004"
+                        }
+                        """.trimIndent(),
+                    ),
+            )
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "text/html; charset=utf-8")
+                    .setBody("<html><head><title>Creator</title></head><body>profile</body></html>"),
+            )
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "text/html; charset=utf-8")
+                    .setBody(
+                        """
+                        <html>
+                          <body>
+                            <script type="application/json">
+                            {
+                              "webapp.video-detail": {
+                                "itemInfo": {
+                                  "itemStruct": {
+                                    "id": "7000000000000000004",
+                                    "desc": "投稿本文",
+                                    "author": {
+                                      "uniqueId": "creator",
+                                      "nickname": "Creator",
+                                      "avatarLarger": "https://p16-common-sign.tiktokcdn.com/creator-avatar.jpeg"
+                                    },
+                                    "video": {
+                                      "cover": "https://p16-common-sign.tiktokcdn.com/creator-cover.jpeg"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                            </script>
+                          </body>
+                        </html>
+                        """.trimIndent(),
+                    ),
+            )
+
+            val result = createTikTokFetcher(
+                server = server,
+                htmlPath = "/tiktok/complete-post",
+            ).fetch("https://www.tiktok.com/@creator/video/7000000000000000004")
+
+            assertTrue(result is FetchOutcome.Ready)
+            result as FetchOutcome.Ready
+            assertEquals("https://p16-common-sign.tiktokcdn.com/creator-avatar.jpeg", result.badgeImageUrl)
+            assertEquals("投稿本文", result.fetchedBody)
+            assertEquals(3, server.requestCount)
+        }
+    }
+
+    @Test
     fun fetch_tiktok_oEmbedHtmlFallback_extractsCaptionWhenTitleMissing() {
         withServer { server ->
             server.enqueue(
@@ -2149,6 +2274,11 @@ class MetadataFetcherTest {
                 val encoded = URLEncoder.encode(targetUrl, StandardCharsets.UTF_8)
                 server.url("/oembed?url=$encoded").toString()
             },
+            xGuestActivationEndpoint = server.url("/guest/activate").toString(),
+            xArticleGraphQLEndpointBuilder = { statusId ->
+                server.url("/graphql?tweetId=$statusId").toString()
+            },
+            xPublicBearerToken = "public-test-token",
         )
     }
 

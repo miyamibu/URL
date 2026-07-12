@@ -308,6 +308,56 @@ final class MetadataFetcherTests: XCTestCase {
         XCTAssertEqual(update.canonicalID, "463440424141459456")
     }
 
+    func testXArticleUsesArticleTitlePreviewAndCoverInsteadOfShortURL() async {
+        let oEmbed = URL(string: "https://mock.local/x-article-oembed")!
+        let syndication = URL(string: "https://mock.local/x-article-syndication")!
+        let guestActivation = URL(string: "https://mock.local/x-guest-activate")!
+        let articleGraphQL = URL(string: "https://mock.local/x-article-graphql")!
+        MockURLProtocol.responses[oEmbed.absoluteString] = .json(
+            #"{"author_name":"mana","html":"<blockquote><p><a href=\"https://t.co/example\">https://t.co/example</a></p></blockquote>"}"#
+        )
+        MockURLProtocol.responses[syndication.absoluteString] = .json(
+            """
+            {
+              "id_str": "2075435864532852921",
+              "text": "https://t.co/example",
+              "user": {"name": "mana"},
+              "article": {
+                "title": "海外の天才が見つけたChatGPT活用大全",
+                "preview_text": "OpenAIは新世代モデルを発表した。",
+                "cover_media": {"media_info": {"original_img_url": "https://pbs.twimg.com/media/article.jpg"}}
+              }
+            }
+            """
+        )
+        MockURLProtocol.responses[guestActivation.absoluteString] = .json(
+            #"{"guest_token":"guest-test-token"}"#
+        )
+        MockURLProtocol.responses[articleGraphQL.absoluteString] = .json(
+            """
+            {
+              "data": {"tweetResult": {"result": {"article": {"article_results": {"result": {
+                "content_state": {"blocks": []},
+                "plain_text": "全文1行目。\\n全文2行目。"
+              }}}}}}
+            }
+            """
+        )
+
+        let update = await makeFetcher(
+            xOEmbedEndpointBuilder: { _ in oEmbed },
+            xSyndicationEndpointBuilder: { _ in syndication },
+            xGuestActivationEndpoint: guestActivation,
+            xArticleGraphQLEndpointBuilder: { _ in articleGraphQL },
+            xPublicBearerToken: "public-test-token"
+        ).fetch(for: makeRecord(serviceType: .x, url: "https://x.com/i/status/2075435864532852921"))
+
+        XCTAssertEqual(update.fetchedBody, "全文1行目。\n全文2行目。")
+        XCTAssertEqual(update.description, "OpenAIは新世代モデルを発表した。")
+        XCTAssertEqual(update.thumbnailURL, "https://pbs.twimg.com/media/article.jpg")
+        XCTAssertEqual(update.fetchedAuthorName, "mana")
+    }
+
     func testInstagramUsesPublicOEmbedMetadataWhenHTMLIsUnavailable() async {
         let oEmbed = URL(string: "https://mock.local/instagram-oembed")!
         let original = URL(string: "https://www.instagram.com/p/fA9uwTtkSN")!
@@ -586,6 +636,9 @@ final class MetadataFetcherTests: XCTestCase {
         tiktokFallbackEndpointBuilder: @escaping @Sendable (URL) -> URL? = { _ in nil },
         xOEmbedEndpointBuilder: @escaping @Sendable (URL) -> URL? = { _ in nil },
         xSyndicationEndpointBuilder: @escaping @Sendable (String) -> URL? = { _ in nil },
+        xGuestActivationEndpoint: URL? = nil,
+        xArticleGraphQLEndpointBuilder: @escaping @Sendable (String) -> URL? = { _ in nil },
+        xPublicBearerToken: String = "public-test-token",
         instagramPublicOEmbedEndpointBuilder: @escaping @Sendable (URL) -> URL? = { _ in nil },
         instagramCaptionedEmbedEndpointBuilder: @escaping @Sendable (URL) -> URL? = { _ in nil }
     ) -> MetadataFetcher {
@@ -598,6 +651,9 @@ final class MetadataFetcherTests: XCTestCase {
             tiktokFallbackEndpointBuilder: tiktokFallbackEndpointBuilder,
             xOEmbedEndpointBuilder: xOEmbedEndpointBuilder,
             xSyndicationEndpointBuilder: xSyndicationEndpointBuilder,
+            xGuestActivationEndpoint: xGuestActivationEndpoint,
+            xArticleGraphQLEndpointBuilder: xArticleGraphQLEndpointBuilder,
+            xPublicBearerToken: xPublicBearerToken,
             instagramPublicOEmbedEndpointBuilder: instagramPublicOEmbedEndpointBuilder,
             instagramCaptionedEmbedEndpointBuilder: instagramCaptionedEmbedEndpointBuilder
         )
