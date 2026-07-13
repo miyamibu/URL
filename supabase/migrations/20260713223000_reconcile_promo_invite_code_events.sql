@@ -34,6 +34,19 @@ begin
          where user_id is null
            and actor_user_id is not null;
     end if;
+
+    if exists (
+        select 1
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'promo_invite_code_events'
+          and column_name = 'detail'
+    ) then
+        update public.promo_invite_code_events
+           set reason = detail ->> 'reason'
+         where reason is null
+           and detail ? 'reason';
+    end if;
 end
 $$;
 

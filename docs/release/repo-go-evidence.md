@@ -2,7 +2,7 @@
 
 ## Final status: REPO_GO
 
-This file records repo-local evidence refreshed on 2026-07-13 at HEAD `bd0b8620`. `REPO_GO` means the repository implementation, docs, scripts, tests, build checks, and release hygiene are ready for pre-publication operations. It does not mean production deploy, store submission, OpenAI submission, production secret entry, or live/store verification is complete.
+This file records repo-local evidence refreshed on 2026-07-13. Source verification used commit `bd0b8620`; this evidence update and the compatibility-test additions are carried by the current branch tip. `REPO_GO` means the repository implementation, docs, scripts, tests, build checks, and release hygiene are ready for pre-publication operations. It does not mean production deploy, store submission, OpenAI submission, production secret entry, or live/store verification is complete.
 
 ## Verified Areas
 
@@ -10,7 +10,7 @@ This file records repo-local evidence refreshed on 2026-07-13 at HEAD `bd0b8620`
 |---|---|---|
 | Android | PASS | `./gradlew testDebugUnitTest assembleDebug assembleRelease lintDebug compileDebugAndroidTestKotlin --rerun-tasks` passed on 2026-07-13. Unit tests, lint, Debug/Release packaging, and AndroidTest Kotlin compilation completed successfully. |
 | iOS | PASS | `xcodebuild -project ... -destination iPhone 17 Pro test` passed on 2026-07-13: 121 tests, 3 live Supabase tests skipped, 0 failures. Unsigned iPhoneOS Release build also passed. The alternate simulator was used because the store-shot simulator returned CoreSimulator Busy. |
-| Supabase migration replay | PASS_WITH_ENVIRONMENT_WARNING | Local disposable replay reached `20260713223000_reconcile_promo_invite_code_events.sql` after compatibility repairs. Final container startup failed on the Colima Docker socket mount; `supabase db lint --local` could not connect to `127.0.0.1:55422`. No remote database was touched. |
+| Supabase migration replay | PASS_WITH_ENVIRONMENT_WARNING | Local disposable replay reached `20260713223000_reconcile_promo_invite_code_events.sql` after compatibility repairs. The pgtap compatibility assertions are recorded in `supabase/tests/promo_invite_code_event_compatibility_validation.sql`. Final container startup failed on the Colima Docker socket mount; `supabase db lint --local` could not connect to `127.0.0.1:55422`. No remote database was touched. |
 | MCP contract | PASS | `python3 scripts/verify_mcp_contract.py` passed. |
 | Web/admin | PASS | `cd web/admin && npm run typecheck` passed. |
 | Mobile UI contract | PASS | `python3 scripts/verify_mobile_ui_contract.py` passed. |
