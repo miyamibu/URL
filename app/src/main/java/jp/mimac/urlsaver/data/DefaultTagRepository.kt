@@ -21,6 +21,7 @@ import jp.mimac.urlsaver.domain.CreateSharedTagGroupResult
 import jp.mimac.urlsaver.domain.FeatureEntitlements
 import jp.mimac.urlsaver.domain.LimitResult
 import jp.mimac.urlsaver.domain.MigrateSharedTagResult
+import jp.mimac.urlsaver.domain.RecordState
 import jp.mimac.urlsaver.domain.SharedTagMemberRecord
 import jp.mimac.urlsaver.domain.SharedTagRecord
 import jp.mimac.urlsaver.domain.SharedTagMemberRole
@@ -62,6 +63,8 @@ class DefaultTagRepository(
     private val remoteDataSource: SharedTagSyncRemoteDataSource,
     private val remoteConfig: SharedTagSyncRemoteConfig,
     private val usageSummaryDataSource: UsageSummaryDataSource,
+    private val aiLocalDataClearer: AiLocalDataClearer,
+    private val localAccountCleanupStore: LocalAccountCleanupStore = NoopLocalAccountCleanupStore,
     private val json: Json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
@@ -370,8 +373,13 @@ class DefaultTagRepository(
 
     override suspend fun exportTag(tagId: Long): TagSharePayload? {
         val tag = tagDao.findTagById(tagId) ?: return null
-        if (tag.deletedAt != null) return null
+        if (tag.deletedAt != null || tag.scope != SharedTagScope.LOCAL_ONLY) return null
         val entries = tagDao.getEntriesForTag(tagId)
+            .filter { entry ->
+                entry.localProvenanceCount > 0 &&
+                    entry.recordState in setOf(RecordState.ACTIVE, RecordState.ARCHIVED) &&
+                    entry.pendingDeletionUntil == null
+            }
         return TagSharePayload(
             urlsaverVersion = 1,
             tag = tag.name,
@@ -379,8 +387,6 @@ class DefaultTagRepository(
             urls = entries.map { entry ->
                 TagShareUrl(
                     url = entry.normalizedUrl,
-                    title = entry.userTitle ?: entry.fetchedTitle,
-                    memo = entry.memo.takeIf { it.isNotBlank() },
                 )
             },
         )
@@ -695,20 +701,73 @@ class DefaultTagRepository(
     }
 
     override suspend fun deleteAccount(): SharedTagAccountDeletionResult {
+        localAccountCleanupStore.pending.value?.let { pending ->
+            return clearLocalAccountData(pending)
+        }
         val session = currentSyncSessionOrNull() ?: return SharedTagAccountDeletionResult.AuthRequired
-        return runCatching {
+        val remoteError = runCatching {
             remoteDataSource.deleteAccount(session)
-            authSessionProvider.updateSession(null)
-            SharedTagAccountDeletionResult.Success
-        }.getOrElse { error ->
-            val message = error.message.orEmpty()
-            if (message.contains("owner_transfer_required", ignoreCase = true)) {
+        }.exceptionOrNull()
+        if (remoteError != null) {
+            val message = remoteError.message.orEmpty()
+            return if (message.contains("owner_transfer_required", ignoreCase = true)) {
                 SharedTagAccountDeletionResult.OwnerTransferRequired
             } else {
                 SharedTagAccountDeletionResult.Failure(
                     message.ifBlank { "アカウントを削除できませんでした" },
                 )
             }
+        }
+        localAccountCleanupStore.save(aiDataPending = true, sessionPending = true)
+        return clearLocalAccountData(
+            LocalAccountCleanupMarker(
+                aiDataPending = true,
+                sessionPending = true,
+            ),
+        )
+    }
+
+    override suspend fun retryLocalAccountCleanup(): SharedTagAccountDeletionResult {
+        val pending = localAccountCleanupStore.pending.value ?: LocalAccountCleanupMarker(
+            aiDataPending = true,
+            sessionPending = authSessionProvider.session.value != null,
+        )
+        return clearLocalAccountData(pending)
+    }
+
+    private suspend fun clearLocalAccountData(
+        initialPending: LocalAccountCleanupMarker,
+    ): SharedTagAccountDeletionResult {
+        var aiDataPending = initialPending.aiDataPending
+        var sessionPending = initialPending.sessionPending
+        localAccountCleanupStore.save(aiDataPending, sessionPending)
+
+        if (aiDataPending && runCatching {
+                aiLocalDataClearer.clearLocalAiData()
+            }.isSuccess
+        ) {
+            aiDataPending = false
+            localAccountCleanupStore.save(aiDataPending, sessionPending)
+        }
+
+        if (sessionPending && authSessionProvider.session.value == null) {
+            sessionPending = false
+            localAccountCleanupStore.save(aiDataPending, sessionPending)
+        } else if (sessionPending && runCatching {
+                authSessionProvider.updateSession(null)
+            }.isSuccess
+        ) {
+            sessionPending = false
+            localAccountCleanupStore.save(aiDataPending, sessionPending)
+        }
+
+        return if (!aiDataPending && !sessionPending) {
+            SharedTagAccountDeletionResult.Success
+        } else {
+            SharedTagAccountDeletionResult.LocalCleanupRequired(
+                aiDataPending = aiDataPending,
+                sessionPending = sessionPending,
+            )
         }
     }
 

@@ -2,6 +2,83 @@ import crypto from "node:crypto";
 import { optionalEnv, requireEnv } from "./env";
 import { createServiceSupabaseClient } from "./supabase";
 
+export const RINBAM_MCP_PROTOCOL_VERSION = "2025-11-25";
+const SUPPORTED_MCP_PROTOCOL_VERSIONS = [RINBAM_MCP_PROTOCOL_VERSION, "2025-06-18", "2025-03-26"] as const;
+
+export type RinbamMcpJsonRpcId = string | number | null;
+
+export type RinbamMcpJsonRpcRequest = {
+  jsonrpc: "2.0";
+  id?: RinbamMcpJsonRpcId;
+  method: string;
+  params?: Record<string, unknown>;
+};
+
+export type RinbamMcpJsonRpcResponse = {
+  jsonrpc: "2.0";
+  id: RinbamMcpJsonRpcId;
+  result?: Record<string, unknown>;
+  error?: {
+    code: number;
+    message: string;
+    data?: Record<string, unknown>;
+  };
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isJsonRpcId(value: unknown): value is RinbamMcpJsonRpcId {
+  return value === null || typeof value === "string" || (typeof value === "number" && Number.isFinite(value));
+}
+
+export function isSupportedMcpProtocolVersion(value: string): boolean {
+  return (SUPPORTED_MCP_PROTOCOL_VERSIONS as readonly string[]).includes(value);
+}
+
+export function supportedMcpProtocolVersions(): readonly string[] {
+  return SUPPORTED_MCP_PROTOCOL_VERSIONS;
+}
+
+export function isRinbamMcpJsonRpcRequest(body: unknown): body is RinbamMcpJsonRpcRequest {
+  if (!isRecord(body) || body.jsonrpc !== "2.0" || typeof body.method !== "string" || body.method.length === 0) {
+    return false;
+  }
+  if ("id" in body && !isJsonRpcId(body.id)) return false;
+  if ("params" in body && body.params !== undefined && !isRecord(body.params)) return false;
+  return true;
+}
+
+export function isRinbamMcpLegacyRestRequest(
+  body: unknown,
+): body is { tool: string; args?: Record<string, unknown> } {
+  if (!isRecord(body) || typeof body.tool !== "string" || body.tool.length === 0) return false;
+  return !("jsonrpc" in body) && (!body.args || isRecord(body.args));
+}
+
+export function isRinbamMcpLegacyRestEnabled(): boolean {
+  return optionalEnv("URLSAVER_MCP_LEGACY_REST_ENABLED") === "true";
+}
+
+export class RinbamMcpJsonRpcError extends Error {
+  constructor(
+    public readonly code: number,
+    message: string,
+    public readonly data?: Record<string, unknown>,
+  ) {
+    super(message);
+    this.name = "RinbamMcpJsonRpcError";
+  }
+}
+
+export class RinbamMcpToolNotFoundError extends Error {
+  constructor(toolName: string) {
+    super(`unknown_tool:${toolName}`);
+    this.name = "RinbamMcpToolNotFoundError";
+  }
+}
+
 type ToolAnnotation = {
   readOnlyHint: true;
   destructiveHint: false;
@@ -109,6 +186,108 @@ export function validateRinbamMcpToolDescriptors(tools = rinbamMcpTools) {
     ) {
       throw new Error(`Invalid MCP annotations for ${tool.name}`);
     }
+  }
+}
+
+function jsonRpcResult(id: RinbamMcpJsonRpcId, result: Record<string, unknown>): RinbamMcpJsonRpcResponse {
+  return { jsonrpc: "2.0", id, result };
+}
+
+function toolCallResult(payload: Record<string, unknown>, isError = false): Record<string, unknown> {
+  return {
+    content: [{ type: "text", text: JSON.stringify(payload) }],
+    structuredContent: payload,
+    ...(isError ? { isError: true } : {}),
+  };
+}
+
+export function parseRinbamMcpJsonRpcRequest(body: unknown): RinbamMcpJsonRpcRequest {
+  if (!isRinbamMcpJsonRpcRequest(body)) {
+    throw new RinbamMcpJsonRpcError(-32600, "Invalid Request");
+  }
+  return body;
+}
+
+export async function callRinbamMcpTool(
+  ctx: RinbamMcpContext,
+  toolName: string,
+  args: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  switch (toolName) {
+    case "search":
+      return searchRinbamLinks(ctx, args);
+    case "fetch":
+      return fetchRinbamLink(ctx, args);
+    case "rinbam.list_tags":
+      return listRinbamTags(ctx);
+    case "rinbam.get_ai_receipt":
+      return getAiReceipt(args);
+    case "rinbam.list_recent_saved_links":
+      return listRecentSavedLinks(ctx, args);
+    default:
+      throw new RinbamMcpToolNotFoundError(toolName);
+  }
+}
+
+export async function handleRinbamMcpJsonRpcRequest(
+  request: RinbamMcpJsonRpcRequest,
+  ctx: RinbamMcpContext,
+): Promise<RinbamMcpJsonRpcResponse | null> {
+  const parsed = parseRinbamMcpJsonRpcRequest(request);
+  if (!("id" in parsed) || parsed.id === undefined) {
+    if (
+      parsed.method === "notifications/initialized" ||
+      parsed.method === "notifications/cancelled" ||
+      parsed.method === "notifications/progress"
+    ) {
+      return null;
+    }
+    throw new RinbamMcpJsonRpcError(-32600, "Requests require an id");
+  }
+
+  const id = parsed.id;
+  switch (parsed.method) {
+    case "initialize": {
+      const requestedVersion = parsed.params?.protocolVersion;
+      if (typeof requestedVersion !== "string" || !isSupportedMcpProtocolVersion(requestedVersion)) {
+        throw new RinbamMcpJsonRpcError(-32602, "Unsupported protocol version", {
+          supported: { versions: [...SUPPORTED_MCP_PROTOCOL_VERSIONS] },
+        });
+      }
+      return jsonRpcResult(id, {
+        protocolVersion: requestedVersion,
+        capabilities: { tools: {} },
+        serverInfo: {
+          name: "rinbam-readonly-links",
+          version: "0.2.0",
+        },
+      });
+    }
+    case "ping":
+      return jsonRpcResult(id, {});
+    case "tools/list":
+      return jsonRpcResult(id, { tools: rinbamMcpTools });
+    case "tools/call": {
+      const params = parsed.params;
+      const toolName = params?.name;
+      const args = params?.arguments;
+      if (typeof toolName !== "string" || (args !== undefined && !isRecord(args))) {
+        throw new RinbamMcpJsonRpcError(-32602, "Invalid tools/call parameters");
+      }
+      try {
+        const payload = await callRinbamMcpTool(ctx, toolName, args ?? {});
+        return jsonRpcResult(id, toolCallResult(payload));
+      } catch (error) {
+        if (error instanceof RinbamMcpInputError) {
+          return jsonRpcResult(id, toolCallResult({ error: error.message }, true));
+        }
+        throw error;
+      }
+    }
+    case "notifications/initialized":
+      return jsonRpcResult(id, {});
+    default:
+      throw new RinbamMcpJsonRpcError(-32601, "Method not found");
   }
 }
 
@@ -308,6 +487,7 @@ function toSearchResult(ctx: RinbamMcpContext, row: PersonalSavedLinkRow, tags: 
     matchReason: "personal_saved_links",
     aiEligible: row.record_state === "ACTIVE",
     sharedTagBoundary: "local_personal_link_sync_only",
+    rawBodyReturned: false,
   };
 }
 
@@ -327,7 +507,7 @@ export async function searchRinbamLinks(ctx: RinbamMcpContext, args: Record<stri
     .slice(0, limit)
     .map((row) => toSearchResult(ctx, row, tagNamesByLinkId.get(row.id) ?? []));
 
-  return { results, includeSharedTags: false };
+  return { results, includeSharedTags: false, rawBodyReturned: false };
 }
 
 export async function listRecentSavedLinks(ctx: RinbamMcpContext, args: Record<string, unknown>) {
@@ -341,6 +521,7 @@ export async function listRinbamTags(ctx: RinbamMcpContext) {
     tags: tagRows
       .map((tag) => ({ id: publicSafeId(ctx.userId, tag.id), name: tag.name, sharedTagBoundary: "local_only" }))
       .sort((a, b) => a.name.localeCompare(b.name)),
+    rawBodyReturned: false,
   };
 }
 

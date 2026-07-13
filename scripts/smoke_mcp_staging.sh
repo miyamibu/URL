@@ -53,16 +53,17 @@ fail_if_sensitive() {
   fi
 }
 
-descriptor="$TMP_DIR/descriptor.json"
-descriptor_status="$(curl_status descriptor GET "$descriptor")"
+initialize_body='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"rinbam-staging-smoke","version":"1.0"}}}'
+descriptor="$TMP_DIR/initialize.json"
+descriptor_status="$(curl_status initialize POST "$descriptor" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-11-25' -H "Authorization: Bearer $TOKEN" --data "$initialize_body")"
 if [[ "$descriptor_status" != "200" && "$descriptor_status" != "404" ]]; then
-  echo "FAIL descriptor expected 200 when enabled or 404 when disabled"
+  echo "FAIL initialize expected 200 when enabled or 404 when disabled"
   exit 1
 fi
 fail_if_sensitive "$descriptor"
 
 noauth="$TMP_DIR/noauth.json"
-noauth_status="$(curl_status noauth POST "$noauth" -H 'Content-Type: application/json' --data '{"tool":"search","args":{"query":"AI","limit":1}}')"
+noauth_status="$(curl_status noauth POST "$noauth" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-11-25' --data "$initialize_body")"
 if [[ "$noauth_status" != "401" && "$noauth_status" != "404" ]]; then
   echo "FAIL noauth request must be rejected or disabled"
   exit 1
@@ -70,7 +71,7 @@ fi
 fail_if_sensitive "$noauth"
 
 invalid="$TMP_DIR/invalid.json"
-invalid_status="$(curl_status invalid-token POST "$invalid" -H 'Content-Type: application/json' -H 'Authorization: Bearer invalid-staging-token' --data '{"tool":"search","args":{"query":"AI","limit":1}}')"
+invalid_status="$(curl_status invalid-token POST "$invalid" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-11-25' -H 'Authorization: Bearer invalid-staging-token' --data "$initialize_body")"
 if [[ "$descriptor_status" == "200" && "$invalid_status" != "401" ]]; then
   echo "FAIL invalid token must return 401 when MCP is enabled"
   exit 1
@@ -83,7 +84,7 @@ if [[ "$descriptor_status" == "404" ]]; then
 fi
 
 search="$TMP_DIR/search.json"
-search_status="$(curl_status search POST "$search" -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" --data '{"tool":"search","args":{"query":"AI","limit":5}}')"
+search_status="$(curl_status search POST "$search" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-11-25' -H "Authorization: Bearer $TOKEN" --data '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search","arguments":{"query":"AI","limit":5}}}')"
 if [[ "$search_status" != "200" ]]; then
   echo "FAIL authenticated search did not return 200"
   exit 1
@@ -91,7 +92,7 @@ fi
 fail_if_sensitive "$search"
 
 shared="$TMP_DIR/shared.json"
-shared_status="$(curl_status shared-tag-rejection POST "$shared" -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" --data '{"tool":"search","args":{"query":"tag","limit":1,"includeSharedTags":true}}')"
+shared_status="$(curl_status shared-tag-rejection POST "$shared" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-11-25' -H "Authorization: Bearer $TOKEN" --data '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"search","arguments":{"query":"tag","limit":1,"includeSharedTags":true}}}')"
 if [[ "$shared_status" != "400" ]]; then
   echo "FAIL includeSharedTags=true must be rejected without explicit scope"
   exit 1
@@ -99,7 +100,7 @@ fi
 fail_if_sensitive "$shared"
 
 receipt="$TMP_DIR/receipt.json"
-receipt_status="$(curl_status ai-receipt POST "$receipt" -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" --data '{"tool":"rinbam.get_ai_receipt","args":{"id":"staging-smoke"}}')"
+receipt_status="$(curl_status ai-receipt POST "$receipt" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-11-25' -H "Authorization: Bearer $TOKEN" --data '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"rinbam.get_ai_receipt","arguments":{"id":"staging-smoke"}}}')"
 if [[ "$receipt_status" != "200" && "$receipt_status" != "404" ]]; then
   echo "FAIL AI receipt metadata request returned unexpected status"
   exit 1

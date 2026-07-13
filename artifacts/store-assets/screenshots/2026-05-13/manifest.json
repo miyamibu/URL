@@ -52,12 +52,12 @@
     ],
     "screenshots": [
       {
-        "file": "01-home.png",
         "pixelWidth": 1080,
         "pixelHeight": 2400,
         "fileType": "PNG",
         "content": "Old empty home candidate",
         "adoptionStatus": "SUPERSEDED",
+        "archiveNote": "元画像は現行作業ツリーから退避済み。再配布対象外で、現存ファイル参照は持たない。",
         "rejectionReason": "Replaced by 01-home-final.png because the old image was an empty state."
       },
       {
@@ -101,12 +101,12 @@
         "adoptionStatus": "READY_FOR_STORE_UPLOAD"
       },
       {
-        "file": "06-export-superseded-shared-tag.png",
         "pixelWidth": 1080,
         "pixelHeight": 2400,
         "fileType": "PNG",
         "content": "Superseded export sheet from before the local-only export fix",
         "adoptionStatus": "SUPERSEDED",
+        "archiveNote": "元画像は現行作業ツリーから退避済み。再配布対象外で、現存ファイル参照は持たない。",
         "rejectionReason": "Preserved as the replaced candidate because shared-tag wording was visible."
       },
       {

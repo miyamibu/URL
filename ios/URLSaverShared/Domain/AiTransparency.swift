@@ -116,7 +116,26 @@ struct MockAiProvider: AiProvider {
 }
 
 enum AiTransparencyFeature {
-    static let isEnabled = false
+    static var isEnabled: Bool {
+        #if DEBUG
+        return parseFlag(Bundle.main.object(forInfoDictionaryKey: "AiTransparencyEnabled"))
+        #else
+        return false
+        #endif
+    }
+
+    private static func parseFlag(_ value: Any?) -> Bool {
+        if let value = value as? Bool {
+            return value
+        }
+        guard let value = value as? String else { return false }
+        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "1", "true", "yes", "on":
+            return true
+        default:
+            return false
+        }
+    }
 }
 
 enum AiTransparencyPolicy {
@@ -186,8 +205,8 @@ enum AiTransparencyPolicy {
             draftID: stableID(prefix: "draft", parts: [receipt.receiptID, generatedAtISO, title, allowed.joined(separator: ",")]),
             receiptID: receipt.receiptID,
             generatedAtISO: generatedAtISO,
-            title: title,
-            body: body,
+            title: redactLocalText(title),
+            body: redactLocalText(body),
             citedSourceIDs: allowed,
             status: .proposed
         )
@@ -198,7 +217,14 @@ enum AiTransparencyPolicy {
         generatedAtISO: String,
         operations: [AiDiffOperation]
     ) -> AiDiffProposal {
-        let normalized = operations.sorted {
+        let normalized = operations.map { operation in
+            AiDiffOperation(
+                targetPublicSafeID: operation.targetPublicSafeID,
+                field: operation.field,
+                before: operation.before.map(redactLocalText),
+                after: operation.after.map(redactLocalText)
+            )
+        }.sorted {
             if $0.targetPublicSafeID == $1.targetPublicSafeID {
                 return $0.field < $1.field
             }
@@ -217,9 +243,11 @@ enum AiTransparencyPolicy {
     static func source(for entry: URLRecord, publicSafeID: String, tagNames: [String] = [], containsSharedTag: Bool? = nil) -> AiTransparencySource {
         let hasSharedTag = containsSharedTag ?? (entry.sharedReferenceCount > 0)
         var reasons: [String] = []
+        if entry.localProvenanceCount <= 0 { reasons.append("local_provenance_required") }
         if hasSharedTag { reasons.append("shared_tag_default_excluded") }
         if entry.recordState == .archived { reasons.append("archived_default_excluded") }
         if entry.recordState == .pendingDelete { reasons.append("pending_delete_excluded") }
+        if entry.pendingDeletionUntil != nil { reasons.append("pending_delete_excluded") }
         return AiTransparencySource(
             publicSafeID: publicSafeID,
             localEntryID: entry.id,
@@ -244,10 +272,28 @@ enum AiTransparencyPolicy {
         }
     }
 
+    static func publicSafeID(for entry: URLRecord) -> String {
+        stableID(prefix: "safe", parts: ["ios", String(entry.id), entry.normalizedURL])
+    }
+
     private static func stableID(prefix: String, parts: [String]) -> String {
         let input = parts.joined(separator: "\u{1f}")
         let digest = SHA256.hash(data: Data(input.utf8))
         let hex = digest.map { String(format: "%02x", $0) }.joined()
         return "\(prefix)-" + String(hex.prefix(24))
+    }
+
+    static func redactLocalText(_ value: String) -> String {
+        let pattern = "https?://[^\\s]+|(?:/Users/|/private/|/var/|[A-Za-z]:\\\\)[^\\s]+|eyJ[A-Za-z0-9_-]{20,}|(?<![A-Za-z0-9])[A-Za-z0-9_-]{40,}(?![A-Za-z0-9])"
+        guard let expression = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            return value
+        }
+        let range = NSRange(value.startIndex..<value.endIndex, in: value)
+        return expression.stringByReplacingMatches(
+            in: value,
+            options: [],
+            range: range,
+            withTemplate: "[URL非表示]"
+        )
     }
 }

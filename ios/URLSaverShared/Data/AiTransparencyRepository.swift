@@ -3,6 +3,7 @@ import SQLite3
 
 enum AiTransparencyRepositoryError: Error {
     case unsafeRawPayload
+    case invalidDiff
 }
 
 extension URLRepository {
@@ -54,10 +55,10 @@ extension URLRepository {
                     binds: [
                         sql(receipt.receiptID),
                         sql(source.publicSafeID),
-                        sql(source.localEntryID),
-                        sql(source.title),
-                        sql(source.normalizedURL),
-                        sql(Self.aiEncode(source.tagNames)),
+                        sql(nil as Int64?),
+                        sql("リンク"),
+                        sql(""),
+                        sql("[]"),
                         sql(source.sharedTagBoundary.rawValue),
                         sql(source.aiEligible ? 1 : 0),
                         sql(Self.aiEncode(source.exclusionReasons)),
@@ -113,10 +114,10 @@ extension URLRepository {
         ) { statement in
             AiTransparencySource(
                 publicSafeID: Self.aiText(statement, 0) ?? "",
-                localEntryID: Self.aiInt64(statement, 1),
-                title: Self.aiText(statement, 2) ?? "",
-                normalizedURL: Self.aiText(statement, 3) ?? "",
-                tagNames: Self.aiDecodeStringArray(Self.aiText(statement, 4)),
+                localEntryID: nil,
+                title: "リンク",
+                normalizedURL: "",
+                tagNames: [],
                 sharedTagBoundary: AiSharedTagBoundary(rawValue: Self.aiText(statement, 5) ?? "") ?? .localOrUntagged,
                 aiEligible: sqlite3_column_int(statement, 6) != 0,
                 exclusionReasons: Self.aiDecodeStringArray(Self.aiText(statement, 7))
@@ -242,55 +243,93 @@ extension URLRepository {
         }
     }
 
-    func applyAiDiffProposal(proposalID: String, confirm: Bool, now: Date = Date()) throws -> Bool {
-        guard confirm,
-              var proposal = try loadAiDiffProposal(proposalID: proposalID),
-              !proposal.applied,
-              let draft = try loadAiDraft(draftID: proposal.draftID)
-        else {
-            return false
+    func loadAiEligibleEntry(publicSafeID: String) throws -> URLRecord? {
+        try observeActiveSnapshot().first { entry in
+            AiTransparencyPolicy.publicSafeID(for: entry) == publicSafeID &&
+                ChatGptPersonalLinkSyncPolicy.eligibility(for: entry).eligible
         }
+    }
 
-        var changed = false
-        try database.transaction {
-            for operation in proposal.operations where operation.field == "userTitle" || operation.field == "memo" {
-                guard let source = try loadAiReceiptSources(receiptID: draft.receiptID)
-                    .first(where: { $0.publicSafeID == operation.targetPublicSafeID }),
-                    let entryID = source.localEntryID
+    func applyAiDiffProposal(proposalID: String, confirm: Bool, now: Date = Date()) throws -> Bool {
+        guard confirm else { return false }
+
+        return try database.transaction {
+            guard let proposal = try loadAiDiffProposal(proposalID: proposalID),
+                  !proposal.applied,
+                  let draft = try loadAiDraft(draftID: proposal.draftID),
+                  draft.status == .proposed,
+                  !proposal.operations.isEmpty,
+                  proposal.operations.count <= 50
+            else {
+                return false
+            }
+
+            let sources = try loadAiReceiptSources(receiptID: draft.receiptID)
+            var validatedOperations: [(entry: URLRecord, operation: AiDiffOperation, after: String?)] = []
+            var seenOperations = Set<String>()
+            for operation in proposal.operations {
+                guard operation.field == "userTitle" || operation.field == "memo",
+                      let source = sources.first(where: { $0.publicSafeID == operation.targetPublicSafeID }),
+                      source.aiEligible,
+                      let entry = try loadAiEligibleEntry(publicSafeID: operation.targetPublicSafeID)
                 else {
-                    continue
+                    return false
                 }
+
+                let operationKey = "\(operation.targetPublicSafeID):\(operation.field)"
+                guard seenOperations.insert(operationKey).inserted else { return false }
+
+                let currentValue: String?
+                let normalizedAfter: String?
                 switch operation.field {
                 case "userTitle":
-                    let titleValue: String? = operation.after?.isEmpty == false ? operation.after : nil
+                    currentValue = entry.userTitle
+                    normalizedAfter = URLRules.normalizeUserTitle(operation.after)
+                    guard operation.after == nil || URLRules.isTitleLengthValid(operation.after ?? "") else {
+                        return false
+                    }
+                case "memo":
+                    currentValue = entry.memo
+                    normalizedAfter = URLRules.normalizeMemo(operation.after)
+                    guard URLRules.isMemoLengthValid(operation.after ?? "") else {
+                        return false
+                    }
+                default:
+                    return false
+                }
+
+                guard currentValue == operation.before else { return false }
+                validatedOperations.append((entry, operation, normalizedAfter))
+            }
+
+            for validated in validatedOperations {
+                let operation = validated.operation
+                let entryID = validated.entry.id
+                switch operation.field {
+                case "userTitle":
                     try database.execute(
                         "UPDATE url_entries SET user_title = ?, updated_at = ? WHERE id = ?;",
-                        binds: [sql(titleValue), sql(now.timeIntervalSince1970), sql(entryID)]
+                        binds: [sql(validated.after), sql(now.timeIntervalSince1970), sql(entryID)]
                     )
-                    changed = true
                 case "memo":
                     try database.execute(
                         "UPDATE url_entries SET memo = ?, updated_at = ? WHERE id = ?;",
-                        binds: [sql(operation.after ?? ""), sql(now.timeIntervalSince1970), sql(entryID)]
+                        binds: [sql(validated.after ?? ""), sql(now.timeIntervalSince1970), sql(entryID)]
                     )
-                    changed = true
                 default:
-                    break
+                    throw AiTransparencyRepositoryError.invalidDiff
                 }
             }
-            if changed {
-                proposal.applied = true
-                try database.execute(
-                    "UPDATE ai_diff_proposals SET applied = 1 WHERE proposal_id = ?;",
-                    binds: [sql(proposal.proposalID)]
-                )
-                try database.execute(
-                    "UPDATE ai_drafts SET status = ? WHERE draft_id = ?;",
-                    binds: [sql(AiDraftStatus.accepted.rawValue), sql(draft.draftID)]
-                )
-            }
+            try database.execute(
+                "UPDATE ai_diff_proposals SET applied = 1 WHERE proposal_id = ?;",
+                binds: [sql(proposal.proposalID)]
+            )
+            try database.execute(
+                "UPDATE ai_drafts SET status = ? WHERE draft_id = ?;",
+                binds: [sql(AiDraftStatus.accepted.rawValue), sql(draft.draftID)]
+            )
+            return true
         }
-        return changed
     }
 
     func clearLocalAiData() throws {

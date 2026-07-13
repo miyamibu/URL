@@ -1,0 +1,30 @@
+Collection/UserLabel retirement restoration snippets (Android)
+===============================================================
+
+These snippets preserve the removed mixed-file public/UI surface. The four
+dedicated source files are archived separately under files/app/ with their
+original relative paths.
+
+UrlSaverRoot.kt (removed public/UI surface)
+-------------------------------------------
+- MainScreen callbacks: onCollectionDeleted, onCollectionDeleteFailed
+- Main/Archive collection state: collections, selectedCollectionIdFlow,
+  customCollections, collection-name filtering, collection selection effects
+- ManualInputSheet collection target fields and CollectionFilterRow block
+- createCollectionState, pendingDeleteCollection, CreateCollectionDialog,
+  confirmCreateCollection, reorderCollections, toggleSelectedCollection,
+  deleteCollection, and collection assignment callbacks
+- DetailScreen currentCollection, availableCollectionTags,
+  locallyRemovedCollectionIds, DetailTagItem.Collection, and collection
+  assign/clear branches
+- filterEntriesBySearch collection parameter and collection-name predicate
+
+ServiceFilterRow.kt (removed collection filter model)
+-------------------------------------------------------
+- TopFilterItem.Collection and collectionId token handling
+- resolvedTopFilterTokens/buildMovableItems collection parameters and items
+- collection selection/create/reorder callbacks and chips
+
+The active source keeps Room compatibility entities/DAOs and legacy
+collectionId/userLabelId storage; these snippets are UI/API-only removal
+material and are intentionally not applied to database migrations.

@@ -8,6 +8,21 @@ struct SharedTagCloudConfig: Sendable {
     let supabaseURL: String
     let anonKey: String
     let inviteLinkBaseURL: String
+    var personalLinkSyncEnabled: Bool = false
+
+    init(
+        enabled: Bool,
+        supabaseURL: String,
+        anonKey: String,
+        inviteLinkBaseURL: String = "",
+        personalLinkSyncEnabled: Bool = false
+    ) {
+        self.enabled = enabled
+        self.supabaseURL = supabaseURL
+        self.anonKey = anonKey
+        self.inviteLinkBaseURL = Self.normalizedInviteLinkBaseURL(inviteLinkBaseURL)
+        self.personalLinkSyncEnabled = personalLinkSyncEnabled
+    }
 
     init(
         bundle: Bundle = .main,
@@ -17,11 +32,13 @@ struct SharedTagCloudConfig: Sendable {
         let envURL = environment["URLSAVER_SUPABASE_URL"]?.trimmingCharacters(in: .whitespacesAndNewlines)
         let envAnonKey = environment["URLSAVER_SUPABASE_ANON_KEY"]?.trimmingCharacters(in: .whitespacesAndNewlines)
         let envInviteLinkBaseURL = environment["URLSAVER_INVITE_LINK_BASE_URL"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let envPersonalLinkSyncEnabled = environment["URLSAVER_CHATGPT_PERSONAL_LINK_SYNC_ENABLED"]?.trimmingCharacters(in: .whitespacesAndNewlines)
         let bundleEnabled = bundle.object(forInfoDictionaryKey: "SharedTagCloudEnabled") as? Bool
         let bundleEnabledString = bundle.object(forInfoDictionaryKey: "SharedTagCloudEnabled") as? String
         let bundleURL = bundle.object(forInfoDictionaryKey: "SupabaseURL") as? String
         let bundleAnonKey = bundle.object(forInfoDictionaryKey: "SupabaseAnonKey") as? String
         let bundleInviteLinkBaseURL = bundle.object(forInfoDictionaryKey: "InviteLinkBaseURL") as? String
+        let bundlePersonalLinkSyncEnabled = bundle.object(forInfoDictionaryKey: "ChatGptPersonalLinkSyncEnabled")
 
         enabled = envEnabled.map(Self.parseEnabledFlag)
             ?? bundleEnabled
@@ -30,10 +47,17 @@ struct SharedTagCloudConfig: Sendable {
         supabaseURL = envURL ?? bundleURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         anonKey = envAnonKey ?? bundleAnonKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         inviteLinkBaseURL = Self.normalizedInviteLinkBaseURL(envInviteLinkBaseURL ?? bundleInviteLinkBaseURL)
+        personalLinkSyncEnabled = envPersonalLinkSyncEnabled.map(Self.parseEnabledFlag)
+            ?? Self.parseEnabledFlag(bundlePersonalLinkSyncEnabled)
+            ?? false
     }
 
     var isConfigured: Bool {
         enabled && !supabaseURL.isEmpty && !anonKey.isEmpty
+    }
+
+    var isPersonalLinkSyncConfigured: Bool {
+        isConfigured && personalLinkSyncEnabled
     }
 
     private static func parseEnabledFlag(_ raw: String) -> Bool {
@@ -43,6 +67,14 @@ struct SharedTagCloudConfig: Sendable {
         default:
             return false
         }
+    }
+
+    private static func parseEnabledFlag(_ value: Any?) -> Bool? {
+        if let value = value as? Bool {
+            return value
+        }
+        guard let value = value as? String else { return nil }
+        return parseEnabledFlag(value)
     }
 
     private static func normalizedInviteLinkBaseURL(_ raw: String?) -> String {
@@ -894,6 +926,7 @@ private enum SharedTagRemoteErrorParser {
 
 enum SharedTagCloudError: Error {
     case authRequired
+    case featureDisabled
     case invalidInvite
     case ownerTransferRequired
     case httpStatus(Int, String)
@@ -903,6 +936,8 @@ enum SharedTagCloudError: Error {
         switch self {
         case .authRequired:
             return "共有タグクラウドにサインインしてください"
+        case .featureDisabled:
+            return "現在は利用できません"
         case .invalidInvite:
             return "招待リンクが無効か期限切れです"
         case .ownerTransferRequired:
@@ -1848,6 +1883,51 @@ final class SharedTagStore: @unchecked Sendable {
     }
 }
 
+protocol SharedTagAccountLocalCleanupStateStore: Sendable {
+    func load() -> SharedTagAccountLocalCleanupState?
+    func save(_ state: SharedTagAccountLocalCleanupState)
+    func clear()
+}
+
+final class UserDefaultsSharedTagAccountLocalCleanupStateStore: @unchecked Sendable, SharedTagAccountLocalCleanupStateStore {
+    private let userDefaults: UserDefaults
+    private let markerKey: String
+    private let aiDataCleanupPendingKey: String
+    private let signOutCleanupPendingKey: String
+
+    init(
+        userDefaults: UserDefaults = .standard,
+        keyPrefix: String = "jp.mimac.urlsaver.shared_tag.account_local_cleanup"
+    ) {
+        self.userDefaults = userDefaults
+        markerKey = "\(keyPrefix).pending"
+        aiDataCleanupPendingKey = "\(keyPrefix).ai_data_pending"
+        signOutCleanupPendingKey = "\(keyPrefix).sign_out_pending"
+    }
+
+    func load() -> SharedTagAccountLocalCleanupState? {
+        guard userDefaults.bool(forKey: markerKey) else { return nil }
+        return SharedTagAccountLocalCleanupState(
+            aiDataCleanupPending: userDefaults.object(forKey: aiDataCleanupPendingKey) == nil
+                || userDefaults.bool(forKey: aiDataCleanupPendingKey),
+            signOutCleanupPending: userDefaults.object(forKey: signOutCleanupPendingKey) == nil
+                || userDefaults.bool(forKey: signOutCleanupPendingKey)
+        )
+    }
+
+    func save(_ state: SharedTagAccountLocalCleanupState) {
+        userDefaults.set(state.aiDataCleanupPending, forKey: aiDataCleanupPendingKey)
+        userDefaults.set(state.signOutCleanupPending, forKey: signOutCleanupPendingKey)
+        userDefaults.set(true, forKey: markerKey)
+    }
+
+    func clear() {
+        userDefaults.removeObject(forKey: markerKey)
+        userDefaults.removeObject(forKey: aiDataCleanupPendingKey)
+        userDefaults.removeObject(forKey: signOutCleanupPendingKey)
+    }
+}
+
 final class SharedTagCloudService: @unchecked Sendable {
     let config: SharedTagCloudConfig
     private let sessionStore: SharedTagAuthSessionStore
@@ -1855,17 +1935,25 @@ final class SharedTagCloudService: @unchecked Sendable {
     private let syncRemoteDataSource: SharedTagSyncRemoteDataSource
     private let store: SharedTagStore
     private let repository: URLRepository
+    private let clearLocalAiData: @Sendable () throws -> Void
+    private let localCleanupStateStore: any SharedTagAccountLocalCleanupStateStore
 
     init(
         config: SharedTagCloudConfig,
         sessionStore: SharedTagAuthSessionStore,
         store: SharedTagStore,
-        repository: URLRepository
+        repository: URLRepository,
+        clearLocalAiData: (@Sendable () throws -> Void)? = nil,
+        cleanupStateStore: (any SharedTagAccountLocalCleanupStateStore)? = nil
     ) {
         self.config = config
         self.sessionStore = sessionStore
         self.store = store
         self.repository = repository
+        self.clearLocalAiData = clearLocalAiData ?? {
+            try repository.clearLocalAiData()
+        }
+        self.localCleanupStateStore = cleanupStateStore ?? UserDefaultsSharedTagAccountLocalCleanupStateStore()
         self.authRemoteDataSource = SharedTagAuthRemoteDataSource(config: config)
         self.syncRemoteDataSource = SharedTagSyncRemoteDataSource(
             config: config,
@@ -1881,6 +1969,10 @@ final class SharedTagCloudService: @unchecked Sendable {
             isSignedIn: session != nil && config.isConfigured,
             signedInEmail: session?.userEmail
         )
+    }
+
+    var localAccountCleanupState: SharedTagAccountLocalCleanupState? {
+        localCleanupStateStore.load()
     }
 
     func currentSession() -> SharedTagAuthSession? {
@@ -2043,68 +2135,125 @@ final class SharedTagCloudService: @unchecked Sendable {
     }
 
     func signOut() throws {
-        try sessionStore.clear()
-        try store.clearLocalSharedState()
+        var firstError: Error?
+        do {
+            try sessionStore.clear()
+        } catch {
+            firstError = error
+        }
+        do {
+            try store.clearLocalSharedState()
+        } catch {
+            if firstError == nil {
+                firstError = error
+            }
+        }
+        if let firstError {
+            throw firstError
+        }
     }
 
-    func setChatGptPersonalLinkSync(enabled: Bool, contentFetchEnabled: Bool) async throws {
+    func setChatGptPersonalLinkSync(enabled: Bool) async throws -> ChatGptPersonalLinkSyncResult {
+        guard config.isPersonalLinkSyncConfigured else { throw SharedTagCloudError.featureDisabled }
         guard let session = try? sessionStore.load() else { throw SharedTagCloudError.authRequired }
         try await syncRemoteDataSource.setChatGptPersonalLinkSync(
             session: session,
             enabled: enabled,
-            contentFetchEnabled: contentFetchEnabled
+            contentFetchEnabled: false
         )
         if enabled {
-            _ = try await syncChatGptPersonalLinks(contentFetchEnabled: contentFetchEnabled)
+            return try await syncChatGptPersonalLinks()
         }
+        let eligibility = try chatGptPersonalLinkEligibility()
+        return ChatGptPersonalLinkSyncResult(
+            attemptedCount: 0,
+            appliedCount: 0,
+            excludedCount: eligibility.excludedCount,
+            exclusionReasons: eligibility.exclusionReasons
+        )
     }
 
-    func syncChatGptPersonalLinks(contentFetchEnabled: Bool) async throws -> Int {
+    func chatGptPersonalLinkEligibility() throws -> ChatGptPersonalLinkEligibility {
+        let records = try repository.loadChatGptPersonalLinkSnapshot()
+        var eligibleCount = 0
+        var excludedCount = 0
+        var exclusionReasons: [String: Int] = [:]
+        for record in records {
+            let result = ChatGptPersonalLinkSyncPolicy.eligibility(for: record)
+            if result.eligible {
+                eligibleCount += 1
+            } else {
+                excludedCount += 1
+                for reason in result.reasons {
+                    exclusionReasons[reason, default: 0] += 1
+                }
+            }
+        }
+        return ChatGptPersonalLinkEligibility(
+            eligibleCount: eligibleCount,
+            excludedCount: excludedCount,
+            exclusionReasons: exclusionReasons
+        )
+    }
+
+    func syncChatGptPersonalLinks() async throws -> ChatGptPersonalLinkSyncResult {
+        guard config.isPersonalLinkSyncConfigured else { throw SharedTagCloudError.featureDisabled }
         guard let session = try? sessionStore.load() else { throw SharedTagCloudError.authRequired }
-        let records = try repository.observeActiveSnapshot() + repository.observeArchiveSnapshot()
-        let operations = try records.map { record in
+        let records = try repository.loadChatGptPersonalLinkSnapshot()
+        var eligibleRecords: [URLRecord] = []
+        var exclusionReasons: [String: Int] = [:]
+        for record in records {
+            let result = ChatGptPersonalLinkSyncPolicy.eligibility(for: record)
+            guard result.eligible else {
+                for reason in result.reasons {
+                    exclusionReasons[reason, default: 0] += 1
+                }
+                continue
+            }
+            eligibleRecords.append(record)
+        }
+        let operations = try eligibleRecords.map { record in
             try makeChatGptPersonalLinkOperation(
                 record: record,
-                tags: repository.loadLocalTagsForEntry(entryID: record.id).map(\.name),
-                contentFetchEnabled: contentFetchEnabled
+                tags: repository.loadLocalTagsForEntry(entryID: record.id).map(\.name)
             )
         }
-        guard !operations.isEmpty else { return 0 }
+        guard !operations.isEmpty else {
+            return ChatGptPersonalLinkSyncResult(
+                attemptedCount: 0,
+                appliedCount: 0,
+                excludedCount: records.count,
+                exclusionReasons: exclusionReasons
+            )
+        }
         let response = try await syncRemoteDataSource.applyChatGptPersonalLinkOps(
             session: session,
             operations: operations
         )
-        if !response.results.isEmpty {
-            return response.results.filter { $0.status == "ok" || $0.status == "skipped" }.count
-        }
-        return response.appliedCount
+        let appliedCount = response.results.isEmpty
+            ? min(response.appliedCount, operations.count)
+            : response.results.filter { $0.status == "ok" || $0.status == "skipped" }.count
+        return ChatGptPersonalLinkSyncResult(
+            attemptedCount: operations.count,
+            appliedCount: appliedCount,
+            excludedCount: records.count - operations.count,
+            exclusionReasons: exclusionReasons
+        )
     }
 
-    private func makeChatGptPersonalLinkOperation(
+    func makeChatGptPersonalLinkOperation(
         record: URLRecord,
-        tags: [String],
-        contentFetchEnabled: Bool
+        tags: [String]
     ) throws -> ChatGptPersonalLinkOperation {
         ChatGptPersonalLinkOperation(
             opID: UUID().uuidString.lowercased(),
-            clientEntryID: "ios:\(record.id)",
+            clientEntryID: AiTransparencyPolicy.publicSafeID(for: record),
             url: record.normalizedURL,
             title: record.userTitle ?? record.fetchedTitle,
             memo: record.memo.isEmpty ? nil : record.memo,
-            extractedText: contentFetchEnabled ? record.fetchedBody : nil,
-            isArchived: record.recordState == .archived,
             updatedAt: Self.chatGptISO8601String(record.updatedAt),
             tags: tags,
-            metadata: ChatGptPersonalLinkMetadata(
-                authorName: record.fetchedAuthorName,
-                bodySummary: record.bodySummary,
-                description: record.description,
-                thumbnailURL: record.thumbnailURL,
-                normalizedHost: record.normalizedHost,
-                rawSourceHost: record.rawSourceHost,
-                serviceType: record.serviceType.rawValue,
-                contentFetchAllowed: contentFetchEnabled
-            )
+            metadata: ChatGptPersonalLinkMetadata(contentFetchAllowed: false)
         )
     }
 
@@ -2644,6 +2793,9 @@ final class SharedTagCloudService: @unchecked Sendable {
     }
 
     func deleteAccount() async -> SharedTagAccountDeletionResult {
+        if let pendingState = localAccountCleanupState {
+            return .localCleanupRequired(pendingState)
+        }
         guard config.isConfigured else {
             return .failure("共有タグクラウドの設定がありません")
         }
@@ -2652,8 +2804,6 @@ final class SharedTagCloudService: @unchecked Sendable {
         }
         do {
             try await syncRemoteDataSource.deleteAccount(session: session)
-            try signOut()
-            return .success
         } catch let error as SharedTagCloudError {
             switch error {
             case .authRequired:
@@ -2674,6 +2824,51 @@ final class SharedTagCloudService: @unchecked Sendable {
             }
             return .failure(error.localizedDescription)
         }
+        localCleanupStateStore.save(
+            SharedTagAccountLocalCleanupState(
+                aiDataCleanupPending: true,
+                signOutCleanupPending: true
+            )
+        )
+        return performLocalAccountCleanup()
+    }
+
+    func retryLocalAccountCleanup() -> SharedTagAccountDeletionResult {
+        performLocalAccountCleanup()
+    }
+
+    private func performLocalAccountCleanup() -> SharedTagAccountDeletionResult {
+        guard var state = localCleanupStateStore.load() else { return .success }
+        if state.aiDataCleanupPending {
+            do {
+                try clearLocalAiData()
+                state = SharedTagAccountLocalCleanupState(
+                    aiDataCleanupPending: false,
+                    signOutCleanupPending: state.signOutCleanupPending
+                )
+                localCleanupStateStore.save(state)
+            } catch {
+                // 保留AIデータ清掃待ちのmarker。signOutは独立して続行する。
+            }
+        }
+        if state.signOutCleanupPending {
+            do {
+                try signOut()
+                state = SharedTagAccountLocalCleanupState(
+                    aiDataCleanupPending: state.aiDataCleanupPending,
+                    signOutCleanupPending: false
+                )
+                localCleanupStateStore.save(state)
+            } catch {
+                // 保留中の項目だけをmarkerに残す。
+            }
+        }
+        guard state.requiresCleanup else {
+            localCleanupStateStore.clear()
+            return .success
+        }
+        localCleanupStateStore.save(state)
+        return .localCleanupRequired(state)
     }
 
     private func refreshLocalState(session: SharedTagAuthSession) async throws {
@@ -2926,15 +3121,13 @@ private struct ChatGptPersonalLinkOpsPayload: Encodable {
     let ops: [ChatGptPersonalLinkOperation]
 }
 
-private struct ChatGptPersonalLinkOperation: Encodable {
+struct ChatGptPersonalLinkOperation: Encodable, Equatable, Sendable {
     let opID: String
     let clientEntryID: String
     let operation = "upsert_link"
     let url: String
     let title: String?
     let memo: String?
-    let extractedText: String?
-    let isArchived: Bool
     let updatedAt: String
     let tags: [String]
     let metadata: ChatGptPersonalLinkMetadata
@@ -2946,32 +3139,16 @@ private struct ChatGptPersonalLinkOperation: Encodable {
         case url
         case title
         case memo
-        case extractedText = "extracted_text"
-        case isArchived = "is_archived"
         case updatedAt = "updated_at"
         case tags
         case metadata
     }
 }
 
-private struct ChatGptPersonalLinkMetadata: Encodable {
-    let authorName: String?
-    let bodySummary: String?
-    let description: String?
-    let thumbnailURL: String?
-    let normalizedHost: String
-    let rawSourceHost: String
-    let serviceType: String
+struct ChatGptPersonalLinkMetadata: Encodable, Equatable, Sendable {
     let contentFetchAllowed: Bool
 
     enum CodingKeys: String, CodingKey {
-        case authorName = "author_name"
-        case bodySummary = "body_summary"
-        case description
-        case thumbnailURL = "thumbnail_url"
-        case normalizedHost = "normalized_host"
-        case rawSourceHost = "raw_source_host"
-        case serviceType = "service_type"
         case contentFetchAllowed = "content_fetch_allowed"
     }
 }

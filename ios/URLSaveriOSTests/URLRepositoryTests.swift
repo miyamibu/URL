@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+@testable import URLSaveriOS
 
 final class URLRepositoryTests: XCTestCase {
     private var databaseURL: URL!
@@ -98,32 +99,27 @@ final class URLRepositoryTests: XCTestCase {
         XCTAssertEqual(entry.metadataState, .ready)
     }
 
-    func testCollectionLifecycleCreateAssignReorderAndDelete() throws {
-        let defaultCollection = try XCTUnwrap(try repository.loadCollections().first)
-        XCTAssertEqual(defaultCollection.id, 1)
-        XCTAssertEqual(defaultCollection.name, "受信箱")
+    func testLegacyCollectionSchemaAndDefaultDecodeRemain() throws {
+        XCTAssertEqual(try repository.database.fetchInt("SELECT id FROM collections WHERE id = 1;"), 1)
+        XCTAssertEqual(try repository.database.fetchString("SELECT name FROM collections WHERE id = 1;"), "受信箱")
 
-        let work = try XCTUnwrap(try repository.createCollection(name: " work "))
-        let later = try XCTUnwrap(try repository.createCollection(name: "later"))
-        let duplicateWork = try XCTUnwrap(try repository.createCollection(name: "work"))
-        XCTAssertEqual(duplicateWork.id, work.id)
+        let saved = try repository.saveFromManualInput("https://example.com/legacy-collection")
+        let entryID = try XCTUnwrap(saved.entryID)
+        try repository.database.execute(
+            """
+            INSERT INTO collections (id, name, normalized_name, sort_order, created_at, updated_at)
+            VALUES (20, '旧コレクション', '旧コレクション', 1, 1, 1);
+            """
+        )
+        try repository.database.execute(
+            "UPDATE url_entries SET collection_id = 20 WHERE id = ?;",
+            binds: [sql(entryID)]
+        )
 
-        let saved = try repository.saveFromManualInput("https://example.com/collection-work")
-        XCTAssertTrue(try repository.assignCollection(entryID: saved.entryID!, collectionID: work.id))
-        XCTAssertEqual(try repository.loadEntry(id: saved.entryID!)?.collectionID, work.id)
-        let sameNameTag = try XCTUnwrap(try repository.createLocalTag(name: "work"))
-        XCTAssertTrue(try repository.assignLocalTag(entryID: saved.entryID!, tagID: sameNameTag.id))
+        XCTAssertEqual(try repository.loadEntry(id: entryID)?.collectionID, 20)
 
-        XCTAssertTrue(try repository.reorderCollections(collectionIDs: [later.id, work.id]))
-        let customOrder = try repository.loadCollections()
-            .filter { $0.id != 1 }
-            .map(\.id)
-        XCTAssertEqual(customOrder, [later.id, work.id])
-
-        XCTAssertTrue(try repository.deleteCollection(id: work.id))
-        XCTAssertEqual(try repository.loadEntry(id: saved.entryID!)?.collectionID, 1)
-        XCTAssertFalse(try repository.loadLocalTags().contains { $0.name == "work" })
-        XCTAssertFalse(try repository.deleteCollection(id: 1))
+        let newEntry = try repository.saveFromManualInput("https://example.com/legacy-collection-default")
+        XCTAssertEqual(try repository.loadEntry(id: try XCTUnwrap(newEntry.entryID))?.collectionID, 1)
     }
 
     func testLocalTagsCreateAtFrontAndReorder() throws {
@@ -364,11 +360,107 @@ final class URLRepositoryTests: XCTestCase {
         let exported = try XCTUnwrap(repository.exportLocalTag(tagID: tag.id))
         XCTAssertEqual(exported.urlsaverVersion, 1)
         XCTAssertEqual(exported.tag, "shared-import")
-        XCTAssertTrue(exported.urls.contains { $0.url == "https://example.com/new-entry" && $0.title == "Imported title" })
+        XCTAssertTrue(exported.urls.contains { $0.url == "https://example.com/new-entry" && $0.title == nil && $0.memo == nil })
+
+        let exportedData = try JSONEncoder().encode(exported)
+        let exportedJSON = try XCTUnwrap(String(data: exportedData, encoding: .utf8))
+        XCTAssertFalse(exportedJSON.contains("\"title\""))
+        XCTAssertFalse(exportedJSON.contains("\"memo\""))
 
         let existing = try XCTUnwrap(repository.loadEntry(id: mergeOnly.entryID!))
         XCTAssertEqual(existing.userTitle, "existing title")
         XCTAssertEqual(existing.memo, "existing memo")
+    }
+
+    func testManualTagImportPreparationDoesNotWriteBeforeConfirmationAndStripsLegacyFields() throws {
+        let legacyJSON = """
+        {
+          "urlsaver_version": 1,
+          "tag": "  manual gate  ",
+          "exported_at": 1234,
+          "urls": [
+            {"url": "https://example.com/manual-tag-import", "title": "Legacy title", "memo": "Legacy memo"},
+            {"url": "not-a-url", "title": "Ignored title", "memo": "Ignored memo"}
+          ]
+        }
+        """
+
+        let appRepository = try URLSaveriOS.URLRepository(databaseURL: databaseURL)
+
+        guard case .ready(let preview) = ManualTagImportPreparation.prepare(input: legacyJSON) else {
+            XCTFail("legacy tag JSON should be prepared for confirmation")
+            return
+        }
+
+        XCTAssertEqual(preview.tagName, "manual gate")
+        XCTAssertEqual(preview.validURLCount, 1)
+        XCTAssertTrue(try appRepository.observeActiveSnapshot().isEmpty)
+        XCTAssertTrue(try appRepository.loadLocalTags().isEmpty)
+        XCTAssertEqual(preview.payload.urls.first?.title, nil)
+        XCTAssertEqual(preview.payload.urls.first?.memo, nil)
+
+        let result = try ManualTagImportPreparation.importConfirmed(preview, repository: appRepository)
+
+        XCTAssertEqual(result.created, 1)
+        let entry = try XCTUnwrap(try appRepository.observeActiveSnapshot().first {
+            $0.normalizedURL == "https://example.com/manual-tag-import"
+        })
+        XCTAssertNil(entry.userTitle)
+        XCTAssertEqual(entry.memo, "")
+    }
+
+    func testManualTagImportCancellationLeavesDatabaseUnchanged() throws {
+        let payload = TagSharePayload(
+            urlsaverVersion: 1,
+            tag: "cancelled-import",
+            exportedAt: 1,
+            urls: [TagShareURL(url: "https://example.com/cancelled-import")]
+        )
+        let input = String(data: try JSONEncoder().encode(payload), encoding: .utf8)!
+
+        guard case .ready = ManualTagImportPreparation.prepare(input: input) else {
+            XCTFail("tag JSON should be prepared for confirmation")
+            return
+        }
+
+        XCTAssertTrue(try repository.observeActiveSnapshot().isEmpty)
+        XCTAssertTrue(try repository.loadLocalTags().isEmpty)
+    }
+
+    func testManualTagImportPreparationValidatesURLCountAndSizeBeforeConfirmation() throws {
+        let tooManyURLs = (0...URLRules.maxBatchSaveURLsPerIntake).map {
+            TagShareURL(url: "https://example.com/too-many-\($0)")
+        }
+        let tooManyPayload = TagSharePayload(
+            urlsaverVersion: 1,
+            tag: "too-many",
+            exportedAt: 1,
+            urls: tooManyURLs
+        )
+        let tooManyInput = String(data: try JSONEncoder().encode(tooManyPayload), encoding: .utf8)!
+
+        guard case .invalid(let countMessage) = ManualTagImportPreparation.prepare(input: tooManyInput) else {
+            XCTFail("too many URLs should stop before confirmation")
+            return
+        }
+        XCTAssertTrue(countMessage.contains("件以内"))
+
+        let oversizedInput = "{" + String(repeating: "a", count: URLRules.maxInputTextBytes) + "}"
+        guard case .invalid(let sizeMessage) = ManualTagImportPreparation.prepare(input: oversizedInput) else {
+            XCTFail("oversized JSON should stop before confirmation")
+            return
+        }
+        XCTAssertTrue(sizeMessage.contains("256KB"))
+        XCTAssertTrue(try repository.observeActiveSnapshot().isEmpty)
+        XCTAssertTrue(try repository.loadLocalTags().isEmpty)
+    }
+
+    func testManualURLInputStillCreatesEntryNormally() throws {
+        let result = try repository.saveFromManualInput("https://example.com/manual-url-still-works")
+
+        XCTAssertEqual(result.result, .created)
+        XCTAssertNotNil(result.entryID)
+        XCTAssertEqual(try repository.observeActiveSnapshot().count, 1)
     }
 
     func testManualInputTooLargeReturnsExplicitResult() throws {

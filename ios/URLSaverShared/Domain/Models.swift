@@ -598,6 +598,38 @@ struct TagShareURL: Codable, Equatable, Sendable {
     let url: String
     let title: String?
     let memo: String?
+
+    init(url: String, title: String? = nil, memo: String? = nil) {
+        self.url = url
+        self.title = title
+        self.memo = memo
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case url
+        case title
+        case memo
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        url = try container.decode(String.self, forKey: .url)
+        // Legacy v1 payloads may contain title/memo. They are intentionally
+        // decoded for import compatibility, but new exports omit both keys.
+        title = try container.decodeIfPresent(String.self, forKey: .title)
+        memo = try container.decodeIfPresent(String.self, forKey: .memo)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(url, forKey: .url)
+        if let title, !title.isEmpty {
+            try container.encode(title, forKey: .title)
+        }
+        if let memo, !memo.isEmpty {
+            try container.encode(memo, forKey: .memo)
+        }
+    }
 }
 
 struct TagImportResult: Equatable, Sendable {

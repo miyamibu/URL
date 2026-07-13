@@ -13,8 +13,8 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.dp
-import jp.mimac.urlsaver.data.CollectionEntity
 import jp.mimac.urlsaver.domain.ServiceType
+import jp.mimac.urlsaver.domain.TagWithCount
 import jp.mimac.urlsaver.ui.components.ServiceFilterRow
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -31,7 +31,7 @@ class ServiceFilterRowDragTest {
 
         composeRule.setContent {
             var selectedService by remember { mutableStateOf(ServiceType.ALL) }
-            var selectedCollectionId by remember { mutableStateOf<Long?>(null) }
+            var selectedLocalTagId by remember { mutableStateOf<Long?>(null) }
             var serviceOrder by remember {
                 mutableStateOf(
                 listOf(
@@ -42,18 +42,12 @@ class ServiceFilterRowDragTest {
                 ),
                 )
             }
-            var collections by remember {
-                mutableStateOf(
-                listOf(
-                    collection(id = 10L, name = "仕事"),
-                ),
-                )
-            }
+            val localTags = remember { listOf(localTag(id = 10L, name = "仕事")) }
             var topTokens by remember {
                 mutableStateOf(
                 listOf(
                     "all",
-                    "collection_10",
+                    "local_tag_10",
                     "service_YOUTUBE",
                     "service_X",
                     "service_INSTAGRAM",
@@ -68,27 +62,22 @@ class ServiceFilterRowDragTest {
                         selectedService = selectedService,
                         onSelectService = { service ->
                             selectedService = service
-                            selectedCollectionId = null
+                            selectedLocalTagId = null
                         },
                         serviceOrder = serviceOrder,
                         topFilterOrderTokens = topTokens,
                         onReorderServices = { reordered ->
                             serviceOrder = reordered
                         },
-                        collections = collections,
-                        selectedCollectionId = selectedCollectionId,
-                        onSelectCollection = { collectionId ->
-                            selectedCollectionId = collectionId
-                            selectedService = ServiceType.ALL
-                        },
                         onReorderTopFilters = { reordered ->
                             latestTopTokens = reordered
                             topTokens = reordered
                         },
-                        onReorderCollections = { reorderedIds ->
-                            collections = reorderedIds.map { reorderedId ->
-                                collections.first { collection -> collection.id == reorderedId }
-                            }
+                        localTags = localTags,
+                        selectedLocalTagId = selectedLocalTagId,
+                        onSelectLocalTag = { localTagId ->
+                            selectedLocalTagId = localTagId
+                            if (localTagId != null) selectedService = ServiceType.ALL
                         },
                     )
                 }
@@ -103,7 +92,7 @@ class ServiceFilterRowDragTest {
         composeRule.runOnIdle {
             assertEquals(
                 listOf(
-                    "collection_10",
+                    "local_tag_10",
                     "service_YOUTUBE",
                     "service_X",
                     "all",
@@ -116,12 +105,12 @@ class ServiceFilterRowDragTest {
     }
 
     @Test
-    fun dragCollectionChip_keepsDroppedMiddlePositionAfterRelease() {
+    fun dragLocalTagChip_keepsDroppedMiddlePositionAfterRelease() {
         var latestTopTokens = emptyList<String>()
 
         composeRule.setContent {
             var selectedService by remember { mutableStateOf(ServiceType.ALL) }
-            var selectedCollectionId by remember { mutableStateOf<Long?>(null) }
+            var selectedLocalTagId by remember { mutableStateOf<Long?>(null) }
             var serviceOrder by remember {
                 mutableStateOf(
                 listOf(
@@ -132,18 +121,12 @@ class ServiceFilterRowDragTest {
                 ),
                 )
             }
-            var collections by remember {
-                mutableStateOf(
-                listOf(
-                    collection(id = 10L, name = "仕事"),
-                ),
-                )
-            }
+            val localTags = remember { listOf(localTag(id = 10L, name = "仕事")) }
             var topTokens by remember {
                 mutableStateOf(
                 listOf(
                     "all",
-                    "collection_10",
+                    "local_tag_10",
                     "service_YOUTUBE",
                     "service_X",
                     "service_INSTAGRAM",
@@ -158,27 +141,22 @@ class ServiceFilterRowDragTest {
                         selectedService = selectedService,
                         onSelectService = { service ->
                             selectedService = service
-                            selectedCollectionId = null
+                            selectedLocalTagId = null
                         },
                         serviceOrder = serviceOrder,
                         topFilterOrderTokens = topTokens,
                         onReorderServices = { reordered ->
                             serviceOrder = reordered
                         },
-                        collections = collections,
-                        selectedCollectionId = selectedCollectionId,
-                        onSelectCollection = { collectionId ->
-                            selectedCollectionId = collectionId
-                            selectedService = ServiceType.ALL
-                        },
                         onReorderTopFilters = { reordered ->
                             latestTopTokens = reordered
                             topTokens = reordered
                         },
-                        onReorderCollections = { reorderedIds ->
-                            collections = reorderedIds.map { reorderedId ->
-                                collections.first { collection -> collection.id == reorderedId }
-                            }
+                        localTags = localTags,
+                        selectedLocalTagId = selectedLocalTagId,
+                        onSelectLocalTag = { localTagId ->
+                            selectedLocalTagId = localTagId
+                            if (localTagId != null) selectedService = ServiceType.ALL
                         },
                     )
                 }
@@ -187,7 +165,7 @@ class ServiceFilterRowDragTest {
 
         composeRule.waitForIdle()
 
-        dragChipToRightEdge(sourceTag = "top_filter_collection_10")
+        dragChipToRightEdge(sourceTag = "top_filter_local_tag_10")
 
         composeRule.waitForIdle()
         composeRule.runOnIdle {
@@ -196,7 +174,7 @@ class ServiceFilterRowDragTest {
                     "all",
                     "service_YOUTUBE",
                     "service_X",
-                    "collection_10",
+                    "local_tag_10",
                     "service_INSTAGRAM",
                     "service_WEB",
                 ),
@@ -242,17 +220,14 @@ class ServiceFilterRowDragTest {
         }
     }
 
-    private fun collection(
+    private fun localTag(
         id: Long,
         name: String,
-    ): CollectionEntity {
-        val now = System.currentTimeMillis()
-        return CollectionEntity(
+    ): TagWithCount {
+        return TagWithCount(
             id = id,
             name = name,
-            sortOrder = 0,
-            createdAt = now,
-            updatedAt = now,
+            urlCount = 0,
         )
     }
 }

@@ -1,0 +1,32 @@
+# Collection retirement restoration record (iOS)
+#
+# This archive intentionally keeps the mixed-file retirement boundary explicit.
+# It is not applied to the working tree. Restore only the listed hunks if a
+# rollback is approved; do not restore the legacy collection UI by default.
+# SQLite compatibility remains in URLRepository.swift (collections table,
+# collection_id, default id 1, and legacy decode).
+#
+# Mixed files and retired symbols:
+# - ios/URLSaverShared/Data/URLRepository.swift
+#   loadCollections, createCollection, assignCollection, reorderCollections,
+#   deleteCollection, normalizeCollectionName, loadCollection, and
+#   loadCollectionByNormalizedName.
+# - ios/URLSaveriOS/App/URLSaverAppModel.swift
+#   collections state, collection CRUD/assignment/reorder/delete actions, and
+#   collection-local-tag bridge.
+# - ios/URLSaveriOS/UI/AppChrome.swift
+#   ServiceFilterRow collection bindings, chips, and collection actions.
+# - ios/URLSaveriOS/UI/RootView.swift
+#   showsCollectionUI branches, collection filters, save-target controls, and
+#   CollectionManagementSheet.
+# - ios/URLSaveriOS/UI/DetailView.swift
+#   collection detail state, section, and assignment sheet.
+# - ios/URLSaveriOSTests/URLRepositoryTests.swift
+#   collection CRUD assertions were replaced by legacy schema/default decode
+#   coverage; restore the old test only with the matching implementation.
+# - ios/URLSaveriOSTests/ServiceFilterTests.swift
+#   collection filter/bridge assertions were retired with the active UI.
+#
+# Restoration rule: preserve all current URL, local-tag, shared-tag, Help,
+# bottom-five-action, and normalized/open URL behavior when reconstructing any
+# individual hunk. Do not restore DefaultProfilePig or unrelated changes.

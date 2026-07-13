@@ -13,48 +13,6 @@ final class ServiceFilterTests: XCTestCase {
         XCTAssertEqual(filteredEntries([tiktok, web], selectedService: .tiktok).map(\.id), [1])
     }
 
-    func testFilteredEntriesMatchesSelectedCollectionOnly() {
-        let inbox = makeRecord(id: 1, serviceType: .web, host: "example.com", collectionID: 1)
-        let recipes = makeRecord(id: 2, serviceType: .web, host: "recipes.example.com", collectionID: 20)
-
-        XCTAssertEqual(
-            filteredEntries([inbox, recipes], selectedService: .all, selectedCollectionID: 20).map(\.id),
-            [2]
-        )
-    }
-
-    func testFilteredEntriesIncludesSameNameLocalTagForSelectedCollection() {
-        let direct = makeRecord(id: 1, serviceType: .web, host: "recipes.example.com", collectionID: 20)
-        let tagged = makeRecord(id: 2, serviceType: .web, host: "tagged.example.com", collectionID: 1)
-        let other = makeRecord(id: 3, serviceType: .web, host: "other.example.com", collectionID: 1)
-        let recipeCollection = URLSaveriOS.CollectionSummary(
-            id: 20,
-            name: "レシピ",
-            sortOrder: 1,
-            activeURLCount: 1,
-            createdAt: .distantPast,
-            updatedAt: .distantPast
-        )
-        let recipeTag = URLSaveriOS.LocalTagSummary(
-            id: 30,
-            name: "レシピ",
-            activeURLCount: 1,
-            createdAt: .distantPast,
-            updatedAt: .distantPast
-        )
-
-        let result = filteredEntries(
-            [direct, tagged, other],
-            selectedService: .all,
-            selectedCollectionID: 20,
-            localTagAssignments: [2: [30]],
-            localTags: [recipeTag],
-            collections: [recipeCollection]
-        )
-
-        XCTAssertEqual(result.map(\.id), [1, 2])
-    }
-
     func testSearchFilteredEntriesMatchesOnlyAssignedLocalTagName() {
         let first = makeRecord(id: 1, serviceType: .web, host: "example.com")
         let second = makeRecord(id: 2, serviceType: .web, host: "travel.example.com")
@@ -94,27 +52,6 @@ final class ServiceFilterTests: XCTestCase {
         )
 
         XCTAssertTrue(result.isEmpty)
-    }
-
-    func testSearchFilteredEntriesMatchesOwnCollectionName() {
-        let inbox = makeRecord(id: 1, serviceType: .web, host: "example.com", collectionID: 1)
-        let recipes = makeRecord(id: 2, serviceType: .web, host: "recipes.example.com", collectionID: 20)
-        let recipeCollection = URLSaveriOS.CollectionSummary(
-            id: 20,
-            name: "レシピ",
-            sortOrder: 1,
-            activeURLCount: 1,
-            createdAt: .distantPast,
-            updatedAt: .distantPast
-        )
-
-        let result = searchFilteredEntries(
-            [inbox, recipes],
-            query: "レシピ",
-            collections: [recipeCollection]
-        )
-
-        XCTAssertEqual(result.map(\.id), [2])
     }
 
     func testSearchFilteredEntriesMatchesCanonicalContentFields() {

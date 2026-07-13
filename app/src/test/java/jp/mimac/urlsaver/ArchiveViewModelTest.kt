@@ -1,8 +1,6 @@
 package jp.mimac.urlsaver
 
 import android.content.Intent
-import jp.mimac.urlsaver.data.CollectionEntity
-import jp.mimac.urlsaver.data.CreateCollectionResult
 import jp.mimac.urlsaver.data.EntryCardDisplayModeStore
 import jp.mimac.urlsaver.data.SaveMemoResult
 import jp.mimac.urlsaver.data.SaveTitleResult
@@ -52,13 +50,7 @@ class ArchiveViewModelTest {
     private class FakeUrlRepository : UrlRepository {
         override fun observeActiveEntries(): Flow<List<UrlEntryEntity>> = emptyFlow()
 
-        override fun observeCollections(): Flow<List<CollectionEntity>> = emptyFlow()
-
         override suspend fun saveFromManualInput(input: String): SaveResult = SaveResult(ShareSaveResult.SAVE_FAILED)
-
-        override suspend fun createCollection(name: String): CreateCollectionResult {
-            return CreateCollectionResult(success = false, invalidName = true)
-        }
 
         override suspend fun archive(entryId: Long): Boolean = false
 

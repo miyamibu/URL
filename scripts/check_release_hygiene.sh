@@ -37,6 +37,49 @@ if [[ -f ios/Config/URLSaverSecrets.local-only.xcconfig ]]; then
   fi
 fi
 
+privacy_required_reason_usage_found=false
+if grep -R -E -q '(@AppStorage|UserDefaults)' ios/URLSaverShared ios/URLSaveriOS ios/URLSaverShareExtension; then
+  privacy_required_reason_usage_found=true
+fi
+
+for privacy_manifest in ios/URLSaveriOS/PrivacyInfo.xcprivacy ios/URLSaverShareExtension/PrivacyInfo.xcprivacy; do
+  if [[ ! -f "$privacy_manifest" ]]; then
+    fail "NO_GO missing iOS privacy manifest: $privacy_manifest"
+  elif ! plutil -lint "$privacy_manifest" >/dev/null 2>&1; then
+    fail "NO_GO invalid iOS privacy manifest: $privacy_manifest"
+  else
+    accessed_api_block="$(grep -A1 -F '<key>NSPrivacyAccessedAPITypes</key>' "$privacy_manifest" || true)"
+    if [[ "$privacy_required_reason_usage_found" == true ]] && printf '%s\n' "$accessed_api_block" | grep -Eq '<array[[:space:]]*/>'; then
+      fail "NO_GO iOS required-reason API usage is present but no approved reason is recorded in $privacy_manifest; do not guess a reason code"
+    else
+      pass "iOS privacy manifest is valid and has required-reason entries or no detected covered API usage: $privacy_manifest"
+    fi
+  fi
+done
+
+reset_password_page="web/invite-link/auth/reset-password/index.html"
+reset_password_cdn_url='src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.53.0/dist/umd/supabase.min.js"'
+reset_password_cdn_sri='integrity="sha384-H9dj4GG/hgfwNjlYa740FF9geXbzyXSgepgoobvIAW49UUAcfk+GAiBnLDIs4hRh"'
+if [[ -f "$reset_password_page" ]] \
+  && grep -Fq "$reset_password_cdn_url" "$reset_password_page" \
+  && grep -Fq "$reset_password_cdn_sri" "$reset_password_page" \
+  && grep -Fq 'crossorigin="anonymous"' "$reset_password_page"; then
+  pass "reset-password CDN script has the verified SRI hash"
+else
+  fail "NO_GO reset-password CDN script is missing the verified SRI hash"
+fi
+
+if [[ -f web/invite-link/vercel.json ]] \
+  && grep -Fq '"source": "/auth/reset-password/:path*"' web/invite-link/vercel.json \
+  && grep -Fq '"key": "Content-Security-Policy"' web/invite-link/vercel.json \
+  && grep -Fq 'sha256-RAh35s8ZX25KPMRobh7ugOpopFd2XiiFHjsEuQ8/k90=' web/invite-link/vercel.json \
+  && grep -Fq 'sha256-IkDFeozcg3Saa4fKYO3EhGCqzC67yl4xj9I6f8cINtI=' web/invite-link/vercel.json \
+  && ! grep -Eq 'unsafe-inline|unsafe-eval' web/invite-link/vercel.json; then
+  pass "reset-password route has a strict hash-based CSP"
+else
+  fail "NO_GO reset-password route is missing a strict hash-based CSP"
+fi
+
 grep -q 'applicationId = "jp.miyamibu.urlalbum"' app/build.gradle.kts \
   && pass "canonical Android applicationId is configured" \
   || fail "canonical Android applicationId is missing"

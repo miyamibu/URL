@@ -7,6 +7,7 @@ import androidx.work.WorkManager
 import jp.mimac.urlsaver.BuildConfig
 import jp.mimac.urlsaver.billing.GooglePlayBillingService
 import jp.mimac.urlsaver.data.AppDatabase
+import jp.mimac.urlsaver.data.AiTransparencyRepository
 import jp.mimac.urlsaver.data.ChatGptPersonalLinkSyncRepository
 import jp.mimac.urlsaver.data.ConfiguredContactSupportClient
 import jp.mimac.urlsaver.data.ContactSupportClient
@@ -24,10 +25,12 @@ import jp.mimac.urlsaver.data.DataStoreServiceFilterOrderStore
 import jp.mimac.urlsaver.data.DataStoreTopFilterOrderStore
 import jp.mimac.urlsaver.data.ServiceFilterOrderStore
 import jp.mimac.urlsaver.data.DefaultExportRepository
+import jp.mimac.urlsaver.data.LocalAccountCleanupStore
 import jp.mimac.urlsaver.data.PendingInviteStore
 import jp.mimac.urlsaver.data.SharedTagAuthRemoteDataSource
 import jp.mimac.urlsaver.data.SharedPreferencesSharedTagAuthSessionProvider
 import jp.mimac.urlsaver.data.SharedPreferencesPendingInviteStore
+import jp.mimac.urlsaver.data.SharedPreferencesLocalAccountCleanupStore
 import jp.mimac.urlsaver.data.SharedPreferencesSharedTagOAuthStateStore
 import jp.mimac.urlsaver.data.SharedPreferencesChatGptPersonalLinkSyncSettingsStore
 import jp.mimac.urlsaver.data.SharedTagAuthSessionProvider
@@ -124,6 +127,9 @@ class AppContainer(context: Context) {
     val pendingInviteStore: PendingInviteStore by lazy {
         SharedPreferencesPendingInviteStore(appContext)
     }
+    val localAccountCleanupStore: LocalAccountCleanupStore by lazy {
+        SharedPreferencesLocalAccountCleanupStore(appContext)
+    }
     private val sharedTagSyncRemoteConfig: SharedTagSyncRemoteConfig by lazy {
         SharedTagSyncRemoteConfig(
             enabled = BuildConfig.SHARED_TAG_CLOUD_ENABLED,
@@ -182,6 +188,18 @@ class AppContainer(context: Context) {
                 authSessionProvider = sharedTagAuthSessionProvider,
                 authRemoteDataSource = sharedTagAuthRemoteDataSource,
             ),
+            operationEnabled = BuildConfig.CHATGPT_PERSONAL_LINK_SYNC_OPERATION_ENABLED &&
+                sharedTagSyncRemoteConfig.isConfigured,
+        )
+    }
+    val aiTransparencyRepository: AiTransparencyRepository by lazy {
+        AiTransparencyRepository(
+            database = database,
+            aiTransparencyDao = database.aiTransparencyDao(),
+            urlEntryDao = database.urlEntryDao(),
+            tagDao = database.tagDao(),
+            nowIso = { java.time.Instant.ofEpochMilli(clock.nowEpochMillis()).toString() },
+            nowMillis = { clock.nowEpochMillis() },
         )
     }
     private val sharedTagSyncScheduler: SharedTagSyncScheduler by lazy {
@@ -247,8 +265,6 @@ class AppContainer(context: Context) {
         DefaultUrlRepository(
             database = database,
             dao = database.urlEntryDao(),
-            collectionDao = database.collectionDao(),
-            userLabelDao = database.userLabelDao(),
             tagDao = database.tagDao(),
             clock = clock,
             scheduler = scheduler,
@@ -271,6 +287,8 @@ class AppContainer(context: Context) {
             remoteDataSource = sharedTagSyncRemoteDataSource,
             remoteConfig = sharedTagSyncRemoteConfig,
             usageSummaryDataSource = usageSummaryDataSource,
+            aiLocalDataClearer = aiTransparencyRepository,
+            localAccountCleanupStore = localAccountCleanupStore,
         )
     }
 

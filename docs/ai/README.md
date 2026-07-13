@@ -4,9 +4,10 @@
 AI-friendly export、AI透明化、ChatGPT向け個人リンク検索、read-only MCP の現行契約を、実装済み範囲と未完了ゲートに分けて管理する。
 
 ## Context
-- 通常UIの `ChatGPT連携` 設定は非表示のまま。
+- Android/iOS の共有タグプロフィール画面には `ChatGPTに保存リンクを同期` カードを表示する。外部接続未設定時は「現在は利用できません」と表示し、操作不可とする。
+- AI透明化は Android の `DEBUG && AI_TRANSPARENCY_ENABLED`、iOS の `DEBUG` と Info.plist flag に限定された Debug-only UI で、通常のRelease UIには出ない。
 - AI向けの正式なユーザー導線は Android / iOS の Export 画面が中心。
-- web/admin の MCP endpoint は read-only 試作であり、production公開やOpenAI提出は未実施。
+- web/admin の MCP endpoint は read-only 試作であり、production公開やOpenAI提出は未実施。MCP/Store/Supabase live は未検証の外部ゲートであり、repo内のローカル実装/検証とは分離する。
 
 ## Index
 - `feature-inventory.md`: 実装済み/未実装の棚卸し。

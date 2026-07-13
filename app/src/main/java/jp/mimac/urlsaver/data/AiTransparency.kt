@@ -1,7 +1,9 @@
 package jp.mimac.urlsaver.data
 
+import androidx.room.withTransaction
 import jp.mimac.urlsaver.BuildConfig
 import jp.mimac.urlsaver.domain.RecordState
+import jp.mimac.urlsaver.domain.UrlRules
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -237,6 +239,7 @@ object AiTransparencyPolicy {
     ): AiTransparencySource {
         val reasons = buildList {
             if (containsSharedTag) add("shared_tag_default_excluded")
+            if (entry.localProvenanceCount <= 0) add("no_local_provenance")
             if (entry.recordState == RecordState.ARCHIVED) add("archived_default_excluded")
             if (entry.recordState == RecordState.PENDING_DELETE) add("pending_delete_excluded")
         }.distinct().sorted()
@@ -254,6 +257,10 @@ object AiTransparencyPolicy {
             aiEligible = reasons.isEmpty(),
             exclusionReasons = reasons,
         )
+    }
+
+    fun publicSafeIdForEntry(entry: UrlEntryEntity): String {
+        return stableId("entry", entry.normalizedUrl)
     }
 
     fun sizeBucket(bytes: Int?): AiSizeBucket {
@@ -275,13 +282,37 @@ object AiTransparencyPolicy {
     }
 }
 
+fun interface AiLocalDataClearer {
+    suspend fun clearLocalAiData()
+}
+
 class AiTransparencyRepository(
+    private val database: AppDatabase,
     private val aiTransparencyDao: AiTransparencyDao,
     private val urlEntryDao: UrlEntryDao,
+    private val tagDao: TagDao,
     private val provider: AiProvider = MockAiProvider(),
     private val nowIso: () -> String,
     private val nowMillis: () -> Long = System::currentTimeMillis,
-) {
+) : AiLocalDataClearer {
+    suspend fun buildPreview(): AiSendPreview {
+        val sources = urlEntryDao.loadAllEntries().map { entry ->
+            val localTags = tagDao.getLocalOnlyTagsForEntry(entry.id).map { it.name }
+            val hasSharedTagAllocation = tagDao.countActiveSyncedRefsForEntry(entry.id) > 0
+            AiTransparencyPolicy.sourceForEntry(
+                entry = entry,
+                publicSafeId = AiTransparencyPolicy.publicSafeIdForEntry(entry),
+                tagNames = localTags,
+                containsSharedTag = entry.sharedReferenceCount > 0 || hasSharedTagAllocation,
+            )
+        }
+        return AiTransparencyPolicy.buildPreview(
+            actionKind = AiActionKind.PERSONAL_LINK_SYNC,
+            destination = "端末内モック",
+            sources = sources,
+        )
+    }
+
     suspend fun saveReceipt(
         preview: AiSendPreview,
         requestBytes: Int? = null,
@@ -339,6 +370,27 @@ class AiTransparencyRepository(
         return proposal
     }
 
+    suspend fun createLocalMockMemoDiff(
+        preview: AiSendPreview,
+        draft: AiDraft,
+    ): AiDiffProposal {
+        val source = preview.sources.firstOrNull { it.aiEligible && it.localEntryId != null }
+        val entry = source?.localEntryId?.let { urlEntryDao.findById(it) }
+        val operations = if (source != null && entry != null) {
+            listOf(
+                AiDiffOperation(
+                    targetPublicSafeId = source.publicSafeId,
+                    field = "memo",
+                    before = entry.memo,
+                    after = draft.body.take(2_000),
+                ),
+            )
+        } else {
+            emptyList()
+        }
+        return saveDiffProposal(draft, operations)
+    }
+
     suspend fun loadReceipt(receiptId: String): AiSendReceipt? {
         val entity = aiTransparencyDao.findReceipt(receiptId) ?: return null
         val sources = aiTransparencyDao.findSourcesForReceipt(receiptId)
@@ -354,32 +406,70 @@ class AiTransparencyRepository(
         aiTransparencyDao.findDiffProposal(proposalId)?.toModel()
 
     suspend fun applyDiffProposal(proposalId: String, confirm: Boolean): Boolean {
-        val proposalEntity = aiTransparencyDao.findDiffProposal(proposalId) ?: return false
-        val proposal = proposalEntity.toModel()
-        if (!confirm || proposal.applied) return false
-        val draft = aiTransparencyDao.findDraft(proposal.draftId) ?: return false
-        var changed = false
-        for (operation in proposal.operations) {
-            if (operation.field !in setOf("userTitle", "memo")) continue
-            val source = aiTransparencyDao.findSource(draft.receiptId, operation.targetPublicSafeId) ?: continue
-            val entryId = source.entryId ?: continue
-            val entry = urlEntryDao.findById(entryId) ?: continue
-            val updated = when (operation.field) {
-                "userTitle" -> entry.copy(userTitle = operation.after?.takeIf { it.isNotBlank() }, updatedAt = nowMillis())
-                "memo" -> entry.copy(memo = operation.after.orEmpty(), updatedAt = nowMillis())
-                else -> entry
+        if (!confirm) return false
+        return database.withTransaction {
+            val proposalEntity = aiTransparencyDao.findDiffProposal(proposalId) ?: return@withTransaction false
+            val proposal = proposalEntity.toModel()
+            if (proposal.applied || proposal.operations.isEmpty()) return@withTransaction false
+            if (proposal.operations.any { it.field !in ALLOWED_DIFF_FIELDS }) return@withTransaction false
+            if (proposal.operations.distinctBy { it.targetPublicSafeId to it.field }.size != proposal.operations.size) {
+                return@withTransaction false
             }
-            urlEntryDao.update(updated)
-            changed = true
-        }
-        if (changed) {
+            val draft = aiTransparencyDao.findDraft(proposal.draftId) ?: return@withTransaction false
+            val updates = proposal.operations.map { operation ->
+                val source = aiTransparencyDao.findSource(draft.receiptId, operation.targetPublicSafeId)
+                    ?: return@withTransaction false
+                val entryId = source.entryId ?: return@withTransaction false
+                val entry = urlEntryDao.findById(entryId) ?: return@withTransaction false
+                if (
+                    entry.recordState != RecordState.ACTIVE ||
+                    entry.localProvenanceCount <= 0 ||
+                    entry.sharedReferenceCount != 0 ||
+                    entry.pendingDeletionUntil != null ||
+                    tagDao.countActiveSyncedRefsForEntry(entry.id) > 0
+                ) {
+                    return@withTransaction false
+                }
+                val currentValue = when (operation.field) {
+                    "userTitle" -> entry.userTitle
+                    "memo" -> entry.memo
+                    else -> return@withTransaction false
+                }
+                if (currentValue != operation.before) return@withTransaction false
+                val normalizedAfter = when (operation.field) {
+                    "userTitle" -> {
+                        if (!UrlRules.isTitleLengthValid(operation.after.orEmpty())) return@withTransaction false
+                        UrlRules.normalizeUserTitle(operation.after)
+                    }
+                    "memo" -> {
+                        if (!UrlRules.isMemoLengthValid(operation.after.orEmpty())) return@withTransaction false
+                        UrlRules.normalizeMemo(operation.after)
+                    }
+                    else -> return@withTransaction false
+                }
+                entry to (operation.field to normalizedAfter)
+            }
+            val updatedAt = nowMillis()
+            val updatedEntries = linkedMapOf<Long, UrlEntryEntity>()
+            updates.forEach { (entry, change) ->
+                val current = updatedEntries[entry.id] ?: entry
+                val updated = when (change.first) {
+                    "userTitle" -> current.copy(userTitle = change.second, updatedAt = updatedAt)
+                    "memo" -> current.copy(memo = change.second.orEmpty(), updatedAt = updatedAt)
+                    else -> return@withTransaction false
+                }
+                updatedEntries[entry.id] = updated
+            }
+            updatedEntries.values.forEach { updated ->
+                urlEntryDao.update(updated)
+            }
             aiTransparencyDao.updateDiffProposal(proposalEntity.copy(applied = true))
             aiTransparencyDao.updateDraft(draft.copy(status = AiDraftStatus.ACCEPTED.name))
+            true
         }
-        return changed
     }
 
-    suspend fun clearLocalAiData() {
+    override suspend fun clearLocalAiData() {
         aiTransparencyDao.deleteAllLocalAiData()
     }
 
@@ -388,6 +478,7 @@ class AiTransparencyRepository(
             encodeDefaults = true
             ignoreUnknownKeys = true
         }
+        private val ALLOWED_DIFF_FIELDS = setOf("userTitle", "memo")
     }
 
     private fun AiSendReceipt.toEntity() = AiReceiptEntity(
@@ -424,7 +515,7 @@ class AiTransparencyRepository(
         publicSafeId = publicSafeId,
         entryId = localEntryId,
         title = title,
-        normalizedUrl = normalizedUrl,
+        normalizedUrl = "",
         tagNamesJson = json.encodeToString(tagNames.distinct().sorted()),
         sharedTagBoundary = sharedTagBoundary.name,
         aiEligible = aiEligible,
@@ -466,4 +557,5 @@ class AiTransparencyRepository(
         operations = json.decodeFromString(operationsJson),
         applied = applied,
     )
+
 }

@@ -27,10 +27,10 @@ The script exits safely if the URL, token, or confirmation env var is missing.
 
 ## Expected Search Response
 
-Request:
+Request (`tools/call` JSON-RPC):
 
 ```json
-{"tool":"search","args":{"query":"AI","limit":5}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search","arguments":{"query":"AI","limit":5}}}
 ```
 
 Expected:
@@ -42,10 +42,10 @@ Expected:
 
 ## Expected Fetch Response
 
-Request:
+Request (`tools/call` JSON-RPC):
 
 ```json
-{"tool":"fetch","args":{"id":"<publicSafeId>"}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"fetch","arguments":{"id":"<publicSafeId>"}}}
 ```
 
 Expected:
@@ -56,10 +56,10 @@ Expected:
 
 ## Expected Shared Tag Exclusion
 
-Request:
+Request (`tools/call` JSON-RPC):
 
 ```json
-{"tool":"search","args":{"query":"tag","includeSharedTags":true}}
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"search","arguments":{"query":"tag","includeSharedTags":true}}}
 ```
 
 Expected:

@@ -6,6 +6,8 @@ import jp.mimac.urlsaver.data.EntitlementGrantStore
 import jp.mimac.urlsaver.data.ContactSupportClient
 import jp.mimac.urlsaver.data.ContactSupportRequest
 import jp.mimac.urlsaver.data.ContactSupportResult
+import jp.mimac.urlsaver.data.LocalAccountCleanupMarker
+import jp.mimac.urlsaver.data.LocalAccountCleanupStore
 import jp.mimac.urlsaver.data.SharedPreferencesSharedTagAuthSessionProvider
 import jp.mimac.urlsaver.data.SharedTagAuthSession
 import jp.mimac.urlsaver.data.SharedTagAuthSessionProvider
@@ -125,6 +127,30 @@ class SharedTagAuthViewModelTest {
         assertEquals("failed", (result as ContactSupportUiResult.Failure).message)
     }
 
+    @Test
+    fun localCleanupPending_restoresWhenViewModelIsRecreated() {
+        val store = InMemoryLocalAccountCleanupStore().apply {
+            save(aiDataPending = true, sessionPending = false)
+        }
+
+        fun createViewModel() = SharedTagAuthViewModel(
+            tagRepository = FakeTagRepository(),
+            userProfileStore = FakeUserProfileStore(),
+            entitlementGrantRepository = fakeEntitlementGrantRepository(),
+            localAccountCleanupStore = store,
+        )
+
+        val firstViewModel = createViewModel()
+        val recreatedViewModel = createViewModel()
+
+        val expected = SharedTagAccountDeletionResult.LocalCleanupRequired(
+            aiDataPending = true,
+            sessionPending = false,
+        )
+        assertEquals(expected, firstViewModel.localAccountCleanupPending.value)
+        assertEquals(expected, recreatedViewModel.localAccountCleanupPending.value)
+    }
+
     private fun fakeEntitlementGrantRepository(
         redeemResult: List<EntitlementGrant> = emptyList(),
     ): EntitlementGrantRepository {
@@ -146,6 +172,23 @@ private class FakeContactSupportClient(
     private val result: ContactSupportResult,
 ) : ContactSupportClient {
     override suspend fun send(request: ContactSupportRequest): ContactSupportResult = result
+}
+
+private class InMemoryLocalAccountCleanupStore : LocalAccountCleanupStore {
+    private val state = MutableStateFlow<LocalAccountCleanupMarker?>(null)
+    override val pending: StateFlow<LocalAccountCleanupMarker?> = state
+
+    override fun save(aiDataPending: Boolean, sessionPending: Boolean) {
+        state.value = if (aiDataPending || sessionPending) {
+            LocalAccountCleanupMarker(aiDataPending, sessionPending)
+        } else {
+            null
+        }
+    }
+
+    override fun clear() {
+        state.value = null
+    }
 }
 
 private class FakeUserProfileStore : UserProfileStore {
@@ -267,6 +310,8 @@ private class FakeTagRepository(
         SharedTagAuthResult.Failure("not implemented")
     override suspend fun signOut() = Unit
     override suspend fun deleteAccount(): SharedTagAccountDeletionResult = SharedTagAccountDeletionResult.AuthRequired
+    override suspend fun retryLocalAccountCleanup(): SharedTagAccountDeletionResult =
+        SharedTagAccountDeletionResult.AuthRequired
     override suspend fun createInviteLink(tagId: Long): SharedTagInviteCreationResult =
         SharedTagInviteCreationResult.AuthRequired
     override suspend fun previewInvite(inviteToken: String): SharedTagInvitePreviewResult =

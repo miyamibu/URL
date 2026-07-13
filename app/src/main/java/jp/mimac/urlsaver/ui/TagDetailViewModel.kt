@@ -9,6 +9,7 @@ import jp.mimac.urlsaver.data.UrlRepository
 import jp.mimac.urlsaver.domain.EntryCardDisplayMode
 import jp.mimac.urlsaver.domain.AssignTagResult
 import jp.mimac.urlsaver.domain.MigrateSharedTagResult
+import jp.mimac.urlsaver.domain.RecordState
 import jp.mimac.urlsaver.domain.SharedTagCloudState
 import jp.mimac.urlsaver.domain.SharedTagInviteCreationResult
 import jp.mimac.urlsaver.domain.SharedTagMemberRecord
@@ -80,6 +81,14 @@ class TagDetailViewModel(
     suspend fun buildTagSharePayloadText(): String? {
         val payload = tagRepository.exportTag(tagId) ?: return null
         return TagShareJson.encodeToString(payload)
+    }
+
+    fun eligibleLocalTagShareEntryCount(): Int {
+        return entries.value.count { entry ->
+            entry.localProvenanceCount > 0 &&
+                entry.recordState in setOf(RecordState.ACTIVE, RecordState.ARCHIVED) &&
+                entry.pendingDeletionUntil == null
+        }
     }
 
     fun toggleEntryCardDisplayMode() {

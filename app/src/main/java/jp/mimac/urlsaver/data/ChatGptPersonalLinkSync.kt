@@ -27,6 +27,18 @@ data class ChatGptPersonalLinkSyncSettings(
     val lastErrorMessage: String? = null,
 )
 
+data class ChatGptSyncEligibility(
+    val entryId: Long,
+    val eligible: Boolean,
+    val exclusionReasons: List<String>,
+)
+
+data class ChatGptSyncEligibilitySnapshot(
+    val eligibleEntries: List<UrlEntryEntity>,
+    val excludedCount: Int,
+    val exclusionsByReason: Map<String, Int>,
+)
+
 interface ChatGptPersonalLinkSyncSettingsStore {
     val settings: StateFlow<ChatGptPersonalLinkSyncSettings>
     fun snapshot(): ChatGptPersonalLinkSyncSettings
@@ -72,7 +84,7 @@ class SharedPreferencesChatGptPersonalLinkSyncSettingsStore(
     private fun read(): ChatGptPersonalLinkSyncSettings =
         ChatGptPersonalLinkSyncSettings(
             enabled = prefs.getBoolean(KEY_ENABLED, false),
-            contentFetchEnabled = prefs.getBoolean(KEY_CONTENT_FETCH_ENABLED, false),
+            contentFetchEnabled = false,
             lastSyncedAt = if (prefs.contains(KEY_LAST_SYNCED_AT)) prefs.getLong(KEY_LAST_SYNCED_AT, 0L) else null,
             lastErrorMessage = prefs.getString(KEY_LAST_ERROR_MESSAGE, null),
         )
@@ -121,7 +133,7 @@ class SupabaseChatGptPersonalLinkRemoteDataSource(
                 requestBody = json.encodeToString(
                     SetPersonalLinkChatGptSyncPayload(
                         enabled = enabled,
-                        contentFetchEnabled = contentFetchEnabled,
+                        contentFetchEnabled = false,
                     ),
                 ),
             )
@@ -175,7 +187,7 @@ class SupabaseChatGptPersonalLinkRemoteDataSource(
             return executeRpc(path, refreshedSession, requestBody, allowRefresh = false)
         }
         if (responseCode !in 200..299) {
-            throw IOException("Supabase ChatGPT personal link RPC failed ($responseCode): $body")
+            throw IOException("Supabase ChatGPT personal link RPC failed ($responseCode)")
         }
         return body
     }
@@ -192,69 +204,145 @@ class ChatGptPersonalLinkSyncRepository(
     private val tagDao: TagDao,
     private val settingsStore: ChatGptPersonalLinkSyncSettingsStore,
     private val remoteDataSource: ChatGptPersonalLinkRemoteDataSource,
+    private val operationEnabled: Boolean = true,
 ) {
     val settings: StateFlow<ChatGptPersonalLinkSyncSettings> = settingsStore.settings
+    val isOperationEnabled: Boolean get() = operationEnabled
 
+    @Suppress("UNUSED_PARAMETER")
     suspend fun setEnabled(enabled: Boolean, contentFetchEnabled: Boolean): ChatGptSyncResult {
+        if (!operationEnabled) return ChatGptSyncResult.GateOff
         val session = authSessionProvider.session.value ?: return ChatGptSyncResult.AuthRequired
         return runCatching {
-            remoteDataSource.setSyncEnabled(session, enabled, contentFetchEnabled)
-            settingsStore.setEnabled(enabled, contentFetchEnabled)
-            if (enabled) syncCurrentSnapshot(session, contentFetchEnabled)
-            ChatGptSyncResult.Success
-        }.getOrElse { error ->
-            settingsStore.markSyncFailure(error.message ?: "ChatGPT連携を更新できませんでした")
-            ChatGptSyncResult.Failure(error.message ?: "ChatGPT連携を更新できませんでした")
+            remoteDataSource.setSyncEnabled(session, enabled, contentFetchEnabled = false)
+            settingsStore.setEnabled(enabled, contentFetchEnabled = false)
+            if (enabled) {
+                syncCurrentSnapshot(session)
+            } else {
+                ChatGptSyncResult.Success(targetCount = 0, excludedCount = 0, syncedCount = 0)
+            }
+        }.getOrElse {
+            settingsStore.markSyncFailure(SAFE_FAILURE_MESSAGE)
+            ChatGptSyncResult.Failure(SAFE_FAILURE_MESSAGE)
         }
     }
 
-    private suspend fun syncCurrentSnapshot(
-        session: SharedTagAuthSession,
-        contentFetchEnabled: Boolean,
-    ) {
-        val operations = urlEntryDao.loadAllEntries()
-            .filter { it.localProvenanceCount > 0 && it.recordState in setOf(RecordState.ACTIVE, RecordState.ARCHIVED) }
+    suspend fun syncNow(): ChatGptSyncResult {
+        if (!operationEnabled) return ChatGptSyncResult.GateOff
+        if (!settingsStore.snapshot().enabled) return ChatGptSyncResult.NotEnabled
+        val session = authSessionProvider.session.value ?: return ChatGptSyncResult.AuthRequired
+        return runCatching { syncCurrentSnapshot(session) }.getOrElse {
+            settingsStore.markSyncFailure(SAFE_FAILURE_MESSAGE)
+            ChatGptSyncResult.Failure(SAFE_FAILURE_MESSAGE)
+        }
+    }
+
+    suspend fun eligibilitySnapshot(): ChatGptSyncEligibilitySnapshot {
+        val entries = urlEntryDao.loadAllEntries()
+        val eligibility = entries.map { entry ->
+            val sharedTagAllocation = tagDao.countActiveSyncedRefsForEntry(entry.id) > 0
+            val reasons = buildList {
+                if (entry.recordState != RecordState.ACTIVE) {
+                    add("active_required")
+                }
+                if (entry.localProvenanceCount <= 0) add("no_local_provenance")
+                if (entry.sharedReferenceCount != 0) add("shared_reference")
+                if (entry.pendingDeletionUntil != null) add("pending_delete")
+                if (sharedTagAllocation) add("shared_tag_allocation")
+            }
+            ChatGptSyncEligibility(
+                entryId = entry.id,
+                eligible = reasons.isEmpty(),
+                exclusionReasons = reasons,
+            ) to entry
+        }
+        val eligibleEntries = eligibility.filter { it.first.eligible }.map { it.second }
+        val exclusionsByReason = eligibility
+            .asSequence()
+            .flatMap { (result, _) -> result.exclusionReasons.asSequence() }
+            .groupingBy { it }
+            .eachCount()
+        return ChatGptSyncEligibilitySnapshot(
+            eligibleEntries = eligibleEntries,
+            excludedCount = eligibility.count { !it.first.eligible },
+            exclusionsByReason = exclusionsByReason,
+        )
+    }
+
+    private suspend fun syncCurrentSnapshot(session: SharedTagAuthSession): ChatGptSyncResult {
+        val snapshot = eligibilitySnapshot()
+        val operations = snapshot.eligibleEntries
             .map { entry ->
                 val tags = tagDao.getLocalOnlyTagsForEntry(entry.id).map { it.name }
-                entry.toChatGptOperation(tags, contentFetchEnabled)
+                entry.toChatGptOperation(tags)
             }
         if (operations.isNotEmpty()) {
-            remoteDataSource.applyOps(session, operations)
+            val response = remoteDataSource.applyOps(session, operations)
+            val appliedCount = response.appliedCount.coerceIn(0, operations.size)
+            val failedCount = (operations.size - appliedCount).coerceAtLeast(0)
+            settingsStore.markSyncSuccess(System.currentTimeMillis())
+            if (failedCount > 0) {
+                return ChatGptSyncResult.Partial(
+                    targetCount = operations.size,
+                    excludedCount = snapshot.excludedCount,
+                    syncedCount = appliedCount,
+                    failedCount = failedCount,
+                )
+            }
+            return ChatGptSyncResult.Success(
+                targetCount = operations.size,
+                excludedCount = snapshot.excludedCount,
+                syncedCount = appliedCount,
+            )
         }
         settingsStore.markSyncSuccess(System.currentTimeMillis())
+        return ChatGptSyncResult.Success(
+            targetCount = 0,
+            excludedCount = snapshot.excludedCount,
+            syncedCount = 0,
+        )
     }
 
     private fun UrlEntryEntity.toChatGptOperation(
         tags: List<String>,
-        contentFetchEnabled: Boolean,
     ): ChatGptPersonalLinkSyncOperation {
         return ChatGptPersonalLinkSyncOperation(
             opId = UUID.randomUUID().toString().lowercase(),
-            clientEntryId = "android:$id",
+            clientEntryId = AiTransparencyPolicy.publicSafeIdForEntry(this),
             url = normalizedUrl,
             title = userTitle ?: fetchedTitle,
             memo = memo.takeIf { it.isNotBlank() },
             tags = tags,
             metadata = buildJsonObject {
                 put("normalized_host", JsonPrimitive(normalizedHost))
-                put("raw_source_host", JsonPrimitive(rawSourceHost))
                 put("service_type", JsonPrimitive(serviceType.name.lowercase()))
-                put("description", JsonPrimitive(description))
-                put("thumbnail_url", JsonPrimitive(thumbnailUrl))
-                put("content_fetch_allowed", JsonPrimitive(contentFetchEnabled))
             },
-            extractedText = if (contentFetchEnabled) fetchedBody else null,
-            isArchived = recordState == RecordState.ARCHIVED,
+            extractedText = null,
+            isArchived = false,
             updatedAt = Instant.ofEpochMilli(updatedAt).toString(),
         )
     }
 }
 
 sealed interface ChatGptSyncResult {
-    data object Success : ChatGptSyncResult
+    data class Success(
+        val targetCount: Int,
+        val excludedCount: Int,
+        val syncedCount: Int,
+    ) : ChatGptSyncResult
+    data class Partial(
+        val targetCount: Int,
+        val excludedCount: Int,
+        val syncedCount: Int,
+        val failedCount: Int,
+    ) : ChatGptSyncResult
     data object AuthRequired : ChatGptSyncResult
+    data object GateOff : ChatGptSyncResult
+    data object NotEnabled : ChatGptSyncResult
     data class Failure(val message: String) : ChatGptSyncResult
 }
+
+private const val SAFE_FAILURE_MESSAGE = "外部接続を更新できませんでした"
 
 @Serializable
 private data class SetPersonalLinkChatGptSyncPayload(

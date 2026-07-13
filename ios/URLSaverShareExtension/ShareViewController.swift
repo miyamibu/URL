@@ -266,6 +266,23 @@ final class ShareViewController: UIViewController {
         }
 
         let payload = await ShareExtensionPayloadExtractor.extract(from: extensionItems)
+        if payload.hasTagShareCandidate {
+            guard let tagPayload = payload.validatedTagSharePayload else {
+                await MainActor.run { updateStatus("タグデータが不正または対応外のため、保存しませんでした", finished: true) }
+                return
+            }
+            guard SharedContainer.hasAppGroupAccess() else {
+                await MainActor.run { updateStatus("タグデータを読み込める共有領域がありません。保存しませんでした", finished: true) }
+                return
+            }
+            guard let repository = try? URLRepository() else {
+                await MainActor.run { updateStatus("保存先の初期化に失敗したため、保存しませんでした", finished: true) }
+                return
+            }
+            self.repository = repository
+            await presentTagShareImportConfirmation(repository: repository, payload: tagPayload)
+            return
+        }
         if !SharedContainer.hasAppGroupAccess() {
             await processShareViaHostAppFallback(payload: payload)
             return
@@ -277,21 +294,6 @@ final class ShareViewController: UIViewController {
             return
         }
         self.repository = repository
-
-        if let tagPayload = payload.tagSharePayload {
-            do {
-                let result = try repository.importLocalTagPayload(tagPayload)
-                await MainActor.run {
-                    updateStatus(
-                        "タグ「\(result.tagName)」を読み込みました\n新規\(result.created)件 / 追加\(result.merged)件",
-                        finished: true
-                    )
-                }
-            } catch {
-                await MainActor.run { updateStatus("タグデータを読み込めませんでした", finished: true) }
-            }
-            return
-        }
 
         let extractedBatch = URLRules.extractAllFromCandidateGroups(payload.candidateGroups)
         let allURLs = extractedBatch.urls
@@ -365,6 +367,32 @@ final class ShareViewController: UIViewController {
             pendingShare = share
             selectedLocalTagIDs = []
             showTagPicker()
+        }
+    }
+
+    private func presentTagShareImportConfirmation(repository: URLRepository, payload: TagSharePayload) async {
+        await MainActor.run {
+            let alert = UIAlertController(
+                title: "自作タグを受け取る",
+                message: "タグ「\(payload.tag)」とURL \(payload.urls.count)件を読み込みます。既存URLは重複として扱います。",
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: "キャンセル", style: .cancel) { [weak self] _ in
+                self?.updateStatus("タグの読み込みをキャンセルしました", finished: true)
+            })
+            alert.addAction(UIAlertAction(title: "取り込む", style: .default) { [weak self] _ in
+                guard let self else { return }
+                do {
+                    let result = try repository.importLocalTagPayload(payload)
+                    self.updateStatus(
+                        "タグ「\(result.tagName)」を読み込みました\n新規\(result.created)件 / 追加\(result.merged)件",
+                        finished: true
+                    )
+                } catch {
+                    self.updateStatus("タグデータを読み込めませんでした。保存しませんでした", finished: true)
+                }
+            })
+            present(alert, animated: true)
         }
     }
 
@@ -826,18 +854,37 @@ private struct ShareExtensionPayload {
     let candidateGroups: ShareCandidateGroups
     let isExplicitMultiShare: Bool
 
-    var tagSharePayload: TagSharePayload? {
+    var tagShareCandidate: String? {
         for group in candidateGroups.orderedGroups {
             for candidate in group {
                 let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard trimmed.hasPrefix("{"), let data = trimmed.data(using: .utf8) else { continue }
-                if let payload = try? JSONDecoder().decode(TagSharePayload.self, from: data),
-                   payload.urlsaverVersion == 1 {
-                    return payload
+                if trimmed.hasPrefix("{") {
+                    return trimmed
                 }
             }
         }
         return nil
+    }
+
+    var hasTagShareCandidate: Bool {
+        tagShareCandidate != nil
+    }
+
+    var validatedTagSharePayload: TagSharePayload? {
+        guard let candidate = tagShareCandidate,
+              candidate.lengthOfBytes(using: .utf8) <= URLRules.maxInputTextBytes,
+              let data = candidate.data(using: .utf8),
+              let payload = try? JSONDecoder().decode(TagSharePayload.self, from: data),
+              payload.urlsaverVersion == 1,
+              payload.urls.count <= URLRules.maxBatchSaveURLsPerIntake,
+              !payload.tag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              payload.urls.allSatisfy({
+                  !$0.url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                  $0.url.lengthOfBytes(using: .utf8) <= URLRules.maxInputTextBytes
+              }) else {
+            return nil
+        }
+        return payload
     }
 }
 

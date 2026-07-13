@@ -68,8 +68,10 @@ import jp.mimac.urlsaver.domain.SharedTagScope
 import jp.mimac.urlsaver.domain.ShareExtractionResult
 import jp.mimac.urlsaver.domain.ShareSaveResult
 import jp.mimac.urlsaver.domain.TagWithCount
+import jp.mimac.urlsaver.domain.TagSharePayload
 import jp.mimac.urlsaver.domain.UrlRules
 import jp.mimac.urlsaver.domain.normalizeSharedTagName
+import jp.mimac.urlsaver.domain.tryDecodeTagSharePayload
 import jp.mimac.urlsaver.ui.theme.UrlSaverTheme
 import kotlinx.coroutines.launch
 
@@ -106,6 +108,18 @@ class ShareReceiverActivity : ComponentActivity() {
     }
 
     private fun buildSharePayload(sourceIntent: Intent): ShareReceiverPayload {
+        val sharedText = sourceIntent.getStringExtra(Intent.EXTRA_TEXT)
+            ?: sourceIntent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
+        val tagPayload = sharedText
+            ?.takeIf { it.toByteArray(Charsets.UTF_8).size <= UrlRules.MAX_INPUT_TEXT_BYTES }
+            ?.let(::tryDecodeTagSharePayload)
+            ?.takeIf { payload ->
+                payload.tag.isNotBlank() && payload.urls.size <= UrlRules.MAX_BATCH_SAVE_URLS_PER_INTAKE
+            }
+        if (tagPayload != null) {
+            return ShareReceiverPayload.TagImport(tagPayload)
+        }
+
         val isSendMultiple = sourceIntent.action == Intent.ACTION_SEND_MULTIPLE
         var degradationNotice: String? = null
 
@@ -261,6 +275,26 @@ private fun ShareReceiverContent(
                             onFinish = onFinish,
                         )
                     }
+                    payload is ShareReceiverPayload.TagImport -> {
+                        ShareReceiverTagImportContent(
+                            payload = payload.payload,
+                            isSaving = isSaving,
+                            onCancel = onFinish,
+                            onImport = {
+                                scope.launch {
+                                    isSaving = true
+                                    val result = container.tagRepository.importTag(payload.payload)
+                                    isSaving = false
+                                    resultMessage = buildString {
+                                        append("タグ『${result.tagName}』を取り込みました")
+                                        append("（新規${result.created}件・追加${result.merged}件")
+                                        if (result.failed > 0) append("・失敗${result.failed}件")
+                                        append("）")
+                                    }
+                                }
+                            },
+                        )
+                    }
                     payload is ShareReceiverPayload.Pending -> {
                         ShareReceiverPendingContent(
                             localTags = localTags,
@@ -324,6 +358,50 @@ private fun ShareReceiverContent(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ShareReceiverTagImportContent(
+    payload: TagSharePayload,
+    isSaving: Boolean,
+    onCancel: () -> Unit,
+    onImport: () -> Unit,
+) {
+    Text(
+        text = "自作タグを受け取る",
+        style = MaterialTheme.typography.headlineSmall,
+        fontWeight = FontWeight.Bold,
+    )
+    Spacer(Modifier.height(12.dp))
+    Text(
+        text = "タグ『${payload.tag}』のURL ${payload.urls.size}件を取り込みます。確認するまで保存しません。",
+        style = MaterialTheme.typography.bodyLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Spacer(Modifier.height(20.dp))
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        TextButton(
+            onClick = onCancel,
+            enabled = !isSaving,
+            modifier = Modifier
+                .weight(1f)
+                .heightIn(min = 56.dp),
+        ) {
+            Text("キャンセル", style = MaterialTheme.typography.titleMedium)
+        }
+        Button(
+            onClick = onImport,
+            enabled = !isSaving,
+            modifier = Modifier
+                .weight(1f)
+                .heightIn(min = 56.dp),
+        ) {
+            Text(if (isSaving) "取り込み中…" else "取り込む", style = MaterialTheme.typography.titleMedium)
         }
     }
 }
@@ -559,7 +637,6 @@ private suspend fun savePendingShare(
     if (payload.urls.size <= 1 && !payload.isBatch) {
         val result = container.repository.saveFromManualInput(
             payload.urls.first(),
-            collectionId = null,
             initialMemo = payload.memo,
         )
         if (shouldAssignShareTags(result.result, result.entryId) && selectedLocalTagIds.isNotEmpty()) {
@@ -584,7 +661,6 @@ private suspend fun savePendingShare(
     payload.urls.forEach { url ->
         val result = container.repository.saveFromManualInput(
             url,
-            collectionId = null,
             initialMemo = payload.memo,
         )
         if (shouldAssignShareTags(result.result, result.entryId) && selectedLocalTagIds.isNotEmpty()) {
@@ -705,6 +781,8 @@ private sealed interface ShareReceiverPayload {
     ) : ShareReceiverPayload
 
     data class Error(val result: ShareSaveResult) : ShareReceiverPayload
+
+    data class TagImport(val payload: TagSharePayload) : ShareReceiverPayload
 }
 
 private data class ShareReceiverSaveOutcome(

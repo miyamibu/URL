@@ -23,6 +23,11 @@ def forbid(rel_path: str, needle: str, reason: str) -> None:
         raise AssertionError(f"{rel_path}: forbidden {needle!r} ({reason})")
 
 
+def forbid_path(rel_path: str, reason: str) -> None:
+    if (ROOT / rel_path).exists():
+        raise AssertionError(f"{rel_path}: active path must be retired ({reason})")
+
+
 def require_order(rel_path: str, first: str, second: str, reason: str) -> None:
     haystack = read(rel_path)
     first_index = haystack.find(first)
@@ -37,6 +42,100 @@ def main() -> int:
             "docs/mobile-ui-regression-contract.md",
             "Local Tags On Cards",
             "single source of truth for card/tag regression behavior",
+        ),
+        lambda: require(
+            "docs/mobile-ui-regression-contract.md",
+            "自作タグを共有",
+            "local tag sharing must use one user-facing, non-technical label",
+        ),
+        lambda: require(
+            "docs/mobile-ui-regression-contract.md",
+            "クラウド未設定・未サインイン・0件の状態でもホームに表示する",
+            "shared-tag row must not disappear in local-only or signed-out builds",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
+            "val showSharedTagCloudUi = true",
+            "Android shared-tag row must remain visible in every home state",
+        ),
+        lambda: forbid(
+            "ios/URLSaveriOS/UI/RootView.swift",
+            "if showsSharedTagCloud {\n                SharedTagSection(",
+            "iPhone shared-tag row must not be hidden by cloud configuration",
+        ),
+        lambda: require(
+            "docs/mobile-ui-regression-contract.md",
+            ".repo-trash/20260713/collections-userlabels/",
+            "retired collection and user-label code must remain reversibly documented",
+        ),
+        lambda: require(
+            ".repo-trash/20260713/collections-userlabels/MANIFEST.md",
+            "Android Room version 22",
+            "retirement manifest must preserve the current Room schema contract",
+        ),
+        lambda: forbid_path(
+            "app/src/main/java/jp/mimac/urlsaver/data/UserLabelDao.kt",
+            "unused UserLabel write DAO belongs in the reversible repo trash",
+        ),
+        lambda: forbid(
+            "app/src/main/java/jp/mimac/urlsaver/data/CollectionDao.kt",
+            "suspend fun insert",
+            "legacy collection DAO must remain read-only",
+        ),
+        lambda: forbid(
+            "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
+            "SHOW_COLLECTION_UI",
+            "retired collection UI must not remain behind a hidden flag",
+        ),
+        lambda: forbid(
+            "ios/URLSaveriOS/UI/RootView.swift",
+            "showsCollectionUI",
+            "retired iPhone collection UI must not remain behind a hidden flag",
+        ),
+        lambda: forbid(
+            "ios/URLSaveriOS/UI/DetailView.swift",
+            "showsCollectionUI",
+            "retired iPhone collection detail UI must not remain behind a hidden flag",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/data/ChatGptPersonalLinkSync.kt",
+            "entry.recordState != RecordState.ACTIVE",
+            "ChatGPT sync must exclude archived and pending entries",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/data/ChatGptPersonalLinkSync.kt",
+            "extractedText = null",
+            "ChatGPT sync must never send fetched body text",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/SharedTagCloudScreens.kt",
+            "ChatGPTに保存リンクを同期",
+            "Android profile must expose the fail-closed sync status card",
+        ),
+        lambda: require(
+            "ios/URLSaveriOS/UI/SharedTagCloudSheet.swift",
+            "ChatGPTに保存リンクを同期",
+            "iPhone profile must expose the fail-closed sync status card",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/TagDetailScreen.kt",
+            "自作タグを共有",
+            "Android local-tag detail must expose the approved share action",
+        ),
+        lambda: require(
+            "ios/URLSaveriOS/UI/DetailView.swift",
+            "自作タグを共有",
+            "iPhone local-tag detail context must expose the approved share action",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ShareReceiverActivity.kt",
+            "自作タグを受け取る",
+            "Android tag payload import must confirm before writing",
+        ),
+        lambda: require(
+            "ios/URLSaverShareExtension/ShareViewController.swift",
+            "自作タグを受け取る",
+            "iPhone tag payload import must confirm before writing",
         ),
         lambda: require(
             "app/src/main/java/jp/mimac/urlsaver/data/AppDatabase.kt",

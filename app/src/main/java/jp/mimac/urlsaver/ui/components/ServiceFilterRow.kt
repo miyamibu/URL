@@ -34,7 +34,6 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
-import jp.mimac.urlsaver.data.CollectionEntity
 import jp.mimac.urlsaver.domain.ServiceType
 import jp.mimac.urlsaver.domain.TagWithCount
 import jp.mimac.urlsaver.ui.filterLabelForService
@@ -53,13 +52,11 @@ internal val fixedServiceFilterOrder = listOf(
 
 internal fun resolvedTopFilterTokens(
     serviceOrder: List<ServiceType>,
-    collections: List<CollectionEntity>,
     localTags: List<TagWithCount> = emptyList(),
     topFilterOrderTokens: List<String>,
 ): List<String> {
     return buildMovableItems(
         serviceOrder = serviceOrder,
-        collections = collections,
         localTags = localTags,
         topFilterOrderTokens = topFilterOrderTokens,
     ).map { item -> item.token }
@@ -86,13 +83,6 @@ private sealed interface TopFilterItem {
 
     data object All : TopFilterItem {
         override val token: String = "all"
-    }
-
-    data class Collection(
-        val id: Long,
-        val label: String,
-    ) : TopFilterItem {
-        override val token: String = "collection_$id"
     }
 
     data class Service(
@@ -127,12 +117,7 @@ fun ServiceFilterRow(
     serviceOrder: List<ServiceType> = fixedServiceFilterOrder.filterNot { it == ServiceType.ALL },
     topFilterOrderTokens: List<String> = emptyList(),
     onReorderServices: ((List<ServiceType>) -> Unit)? = null,
-    collections: List<CollectionEntity> = emptyList(),
-    selectedCollectionId: Long? = null,
-    onSelectCollection: ((Long?) -> Unit)? = null,
-    onCreateCollection: (() -> Unit)? = null,
     onReorderTopFilters: ((List<String>) -> Unit)? = null,
-    onReorderCollections: ((List<Long>) -> Unit)? = null,
     localTags: List<TagWithCount> = emptyList(),
     selectedLocalTagId: Long? = null,
     onSelectLocalTag: ((Long?) -> Unit)? = null,
@@ -141,10 +126,9 @@ fun ServiceFilterRow(
 ) {
     val listState = rememberLazyListState()
     val edgeThresholdPx = with(LocalDensity.current) { 32.dp.toPx() }
-    val latestMovableItems = remember(serviceOrder, collections, localTags, topFilterOrderTokens) {
+    val latestMovableItems = remember(serviceOrder, localTags, topFilterOrderTokens) {
         buildMovableItems(
             serviceOrder = serviceOrder,
-            collections = collections,
             localTags = localTags,
             topFilterOrderTokens = topFilterOrderTokens,
         )
@@ -168,7 +152,7 @@ fun ServiceFilterRow(
         }
     }
 
-    val canReorder = onReorderCollections != null || onReorderServices != null || onReorderTopFilters != null
+    val canReorder = onReorderServices != null || onReorderTopFilters != null
     val isDragging = draggedToken != null
     fun resetDragState() {
         draggedToken = null
@@ -248,14 +232,10 @@ fun ServiceFilterRow(
                                     settleDraggedItemOnRelease()
                                     val reorderedTokens = orderedMovableItems.map { current -> current.token }
                                     if (dragStartedTokens.isNotEmpty() && reorderedTokens != dragStartedTokens) {
-                                        val reorderedCollections = orderedMovableItems
-                                            .filterIsInstance<TopFilterItem.Collection>()
-                                            .map { current -> current.id }
                                         val reorderedServices = orderedMovableItems
                                             .filterIsInstance<TopFilterItem.Service>()
                                             .map { current -> current.service }
                                         onReorderTopFilters?.invoke(reorderedTokens)
-                                        onReorderCollections?.invoke(reorderedCollections)
                                         onReorderServices?.invoke(reorderedServices)
                                     }
                                     resetDragState()
@@ -341,12 +321,9 @@ fun ServiceFilterRow(
             val draggedState = draggedToken == item.token
             val selectedState = when (item) {
                 TopFilterItem.All -> selectedLocalTagId == null &&
-                    selectedCollectionId == null &&
                     selectedService == ServiceType.ALL
-                is TopFilterItem.Collection -> selectedCollectionId == item.id
                 is TopFilterItem.LocalTag -> selectedLocalTagId == item.id
                 is TopFilterItem.Service -> selectedLocalTagId == null &&
-                    selectedCollectionId == null &&
                     selectedService == item.service
             }
             val localTag = (item as? TopFilterItem.LocalTag)?.let { local ->
@@ -370,7 +347,6 @@ fun ServiceFilterRow(
             OrbitFilterChip(
                 label = when (item) {
                     TopFilterItem.All -> filterLabelForService(ServiceType.ALL)
-                    is TopFilterItem.Collection -> item.label
                     is TopFilterItem.LocalTag -> item.label
                     is TopFilterItem.Service -> filterLabelForService(item.service)
                 },
@@ -397,10 +373,6 @@ fun ServiceFilterRow(
                                         onSelectLocalTag?.invoke(null)
                                         onSelectService(ServiceType.ALL)
                                     }
-                                    is TopFilterItem.Collection -> {
-                                        onSelectLocalTag?.invoke(null)
-                                        onSelectCollection?.invoke(item.id)
-                                    }
                                     is TopFilterItem.Service -> {
                                         onSelectLocalTag?.invoke(null)
                                         onSelectService(item.service)
@@ -423,23 +395,11 @@ fun ServiceFilterRow(
             )
         }
 
-        if (onCreateCollection != null) {
-            item(key = "create_collection") {
-                OrbitFilterChip(
-                    label = "+保存先",
-                    selected = false,
-                    modifier = Modifier
-                        .testTag("top_filter_create_collection")
-                        .clickable(enabled = !isDragging) { onCreateCollection() },
-                )
-            }
-        }
     }
 }
 
 private fun buildMovableItems(
     serviceOrder: List<ServiceType>,
-    collections: List<CollectionEntity>,
     localTags: List<TagWithCount>,
     topFilterOrderTokens: List<String>,
 ): List<TopFilterItem> {
@@ -453,14 +413,6 @@ private fun buildMovableItems(
             )
         }
         add(TopFilterItem.All)
-        collections.forEach { collection ->
-            add(
-                TopFilterItem.Collection(
-                    id = collection.id,
-                    label = collection.name,
-                ),
-            )
-        }
         serviceOrder
             .filterNot { it == ServiceType.ALL }
             .forEach { service ->

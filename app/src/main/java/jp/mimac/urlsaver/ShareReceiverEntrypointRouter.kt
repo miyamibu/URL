@@ -9,19 +9,11 @@ import jp.mimac.urlsaver.data.EXTRA_PROMO_CODE
 import jp.mimac.urlsaver.data.EXTRA_PROMO_CODE_INVALID
 import jp.mimac.urlsaver.data.EXTRA_SHARED_TAG_INVITE_INVALID
 import jp.mimac.urlsaver.data.EXTRA_SHARED_TAG_INVITE_TOKEN
-import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_CREATED
-import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_FAILED
-import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_CANCELLED
-import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_MERGED
-import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_MESSAGE
-import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_SKIPPED
-import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_TAG_ID
-import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_TAG_NAME
 import jp.mimac.urlsaver.data.TagRepository
-import jp.mimac.urlsaver.domain.tryDecodeTagSharePayload
 import java.util.UUID
 
 internal object ShareReceiverEntrypointRouter {
+    @Suppress("UNUSED_PARAMETER")
     suspend fun resolve(
         activity: ComponentActivity,
         sourceIntent: Intent,
@@ -30,24 +22,7 @@ internal object ShareReceiverEntrypointRouter {
         if (sourceIntent.action == Intent.ACTION_VIEW) {
             return buildMainIntentForDeepLink(activity, sourceIntent)
         }
-
-        val tagPayload = extractShareText(sourceIntent)?.let(::tryDecodeTagSharePayload) ?: return null
-        val importResult = tagRepository.importTag(tagPayload)
-        return buildMainRedirectIntent(activity).apply {
-            putExtra(EXTRA_TAG_IMPORT_TAG_ID, importResult.tagId)
-            putExtra(EXTRA_TAG_IMPORT_TAG_NAME, importResult.tagName)
-            putExtra(EXTRA_TAG_IMPORT_CREATED, importResult.created)
-            putExtra(EXTRA_TAG_IMPORT_MERGED, importResult.merged)
-            putExtra(EXTRA_TAG_IMPORT_SKIPPED, importResult.duplicateSkipped)
-            putExtra(EXTRA_TAG_IMPORT_FAILED, importResult.failed)
-            putExtra(EXTRA_TAG_IMPORT_CANCELLED, importResult.cancelled)
-            importResult.message?.let { putExtra(EXTRA_TAG_IMPORT_MESSAGE, it) }
-        }
-    }
-
-    private fun extractShareText(sourceIntent: Intent): String? {
-        return sourceIntent.getStringExtra(Intent.EXTRA_TEXT)
-            ?: sourceIntent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
+        return null
     }
 
     private fun buildMainIntentForDeepLink(activity: ComponentActivity, sourceIntent: Intent): Intent {

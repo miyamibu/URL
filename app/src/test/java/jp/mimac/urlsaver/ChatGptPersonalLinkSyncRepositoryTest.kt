@@ -21,12 +21,15 @@ import jp.mimac.urlsaver.domain.RecordState
 import jp.mimac.urlsaver.domain.ServiceType
 import jp.mimac.urlsaver.domain.SharedTagScope
 import jp.mimac.urlsaver.domain.SharedTagSyncStatus
+import jp.mimac.urlsaver.ui.ChatGptSyncPendingAction
+import jp.mimac.urlsaver.ui.chatGptSyncConfirmationBody
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -68,6 +71,19 @@ class ChatGptPersonalLinkSyncRepositoryTest {
         authProvider.updateSession(SharedTagAuthSession(authUserId = "user-a", accessToken = "token-a"))
         val entryId = insertEntry("https://example.com/chatgpt-local-only")
         val localTagId = db.tagDao().insertTag(TagEntity(name = "local-only", createdAt = 1L))
+        db.tagDao().insertCrossRef(TagUrlCrossRef(tagId = localTagId, entryId = entryId))
+
+        repository.setEnabled(enabled = true, contentFetchEnabled = false)
+
+        val operation = remote.operations.single()
+        assertEquals(listOf("local-only"), operation.tags)
+        assertFalse(operation.tags.contains("shared-hidden"))
+    }
+
+    @Test
+    fun syncCurrentSnapshot_excludesEntriesAllocatedToSharedTags() = runBlocking {
+        authProvider.updateSession(SharedTagAuthSession(authUserId = "user-a", accessToken = "token-a"))
+        val entryId = insertEntry("https://example.com/chatgpt-shared-hidden")
         val sharedTagId = db.tagDao().insertTag(
             TagEntity(
                 name = "shared-hidden",
@@ -78,7 +94,6 @@ class ChatGptPersonalLinkSyncRepositoryTest {
                 syncStatus = SharedTagSyncStatus.SYNCED,
             ),
         )
-        db.tagDao().insertCrossRef(TagUrlCrossRef(tagId = localTagId, entryId = entryId))
         db.tagDao().upsertCrossRefs(
             listOf(
                 TagUrlCrossRef(
@@ -87,8 +102,8 @@ class ChatGptPersonalLinkSyncRepositoryTest {
                     scope = SharedTagScope.SYNCED,
                     authUserId = "user-a",
                     remoteUrlId = "remote-url",
-                    rawUrl = "https://example.com/chatgpt-local-only",
-                    normalizedUrl = "https://example.com/chatgpt-local-only",
+                    rawUrl = "https://example.com/chatgpt-shared-hidden",
+                    normalizedUrl = "https://example.com/chatgpt-shared-hidden",
                     normalizationVersion = 1,
                     syncStatus = SharedTagSyncStatus.SYNCED,
                 ),
@@ -97,12 +112,71 @@ class ChatGptPersonalLinkSyncRepositoryTest {
 
         repository.setEnabled(enabled = true, contentFetchEnabled = false)
 
-        val operation = remote.operations.single()
-        assertEquals(listOf("local-only"), operation.tags)
-        assertFalse(operation.tags.contains("shared-hidden"))
+        assertTrue(remote.operations.isEmpty())
     }
 
-    private suspend fun insertEntry(normalizedUrl: String): Long {
+    @Test
+    fun syncCurrentSnapshot_excludesArchivedAndNeverSendsFetchedBody() = runBlocking {
+        authProvider.updateSession(SharedTagAuthSession(authUserId = "user-a", accessToken = "token-a"))
+        insertEntry(
+            normalizedUrl = "https://example.com/chatgpt-archived",
+            recordState = RecordState.ARCHIVED,
+            fetchedBody = "private fetched body",
+        )
+        insertEntry(
+            normalizedUrl = "https://example.com/chatgpt-active",
+            fetchedBody = "private fetched body",
+        )
+
+        repository.setEnabled(enabled = true, contentFetchEnabled = true)
+
+        val operation = remote.operations.single()
+        assertEquals("https://example.com/chatgpt-active", operation.url)
+        assertEquals(null, operation.extractedText)
+        assertFalse(settingsStore.snapshot().contentFetchEnabled)
+    }
+
+    @Test
+    fun eligibilitySnapshot_confirmationBodyShowsTargetExcludedAndSummary() = runBlocking {
+        insertEntry("https://example.com/chatgpt-confirmation-target")
+        insertEntry(
+            normalizedUrl = "https://example.com/chatgpt-confirmation-excluded",
+            recordState = RecordState.ARCHIVED,
+        )
+
+        val body = chatGptSyncConfirmationBody(
+            action = ChatGptSyncPendingAction.SYNC_NOW,
+            eligibility = repository.eligibilitySnapshot(),
+        )
+
+        assertTrue(body.contains("対象 1件"))
+        assertTrue(body.contains("除外 1件"))
+        assertTrue(body.contains("送信対象概要: example.com"))
+    }
+
+    @Test
+    fun disableConfirmationBodyShowsCountsAndNoSendWording() = runBlocking {
+        insertEntry("https://example.com/chatgpt-disable-target")
+        insertEntry(
+            normalizedUrl = "https://example.com/chatgpt-disable-excluded",
+            recordState = RecordState.ARCHIVED,
+        )
+
+        val body = chatGptSyncConfirmationBody(
+            action = ChatGptSyncPendingAction.DISABLE,
+            eligibility = repository.eligibilitySnapshot(),
+        )
+
+        assertTrue(body.contains("対象 1件"))
+        assertTrue(body.contains("除外 1件"))
+        assertTrue(body.contains("今回の送信なし"))
+    }
+
+    private suspend fun insertEntry(
+        normalizedUrl: String,
+        recordState: RecordState = RecordState.ACTIVE,
+        fetchedBody: String? = null,
+    ): Long {
         return db.urlEntryDao().insert(
             UrlEntryEntity(
                 originalUrl = normalizedUrl,
@@ -114,7 +188,8 @@ class ChatGptPersonalLinkSyncRepositoryTest {
                 serviceType = ServiceType.WEB,
                 contentContext = ContentContext.STANDARD,
                 metadataState = MetadataState.READY,
-                recordState = RecordState.ACTIVE,
+                fetchedBody = fetchedBody,
+                recordState = recordState,
                 createdAt = 1_000L,
                 updatedAt = 1_000L,
             ),

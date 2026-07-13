@@ -85,55 +85,6 @@ class ListFilterStateTest {
         assertEquals(listOf(2L), state.entries.map { it.id })
     }
 
-    @Test
-    fun selectedServiceAndCollection_filtersByBothConditions() {
-        val youtubeInWork = entry(
-            id = 1,
-            serviceType = ServiceType.YOUTUBE,
-            displayUrl = "youtube.com/watch?v=1",
-            collectionId = 10L,
-        )
-        val youtubeInPrivate = entry(
-            id = 2,
-            serviceType = ServiceType.YOUTUBE,
-            displayUrl = "youtube.com/watch?v=2",
-            collectionId = 20L,
-        )
-        val webInWork = entry(
-            id = 3,
-            serviceType = ServiceType.WEB,
-            displayUrl = "example.com/article",
-            collectionId = 10L,
-        )
-
-        val state = buildListFilterUiState(
-            entries = listOf(youtubeInWork, youtubeInPrivate, webInWork),
-            selectedService = ServiceType.YOUTUBE,
-            selectedCollectionId = 10L,
-        )
-
-        assertEquals(3, state.globalCount)
-        assertEquals(1, state.scopeCount)
-        assertEquals(listOf(1L), state.entries.map { it.id })
-    }
-
-    @Test
-    fun selectedCollection_includesEntriesAssignedThroughMatchingLocalTag() {
-        val entryInOtherCollection = entry(id = 20, collectionId = 7L)
-        val entryOnlyInOtherCollection = entry(id = 21, collectionId = 7L)
-
-        val state = buildListFilterUiState(
-            entries = listOf(entryInOtherCollection, entryOnlyInOtherCollection),
-            selectedService = ServiceType.ALL,
-            selectedCollectionId = 6L,
-            localTagCollectionEntryIds = mapOf(6L to setOf(20L)),
-        )
-
-        assertEquals(2, state.globalCount)
-        assertEquals(1, state.scopeCount)
-        assertEquals(listOf(20L), state.entries.map { it.id })
-    }
-
     private fun entry(
         id: Long = 1,
         serviceType: ServiceType = ServiceType.WEB,

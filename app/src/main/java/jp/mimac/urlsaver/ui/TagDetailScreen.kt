@@ -1,5 +1,6 @@
 package jp.mimac.urlsaver.ui
 
+import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
@@ -78,6 +79,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.core.content.FileProvider
 import jp.mimac.urlsaver.domain.EntryCardDisplayMode
 import jp.mimac.urlsaver.domain.AssignTagResult
 import jp.mimac.urlsaver.domain.SharedTagInviteCreationResult
@@ -91,6 +93,7 @@ import jp.mimac.urlsaver.ui.components.OrbitActionStyle
 import jp.mimac.urlsaver.ui.theme.OrbitTokens
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import java.io.File
 import kotlin.math.abs
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -117,6 +120,7 @@ fun TagDetailScreen(
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showLeaveDialog by remember { mutableStateOf(false) }
     var showShareOptionsDialog by remember { mutableStateOf(false) }
+    var showLocalTagShareDialog by remember { mutableStateOf(false) }
     var pendingOwnershipTransferMember by remember { mutableStateOf<SharedTagMemberRecord?>(null) }
     var shareError by remember { mutableStateOf<String?>(null) }
     var memberRemoveError by remember { mutableStateOf<String?>(null) }
@@ -213,6 +217,35 @@ fun TagDetailScreen(
             putExtra(Intent.EXTRA_TEXT, text)
         }
         context.startActivity(Intent.createChooser(shareIntent, chooserTitle))
+    }
+
+    fun launchLocalTagShare(payloadText: String): Boolean {
+        val shareIntent = runCatching {
+            val exportDirectory = File(context.cacheDir, "exports").apply { mkdirs() }
+            val exportFile = File.createTempFile("tag-share-", ".json", exportDirectory).apply {
+                writeText(payloadText, Charsets.UTF_8)
+            }
+            val uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                exportFile,
+            )
+            Intent(Intent.ACTION_SEND).apply {
+                type = "application/json"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                clipData = ClipData.newRawUri("自作タグ", uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        }.getOrElse {
+            Intent(Intent.ACTION_SEND).apply {
+                type = "application/json"
+                putExtra(Intent.EXTRA_TEXT, payloadText)
+            }
+        }
+        return runCatching {
+            context.startActivity(Intent.createChooser(shareIntent, "自作タグを共有"))
+            true
+        }.getOrDefault(false)
     }
 
     fun scheduleEntryRemoval(entryId: Long) {
@@ -395,6 +428,21 @@ fun TagDetailScreen(
                         count = visibleEntries.size,
                     )
                 }
+                if (isLocalTag) {
+                    item {
+                        OutlinedButton(
+                            onClick = { showLocalTagShareDialog = true },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 4.dp)
+                                .height(52.dp),
+                        ) {
+                            Icon(Icons.Outlined.IosShare, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("自作タグを共有")
+                        }
+                    }
+                }
                 if (visibleEntries.isEmpty()) {
                     item {
                         TagEmptyPlaceholder(isLocalTag = isLocalTag)
@@ -485,6 +533,42 @@ fun TagDetailScreen(
             confirmButton = {
                 TextButton(onClick = { showShareOptionsDialog = false }) {
                     Text("閉じる")
+                }
+            },
+        )
+    }
+
+    if (showLocalTagShareDialog) {
+        AlertDialog(
+            onDismissRequest = { showLocalTagShareDialog = false },
+            title = { Text("自作タグを共有") },
+            text = {
+                Text(
+                    "タグ『${currentTag.name}』とURL ${viewModel.eligibleLocalTagShareEntryCount()}件を共有します。タイトル、メモ、共有タグの情報は含まれません。",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showLocalTagShareDialog = false
+                        scope.launch {
+                            val payload = viewModel.buildTagSharePayloadText()
+                            if (payload == null) {
+                                snackbarHostState.showSnackbar("自作タグを共有できませんでした")
+                            } else if (launchLocalTagShare(payload)) {
+                                snackbarHostState.showSnackbar("共有先を開きました")
+                            } else {
+                                snackbarHostState.showSnackbar("共有先を開けませんでした")
+                            }
+                        }
+                    },
+                ) {
+                    Text("共有先を選ぶ")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLocalTagShareDialog = false }) {
+                    Text("キャンセル")
                 }
             },
         )

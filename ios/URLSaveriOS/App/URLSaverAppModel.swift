@@ -25,8 +25,100 @@ struct AppNotification: Identifiable, Equatable {
     let autoDismissAfter: TimeInterval?
 }
 
+struct ManualTagImportPreview: Identifiable, Equatable, Sendable {
+    let id: UUID
+    let tagName: String
+    let validURLCount: Int
+    let payload: TagSharePayload
+
+    init(tagName: String, validURLCount: Int, payload: TagSharePayload) {
+        self.id = UUID()
+        self.tagName = tagName
+        self.validURLCount = validURLCount
+        self.payload = payload
+    }
+}
+
+enum ManualTagImportPreparation: Equatable {
+    case notTagPayload
+    case ready(ManualTagImportPreview)
+    case invalid(String)
+
+    static func prepare(input: String) -> ManualTagImportPreparation {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.first == "{" else {
+            return .notTagPayload
+        }
+
+        guard let data = trimmed.data(using: .utf8) else {
+            return .invalid("タグデータを読み込めませんでした")
+        }
+        guard data.count <= URLRules.maxInputTextBytes else {
+            return .invalid("タグデータが大きすぎます。256KB以内で貼り付けてください")
+        }
+        guard let payload = try? JSONDecoder().decode(TagSharePayload.self, from: data) else {
+            return .notTagPayload
+        }
+        guard payload.urlsaverVersion == 1 else {
+            return .invalid("対応していないタグデータです")
+        }
+        guard payload.urls.count <= URLRules.maxBatchSaveURLsPerIntake else {
+            return .invalid("タグデータのURLは\(URLRules.maxBatchSaveURLsPerIntake)件以内にしてください")
+        }
+        guard let tagName = normalizedTagName(payload.tag) else {
+            return .invalid("タグ名が空または長すぎます")
+        }
+
+        let normalizedURLs = payload.urls.compactMap { URLRules.normalize($0.url) }
+        guard !normalizedURLs.isEmpty else {
+            return .invalid("タグデータ内に有効なURLがありません")
+        }
+
+        let sanitizedPayload = TagSharePayload(
+            urlsaverVersion: 1,
+            tag: tagName,
+            exportedAt: payload.exportedAt,
+            urls: normalizedURLs.map { TagShareURL(url: $0) }
+        )
+        return .ready(
+            ManualTagImportPreview(
+                tagName: tagName,
+                validURLCount: normalizedURLs.count,
+                payload: sanitizedPayload
+            )
+        )
+    }
+
+    static func importConfirmed(
+        _ preview: ManualTagImportPreview,
+        repository: URLRepository
+    ) throws -> TagImportResult {
+        let sanitizedPayload = TagSharePayload(
+            urlsaverVersion: 1,
+            tag: preview.tagName,
+            exportedAt: preview.payload.exportedAt,
+            urls: preview.payload.urls.compactMap { item in
+                guard let normalizedURL = URLRules.normalize(item.url) else { return nil }
+                return TagShareURL(url: normalizedURL)
+            }
+        )
+        return try repository.importLocalTagPayload(sanitizedPayload)
+    }
+
+    private static func normalizedTagName(_ rawName: String) -> String? {
+        let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= 40 else { return nil }
+        let normalized = trimmed
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+        return normalized.isEmpty ? nil : normalized
+    }
+}
+
 enum ManualSaveOutcome: Equatable {
     case inputError(ShareSaveResult)
+    case tagImportConfirmation(ManualTagImportPreview)
+    case tagImportError(String)
     case saved(SaveResult)
     case completed
 }
@@ -44,9 +136,16 @@ enum ContactSupportSendResult: Equatable {
 }
 
 struct ChatGptPersonalLinkSettings: Equatable {
+    var operationEnabled: Bool = false
     var enabled: Bool = false
     var contentFetchEnabled: Bool = false
+    var eligibleCount: Int = 0
+    var excludedCount: Int = 0
+    var exclusionReasons: [String: Int] = [:]
     var lastSyncedAt: Date?
+    var isLoading: Bool = false
+    var status: ChatGptPersonalLinkSyncStatus = .idle
+    var pendingConfirmation: Bool?
     var lastErrorMessage: String?
 }
 
@@ -72,11 +171,11 @@ final class URLSaverAppModel: ObservableObject {
     @Published private(set) var sharedTagGroups: [SharedTagGroupSummary] = []
     @Published private(set) var localTags: [LocalTagSummary] = []
     @Published private(set) var localTagAssignments: [Int64: Set<Int64>] = [:]
-    @Published private(set) var collections: [CollectionSummary] = []
     @Published private(set) var chatGptPersonalLinkSettings = ChatGptPersonalLinkSettings()
     @Published private(set) var isUpdatingChatGptPersonalLinkSync = false
     @Published private(set) var mediaSaveRevision = 0
     @Published private(set) var profileStatusMessage: String?
+    @Published private(set) var sharedTagAccountLocalCleanupState: SharedTagAccountLocalCleanupState?
     @Published var selectedTab: RootTab = .main
     @Published var navigationPath: [Int64] = []
     @Published var currentNotification: AppNotification?
@@ -89,14 +188,17 @@ final class URLSaverAppModel: ObservableObject {
 
     init(services: AppServices) {
         self.services = services
+        sharedTagAccountLocalCleanupState = services.sharedTagCloud.localAccountCleanupState
     }
 
     func bootstrapIfNeeded() async {
         guard !hasBootstrapped else { return }
         hasBootstrapped = true
+        sharedTagAccountLocalCleanupState = services.sharedTagCloud.localAccountCleanupState
         profile = (try? services.profileStore.load()) ?? .empty
         pendingInviteRecord = try? services.pendingInviteStore.load()
         try? services.repository.cleanupExpiredPendingDeletes()
+        services.storePurchaseService.startTransactionUpdates()
         await reload()
         await refreshSharedTagCloudState()
         await refreshEntitlements()
@@ -120,7 +222,6 @@ final class URLSaverAppModel: ObservableObject {
         archivedEntries = (try? services.repository.observeArchiveSnapshot()) ?? []
         localTags = (try? services.repository.loadLocalTags()) ?? []
         localTagAssignments = (try? services.repository.loadLocalTagAssignments()) ?? [:]
-        collections = (try? services.repository.loadCollections()) ?? []
     }
 
     func processMetadataBacklog() async {
@@ -130,43 +231,183 @@ final class URLSaverAppModel: ObservableObject {
     }
 
     func refreshEntitlements() async {
+        await services.storePurchaseService.refreshCurrentEntitlements()
         entitlements = await services.entitlementService.refreshForCurrentSession()
     }
 
     func refreshChatGptPersonalLinkSettings() {
         let defaults = UserDefaults.standard
+        let eligibility = (try? services.sharedTagCloud.chatGptPersonalLinkEligibility()) ?? .empty
+        let operationEnabled = services.sharedTagCloud.config.isPersonalLinkSyncConfigured
         chatGptPersonalLinkSettings = ChatGptPersonalLinkSettings(
-            enabled: defaults.bool(forKey: "chatgpt_personal_link_sync.enabled"),
-            contentFetchEnabled: defaults.bool(forKey: "chatgpt_personal_link_sync.content_fetch_enabled"),
+            operationEnabled: operationEnabled,
+            enabled: operationEnabled && defaults.bool(forKey: "chatgpt_personal_link_sync.enabled"),
+            contentFetchEnabled: false,
+            eligibleCount: eligibility.eligibleCount,
+            excludedCount: eligibility.excludedCount,
+            exclusionReasons: eligibility.exclusionReasons,
             lastSyncedAt: defaults.object(forKey: "chatgpt_personal_link_sync.last_synced_at") as? Date,
             lastErrorMessage: defaults.string(forKey: "chatgpt_personal_link_sync.last_error_message")
         )
     }
 
-    func setChatGptPersonalLinkSync(enabled: Bool, contentFetchEnabled: Bool) async {
+    func requestChatGptPersonalLinkSyncChange(enabled: Bool) {
+        guard chatGptPersonalLinkSettings.operationEnabled else { return }
+        chatGptPersonalLinkSettings.pendingConfirmation = enabled
+    }
+
+    func cancelChatGptPersonalLinkSyncChange() {
+        chatGptPersonalLinkSettings.pendingConfirmation = nil
+    }
+
+    func setChatGptPersonalLinkSync(enabled: Bool, contentFetchEnabled: Bool = false) async {
+        _ = contentFetchEnabled
+        requestChatGptPersonalLinkSyncChange(enabled: enabled)
+        await confirmChatGptPersonalLinkSyncChange()
+    }
+
+    func confirmChatGptPersonalLinkSyncChange() async {
+        guard let enabled = chatGptPersonalLinkSettings.pendingConfirmation else { return }
+        chatGptPersonalLinkSettings.pendingConfirmation = nil
+        guard chatGptPersonalLinkSettings.operationEnabled else { return }
         guard !isUpdatingChatGptPersonalLinkSync else { return }
         isUpdatingChatGptPersonalLinkSync = true
+        chatGptPersonalLinkSettings.isLoading = true
+        chatGptPersonalLinkSettings.status = .loading
         defer { isUpdatingChatGptPersonalLinkSync = false }
         do {
-            try await services.sharedTagCloud.setChatGptPersonalLinkSync(
-                enabled: enabled,
-                contentFetchEnabled: contentFetchEnabled
-            )
+            let result = try await services.sharedTagCloud.setChatGptPersonalLinkSync(enabled: enabled)
             let defaults = UserDefaults.standard
             defaults.set(enabled, forKey: "chatgpt_personal_link_sync.enabled")
-            defaults.set(enabled && contentFetchEnabled, forKey: "chatgpt_personal_link_sync.content_fetch_enabled")
+            defaults.set(false, forKey: "chatgpt_personal_link_sync.content_fetch_enabled")
             defaults.set(Date(), forKey: "chatgpt_personal_link_sync.last_synced_at")
             defaults.removeObject(forKey: "chatgpt_personal_link_sync.last_error_message")
-            refreshChatGptPersonalLinkSettings()
+            updateChatGptPersonalLinkEligibility()
+            chatGptPersonalLinkSettings.enabled = enabled
+            chatGptPersonalLinkSettings.contentFetchEnabled = false
+            chatGptPersonalLinkSettings.lastSyncedAt = defaults.object(forKey: "chatgpt_personal_link_sync.last_synced_at") as? Date
+            chatGptPersonalLinkSettings.lastErrorMessage = nil
+            chatGptPersonalLinkSettings.status = result.status
+            chatGptPersonalLinkSettings.isLoading = false
             enqueueNotification(AppNotification(message: enabled ? "ChatGPT連携を有効にしました" : "ChatGPT連携を無効にしました", actionLabel: nil, action: nil, autoDismissAfter: 4))
         } catch SharedTagCloudError.authRequired {
+            chatGptPersonalLinkSettings.status = .failure("りんばむのアカウントでサインインしてください")
+            chatGptPersonalLinkSettings.lastErrorMessage = "りんばむのアカウントでサインインしてください"
+            chatGptPersonalLinkSettings.isLoading = false
             enqueueNotification(AppNotification(message: "ChatGPT連携にはサインインが必要です", actionLabel: nil, action: nil, autoDismissAfter: 4))
         } catch {
-            let message = error.localizedDescription
+            let message = (error as? SharedTagCloudError)?.userMessage ?? error.localizedDescription
             UserDefaults.standard.set(message, forKey: "chatgpt_personal_link_sync.last_error_message")
-            refreshChatGptPersonalLinkSettings()
+            chatGptPersonalLinkSettings.status = .failure(message)
+            chatGptPersonalLinkSettings.lastErrorMessage = message
+            chatGptPersonalLinkSettings.isLoading = false
             enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 5))
         }
+    }
+
+    func syncChatGptPersonalLinksNow() async {
+        guard chatGptPersonalLinkSettings.operationEnabled,
+              chatGptPersonalLinkSettings.enabled,
+              !isUpdatingChatGptPersonalLinkSync else { return }
+        isUpdatingChatGptPersonalLinkSync = true
+        chatGptPersonalLinkSettings.isLoading = true
+        chatGptPersonalLinkSettings.status = .loading
+        defer { isUpdatingChatGptPersonalLinkSync = false }
+        do {
+            let result = try await services.sharedTagCloud.syncChatGptPersonalLinks()
+            UserDefaults.standard.set(Date(), forKey: "chatgpt_personal_link_sync.last_synced_at")
+            UserDefaults.standard.removeObject(forKey: "chatgpt_personal_link_sync.last_error_message")
+            updateChatGptPersonalLinkEligibility()
+            chatGptPersonalLinkSettings.lastSyncedAt = UserDefaults.standard.object(forKey: "chatgpt_personal_link_sync.last_synced_at") as? Date
+            chatGptPersonalLinkSettings.lastErrorMessage = nil
+            chatGptPersonalLinkSettings.status = result.status
+            chatGptPersonalLinkSettings.isLoading = false
+        } catch SharedTagCloudError.authRequired {
+            chatGptPersonalLinkSettings.status = .failure("りんばむのアカウントでサインインしてください")
+            chatGptPersonalLinkSettings.lastErrorMessage = "りんばむのアカウントでサインインしてください"
+            chatGptPersonalLinkSettings.isLoading = false
+        } catch {
+            let message = (error as? SharedTagCloudError)?.userMessage ?? error.localizedDescription
+            UserDefaults.standard.set(message, forKey: "chatgpt_personal_link_sync.last_error_message")
+            chatGptPersonalLinkSettings.status = .failure(message)
+            chatGptPersonalLinkSettings.lastErrorMessage = message
+            chatGptPersonalLinkSettings.isLoading = false
+        }
+    }
+
+    func retryChatGptPersonalLinkSync() async {
+        await syncChatGptPersonalLinksNow()
+    }
+
+    private func updateChatGptPersonalLinkEligibility() {
+        let eligibility = (try? services.sharedTagCloud.chatGptPersonalLinkEligibility()) ?? .empty
+        chatGptPersonalLinkSettings.eligibleCount = eligibility.eligibleCount
+        chatGptPersonalLinkSettings.excludedCount = eligibility.excludedCount
+        chatGptPersonalLinkSettings.exclusionReasons = eligibility.exclusionReasons
+    }
+
+    func aiTransparencyPreview() -> AiSendPreview? {
+        #if DEBUG
+        guard AiTransparencyFeature.isEnabled else { return nil }
+        let namesByID = Dictionary(uniqueKeysWithValues: localTags.map { ($0.id, $0.name) })
+        let sources = activeEntries.map { entry in
+            let tagNames = (localTagAssignments[entry.id] ?? [])
+                .compactMap { namesByID[$0] }
+            return AiTransparencyPolicy.source(
+                for: entry,
+                publicSafeID: AiTransparencyPolicy.publicSafeID(for: entry),
+                tagNames: tagNames
+            )
+        }
+        return AiTransparencyPolicy.buildPreview(
+            actionKind: .personalLinkSync,
+            destination: "端末内モック",
+            sources: sources
+        )
+        #else
+        return nil
+        #endif
+    }
+
+    func saveAiTransparencyReceipt(preview: AiSendPreview) -> AiSendReceipt? {
+        #if DEBUG
+        guard AiTransparencyFeature.isEnabled else { return nil }
+        return try? services.repository.saveAiReceipt(preview: preview)
+        #else
+        return nil
+        #endif
+    }
+
+    func generateAiTransparencyDraft(preview: AiSendPreview, receipt: AiSendReceipt) -> AiDraft? {
+        #if DEBUG
+        guard AiTransparencyFeature.isEnabled else { return nil }
+        return try? services.repository.generateAiDraftWithFallback(preview: preview, receipt: receipt)
+        #else
+        return nil
+        #endif
+    }
+
+    func saveAiTransparencyDiff(draft: AiDraft, operations: [AiDiffOperation]) -> AiDiffProposal? {
+        #if DEBUG
+        guard AiTransparencyFeature.isEnabled else { return nil }
+        return try? services.repository.saveAiDiffProposal(draft: draft, operations: operations)
+        #else
+        return nil
+        #endif
+    }
+
+    func applyAiTransparencyDiff(proposalID: String, confirm: Bool) async -> Bool {
+        #if DEBUG
+        guard AiTransparencyFeature.isEnabled,
+              let applied = try? services.repository.applyAiDiffProposal(proposalID: proposalID, confirm: confirm),
+              applied else {
+            return false
+        }
+        await reload()
+        return true
+        #else
+        return false
+        #endif
     }
 
     func purchasePaidCourse(planType: PlanType, billingPeriod: BillingPeriod) async {
@@ -228,12 +469,16 @@ final class URLSaverAppModel: ObservableObject {
         await reload()
     }
 
-    func prepareManualSave(input: String, localTagIDs: Set<Int64> = [], collectionID: Int64? = nil) async -> ManualSaveOutcome {
-        if let data = input.trimmingCharacters(in: .whitespacesAndNewlines).data(using: .utf8),
-           (try? JSONDecoder().decode(TagSharePayload.self, from: data)) != nil {
-            _ = await importLocalTagPayloadText(input)
-            return .completed
+    func prepareManualSave(input: String, localTagIDs: Set<Int64> = []) async -> ManualSaveOutcome {
+        switch ManualTagImportPreparation.prepare(input: input) {
+        case .ready(let preview):
+            return .tagImportConfirmation(preview)
+        case .invalid(let message):
+            return .tagImportError(message)
+        case .notTagPayload:
+            break
         }
+
         guard let saveResult = try? services.repository.saveFromManualInput(input, localTagIDs: Array(localTagIDs)) else {
             return .saved(SaveResult(result: .saveFailed))
         }
@@ -242,9 +487,6 @@ final class URLSaverAppModel: ObservableObject {
         case .inputTooLarge, .invalidURL, .noURLFound:
             return .inputError(saveResult.result)
         default:
-            if let collectionID, let entryID = saveResult.entryID {
-                _ = try? services.repository.assignCollection(entryID: entryID, collectionID: collectionID)
-            }
             return .saved(saveResult)
         }
     }
@@ -253,13 +495,15 @@ final class URLSaverAppModel: ObservableObject {
         await handleSaveResult(saveResult, degradationNotice: nil)
     }
 
-    func manualSave(input: String, localTagIDs: Set<Int64> = [], collectionID: Int64? = nil) async -> ShareSaveResult? {
-        switch await prepareManualSave(input: input, localTagIDs: localTagIDs, collectionID: collectionID) {
+    func manualSave(input: String, localTagIDs: Set<Int64> = []) async -> ShareSaveResult? {
+        switch await prepareManualSave(input: input, localTagIDs: localTagIDs) {
         case .inputError(let result):
             return result
         case .saved(let saveResult):
             await finishPreparedManualSave(saveResult)
             return nil
+        case .tagImportConfirmation, .tagImportError:
+            return .saveFailed
         case .completed:
             return nil
         }
@@ -421,67 +665,6 @@ final class URLSaverAppModel: ObservableObject {
         return true
     }
 
-    func createCollection(name: String) async -> CollectionSummary? {
-        guard let collection = try? services.repository.createCollection(name: name) else {
-            enqueueNotification(AppNotification(message: "コレクションを作成できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
-            return nil
-        }
-        await reload()
-        enqueueNotification(AppNotification(message: "コレクションを作成しました", actionLabel: nil, action: nil, autoDismissAfter: 3))
-        return collection
-    }
-
-    func assignCollection(entryID: Int64, collectionID: Int64) async -> Bool {
-        guard (try? services.repository.assignCollection(entryID: entryID, collectionID: collectionID)) == true else {
-            enqueueNotification(AppNotification(message: "コレクションに移動できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
-            return false
-        }
-        await reload()
-        enqueueNotification(AppNotification(message: "コレクションに移動しました", actionLabel: nil, action: nil, autoDismissAfter: 3))
-        return true
-    }
-
-    func assignCollectionAndCreateLocalTag(entryID: Int64, collection: CollectionSummary) async -> Bool {
-        let previousCollection = entry(for: entryID).flatMap { entry in
-            collections.first { $0.id == entry.collectionID && $0.id != collection.id && $0.id != 1 }
-        }
-        guard (try? services.repository.assignCollection(entryID: entryID, collectionID: collection.id)) == true else {
-            enqueueNotification(AppNotification(message: "コレクションに移動できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
-            return false
-        }
-        if let previousCollection,
-           let tag = try? services.repository.createLocalTag(name: previousCollection.name) {
-            _ = try? services.repository.assignLocalTag(entryID: entryID, tagID: tag.id)
-        }
-        if collection.id != 1,
-           let tag = try? services.repository.createLocalTag(name: collection.name) {
-            _ = try? services.repository.assignLocalTag(entryID: entryID, tagID: tag.id)
-        }
-        await reload()
-        enqueueNotification(AppNotification(message: "コレクションに移動しました", actionLabel: nil, action: nil, autoDismissAfter: 3))
-        return true
-    }
-
-    func reorderCollections(collectionIDs: [Int64]) async -> Bool {
-        guard (try? services.repository.reorderCollections(collectionIDs: collectionIDs)) == true else {
-            enqueueNotification(AppNotification(message: "コレクションを並び替えできませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
-            return false
-        }
-        await reload()
-        enqueueNotification(AppNotification(message: "コレクションを並び替えました", actionLabel: nil, action: nil, autoDismissAfter: 3))
-        return true
-    }
-
-    func deleteCollection(collectionID: Int64) async -> Bool {
-        guard (try? services.repository.deleteCollection(id: collectionID)) == true else {
-            enqueueNotification(AppNotification(message: "コレクションを削除できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
-            return false
-        }
-        await reload()
-        enqueueNotification(AppNotification(message: "コレクションを削除しました", actionLabel: nil, action: nil, autoDismissAfter: 3))
-        return true
-    }
-
     func loadLocalTagsForEntry(entryID: Int64) -> [LocalTagSummary] {
         (try? services.repository.loadLocalTagsForEntry(entryID: entryID)) ?? []
     }
@@ -516,30 +699,29 @@ final class URLSaverAppModel: ObservableObject {
         return true
     }
 
-    func localTagShareText(for tag: LocalTagSummary) -> String {
-        """
-        りんばむの端末内タグ:
-        \(tag.name)
-
-        urlsaver://tag/\(tag.id)
-
-        このリンクは同じ端末内のタグを開くためのものです。
-        """
+    func localTagShareURLCount(tagID: Int64) -> Int {
+        (try? services.repository.exportLocalTag(tagID: tagID)?.urls.count) ?? 0
     }
 
-    func localTagPayloadText(tagID: Int64) -> String? {
+    func localTagShareFileURL(tagID: Int64) -> URL? {
         guard let payload = try? services.repository.exportLocalTag(tagID: tagID),
               let data = try? JSONEncoder().encode(payload) else {
             return nil
         }
-        return String(data: data, encoding: .utf8)
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("rinbam-tag-\(UUID().uuidString).json")
+        do {
+            try data.write(to: fileURL, options: .atomic)
+            return fileURL
+        } catch {
+            return nil
+        }
     }
 
     @discardableResult
-    func importLocalTagPayloadText(_ text: String) async -> Bool {
-        guard let data = text.trimmingCharacters(in: .whitespacesAndNewlines).data(using: .utf8),
-              let payload = try? JSONDecoder().decode(TagSharePayload.self, from: data),
-              let result = try? services.repository.importLocalTagPayload(payload) else {
+    func confirmManualTagImport(_ preview: ManualTagImportPreview) async -> Bool {
+        guard let result = try? ManualTagImportPreparation.importConfirmed(preview, repository: services.repository),
+              result.tagID >= 0 else {
             enqueueNotification(AppNotification(message: "タグデータを読み込めませんでした", actionLabel: nil, action: nil, autoDismissAfter: 4))
             return false
         }
@@ -980,12 +1162,16 @@ final class URLSaverAppModel: ObservableObject {
     func deleteSharedTagCloudAccount() async {
         switch await services.sharedTagCloud.deleteAccount() {
         case .success:
-            try? services.pendingInviteStore.clear()
-            pendingInviteRecord = nil
-            await refreshSharedTagCloudState()
-            await reload()
+            sharedTagAccountLocalCleanupState = nil
+            await refreshAfterRemoteAccountDeletion()
             profileStatusMessage = "共有タグアカウントを削除しました。"
             enqueueNotification(AppNotification(message: "共有タグクラウドのアカウントを削除しました", actionLabel: nil, action: nil, autoDismissAfter: 5))
+        case .localCleanupRequired(let state):
+            sharedTagAccountLocalCleanupState = state
+            await refreshAfterRemoteAccountDeletion()
+            let message = localAccountCleanupMessage(for: state)
+            profileStatusMessage = message
+            enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 6))
         case .authRequired:
             enqueueNotification(AppNotification(message: "先に共有タグクラウドへサインインしてください", actionLabel: nil, action: nil, autoDismissAfter: 4))
         case .ownerTransferRequired:
@@ -993,6 +1179,49 @@ final class URLSaverAppModel: ObservableObject {
         case .failure(let message):
             enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 4))
         }
+    }
+
+    func retrySharedTagAccountLocalCleanup() async {
+        guard sharedTagAccountLocalCleanupState != nil else { return }
+        switch services.sharedTagCloud.retryLocalAccountCleanup() {
+        case .success:
+            sharedTagAccountLocalCleanupState = nil
+            await refreshSharedTagCloudState()
+            await reload()
+            profileStatusMessage = "端末内データの消去を完了しました。"
+            enqueueNotification(AppNotification(message: "端末内データの消去を完了しました", actionLabel: nil, action: nil, autoDismissAfter: 5))
+        case .localCleanupRequired(let state):
+            sharedTagAccountLocalCleanupState = state
+            await refreshSharedTagCloudState()
+            await reload()
+            let message = localAccountCleanupMessage(for: state)
+            profileStatusMessage = message
+            enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 6))
+        case .failure(let message):
+            profileStatusMessage = message
+            enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 5))
+        case .authRequired, .ownerTransferRequired:
+            let message = "端末内データの消去を完了できませんでした。もう一度お試しください。"
+            profileStatusMessage = message
+            enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 5))
+        }
+    }
+
+    private func refreshAfterRemoteAccountDeletion() async {
+        try? services.pendingInviteStore.clear()
+        pendingInviteRecord = nil
+        await refreshSharedTagCloudState()
+        await reload()
+    }
+
+    private func localAccountCleanupMessage(for state: SharedTagAccountLocalCleanupState) -> String {
+        if state.aiDataCleanupPending && state.signOutCleanupPending {
+            return "アカウント削除済み・端末内AIデータとサインアウト情報の消去未完了"
+        }
+        if state.aiDataCleanupPending {
+            return "アカウント削除済み・端末内AIデータ消去未完了"
+        }
+        return "アカウント削除済み・端末内のサインアウト情報消去未完了"
     }
 
     func loadSharedTagsForEntry(entryID: Int64) -> [SharedTagSummary] {

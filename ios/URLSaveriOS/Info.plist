@@ -24,6 +24,10 @@
 	<string>15</string>
 	<key>SharedTagCloudEnabled</key>
 	<string>$(URLSAVER_SHARED_TAG_CLOUD_ENABLED)</string>
+	<key>ChatGptPersonalLinkSyncEnabled</key>
+	<string>$(URLSAVER_CHATGPT_PERSONAL_LINK_SYNC_ENABLED)</string>
+	<key>AiTransparencyEnabled</key>
+	<string>$(URLSAVER_AI_TRANSPARENCY_ENABLED)</string>
 	<key>SupabaseURL</key>
 	<string>$(URLSAVER_SUPABASE_URL)</string>
 	<key>SupabaseAnonKey</key>

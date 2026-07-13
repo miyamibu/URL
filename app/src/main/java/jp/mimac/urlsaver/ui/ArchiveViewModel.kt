@@ -2,8 +2,6 @@ package jp.mimac.urlsaver.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import jp.mimac.urlsaver.data.CollectionEntity
-import jp.mimac.urlsaver.data.CreateCollectionResult
 import jp.mimac.urlsaver.data.EntryCardDisplayModeStore
 import jp.mimac.urlsaver.data.ServiceFilterOrderStore
 import jp.mimac.urlsaver.data.TagRepository
@@ -29,11 +27,7 @@ class ArchiveViewModel(
     private val tagRepository: TagRepository? = null,
 ) : ViewModel() {
     private val selectedService = MutableStateFlow(ServiceType.ALL)
-    private val selectedCollectionId = MutableStateFlow<Long?>(null)
     private val selectedLocalTagId = MutableStateFlow<Long?>(null)
-
-    val collections: StateFlow<List<CollectionEntity>> = repository.observeCollections()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val allTagsWithCount: StateFlow<List<TagWithCount>> = tagRepository
         ?.observeAllTagsWithCount()
@@ -53,27 +47,15 @@ class ArchiveViewModel(
     val topFilterOrderTokens: StateFlow<List<String>> = topFilterOrderStore.observeOrderTokens()
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    private val localTagRefs = combine(
-        repository.observeLocalTagCollectionEntryRefs(),
-        repository.observeLocalTagEntryRefs(),
-    ) { collectionRefs, entryRefs -> collectionRefs to entryRefs }
-
     val uiState: StateFlow<ListFilterUiState> = combine(
         repository.observeArchiveEntries(),
         selectedService,
-        selectedCollectionId,
         selectedLocalTagId,
-        localTagRefs,
-    ) { entries, selectedService, selectedCollection, selectedLocalTag, refs ->
-        val (collectionRefs, entryRefs) = refs
+        repository.observeLocalTagEntryRefs(),
+    ) { entries, selectedService, selectedLocalTag, entryRefs ->
         val baseState = buildListFilterUiState(
             entries = entries,
             selectedService = selectedService,
-            selectedCollectionId = selectedCollection,
-            localTagCollectionEntryIds = collectionRefs.groupBy(
-                keySelector = { it.collectionId },
-                valueTransform = { it.entryId },
-            ).mapValues { (_, entryIds) -> entryIds.toSet() },
         )
         val scopedEntries = if (selectedLocalTag == null) {
             baseState.entries
@@ -91,29 +73,16 @@ class ArchiveViewModel(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ListFilterUiState())
 
     val selectedServiceFlow: StateFlow<ServiceType> = selectedService
-    val selectedCollectionIdFlow: StateFlow<Long?> = selectedCollectionId
     val selectedLocalTagIdFlow: StateFlow<Long?> = selectedLocalTagId
 
     fun selectService(serviceType: ServiceType) {
         selectedService.value = serviceType
-        selectedCollectionId.value = null
-        selectedLocalTagId.value = null
-    }
-
-    fun selectCollection(collectionId: Long?) {
-        selectedCollectionId.value = collectionId
-        selectedService.value = ServiceType.ALL
         selectedLocalTagId.value = null
     }
 
     fun selectLocalTag(tagId: Long?) {
         selectedLocalTagId.value = tagId
-        selectedCollectionId.value = null
         selectedService.value = ServiceType.ALL
-    }
-
-    suspend fun createCollection(name: String): CreateCollectionResult {
-        return repository.createCollection(name)
     }
 
     suspend fun createLocalTag(name: String): CreateTagResult {
@@ -122,10 +91,6 @@ class ArchiveViewModel(
 
     suspend fun renameLocalTag(tagId: Long, name: String): CreateTagResult {
         return tagRepository?.renameLocalTagWithResult(tagId, name) ?: CreateTagResult.Failed
-    }
-
-    suspend fun reorderCollections(collectionIds: List<Long>): Boolean {
-        return repository.reorderCollections(collectionIds)
     }
 
     fun reorderServices(serviceOrder: List<ServiceType>) {
@@ -138,14 +103,6 @@ class ArchiveViewModel(
         viewModelScope.launch {
             topFilterOrderStore.setOrderTokens(tokens)
         }
-    }
-
-    suspend fun deleteCollection(collectionId: Long): Boolean {
-        val deleted = repository.deleteCollection(collectionId)
-        if (deleted && selectedCollectionId.value == collectionId) {
-            selectedCollectionId.value = null
-        }
-        return deleted
     }
 
     suspend fun restoreEntry(entryId: Long): Boolean {

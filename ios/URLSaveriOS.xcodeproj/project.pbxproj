@@ -656,6 +656,8 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = URLSaveriOS/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				URLSAVER_CHATGPT_PERSONAL_LINK_SYNC_ENABLED = false;
+				URLSAVER_AI_TRANSPARENCY_ENABLED = false;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -897,6 +899,8 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = URLSaveriOS/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				URLSAVER_CHATGPT_PERSONAL_LINK_SYNC_ENABLED = false;
+				URLSAVER_AI_TRANSPARENCY_ENABLED = false;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

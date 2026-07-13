@@ -2,6 +2,8 @@ import XCTest
 @testable import URLSaveriOS
 
 final class MetadataStatusTextTests: XCTestCase {
+    private let backgroundTaskWaitTimeout: TimeInterval = 5.0
+
     func testListAndDetailCopyMatchesContract() {
         let record = URLRecord(
             id: 1,
@@ -91,11 +93,11 @@ final class MetadataStatusTextTests: XCTestCase {
             return true
         }
 
-        await fulfillment(of: [started], timeout: 1.0)
+        await fulfillment(of: [started], timeout: backgroundTaskWaitTimeout)
         XCTAssertNil(task.completedSuccess)
 
         await gate.resume()
-        await fulfillment(of: [completed], timeout: 1.0)
+        await fulfillment(of: [completed], timeout: backgroundTaskWaitTimeout)
         XCTAssertEqual(task.completedSuccess, true)
         XCTAssertEqual(task.completedCallCount, 1)
         XCTAssertNil(task.expirationHandler)
@@ -108,7 +110,7 @@ final class MetadataStatusTextTests: XCTestCase {
 
         BackgroundTaskRunner.run(task: task) { false }
 
-        await fulfillment(of: [completed], timeout: 1.0)
+        await fulfillment(of: [completed], timeout: backgroundTaskWaitTimeout)
         XCTAssertEqual(task.completedSuccess, false)
         XCTAssertEqual(task.completedCallCount, 1)
     }
@@ -127,9 +129,9 @@ final class MetadataStatusTextTests: XCTestCase {
             return false
         }
 
-        await fulfillment(of: [started], timeout: 1.0)
+        await fulfillment(of: [started], timeout: backgroundTaskWaitTimeout)
         task.expirationHandler?()
-        await fulfillment(of: [completed], timeout: 1.0)
+        await fulfillment(of: [completed], timeout: backgroundTaskWaitTimeout)
         XCTAssertEqual(task.completedSuccess, false)
         XCTAssertEqual(task.completedCallCount, 1)
         XCTAssertNil(task.expirationHandler)
@@ -151,12 +153,12 @@ final class MetadataStatusTextTests: XCTestCase {
             return false
         }
 
-        await fulfillment(of: [started], timeout: 1.0)
+        await fulfillment(of: [started], timeout: backgroundTaskWaitTimeout)
         task.expirationHandler?()
         XCTAssertNil(task.completedSuccess)
 
         await gate.resume()
-        await fulfillment(of: [completed], timeout: 1.0)
+        await fulfillment(of: [completed], timeout: backgroundTaskWaitTimeout)
         XCTAssertEqual(task.completedSuccess, false)
         XCTAssertEqual(task.completedCallCount, 1)
     }

@@ -5,6 +5,11 @@ import SafariServices
 import SwiftUI
 import UIKit
 
+private enum ChatGptPersonalLinkSyncAction: Equatable {
+    case change(enabled: Bool)
+    case sync
+}
+
 struct SharedTagCloudSheet: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("appThemeMode") private var themeModeRaw = AppThemeMode.system.rawValue
@@ -27,6 +32,8 @@ struct SharedTagCloudSheet: View {
     @State private var googleOAuthURL: URL?
     @State private var pendingAppleNonce: String?
     @State private var pendingAppleState: String?
+    @State private var pendingChatGptPersonalLinkSyncAction: ChatGptPersonalLinkSyncAction?
+    @State private var isShowingAiTransparency = false
     @StateObject private var appleSignInCoordinator = AppleSignInCoordinator()
 
     var body: some View {
@@ -66,11 +73,22 @@ struct SharedTagCloudSheet: View {
                     }
 
                     profileSection
+                    chatGptPersonalLinkSyncSection
+                    #if DEBUG
+                    if AiTransparencyFeature.isEnabled {
+                        aiTransparencyEntry
+                    }
+                    #endif
                     usageSummarySection
+                    if let cleanupState = model.sharedTagAccountLocalCleanupState {
+                        accountLocalCleanupSection(cleanupState)
+                    }
                     accountActionsSection
                     paidCourseSection
 
-                    if model.sharedTagCloudState.isConfigured && !model.sharedTagCloudState.isSignedIn {
+                    if model.sharedTagAccountLocalCleanupState == nil &&
+                        model.sharedTagCloudState.isConfigured &&
+                        !model.sharedTagCloudState.isSignedIn {
                         signedOutSection
                     }
 
@@ -181,6 +199,14 @@ struct SharedTagCloudSheet: View {
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
             .presentationCornerRadius(32)
+        }
+        .sheet(isPresented: $isShowingAiTransparency) {
+            #if DEBUG
+            AiTransparencySheet(model: model)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+                .presentationCornerRadius(32)
+            #endif
         }
         .sheet(
             isPresented: Binding(
@@ -475,6 +501,178 @@ struct SharedTagCloudSheet: View {
         }
     }
 
+    private var chatGptPersonalLinkSyncSection: some View {
+        let settings = model.chatGptPersonalLinkSettings
+        return AppPanel {
+            Label("ChatGPTに保存リンクを同期", systemImage: "link.badge.plus")
+                .font(.system(size: 20, weight: .heavy, design: .rounded))
+                .foregroundStyle(AppPalette.textPrimary)
+
+            if !settings.operationEnabled {
+                Text("現在は利用できません")
+                    .font(.system(size: 17, weight: .heavy, design: .rounded))
+                    .foregroundStyle(AppPalette.textPrimary)
+                Text("外部接続の確認が完了するまでオフです")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(AppPalette.textSecondary)
+                Text("同期をオンにするまでリンクは送信されません")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(AppPalette.textSecondary)
+            } else if !model.sharedTagCloudState.isSignedIn {
+                Text("りんばむのアカウントでサインインしてください")
+                    .font(.system(size: 16, weight: .heavy, design: .rounded))
+                    .foregroundStyle(AppPalette.textPrimary)
+            } else {
+                HStack(spacing: 10) {
+                    syncCountTile(title: "同期対象", value: settings.eligibleCount)
+                    syncCountTile(title: "除外", value: settings.excludedCount)
+                }
+
+                if !settings.enabled {
+                    Text("同期をオンにするまでリンクは送信されません")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(AppPalette.textSecondary)
+                } else {
+                    Text("同期はオンです。対象は自作タグ由来のアクティブなリンクだけです")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(AppPalette.textSecondary)
+                }
+
+                if !settings.exclusionReasons.isEmpty {
+                    Text("共有タグ付き、アーカイブ、削除待ちなどを除外しています")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(AppPalette.textSecondary)
+                }
+
+                if settings.isLoading {
+                    ProgressView("同期しています…")
+                        .tint(AppPalette.primaryStrong)
+                } else {
+                    HStack(spacing: 10) {
+                        AppActionButton(tone: settings.enabled ? .secondary : .primary, enabled: !isWorking) {
+                            requestChatGptPersonalLinkSyncConfirmation(.change(enabled: !settings.enabled))
+                        } label: {
+                            Text(settings.enabled ? "同期をオフにする" : "同期をオンにする")
+                        }
+
+                        if settings.enabled {
+                            AppActionButton(enabled: !isWorking) {
+                                requestChatGptPersonalLinkSyncConfirmation(.sync)
+                            } label: {
+                                Text("今すぐ同期")
+                            }
+                        }
+                    }
+
+                    if case .failure = settings.status {
+                        AppActionButton(enabled: !isWorking) {
+                            requestChatGptPersonalLinkSyncConfirmation(.sync)
+                        } label: {
+                            Text("再試行")
+                        }
+                    }
+                }
+
+                if let lastSyncedAt = settings.lastSyncedAt {
+                    Text("最終同期: \(DateFormatters.detailTimestamp.string(from: lastSyncedAt))")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(AppPalette.textMuted)
+                }
+            }
+        }
+        .confirmationDialog(
+            "ChatGPT同期の確認",
+            isPresented: Binding(
+                get: { pendingChatGptPersonalLinkSyncAction != nil },
+                set: { if !$0 { pendingChatGptPersonalLinkSyncAction = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("確認して実行") {
+                confirmChatGptPersonalLinkSyncAction()
+            }
+            Button("キャンセル", role: .cancel) {
+                pendingChatGptPersonalLinkSyncAction = nil
+            }
+        } message: {
+            Text(chatGptPersonalLinkSyncConfirmationMessage(
+                action: pendingChatGptPersonalLinkSyncAction,
+                settings: settings
+            ))
+        }
+    }
+
+    private func requestChatGptPersonalLinkSyncConfirmation(_ action: ChatGptPersonalLinkSyncAction) {
+        let settings = model.chatGptPersonalLinkSettings
+        guard settings.operationEnabled,
+              model.sharedTagCloudState.isSignedIn,
+              !settings.isLoading else { return }
+        if case .sync = action, !settings.enabled { return }
+        pendingChatGptPersonalLinkSyncAction = action
+    }
+
+    private func confirmChatGptPersonalLinkSyncAction() {
+        guard let action = pendingChatGptPersonalLinkSyncAction else { return }
+        pendingChatGptPersonalLinkSyncAction = nil
+
+        switch action {
+        case .change(let enabled):
+            model.requestChatGptPersonalLinkSyncChange(enabled: enabled)
+            Task { await model.confirmChatGptPersonalLinkSyncChange() }
+        case .sync:
+            Task { await model.syncChatGptPersonalLinksNow() }
+        }
+    }
+
+    private func chatGptPersonalLinkSyncConfirmationMessage(
+        action: ChatGptPersonalLinkSyncAction?,
+        settings: ChatGptPersonalLinkSettings
+    ) -> String {
+        let counts = "対象 \(settings.eligibleCount)件 / 除外 \(settings.excludedCount)件"
+        switch action {
+        case .change(enabled: true):
+            return "\(counts)\n送信概要: URL・タイトル・メモ・自作タグ名・更新日時を同期します。本文や秘密情報は送信しません。\n同期をオンにします。"
+        case .change(enabled: false):
+            return "\(counts)\n送信概要: 同期をオフにするため、今回の送信はありません。\n同期をオフにします。"
+        case .sync:
+            return "\(counts)\n送信概要: URL・タイトル・メモ・自作タグ名・更新日時を同期します。本文や秘密情報は送信しません。"
+        case nil:
+            return counts
+        }
+    }
+
+    private func syncCountTile(title: String, value: Int) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(AppPalette.textSecondary)
+            Text("\(value)件")
+                .font(.system(size: 21, weight: .heavy, design: .rounded))
+                .foregroundStyle(AppPalette.textPrimary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(AppPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    #if DEBUG
+    private var aiTransparencyEntry: some View {
+        AppPanel {
+            Text("AI動作の確認（デバッグ）")
+                .font(.system(size: 19, weight: .heavy, design: .rounded))
+                .foregroundStyle(AppPalette.textPrimary)
+            Text("端末内のモックReceipt / 下書き / 変更案を確認できます")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(AppPalette.textSecondary)
+            AppActionButton(enabled: !isWorking) {
+                isShowingAiTransparency = true
+            } label: {
+                Text("AI動作の確認（デバッグ）")
+            }
+        }
+    }
+    #endif
+
     private var usageSummarySection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("使用状況")
@@ -526,6 +724,45 @@ struct SharedTagCloudSheet: View {
             } label: {
                 Text("問い合わせ")
             }
+        }
+    }
+
+    private func accountLocalCleanupSection(_ state: SharedTagAccountLocalCleanupState) -> some View {
+        AppPanel(strong: true) {
+            Text("アカウント削除済み")
+                .font(.system(size: 20, weight: .heavy, design: .rounded))
+                .foregroundStyle(Color.white.opacity(0.96))
+
+            if state.aiDataCleanupPending {
+                Text("アカウント削除済み・端末内AIデータ消去未完了")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Color.white.opacity(0.96))
+            }
+            if state.signOutCleanupPending {
+                Text("端末内のサインアウト情報または共有タグデータの消去が未完了です")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Color.white.opacity(0.96))
+            }
+
+            Text("再試行では端末内の消去だけを行い、クラウドのアカウント削除は行いません。")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Color.white.opacity(0.82))
+
+            AppActionButton(tone: .primary, enabled: !isWorking) {
+                guard !isWorking else { return }
+                isWorking = true
+                Task {
+                    await model.retrySharedTagAccountLocalCleanup()
+                    isWorking = false
+                }
+            } label: {
+                if isWorking {
+                    ProgressView().tint(AppPalette.textPrimary)
+                } else {
+                    Text("端末内データ消去を再試行")
+                }
+            }
+            .accessibilityHint("クラウドのアカウント削除は行わず、端末内の消去だけを再試行します")
         }
     }
 
@@ -791,6 +1028,193 @@ private struct UsageMetricTile: View {
         .background(AppPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }
+
+#if DEBUG
+private struct AiTransparencySheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    @ObservedObject var model: URLSaverAppModel
+    @State private var preview: AiSendPreview?
+    @State private var receipt: AiSendReceipt?
+    @State private var draft: AiDraft?
+    @State private var diff: AiDiffProposal?
+    @State private var message: String?
+    @State private var isShowingApplyConfirmation = false
+
+    var body: some View {
+        ScreenContainer {
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack {
+                        Text("AI動作の確認（デバッグ）")
+                            .font(.system(size: 26, weight: .heavy, design: .rounded))
+                            .foregroundStyle(AppPalette.textPrimary)
+                        Spacer()
+                        Button("閉じる") { dismiss() }
+                            .font(.system(size: 17, weight: .bold))
+                            .foregroundStyle(AppPalette.primaryStrong)
+                    }
+
+                    AppPanel(strong: true) {
+                        Text("この画面は端末内のモックです。外部には送信しません。")
+                            .font(.system(size: 16, weight: .heavy, design: .rounded))
+                            .foregroundStyle(Color.white.opacity(0.96))
+                    }
+
+                    AppPanel {
+                        Text("送信前の確認")
+                            .font(.system(size: 19, weight: .heavy, design: .rounded))
+                            .foregroundStyle(AppPalette.textPrimary)
+                        if let preview {
+                            Text("対象 \(preview.eligibleCount)件 / 除外 \(preview.blockedCount)件")
+                                .font(.system(size: 17, weight: .bold))
+                                .foregroundStyle(AppPalette.textPrimary)
+                            Text("本文、prompt、token、端末内パス、DB IDは送信しません")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(AppPalette.textSecondary)
+                        } else {
+                            Text("確認データを作成できませんでした")
+                                .foregroundStyle(AppPalette.danger)
+                        }
+                    }
+
+                    AppPanel {
+                        Text("処理記録")
+                            .font(.system(size: 19, weight: .heavy, design: .rounded))
+                            .foregroundStyle(AppPalette.textPrimary)
+                        if let receipt {
+                            Text("送信対象 \(receipt.sentSourceIDs.count)件 / 除外 \(receipt.blockedSourceIDs.count)件")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(AppPalette.textPrimary)
+                            Text("サイズ: \(receipt.requestSizeBucket.rawValue) / \(receipt.responseSizeBucket.rawValue)")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(AppPalette.textSecondary)
+                            Text("raw body / raw prompt: なし")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(AppPalette.textSecondary)
+                        } else {
+                            Text("まだ処理記録はありません")
+                                .foregroundStyle(AppPalette.textSecondary)
+                        }
+                    }
+
+                    AppPanel {
+                        Text("下書き")
+                            .font(.system(size: 19, weight: .heavy, design: .rounded))
+                            .foregroundStyle(AppPalette.textPrimary)
+                        if let draft {
+                            Text(draft.title)
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundStyle(AppPalette.textPrimary)
+                            Text(draft.body)
+                                .font(.system(size: 14, weight: .medium, design: .monospaced))
+                                .foregroundStyle(AppPalette.textSecondary)
+                                .textSelection(.enabled)
+                        } else {
+                            Text("モック下書きはありません")
+                                .foregroundStyle(AppPalette.textSecondary)
+                        }
+                    }
+
+                    AppPanel {
+                        Text("変更案")
+                            .font(.system(size: 19, weight: .heavy, design: .rounded))
+                            .foregroundStyle(AppPalette.textPrimary)
+                        if let diff {
+                            Text("変更案 \(diff.operations.count)件")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(AppPalette.textPrimary)
+                            Text(diff.operations.isEmpty ? "今回のモックでは本体変更案はありません。適用対象はタイトルとメモだけです。" : "変更前後を確認してから明示的に適用します。")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(AppPalette.textSecondary)
+                            ForEach(Array(diff.operations.enumerated()), id: \.offset) { _, operation in
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(operation.field == "memo" ? "メモの変更案" : "タイトルの変更案")
+                                        .font(.system(size: 15, weight: .bold))
+                                        .foregroundStyle(AppPalette.textPrimary)
+                                    Text("変更前: \((operation.before?.isEmpty == false) ? operation.before! : "（空）")")
+                                        .font(.system(size: 14, weight: .medium))
+                                        .foregroundStyle(AppPalette.textSecondary)
+                                    Text("変更後: \((operation.after?.isEmpty == false) ? operation.after! : "（空）")")
+                                        .font(.system(size: 14, weight: .medium))
+                                        .foregroundStyle(AppPalette.textPrimary)
+                                }
+                            }
+                            if !diff.operations.isEmpty, !diff.applied {
+                                AppActionButton(tone: .primary, enabled: true) {
+                                    isShowingApplyConfirmation = true
+                                } label: {
+                                    Text("変更を反映")
+                                }
+                            }
+                        } else {
+                            Text("変更案はありません")
+                                .foregroundStyle(AppPalette.textSecondary)
+                        }
+                    }
+
+                    if let message {
+                        Text(message)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(AppPalette.danger)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 24)
+            }
+        }
+        .task { prepare() }
+        .confirmationDialog("変更を反映", isPresented: $isShowingApplyConfirmation, titleVisibility: .visible) {
+            Button("確認して反映") {
+                guard let proposalID = diff?.proposalID else { return }
+                Task {
+                    let applied = await model.applyAiTransparencyDiff(proposalID: proposalID, confirm: true)
+                    message = applied ? "変更案を反映しました" : "内容が変更されたため、変更案を作り直してください"
+                    if applied { diff?.applied = true }
+                }
+            }
+            Button("キャンセル", role: .cancel) {}
+        } message: {
+            Text("変更直前に対象条件と現在値を再確認します。1件でも条件を満たさない場合は反映しません。")
+        }
+    }
+
+    private func prepare() {
+        guard let preview = model.aiTransparencyPreview(),
+              let receipt = model.saveAiTransparencyReceipt(preview: preview),
+              let draft = model.generateAiTransparencyDraft(preview: preview, receipt: receipt) else {
+            message = "デバッグflagが無効、またはローカル確認データを作成できませんでした"
+            return
+        }
+        let operation: AiDiffOperation? = preview.sources
+            .first(where: { $0.aiEligible })
+            .flatMap { source in
+                model.activeEntries.first(where: {
+                    AiTransparencyPolicy.publicSafeID(for: $0) == source.publicSafeID
+                }).map { entry in
+                    AiDiffOperation(
+                        targetPublicSafeID: source.publicSafeID,
+                        field: "memo",
+                        before: entry.memo,
+                        after: String(draft.body.prefix(2_000))
+                    )
+                }
+            }
+        guard let diff = model.saveAiTransparencyDiff(
+            draft: draft,
+            operations: operation.map { [$0] } ?? []
+        ) else {
+            message = "変更案を作成できませんでした"
+            return
+        }
+        self.preview = preview
+        self.receipt = receipt
+        self.draft = draft
+        self.diff = diff
+    }
+}
+#endif
 
 private struct ContactSupportSheet: View {
     @Environment(\.dismiss) private var dismiss

@@ -7,15 +7,9 @@ private extension Color {
     }
 }
 
-func shouldShowSharedTagCloudEntryPoints(
-    isConfigured: Bool,
-    hasSharedTags: Bool,
-    hasPendingInvite: Bool
-) -> Bool {
-    isConfigured || hasSharedTags || hasPendingInvite
+func shouldShowPendingInviteBanner(hasPendingInvite: Bool) -> Bool {
+    hasPendingInvite
 }
-
-private let showsCollectionUI = false
 
 struct RootView: View {
     @ObservedObject var model: URLSaverAppModel
@@ -25,15 +19,10 @@ struct RootView: View {
     @State private var selectedArchiveService: ServiceType = .all
     @State private var selectedMainLocalTagID: Int64?
     @State private var selectedArchiveLocalTagID: Int64?
-    @State private var selectedMainCollectionID: Int64?
-    @State private var selectedArchiveCollectionID: Int64?
     @AppStorage("entryListDisplayMode") private var displayModeRaw = EntryListDisplayMode.compact.rawValue
     @State private var isShowingLocalTagCreateAlert = false
-    @State private var isShowingCollectionCreateAlert = false
-    @State private var isShowingCollectionManagementSheet = false
     @State private var isShowingLocalTagManagementSheet = false
     @State private var localTagNameDraft = ""
-    @State private var collectionNameDraft = ""
     @State private var isShowingUsageGuide = false
     @State private var isShowingSearchBar = false
     @State private var searchQuery = ""
@@ -67,7 +56,7 @@ struct RootView: View {
     @ViewBuilder
     private func tabContent(
         mainDisplayedEntries: [URLRecord],
-        showsSharedTagCloud: Bool
+        showsPendingInviteBanner: Bool
     ) -> some View {
         switch model.selectedTab {
         case .main:
@@ -77,11 +66,9 @@ struct RootView: View {
                 pendingInviteRecord: model.pendingInviteRecord,
                 localTags: model.localTags,
                 localTagAssignments: model.localTagAssignments,
-                collections: model.collections,
                 sharedTags: model.sharedTags,
                 selectedService: $selectedMainService,
                 selectedLocalTagID: $selectedMainLocalTagID,
-                selectedCollectionID: $selectedMainCollectionID,
                 displayMode: displayModeBinding,
                 isShowingUsageGuide: $isShowingUsageGuide,
                 isShowingSearchBar: $isShowingSearchBar,
@@ -90,8 +77,6 @@ struct RootView: View {
                 onOpenGroups: { model.selectedTab = .groups },
                 onOpenDetail: model.openEntry(_:),
                 onCreateLocalTag: { isShowingLocalTagCreateAlert = true },
-                onCreateCollection: { isShowingCollectionCreateAlert = true },
-                onManageCollections: { isShowingCollectionManagementSheet = true },
                 onManageLocalTags: { isShowingLocalTagManagementSheet = true },
                 onRenameLocalTag: beginRenameLocalTag,
                 onReorderLocalTags: { ids in
@@ -155,7 +140,7 @@ struct RootView: View {
                 onOpenSharedTagCloud: { isShowingSharedTagCloudSheet = true },
                 onCreateSharedTag: { isShowingSharedTagCreateSheet = true },
                 onOpenSharedTag: { selectedSharedTagID = $0 },
-                showsSharedTagCloud: showsSharedTagCloud
+                showsPendingInviteBanner: showsPendingInviteBanner
             )
         case .archive:
             ArchiveScreen(
@@ -163,23 +148,17 @@ struct RootView: View {
                     model.archivedEntries,
                     selectedService: selectedArchiveService,
                     selectedLocalTagID: selectedArchiveLocalTagID,
-                    selectedCollectionID: selectedArchiveCollectionID,
                     localTagAssignments: model.localTagAssignments,
-                    localTags: model.localTags,
-                    collections: model.collections
+                    localTags: model.localTags
                 ),
                 totalEntries: model.archivedEntries,
                 localTags: model.localTags,
                 localTagAssignments: model.localTagAssignments,
-                collections: model.collections,
                 selectedService: $selectedArchiveService,
                 selectedLocalTagID: $selectedArchiveLocalTagID,
-                selectedCollectionID: $selectedArchiveCollectionID,
                 displayMode: displayModeBinding,
                 onBack: { model.selectedTab = .main },
                 onCreateLocalTag: { isShowingLocalTagCreateAlert = true },
-                onCreateCollection: { isShowingCollectionCreateAlert = true },
-                onManageCollections: { isShowingCollectionManagementSheet = true },
                 onManageLocalTags: { isShowingLocalTagManagementSheet = true },
                 onRenameLocalTag: beginRenameLocalTag,
                 onReorderLocalTags: { ids in
@@ -215,28 +194,23 @@ struct RootView: View {
                 model.activeEntries,
                 selectedService: selectedMainService,
                 selectedLocalTagID: selectedMainLocalTagID,
-                selectedCollectionID: selectedMainCollectionID,
                 localTagAssignments: model.localTagAssignments,
-                localTags: model.localTags,
-                collections: model.collections
+                localTags: model.localTags
             )
             let mainDisplayedEntries = searchFilteredEntries(
                 mainVisibleEntries,
                 query: searchQuery,
                 localTags: model.localTags,
-                localTagAssignments: model.localTagAssignments,
-                collections: model.collections
+                localTagAssignments: model.localTagAssignments
             )
-            let showsSharedTagCloud = shouldShowSharedTagCloudEntryPoints(
-                isConfigured: model.sharedTagCloudState.isConfigured,
-                hasSharedTags: !model.sharedTags.isEmpty || !model.sharedTagGroups.isEmpty,
+            let showsPendingInviteBanner = shouldShowPendingInviteBanner(
                 hasPendingInvite: model.pendingInviteRecord != nil
             )
             NavigationStack(path: $model.navigationPath) {
                 ScreenContainer {
                     tabContent(
                         mainDisplayedEntries: mainDisplayedEntries,
-                        showsSharedTagCloud: showsSharedTagCloud
+                        showsPendingInviteBanner: showsPendingInviteBanner
                     )
                     .overlay(alignment: .bottom) {
                         if model.selectedTab == .main && selectedMainEntryIDs.isEmpty && !isShowingUsageGuide && !isShowingSearchBar && searchQuery.isEmpty {
@@ -281,7 +255,6 @@ struct RootView: View {
                 model.selectedTab = .main
                 selectedMainService = .all
                 selectedMainLocalTagID = tagID
-                selectedMainCollectionID = nil
                 model.consumeIncomingLocalTagID()
             }
             .onChange(of: selectedMainService) { _, _ in
@@ -291,19 +264,6 @@ struct RootView: View {
             .onChange(of: selectedMainLocalTagID) { _, _ in
                 isMainSelectionModeActive = false
                 selectedMainEntryIDs = []
-            }
-            .onChange(of: selectedMainCollectionID) { _, _ in
-                isMainSelectionModeActive = false
-                selectedMainEntryIDs = []
-            }
-            .onChange(of: model.collections) { _, collections in
-                let collectionIDs = Set(collections.map(\.id))
-                if let selectedMainCollectionID, !collectionIDs.contains(selectedMainCollectionID) {
-                    self.selectedMainCollectionID = nil
-                }
-                if let selectedArchiveCollectionID, !collectionIDs.contains(selectedArchiveCollectionID) {
-                    self.selectedArchiveCollectionID = nil
-                }
             }
             .overlay(alignment: .bottom) {
                 if let notification = model.currentNotification {
@@ -318,7 +278,7 @@ struct RootView: View {
             }
             }
             .sheet(isPresented: $isShowingManualSheet) {
-                ManualInputSheet(model: model, selectedCollectionID: selectedMainCollectionID)
+                ManualInputSheet(model: model)
                     .presentationDetents([.height(640)])
                     .presentationDragIndicator(.hidden)
                     .presentationCornerRadius(32)
@@ -366,21 +326,6 @@ struct RootView: View {
                 .onDisappear {
                     selectedBatchLocalTagIDs = []
                 }
-            }
-            .sheet(isPresented: $isShowingCollectionManagementSheet) {
-                CollectionManagementSheet(
-                    collections: model.collections,
-                    onMove: { ids in
-                        Task { _ = await model.reorderCollections(collectionIDs: ids) }
-                    },
-                    onDelete: { collection in
-                        Task { _ = await model.deleteCollection(collectionID: collection.id) }
-                    },
-                    onClose: { isShowingCollectionManagementSheet = false }
-                )
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-                .presentationCornerRadius(32)
             }
             .sheet(isPresented: $isShowingSharedTagCreateSheet) {
                 SharedTagCreateSheet(
@@ -449,25 +394,6 @@ struct RootView: View {
                 }
             } message: {
                 Text("このiPhone内でURLを整理するタグを作成します。")
-            }
-            .alert("コレクションを作成", isPresented: $isShowingCollectionCreateAlert) {
-                TextField("コレクション名", text: $collectionNameDraft)
-                Button("作成") {
-                    let name = collectionNameDraft
-                    collectionNameDraft = ""
-                    Task {
-                        if let collection = await model.createCollection(name: name) {
-                            selectedMainService = .all
-                            selectedMainLocalTagID = nil
-                            selectedMainCollectionID = collection.id
-                        }
-                    }
-                }
-                Button("キャンセル", role: .cancel) {
-                    collectionNameDraft = ""
-                }
-            } message: {
-                Text("URLの保存先として使うコレクションを作成します。")
             }
             .alert("タグを削除", isPresented: isShowingLocalTagDeleteAlert) {
                 Button("キャンセル", role: .cancel) {
@@ -618,11 +544,9 @@ private struct MainScreen: View {
     let pendingInviteRecord: PendingInviteRecord?
     let localTags: [LocalTagSummary]
     let localTagAssignments: [Int64: Set<Int64>]
-    let collections: [CollectionSummary]
     let sharedTags: [SharedTagSummary]
     @Binding var selectedService: ServiceType
     @Binding var selectedLocalTagID: Int64?
-    @Binding var selectedCollectionID: Int64?
     @Binding var displayMode: EntryListDisplayMode
     @Binding var isShowingUsageGuide: Bool
     @Binding var isShowingSearchBar: Bool
@@ -631,8 +555,6 @@ private struct MainScreen: View {
     let onOpenGroups: () -> Void
     let onOpenDetail: (Int64) -> Void
     let onCreateLocalTag: () -> Void
-    let onCreateCollection: () -> Void
-    let onManageCollections: () -> Void
     let onManageLocalTags: () -> Void
     let onRenameLocalTag: (LocalTagSummary) -> Void
     let onReorderLocalTags: ([Int64]) -> Void
@@ -655,7 +577,7 @@ private struct MainScreen: View {
     let onOpenSharedTagCloud: () -> Void
     let onCreateSharedTag: () -> Void
     let onOpenSharedTag: (String) -> Void
-    let showsSharedTagCloud: Bool
+    let showsPendingInviteBanner: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -667,7 +589,6 @@ private struct MainScreen: View {
                 onTitleTap: {
                     selectedService = .all
                     selectedLocalTagID = nil
-                    selectedCollectionID = nil
                     searchQuery = ""
                     isShowingSearchBar = false
                     isShowingUsageGuide = false
@@ -708,25 +629,19 @@ private struct MainScreen: View {
             ServiceFilterRow(
                 selectedService: $selectedService,
                 selectedLocalTagID: $selectedLocalTagID,
-                selectedCollectionID: $selectedCollectionID,
                 showsCreateChip: true,
                 createAction: onCreateLocalTag,
-                collectionCreateAction: showsCollectionUI ? onCreateCollection : nil,
-                collectionManageAction: showsCollectionUI ? onManageCollections : nil,
                 localTags: localTags,
-                collections: showsCollectionUI ? collections : [],
                 onRenameLocalTag: onRenameLocalTag,
                 onReorderLocalTags: onReorderLocalTags
             )
 
-            if showsSharedTagCloud {
-                SharedTagSection(
-                    tags: sharedTags,
-                    onCreateTag: onCreateSharedTag,
-                    onOpenTag: onOpenSharedTag
-                )
-                .padding(.bottom, 6)
-            }
+            SharedTagSection(
+                tags: sharedTags,
+                onCreateTag: onCreateSharedTag,
+                onOpenTag: onOpenSharedTag
+            )
+            .padding(.bottom, 6)
 
             if selectionModeActive || !selectedEntryIDs.isEmpty {
                 EntrySelectionBar(
@@ -749,7 +664,7 @@ private struct MainScreen: View {
 
                 ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: 14) {
-                        if showsSharedTagCloud, let pendingInviteRecord {
+                        if showsPendingInviteBanner, let pendingInviteRecord {
                             PendingInviteBanner(
                                 pendingInviteRecord: pendingInviteRecord,
                                 onOpenCloud: onOpenSharedTagCloud
@@ -1871,17 +1786,14 @@ func searchFilteredEntries(
     _ entries: [URLRecord],
     query: String,
     localTags: [LocalTagSummary] = [],
-    localTagAssignments: [Int64: Set<Int64>] = [:],
-    collections: [CollectionSummary] = []
+    localTagAssignments: [Int64: Set<Int64>] = [:]
 ) -> [URLRecord] {
     let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     guard !needle.isEmpty else { return entries }
     let localTagNamesByID = Dictionary(uniqueKeysWithValues: localTags.map { ($0.id, $0.name.lowercased()) })
-    let collectionNamesByID = Dictionary(uniqueKeysWithValues: collections.map { ($0.id, $0.name.lowercased()) })
     return entries.filter { entry in
         let entryLocalTagNames = (localTagAssignments[entry.id] ?? [])
             .compactMap { localTagNamesByID[$0] }
-        let collectionName = collectionNamesByID[entry.collectionID] ?? ""
         return [
             entry.originalURL,
             entry.normalizedURL,
@@ -1898,7 +1810,6 @@ func searchFilteredEntries(
             entry.memo,
             entry.effectiveTitle,
             serviceLabel(for: entry),
-            collectionName,
         ].contains { $0.lowercased().contains(needle) }
             || entryLocalTagNames.contains { $0.contains(needle) }
     }
@@ -2062,15 +1973,11 @@ private struct ArchiveScreen: View {
     let totalEntries: [URLRecord]
     let localTags: [LocalTagSummary]
     let localTagAssignments: [Int64: Set<Int64>]
-    let collections: [CollectionSummary]
     @Binding var selectedService: ServiceType
     @Binding var selectedLocalTagID: Int64?
-    @Binding var selectedCollectionID: Int64?
     @Binding var displayMode: EntryListDisplayMode
     let onBack: () -> Void
     let onCreateLocalTag: () -> Void
-    let onCreateCollection: () -> Void
-    let onManageCollections: () -> Void
     let onManageLocalTags: () -> Void
     let onRenameLocalTag: (LocalTagSummary) -> Void
     let onReorderLocalTags: ([Int64]) -> Void
@@ -2099,13 +2006,9 @@ private struct ArchiveScreen: View {
             ServiceFilterRow(
                 selectedService: $selectedService,
                 selectedLocalTagID: $selectedLocalTagID,
-                selectedCollectionID: $selectedCollectionID,
                 showsCreateChip: true,
                 createAction: onCreateLocalTag,
-                collectionCreateAction: showsCollectionUI ? onCreateCollection : nil,
-                collectionManageAction: showsCollectionUI ? onManageCollections : nil,
                 localTags: localTags,
-                collections: showsCollectionUI ? collections : [],
                 onRenameLocalTag: onRenameLocalTag,
                 onReorderLocalTags: onReorderLocalTags
             )
@@ -3224,141 +3127,6 @@ private struct LocalTagManagementFlowLayout: Layout {
     }
 }
 
-private struct CollectionManagementSheet: View {
-    let collections: [CollectionSummary]
-    let onMove: ([Int64]) -> Void
-    let onDelete: (CollectionSummary) -> Void
-    let onClose: () -> Void
-
-    @State private var pendingDelete: CollectionSummary?
-
-    private var customCollections: [CollectionSummary] {
-        collections
-            .filter { $0.id != 1 }
-            .sorted { $0.sortOrder < $1.sortOrder }
-    }
-
-    var body: some View {
-        ZStack {
-            AppPalette.background.ignoresSafeArea()
-
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    Text("保存先管理")
-                        .font(.system(size: 26, weight: .heavy, design: .rounded))
-                        .foregroundStyle(AppPalette.textPrimary)
-                    Spacer()
-                    Button("閉じる", action: onClose)
-                        .font(.system(size: 17, weight: .bold))
-                        .foregroundStyle(AppPalette.primaryStrong)
-                }
-
-                AppPanel {
-                    Text("受信箱は常に残ります。自作コレクションを削除すると、中のURLは受信箱へ戻ります。")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(AppPalette.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                if customCollections.isEmpty {
-                    AppPanel {
-                        Text("管理できる自作コレクションはまだありません")
-                            .font(.system(size: 17, weight: .heavy, design: .rounded))
-                            .foregroundStyle(AppPalette.textSecondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                } else {
-                    ScrollView(showsIndicators: false) {
-                        VStack(spacing: 10) {
-                            ForEach(Array(customCollections.enumerated()), id: \.element.id) { index, collection in
-                                collectionRow(collection, index: index)
-                            }
-                        }
-                        .padding(.bottom, 12)
-                    }
-                }
-
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 22)
-            .padding(.bottom, 24)
-        }
-        .alert("コレクションを削除", isPresented: Binding(
-            get: { pendingDelete != nil },
-            set: { if !$0 { pendingDelete = nil } }
-        )) {
-            Button("キャンセル", role: .cancel) { pendingDelete = nil }
-            Button("削除する", role: .destructive) {
-                guard let pendingDelete else { return }
-                self.pendingDelete = nil
-                onDelete(pendingDelete)
-            }
-        } message: {
-            Text(pendingDelete.map { "「\($0.name)」を削除します。URL自体は削除されず、受信箱へ戻ります。" } ?? "このコレクションを削除します。")
-        }
-    }
-
-    @ViewBuilder
-    private func collectionRow(_ collection: CollectionSummary, index: Int) -> some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(collection.name)
-                    .font(.system(size: 18, weight: .heavy, design: .rounded))
-                    .foregroundStyle(AppPalette.textPrimary)
-                    .lineLimit(1)
-                Text("\(collection.activeURLCount)件")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(AppPalette.textSecondary)
-            }
-            Spacer(minLength: 0)
-            Button {
-                moveCollection(from: index, offset: -1)
-            } label: {
-                Image(systemName: "chevron.up")
-                    .font(.system(size: 15, weight: .bold))
-                    .frame(width: 38, height: 38)
-            }
-            .disabled(index == 0)
-            .accessibilityLabel("上へ移動")
-
-            Button {
-                moveCollection(from: index, offset: 1)
-            } label: {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 15, weight: .bold))
-                    .frame(width: 38, height: 38)
-            }
-            .disabled(index == customCollections.count - 1)
-            .accessibilityLabel("下へ移動")
-
-            Button(role: .destructive) {
-                pendingDelete = collection
-            } label: {
-                Image(systemName: "trash")
-                    .font(.system(size: 15, weight: .bold))
-                    .frame(width: 38, height: 38)
-            }
-            .accessibilityLabel("削除")
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(AppPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(AppPalette.outlineSoft, lineWidth: 1.5)
-        )
-    }
-
-    private func moveCollection(from index: Int, offset: Int) {
-        let target = index + offset
-        guard customCollections.indices.contains(index), customCollections.indices.contains(target) else { return }
-        var ids = customCollections.map(\.id)
-        ids.swapAt(index, target)
-        onMove(ids)
-    }
-}
-
 private struct LocalTagManagementPill: View {
     let tag: LocalTagSummary
     let onRename: (LocalTagSummary) -> Void
@@ -3411,16 +3179,14 @@ private struct ManualInputSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @ObservedObject var model: URLSaverAppModel
-    let selectedCollectionID: Int64?
     @State private var input = ""
     @State private var inputError: ShareSaveResult?
+    @State private var inputErrorMessage: String?
     @State private var isSaving = false
     @State private var selectedLocalTagIDs: Set<Int64> = []
-    @State private var selectedSaveCollectionID: Int64?
+    @State private var pendingTagImport: ManualTagImportPreview?
     @State private var isShowingCreateTagAlert = false
-    @State private var isShowingCreateCollectionAlert = false
     @State private var newTagName = ""
-    @State private var newCollectionName = ""
 
     var body: some View {
         ScreenContainer {
@@ -3433,7 +3199,7 @@ private struct ManualInputSheet: View {
 
                 Text("URL / テキスト")
                     .font(.system(size: 18, weight: .bold))
-                    .foregroundStyle(inputError == nil ? AppPalette.textSecondary : AppPalette.danger)
+                    .foregroundStyle(inputError == nil && inputErrorMessage == nil ? AppPalette.textSecondary : AppPalette.danger)
                     .padding(.top, 8)
 
                 VStack(alignment: .leading, spacing: 10) {
@@ -3449,10 +3215,14 @@ private struct ManualInputSheet: View {
                         .background(AppPalette.background, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                         .overlay(
                             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .stroke(inputError == nil ? AppPalette.outlineSoft : AppPalette.danger, lineWidth: 2)
+                                .stroke(inputError == nil && inputErrorMessage == nil ? AppPalette.outlineSoft : AppPalette.danger, lineWidth: 2)
                         )
 
-                    if let inputError {
+                    if let inputErrorMessage {
+                        Text(inputErrorMessage)
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(AppPalette.danger)
+                    } else if let inputError {
                         Text(message(for: inputError))
                             .font(.system(size: 16, weight: .medium))
                             .foregroundStyle(AppPalette.danger)
@@ -3462,40 +3232,12 @@ private struct ManualInputSheet: View {
                 Button("クリップボードを貼り付け") {
                     input = UIPasteboard.general.string ?? input
                     inputError = nil
+                    inputErrorMessage = nil
                 }
                 .font(.system(size: 19, weight: .heavy))
                 .foregroundStyle(AppPalette.primaryStrong)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
-
-                if showsCollectionUI {
-                    Text("保存先")
-                        .font(.system(size: 18, weight: .heavy))
-                        .foregroundStyle(AppPalette.textPrimary)
-                        .padding(.top, 6)
-
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(model.collections) { collection in
-                                FilterChipButton(
-                                    label: collection.name,
-                                    selected: (selectedSaveCollectionID ?? selectedCollectionID ?? 1) == collection.id
-                                ) {
-                                    selectedSaveCollectionID = collection.id
-                                }
-                            }
-                        }
-                        .padding(.vertical, 2)
-                    }
-
-                    Button("＋ コレクションを作成") {
-                        isShowingCreateCollectionAlert = true
-                    }
-                        .font(.system(size: 18, weight: .heavy))
-                        .foregroundStyle(AppPalette.primaryStrong)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 4)
-                }
 
                 Text("タグ")
                     .font(.system(size: 18, weight: .heavy))
@@ -3543,19 +3285,27 @@ private struct ManualInputSheet: View {
                 ) {
                     Task {
                         isSaving = true
-                        let collectionID = showsCollectionUI ? (selectedSaveCollectionID ?? selectedCollectionID) : nil
-                        let outcome = await model.prepareManualSave(input: input, localTagIDs: selectedLocalTagIDs, collectionID: collectionID)
+                        let outcome = await model.prepareManualSave(input: input, localTagIDs: selectedLocalTagIDs)
                         isSaving = false
-                        if case .inputError(let error) = outcome {
+                        switch outcome {
+                        case .inputError(let error):
                             inputError = error
-                        } else {
+                            inputErrorMessage = nil
+                        case .tagImportError(let message):
+                            inputError = nil
+                            inputErrorMessage = message
+                        case .tagImportConfirmation(let preview):
+                            inputError = nil
+                            inputErrorMessage = nil
+                            pendingTagImport = preview
+                        case .saved(let saveResult):
                             dismiss()
-                            if case .saved(let saveResult) = outcome {
-                                Task {
-                                    try? await Task.sleep(nanoseconds: 350_000_000)
-                                    await model.finishPreparedManualSave(saveResult)
-                                }
+                            Task {
+                                try? await Task.sleep(nanoseconds: 350_000_000)
+                                await model.finishPreparedManualSave(saveResult)
                             }
+                        case .completed:
+                            dismiss()
                         }
                     }
                 } label: {
@@ -3570,9 +3320,7 @@ private struct ManualInputSheet: View {
             .padding(.bottom, 22)
             .onChange(of: input) { _, _ in
                 inputError = nil
-            }
-            .onAppear {
-                selectedSaveCollectionID = showsCollectionUI ? (selectedCollectionID ?? model.collections.first?.id) : nil
+                inputErrorMessage = nil
             }
         }
         .alert("タグを作成", isPresented: $isShowingCreateTagAlert) {
@@ -3592,22 +3340,29 @@ private struct ManualInputSheet: View {
         } message: {
             Text("保存時に選べる通常タグを作成します。")
         }
-        .alert("コレクションを作成", isPresented: $isShowingCreateCollectionAlert) {
-            TextField("コレクション名", text: $newCollectionName)
-            Button("作成") {
-                let name = newCollectionName
-                newCollectionName = ""
-                Task {
-                    if let collection = await model.createCollection(name: name) {
-                        selectedSaveCollectionID = collection.id
-                    }
-                }
+        .sheet(item: $pendingTagImport) { preview in
+            ManualTagImportConfirmationSheet(
+                preview: preview,
+                onImport: { beginManualTagImport(preview) },
+                onCancel: { pendingTagImport = nil }
+            )
+            .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
+            .presentationCornerRadius(32)
+        }
+    }
+
+    private func beginManualTagImport(_ preview: ManualTagImportPreview) {
+        pendingTagImport = nil
+        isSaving = true
+        Task {
+            let imported = await model.confirmManualTagImport(preview)
+            isSaving = false
+            if imported {
+                dismiss()
+            } else {
+                inputErrorMessage = "タグデータを読み込めませんでした"
             }
-            Button("キャンセル", role: .cancel) {
-                newCollectionName = ""
-            }
-        } message: {
-            Text("保存先に使うコレクションを作成します。")
         }
     }
 
@@ -3622,6 +3377,93 @@ private struct ManualInputSheet: View {
         default:
             return "保存できませんでした"
         }
+    }
+}
+
+private struct ManualTagImportConfirmationSheet: View {
+    let preview: ManualTagImportPreview
+    let onImport: () -> Void
+    let onCancel: () -> Void
+
+    @State private var isWorking = false
+
+    var body: some View {
+        ScreenContainer {
+            VStack(alignment: .leading, spacing: 16) {
+                Capsule()
+                    .fill(AppPalette.outlineSoft)
+                    .frame(width: 72, height: 8)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 10)
+
+                Text("自作タグデータを取り込む")
+                    .font(.system(size: 25, weight: .heavy, design: .rounded))
+                    .foregroundStyle(AppPalette.textPrimary)
+
+                Text("取り込む内容を確認してください")
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(AppPalette.textSecondary)
+
+                AppPanel {
+                    HStack {
+                        Text("タグ名")
+                            .foregroundStyle(AppPalette.textSecondary)
+                        Spacer()
+                        Text(preview.tagName)
+                            .fontWeight(.bold)
+                            .foregroundStyle(AppPalette.textPrimary)
+                            .lineLimit(1)
+                    }
+
+                    HStack {
+                        Text("有効URL")
+                            .foregroundStyle(AppPalette.textSecondary)
+                        Spacer()
+                        Text("\(preview.validURLCount)件")
+                            .fontWeight(.bold)
+                            .foregroundStyle(AppPalette.textPrimary)
+                    }
+                }
+
+                AppPanel(strong: true) {
+                    Text("タイトル・メモ・共有タグ情報は取り込みません。URLと自作タグ名だけを取り込みます。")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Color.white.opacity(0.92))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 8)
+
+                HStack(spacing: 12) {
+                    Button("キャンセル", role: .cancel, action: onCancel)
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundStyle(AppPalette.textPrimary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 18)
+                        .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                                .stroke(AppPalette.outline, lineWidth: 1.5)
+                        )
+                        .accessibilityIdentifier("manual-tag-import-cancel")
+
+                    AppActionButton(tone: .primary, enabled: !isWorking) {
+                        isWorking = true
+                        onImport()
+                    } label: {
+                        if isWorking {
+                            ProgressView().tint(AppPalette.textPrimary)
+                        } else {
+                            Text("取り込む")
+                        }
+                    }
+                    .accessibilityIdentifier("manual-tag-import-confirm")
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 22)
+        }
+        .accessibilityIdentifier("manual-tag-import-confirmation")
     }
 }
 

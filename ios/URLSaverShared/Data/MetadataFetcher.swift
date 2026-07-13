@@ -7,6 +7,9 @@ struct MetadataFetcher: Sendable {
     private let tiktokFallbackEndpointBuilder: @Sendable (URL) -> URL?
     private let xOEmbedEndpointBuilder: @Sendable (URL) -> URL?
     private let xSyndicationEndpointBuilder: @Sendable (String) -> URL?
+    private let xGuestActivationEndpoint: URL?
+    private let xArticleGraphQLEndpointBuilder: @Sendable (String) -> URL?
+    private let xPublicBearerToken: String
     private let instagramPublicOEmbedEndpointBuilder: @Sendable (URL) -> URL?
     private let instagramCaptionedEmbedEndpointBuilder: @Sendable (URL) -> URL?
 
@@ -17,6 +20,9 @@ struct MetadataFetcher: Sendable {
         tiktokFallbackEndpointBuilder: @escaping @Sendable (URL) -> URL? = MetadataFetcher.tiktokFallbackURL(for:),
         xOEmbedEndpointBuilder: @escaping @Sendable (URL) -> URL? = MetadataFetcher.xOEmbedURL(for:),
         xSyndicationEndpointBuilder: @escaping @Sendable (String) -> URL? = MetadataFetcher.xSyndicationURL(for:),
+        xGuestActivationEndpoint: URL? = URL(string: "https://api.x.com/1.1/guest/activate.json"),
+        xArticleGraphQLEndpointBuilder: @escaping @Sendable (String) -> URL? = MetadataFetcher.xArticleGraphQLURL(for:),
+        xPublicBearerToken: String = MetadataFetcher.xPublicBearerToken,
         instagramPublicOEmbedEndpointBuilder: @escaping @Sendable (URL) -> URL? = MetadataFetcher.instagramPublicOEmbedURL(for:),
         instagramCaptionedEmbedEndpointBuilder: @escaping @Sendable (URL) -> URL? = MetadataFetcher.instagramCaptionedEmbedURL(for:)
     ) {
@@ -26,6 +32,9 @@ struct MetadataFetcher: Sendable {
         self.tiktokFallbackEndpointBuilder = tiktokFallbackEndpointBuilder
         self.xOEmbedEndpointBuilder = xOEmbedEndpointBuilder
         self.xSyndicationEndpointBuilder = xSyndicationEndpointBuilder
+        self.xGuestActivationEndpoint = xGuestActivationEndpoint
+        self.xArticleGraphQLEndpointBuilder = xArticleGraphQLEndpointBuilder
+        self.xPublicBearerToken = xPublicBearerToken
         self.instagramPublicOEmbedEndpointBuilder = instagramPublicOEmbedEndpointBuilder
         self.instagramCaptionedEmbedEndpointBuilder = instagramCaptionedEmbedEndpointBuilder
     }
@@ -111,7 +120,12 @@ struct MetadataFetcher: Sendable {
 
         let oEmbedMetadata = await fetchXOEmbedMetadata(inputURL: inputURL, statusID: statusID)
         let syndicationMetadata = await fetchXSyndicationMetadata(statusID: statusID)
-        let mergedMetadata = oEmbedMetadata.merging(with: syndicationMetadata)
+        let mergedMetadata: ExtractedMetadata
+        if Self.isSingleHTTPURL(oEmbedMetadata.body), !Self.isSingleHTTPURL(syndicationMetadata.body) {
+            mergedMetadata = syndicationMetadata.merging(with: oEmbedMetadata)
+        } else {
+            mergedMetadata = oEmbedMetadata.merging(with: syndicationMetadata)
+        }
 
         if mergedMetadata.hasAnyContent {
             return readyUpdate(from: mergedMetadata, finalURL: inputURL)
@@ -251,6 +265,10 @@ struct MetadataFetcher: Sendable {
         request.setValue("application/json,text/plain,*/*", forHTTPHeaderField: "Accept")
         request.setValue(Locale.preferredLanguages.first ?? "ja-JP", forHTTPHeaderField: "Accept-Language")
 
+        return await fetchJSONObject(request: request)
+    }
+
+    private func fetchJSONObject(request: URLRequest) async -> [String: Any]? {
         do {
             let (data, response) = try await session.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse else { return nil }
@@ -455,8 +473,16 @@ struct MetadataFetcher: Sendable {
         }
 
         let user = payload["user"] as? [String: Any]
-        let body = stringField(payload, "text", "full_text")
-        let thumbnail = firstXPhotoURL(payload) ?? firstXMediaURL(payload)
+        let article = payload["article"] as? [String: Any]
+        let articleTitle = article.flatMap { stringField($0, "title") }
+        let articlePreview = article.flatMap { stringField($0, "preview_text") }
+        let combinedArticleBody = [articleTitle, articlePreview].compactMap { $0 }.joined(separator: " ")
+        let articleFallbackBody = combinedArticleBody.isEmpty ? nil : combinedArticleBody
+        let articleFullBody = article == nil ? nil : await fetchXArticlePlainText(statusID: statusID)
+        let body = articleFullBody ?? articleFallbackBody ?? stringField(payload, "text", "full_text")
+        let articleThumbnail = ((article?["cover_media"] as? [String: Any])?["media_info"] as? [String: Any])
+            .flatMap { stringField($0, "original_img_url") }
+        let thumbnail = articleThumbnail ?? firstXPhotoURL(payload) ?? firstXMediaURL(payload)
         let badgeImageURL = user
             .flatMap { stringField($0, "profile_image_url_https", "profile_image_url") }
             .map { $0.replacingOccurrences(of: "_normal.", with: "_400x400.") }
@@ -467,11 +493,74 @@ struct MetadataFetcher: Sendable {
             body: body,
             bodyKind: body == nil ? nil : .xPostText,
             summary: summarize(body),
-            description: body,
+            description: articlePreview ?? body,
             thumbnail: thumbnail,
             badgeImageURL: badgeImageURL,
             canonicalID: stringField(payload, "id_str", "id") ?? statusID
         )
+    }
+
+    private func fetchXArticlePlainText(statusID: String) async -> String? {
+        guard let guestToken = await fetchXGuestToken(),
+              let endpoint = xArticleGraphQLEndpointBuilder(statusID) else {
+            return nil
+        }
+        var request = URLRequest(url: endpoint)
+        request.timeoutInterval = 30
+        request.setValue(Self.browserLikeUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("Bearer \(xPublicBearerToken)", forHTTPHeaderField: "Authorization")
+        request.setValue(guestToken, forHTTPHeaderField: "X-Guest-Token")
+        request.setValue("yes", forHTTPHeaderField: "X-Twitter-Active-User")
+        request.setValue("ja", forHTTPHeaderField: "X-Twitter-Client-Language")
+        guard let payload = await fetchJSONObject(request: request),
+              let plainText = findXArticlePlainText(in: payload) else {
+            return nil
+        }
+        return normalizeXArticleBodyText(plainText)
+    }
+
+    private func fetchXGuestToken() async -> String? {
+        guard let endpoint = xGuestActivationEndpoint else { return nil }
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.httpBody = Data()
+        request.timeoutInterval = 30
+        request.setValue(Self.browserLikeUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("Bearer \(xPublicBearerToken)", forHTTPHeaderField: "Authorization")
+        return await fetchJSONObject(request: request).flatMap { stringField($0, "guest_token") }
+    }
+
+    private func findXArticlePlainText(in value: Any) -> String? {
+        if let object = value as? [String: Any] {
+            if object["content_state"] is [String: Any], let text = object["plain_text"] as? String {
+                return text
+            }
+            for child in object.values {
+                if let found = findXArticlePlainText(in: child) { return found }
+            }
+        } else if let array = value as? [Any] {
+            for child in array {
+                if let found = findXArticlePlainText(in: child) { return found }
+            }
+        }
+        return nil
+    }
+
+    private func normalizeXArticleBodyText(_ value: String) -> String? {
+        let normalized = value
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .joined(separator: "\n")
+            .replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return nil }
+        if normalized.count <= Self.xArticleBodyMaxLength { return normalized }
+        return String(normalized.prefix(Self.xArticleBodyMaxLength - 1))
+            .trimmingCharacters(in: .whitespacesAndNewlines) + "…"
     }
 
     private func fetchInstagramPublicOEmbedMetadata(inputURL: URL) async -> ExtractedMetadata {
@@ -1409,12 +1498,37 @@ struct MetadataFetcher: Sendable {
         )
     }
 
+    private static func isSingleHTTPURL(_ value: String?) -> Bool {
+        guard let value,
+              !value.contains(where: { $0.isWhitespace }),
+              let components = URLComponents(string: value),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            return false
+        }
+        return components.host?.isEmpty == false
+    }
+
     private static func xSyndicationURL(for statusID: String) -> URL? {
         queryURL(
             base: "https://cdn.syndication.twimg.com/tweet-result",
             items: [
                 URLQueryItem(name: "id", value: statusID),
                 URLQueryItem(name: "token", value: "1"),
+            ]
+        )
+    }
+
+    private static func xArticleGraphQLURL(for statusID: String) -> URL? {
+        let variables = #"{"tweetId":"\#(statusID)","withCommunity":false,"includePromotedContent":false,"withVoice":false}"#
+        let features = #"{"creator_subscriptions_tweet_preview_api_enabled":true,"premium_content_api_read_enabled":false,"communities_web_enable_tweet_community_results_fetch":true,"c9s_tweet_anatomy_moderator_badge_enabled":true,"articles_preview_enabled":true,"responsive_web_edit_tweet_api_enabled":true,"graphql_is_translatable_rweb_tweet_is_translatable_enabled":true,"view_counts_everywhere_api_enabled":true,"longform_notetweets_consumption_enabled":true,"responsive_web_twitter_article_tweet_consumption_enabled":true,"creator_subscriptions_quote_tweet_preview_enabled":false,"freedom_of_speech_not_reach_fetch_enabled":true,"tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled":true,"longform_notetweets_rich_text_read_enabled":true,"longform_notetweets_inline_media_enabled":true,"responsive_web_graphql_exclude_directive_enabled":true,"verified_phone_label_enabled":false,"responsive_web_graphql_skip_user_profile_image_extensions_enabled":false,"responsive_web_graphql_timeline_navigation_enabled":true,"responsive_web_enhance_cards_enabled":false}"#
+        let toggles = #"{"withAuxiliaryUserLabels":false,"withArticleRichContentState":true,"withArticlePlainText":true,"withGrokAnalyze":false,"withDisallowedReplyControls":false}"#
+        return queryURL(
+            base: "https://api.x.com/graphql/-4_LMahNlI4MuLJ-EAFEog/TweetResultByRestId",
+            items: [
+                URLQueryItem(name: "variables", value: variables),
+                URLQueryItem(name: "features", value: features),
+                URLQueryItem(name: "fieldToggles", value: toggles),
             ]
         )
     }
@@ -1448,6 +1562,9 @@ struct MetadataFetcher: Sendable {
     }
 
     private static let maxBodyBytes = 2_000_000
+    private static let xArticleBodyMaxLength = 200_000
+    private static let xPublicBearerToken =
+        "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
     private static let browserLikeUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1 URLSaveriOS/1.0"
 }
 

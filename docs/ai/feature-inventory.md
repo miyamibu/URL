@@ -4,7 +4,7 @@
 `1prompt.docx` のAI透明化/個人リンク記憶要求を、現在の repo 実装状態に落として追跡する。
 
 ## Context
-2026-07-10時点の作業では、DB破壊・store提出・deploy・production secret投入は行っていない。`REPO_GO` はrepo内の実装/検証が外部公開前に揃ったという意味であり、production deploy、OpenAI submission、store submission、production secret投入、store/live再確認はManual stepsとして分離する。
+2026-07-10時点の作業では、DB破壊・store提出・deploy・production secret投入は行っていない。`REPO_GO` はrepo内の実装/検証が外部公開前に揃ったという意味であり、production deploy、OpenAI submission、store submission、production secret投入、store/live再確認はManual stepsとして分離する。MCP/Store/Supabase live は未検証の外部ゲートであり、ローカル実装/検証とは分離する。
 
 ## Inventory
 | Area | Status | Evidence | Remaining gate |
@@ -12,7 +12,8 @@
 | AI-safe Export ZIP / JSON | IMPLEMENTED_LOCAL | Android `ExportRepository.kt`, iOS `ExportArchiveBuilder.swift` が `schema.json`, `README_FOR_AI.md`, `redaction_report.json`, `publicSafeId`, `aiEligible`, excerpt/redaction, `savedSnapshotNotice` を出力する。 | external share-sheet/store proof is Manual step |
 | Raw fetched body exclusion | IMPLEMENTED_LOCAL | Export documentから `fetchedBody` を除外し、`bodyExcerpt` と `bodySummary` に限定。 | future opt-in body export requires new approval |
 | Shared tag AI boundary | IMPLEMENTED_LOCAL | 共有タグ付きentryは `aiEligible=false` / `shared_tag_default_excluded`。Android ChatGPT sync は local-only tags を送る。 | iOS personal-link syncのlocal-only tag parity review |
-| Preview / Receipt / Draft / Diff | IMPLEMENTED_LOCAL | Android RoomとiOS SQLiteにReceipt/Draft/Diffをローカル保存。feature flag default off。Mock providerでdeterministic draft生成。Diff applyは明示confirm時のみ許可フィールドを更新。 | production AI provider wiring is future opt-in |
+| ChatGPT personal-link sync card | IMPLEMENTED_LOCAL | Android/iOS の共有タグプロフィール画面にカードを表示。外部接続未設定時は「現在は利用できません」と表示し、操作不可とする。 | MCP/Store/Supabase live は未検証の外部ゲート |
+| Preview / Receipt / Draft / Diff | IMPLEMENTED_LOCAL | Android RoomとiOS SQLiteにReceipt/Draft/Diffをローカル保存。Androidの `DEBUG && AI_TRANSPARENCY_ENABLED`、iOSの `DEBUG`/Info.plist flag に限定された Debug-only UI で、通常のRelease UIには出ない。Mock providerでdeterministic draft生成。Diff applyは明示confirm時のみ許可フィールドを更新。 | production AI provider wiring is future opt-in |
 | Read-only MCP descriptors | IMPLEMENTED_LOCAL | `web/admin/lib/rinbamMcp.ts` が `search`, `fetch`, `rinbam.list_tags`, `rinbam.get_ai_receipt`, `rinbam.list_recent_saved_links` を定義。annotationsはread-only固定。 | deployed URL / OpenAI review are Manual steps |
 | MCP data access | IMPLEMENTED_LOCAL | `URLSAVER_MCP_ENABLED=true` が無い限りendpointはdefault disabled。Bearer tokenを `auth.getUser` し、全queryで `user_id` を固定。rate limitあり。raw `fetched_body` は返さない。 | production OAuth/client registration is Manual step |
 | Link death insurance | IMPLEMENTED_LOCAL | 保存時点のtitle/author/body kind/summary/excerpt/thumbnail/metadata source/fetched timeをExport/MCPに出し、保存時点情報の注意文を出す。 | Wayback/headless/browser external resolver remains out of repo default |

@@ -85,3 +85,9 @@ export function assertWritable(admin: AdminContext) {
     throw new Response("この管理者ロールでは変更できません", { status: 403 });
   }
 }
+
+export function assertCanSearchUsers(admin: AdminContext) {
+  if (admin.role !== "owner" && admin.role !== "billing") {
+    throw new Response("この管理者ロールではユーザー検索できません", { status: 403 });
+  }
+}

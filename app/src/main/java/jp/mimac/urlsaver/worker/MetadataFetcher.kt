@@ -48,6 +48,11 @@ class MetadataFetcher(
     private val oEmbedEndpointBuilder: (String) -> String = { targetUrl ->
         "$OEMBED_ENDPOINT?omit_script=true&dnt=true&url=${URLEncoder.encode(targetUrl, Charsets.UTF_8.name())}"
     },
+    private val xGuestActivationEndpoint: String = X_GUEST_ACTIVATION_ENDPOINT,
+    private val xArticleGraphQLEndpointBuilder: (String) -> String = { statusId ->
+        buildXArticleGraphQLEndpoint(statusId)
+    },
+    private val xPublicBearerToken: String = X_PUBLIC_BEARER_TOKEN,
     private val youtubeOEmbedEndpointBuilder: (String) -> String = { targetUrl ->
         "$YOUTUBE_OEMBED_ENDPOINT?format=json&url=${URLEncoder.encode(targetUrl, Charsets.UTF_8.name())}"
     },
@@ -131,13 +136,23 @@ class MetadataFetcher(
         primary: FetchOutcome.Ready,
         supplement: FetchOutcome.Ready,
     ): FetchOutcome.Ready {
+        val preferSupplementBody = primary.fetchedBody?.isSingleHttpUrl() == true &&
+            supplement.fetchedBody?.isSingleHttpUrl() == false
         return primary.copy(
             fetchedTitle = primary.fetchedTitle ?: supplement.fetchedTitle,
             fetchedAuthorName = primary.fetchedAuthorName ?: supplement.fetchedAuthorName,
-            fetchedBody = primary.fetchedBody ?: supplement.fetchedBody,
-            fetchedBodyKind = primary.fetchedBodyKind ?: supplement.fetchedBodyKind,
-            bodySummary = primary.bodySummary ?: supplement.bodySummary,
-            description = primary.description ?: supplement.description,
+            fetchedBody = if (preferSupplementBody) {
+                supplement.fetchedBody
+            } else {
+                primary.fetchedBody ?: supplement.fetchedBody
+            },
+            fetchedBodyKind = if (preferSupplementBody) {
+                supplement.fetchedBodyKind
+            } else {
+                primary.fetchedBodyKind ?: supplement.fetchedBodyKind
+            },
+            bodySummary = if (preferSupplementBody) supplement.bodySummary else primary.bodySummary ?: supplement.bodySummary,
+            description = if (preferSupplementBody) supplement.description else primary.description ?: supplement.description,
             thumbnailUrl = primary.thumbnailUrl ?: supplement.thumbnailUrl,
             badgeImageUrl = primary.badgeImageUrl ?: supplement.badgeImageUrl,
             canonicalId = primary.canonicalId ?: supplement.canonicalId,
@@ -346,7 +361,10 @@ class MetadataFetcher(
             oEmbedMetadata.authorUrl?.let(::fetchSingleOgImage)
         }.getOrNull()
 
-        if (oEmbedMetadata.hasCompleteMetadata) {
+        // oEmbed can be content-complete while the creator avatar exists only on the post page.
+        if (oEmbedMetadata.hasCompleteMetadata &&
+            (oEmbedMetadata.authorUrl == null || profileBadgeImageUrl != null)
+        ) {
             return FetchOutcome.Ready(
                 fetchedTitle = oEmbedMetadata.title,
                 fetchedBody = oEmbedMetadata.body,
@@ -537,9 +555,21 @@ class MetadataFetcher(
         return fetchJsonPayload(endpoint) { payload ->
             val user = payload.jsonObjectOrNull("user")
             val title = user?.firstNonBlankString("name", "screen_name")
-            val body = payload.extractSyndicationBody()
+            val article = payload.jsonObjectOrNull("article")
+            val articleTitle = article?.firstNonBlankString("title")
+            val articlePreview = article?.firstNonBlankString("preview_text")
+            val articleFallbackBody = listOfNotNull(articleTitle, articlePreview)
+                .joinToString(" ")
+                .takeIf { it.isNotBlank() }
+                ?.let(::normalizeFetchedBodyText)
+            val articleFullBody = article?.let { fetchXArticlePlainText(statusId) }
+            val body = articleFullBody ?: articleFallbackBody ?: payload.extractSyndicationBody()
             val summary = body?.let(::buildRuleSummary)
-            val photoThumbnail = payload.firstPhotoThumbnailUrl()
+            val articleThumbnail = article
+                ?.jsonObjectOrNull("cover_media")
+                ?.jsonObjectOrNull("media_info")
+                ?.firstNonBlankString("original_img_url")
+            val photoThumbnail = articleThumbnail ?: payload.firstPhotoThumbnailUrl()
             val videoThumbnail = payload.firstVideoThumbnailUrl()
             val badgeImage = user?.firstNonBlankString("profile_image_url_https", "profile_image_url")
                 ?.replace("_normal.", "_400x400.")
@@ -557,9 +587,11 @@ class MetadataFetcher(
 
             FetchOutcome.Ready(
                 fetchedTitle = title,
+                fetchedAuthorName = title,
                 fetchedBody = body,
                 fetchedBodyKind = body?.let { MetadataBodyKind.X_POST_TEXT },
                 bodySummary = summary,
+                description = articlePreview ?: body,
                 thumbnailUrl = photoThumbnail ?: videoThumbnail,
                 badgeImageUrl = badgeImage,
                 canonicalId = canonicalFromPayload ?: statusId,
@@ -591,6 +623,61 @@ class MetadataFetcher(
                 normalizedHost = null,
                 rawSourceHost = null,
             )
+        }
+    }
+
+    private fun fetchXArticlePlainText(statusId: String): String? {
+        val guestToken = fetchXGuestToken() ?: return null
+        val connection = connectionFactory(xArticleGraphQLEndpointBuilder(statusId)).apply {
+            instanceFollowRedirects = false
+            connectTimeout = connectTimeoutMillis
+            readTimeout = readTimeoutMillis
+            requestMethod = "GET"
+            setRequestProperty("User-Agent", X_WEB_USER_AGENT)
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("Authorization", "Bearer $xPublicBearerToken")
+            setRequestProperty("X-Guest-Token", guestToken)
+            setRequestProperty("X-Twitter-Active-User", "yes")
+            setRequestProperty("X-Twitter-Client-Language", "ja")
+        }
+        return try {
+            if (connection.responseCode !in 200..299 || connection.contentLengthLong > BODY_LIMIT_BYTES) return null
+            val body = BufferedInputStream(connection.inputStream).use { input ->
+                readLimitedBody(input, BODY_LIMIT_BYTES)
+            } ?: return null
+            val payload = parseJsonObject(body.toString(Charsets.UTF_8)) ?: return null
+            traverseJsonObjects(payload)
+                .firstNotNullOfOrNull { candidate ->
+                    candidate.firstNonBlankString("plain_text").takeIf {
+                        candidate["content_state"] is JsonObject
+                    }
+                }
+                ?.let(::normalizeXArticleBodyText)
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun fetchXGuestToken(): String? {
+        val connection = connectionFactory(xGuestActivationEndpoint).apply {
+            instanceFollowRedirects = false
+            connectTimeout = connectTimeoutMillis
+            readTimeout = readTimeoutMillis
+            requestMethod = "POST"
+            doOutput = true
+            setFixedLengthStreamingMode(0)
+            setRequestProperty("User-Agent", X_WEB_USER_AGENT)
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("Authorization", "Bearer $xPublicBearerToken")
+        }
+        return try {
+            if (connection.responseCode !in 200..299 || connection.contentLengthLong > BODY_LIMIT_BYTES) return null
+            val body = BufferedInputStream(connection.inputStream).use { input ->
+                readLimitedBody(input, BODY_LIMIT_BYTES)
+            } ?: return null
+            parseJsonObject(body.toString(Charsets.UTF_8))?.firstNonBlankString("guest_token")
+        } finally {
+            connection.disconnect()
         }
     }
 
@@ -2039,6 +2126,20 @@ class MetadataFetcher(
         return truncateWithEllipsis(normalized, BODY_TEXT_MAX_LENGTH)
     }
 
+    private fun normalizeXArticleBodyText(raw: String?): String? {
+        val normalized = raw
+            ?.replace('\u00A0', ' ')
+            ?.replace("\r\n", "\n")
+            ?.replace('\r', '\n')
+            ?.lines()
+            ?.joinToString("\n") { it.trim() }
+            ?.replace(Regex("\n{3,}"), "\n\n")
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: return null
+        return truncateWithEllipsis(normalized, X_ARTICLE_BODY_MAX_LENGTH)
+    }
+
     private fun normalizeYouTubeDescriptionText(raw: String?): String? {
         val normalized = normalizeFetchedBodyText(raw) ?: return null
         return normalized.takeUnless { body ->
@@ -2290,6 +2391,15 @@ class MetadataFetcher(
         return values.firstOrNull { !it.isNullOrBlank() }?.trim()
     }
 
+    private fun String.isSingleHttpUrl(): Boolean {
+        val trimmed = trim()
+        return !trimmed.any(Char::isWhitespace) &&
+            runCatching {
+                val uri = URI(trimmed)
+                uri.scheme?.lowercase(Locale.ROOT) in setOf("http", "https") && !uri.host.isNullOrBlank()
+            }.getOrDefault(false)
+    }
+
     private fun isFetchableScheme(uri: URI): Boolean {
         return when (uri.scheme?.lowercase(Locale.ROOT)) {
             "https" -> true
@@ -2420,6 +2530,14 @@ class MetadataFetcher(
         private const val DEFAULT_SYNDICATION_TOKEN = "1"
         private const val SYNDICATION_ENDPOINT = "https://cdn.syndication.twimg.com/tweet-result"
         private const val OEMBED_ENDPOINT = "https://publish.twitter.com/oembed"
+        private const val X_GUEST_ACTIVATION_ENDPOINT = "https://api.x.com/1.1/guest/activate.json"
+        private const val X_ARTICLE_GRAPHQL_ENDPOINT =
+            "https://api.x.com/graphql/-4_LMahNlI4MuLJ-EAFEog/TweetResultByRestId"
+        private const val X_PUBLIC_BEARER_TOKEN =
+            "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
+        private const val X_WEB_USER_AGENT =
+            "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
+        private const val X_ARTICLE_BODY_MAX_LENGTH = 200_000
         private const val YOUTUBE_OEMBED_ENDPOINT = "https://www.youtube.com/oembed"
         private const val YOUTUBE_PLAYER_ENDPOINT = "https://www.youtube.com/youtubei/v1/player"
         private const val YOUTUBE_INNERTUBE_API_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
@@ -2430,6 +2548,15 @@ class MetadataFetcher(
 
         private const val SUMMARY_MAX_LENGTH = 110
         private val SENTENCE_BOUNDARY_REGEX = Regex("[。.!?！？]")
+
+        private fun buildXArticleGraphQLEndpoint(statusId: String): String {
+            val variables = """{"tweetId":"$statusId","withCommunity":false,"includePromotedContent":false,"withVoice":false}"""
+            val features = """{"creator_subscriptions_tweet_preview_api_enabled":true,"premium_content_api_read_enabled":false,"communities_web_enable_tweet_community_results_fetch":true,"c9s_tweet_anatomy_moderator_badge_enabled":true,"articles_preview_enabled":true,"responsive_web_edit_tweet_api_enabled":true,"graphql_is_translatable_rweb_tweet_is_translatable_enabled":true,"view_counts_everywhere_api_enabled":true,"longform_notetweets_consumption_enabled":true,"responsive_web_twitter_article_tweet_consumption_enabled":true,"creator_subscriptions_quote_tweet_preview_enabled":false,"freedom_of_speech_not_reach_fetch_enabled":true,"tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled":true,"longform_notetweets_rich_text_read_enabled":true,"longform_notetweets_inline_media_enabled":true,"responsive_web_graphql_exclude_directive_enabled":true,"verified_phone_label_enabled":false,"responsive_web_graphql_skip_user_profile_image_extensions_enabled":false,"responsive_web_graphql_timeline_navigation_enabled":true,"responsive_web_enhance_cards_enabled":false}"""
+            val toggles = """{"withAuxiliaryUserLabels":false,"withArticleRichContentState":true,"withArticlePlainText":true,"withGrokAnalyze":false,"withDisallowedReplyControls":false}"""
+            return "$X_ARTICLE_GRAPHQL_ENDPOINT?variables=${urlEncode(variables)}&features=${urlEncode(features)}&fieldToggles=${urlEncode(toggles)}"
+        }
+
+        private fun urlEncode(value: String): String = URLEncoder.encode(value, Charsets.UTF_8.name())
         private val YOUTUBE_CHANNEL_BADGE_PATTERN =
             Regex("""https:(?:\\\\/\\\\/|//)yt3\.ggpht\.com[^"'\\\s<]+""")
         private val YOUTUBE_EMBEDDED_DESCRIPTION_PATTERNS = listOf(

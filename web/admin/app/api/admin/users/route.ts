@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/auth";
+import { assertCanSearchUsers, requireAdmin } from "@/lib/auth";
 import { normalizedEmail } from "@/lib/env";
 import { createServiceSupabaseClient } from "@/lib/supabase";
 
@@ -11,7 +11,8 @@ function asErrorResponse(error: unknown): Response {
 
 export async function GET(request: NextRequest) {
   try {
-    await requireAdmin(request);
+    const admin = await requireAdmin(request);
+    assertCanSearchUsers(admin);
     const query = normalizedEmail(request.nextUrl.searchParams.get("q") ?? "");
     if (query.length < 2) {
       return NextResponse.json({ users: [] });
@@ -31,7 +32,10 @@ export async function GET(request: NextRequest) {
         lastSignInAt: user.last_sign_in_at,
       }));
 
-    return NextResponse.json({ users });
+    return NextResponse.json(
+      { users },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     return asErrorResponse(error);
   }

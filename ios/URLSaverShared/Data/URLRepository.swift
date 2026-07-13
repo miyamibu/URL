@@ -38,6 +38,12 @@ final class URLRepository: @unchecked Sendable {
         )
     }
 
+    func loadChatGptPersonalLinkSnapshot() throws -> [URLRecord] {
+        try fetchEntries(
+            whereClause: "(local_provenance_count > 0 OR shared_reference_count > 0) ORDER BY created_at DESC"
+        )
+    }
+
     func loadLocalTags() throws -> [LocalTagSummary] {
         try database.fetchMany(
             sql: """
@@ -104,122 +110,6 @@ final class URLRepository: @unchecked Sendable {
                 updatedAt: dateColumn(statement, index: 4) ?? Date(timeIntervalSince1970: 0)
             )
         }
-    }
-
-    func loadCollections() throws -> [CollectionSummary] {
-        try database.fetchMany(
-            sql: """
-            SELECT
-                collections.id,
-                collections.name,
-                collections.sort_order,
-                COUNT(CASE
-                    WHEN url_entries.local_provenance_count > 0
-                        AND url_entries.record_state = 'ACTIVE'
-                    THEN 1
-                END) AS active_url_count,
-                collections.created_at,
-                collections.updated_at
-            FROM collections
-            LEFT JOIN url_entries
-                ON url_entries.collection_id = collections.id
-            GROUP BY collections.id
-            ORDER BY collections.sort_order ASC, collections.id ASC;
-            """
-        ) { statement in
-            CollectionSummary(
-                id: sqlite3_column_int64(statement, 0),
-                name: textColumn(statement, index: 1) ?? "",
-                sortOrder: Int(sqlite3_column_int(statement, 2)),
-                activeURLCount: Int(sqlite3_column_int(statement, 3)),
-                createdAt: dateColumn(statement, index: 4) ?? Date(timeIntervalSince1970: 0),
-                updatedAt: dateColumn(statement, index: 5) ?? Date(timeIntervalSince1970: 0)
-            )
-        }
-    }
-
-    func createCollection(name rawName: String) throws -> CollectionSummary? {
-        guard let normalized = normalizeCollectionName(rawName) else { return nil }
-        if let existing = try loadCollectionByNormalizedName(normalized.key) {
-            return existing
-        }
-        let now = Date()
-        let nextSortOrder = (try database.fetchInt("SELECT COALESCE(MAX(sort_order), 0) FROM collections;") ?? 0) + 1
-        let id = try insert(
-            sql: """
-            INSERT INTO collections (name, normalized_name, sort_order, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?);
-            """,
-            binds: [
-                sql(normalized.name),
-                sql(normalized.key),
-                sql(nextSortOrder),
-                sql(now.timeIntervalSince1970),
-                sql(now.timeIntervalSince1970),
-            ]
-        )
-        return CollectionSummary(
-            id: id,
-            name: normalized.name,
-            sortOrder: nextSortOrder,
-            activeURLCount: 0,
-            createdAt: now,
-            updatedAt: now
-        )
-    }
-
-    func assignCollection(entryID: Int64, collectionID: Int64) throws -> Bool {
-        guard try loadEntry(id: entryID) != nil,
-              try loadCollection(id: collectionID) != nil else {
-            return false
-        }
-        try execute(
-            """
-            UPDATE url_entries
-            SET collection_id = ?,
-                updated_at = ?
-            WHERE id = ?;
-            """,
-            binds: [sql(collectionID), sql(Date().timeIntervalSince1970), sql(entryID)]
-        )
-        return true
-    }
-
-    func reorderCollections(collectionIDs: [Int64]) throws -> Bool {
-        let customCollections = try loadCollections().filter { $0.id != defaultCollectionID }
-        let customIDs = Set(customCollections.map(\.id))
-        guard Set(collectionIDs) == customIDs else { return false }
-        let now = Date().timeIntervalSince1970
-        try database.transaction {
-            for (index, collectionID) in collectionIDs.enumerated() {
-                try execute(
-                    "UPDATE collections SET sort_order = ?, updated_at = ? WHERE id = ?;",
-                    binds: [sql(index + 1), sql(now), sql(collectionID)]
-                )
-            }
-        }
-        return true
-    }
-
-    func deleteCollection(id collectionID: Int64) throws -> Bool {
-        guard let collection = try loadCollection(id: collectionID),
-              collection.id != defaultCollectionID,
-              collection.name != defaultCollectionName else {
-            return false
-        }
-        try database.transaction {
-            try execute(
-                "UPDATE url_entries SET collection_id = ?, updated_at = ? WHERE collection_id = ?;",
-                binds: [sql(defaultCollectionID), sql(Date().timeIntervalSince1970), sql(collectionID)]
-            )
-            if let normalized = normalizeLocalTagName(collection.name),
-               let localTag = try loadLocalTagByNormalizedName(normalized.key) {
-                try execute("DELETE FROM local_tag_entries WHERE tag_id = ?;", binds: [sql(localTag.id)])
-                try execute("DELETE FROM local_tags WHERE id = ?;", binds: [sql(localTag.id)])
-            }
-            try execute("DELETE FROM collections WHERE id = ?;", binds: [sql(collectionID)])
-        }
-        return true
     }
 
     func loadLocalTagAssignments() throws -> [Int64: Set<Int64>] {
@@ -363,22 +253,19 @@ final class URLRepository: @unchecked Sendable {
         guard let tag = try loadLocalTag(id: tagID) else { return nil }
         let entries = try database.fetchMany(
             sql: """
-            SELECT url_entries.normalized_url, url_entries.user_title, url_entries.fetched_title, url_entries.memo
+            SELECT url_entries.normalized_url
             FROM url_entries
             INNER JOIN local_tag_entries ON local_tag_entries.entry_id = url_entries.id
             WHERE local_tag_entries.tag_id = ?
               AND url_entries.local_provenance_count > 0
               AND url_entries.record_state IN ('ACTIVE', 'ARCHIVED')
+              AND url_entries.pending_deletion_until IS NULL
             ORDER BY url_entries.created_at DESC;
             """,
             binds: [sql(tagID)]
         ) { statement in
             TagShareURL(
-                url: textColumn(statement, index: 0) ?? "",
-                title: textColumn(statement, index: 1) ?? textColumn(statement, index: 2),
-                memo: (textColumn(statement, index: 3) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    ? nil
-                    : textColumn(statement, index: 3)
+                url: textColumn(statement, index: 0) ?? ""
             )
         }
         return TagSharePayload(
@@ -391,6 +278,11 @@ final class URLRepository: @unchecked Sendable {
 
     func importLocalTagPayload(_ payload: TagSharePayload) throws -> TagImportResult {
         guard payload.urlsaverVersion == 1,
+              payload.urls.count <= URLRules.maxBatchSaveURLsPerIntake,
+              payload.urls.allSatisfy({
+                  !$0.url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                  $0.url.lengthOfBytes(using: .utf8) <= URLRules.maxInputTextBytes
+              }),
               let normalized = normalizeLocalTagName(payload.tag) else {
             return TagImportResult(
                 tagID: -1,
@@ -1057,58 +949,6 @@ final class URLRepository: @unchecked Sendable {
             .joined(separator: " ")
         guard !name.isEmpty else { return nil }
         return (name, name.lowercased())
-    }
-
-    private func normalizeCollectionName(_ rawName: String) -> (name: String, key: String)? {
-        let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed.count <= 40 else { return nil }
-        let name = trimmed
-            .split(whereSeparator: { $0.isWhitespace })
-            .joined(separator: " ")
-        guard !name.isEmpty else { return nil }
-        return (name, name.lowercased())
-    }
-
-    private func loadCollection(id collectionID: Int64) throws -> CollectionSummary? {
-        try database.fetchOne(
-            sql: """
-            SELECT id, name, sort_order, 0 AS active_url_count, created_at, updated_at
-            FROM collections
-            WHERE id = ?
-            LIMIT 1;
-            """,
-            binds: [sql(collectionID)]
-        ) { statement in
-            CollectionSummary(
-                id: sqlite3_column_int64(statement, 0),
-                name: textColumn(statement, index: 1) ?? "",
-                sortOrder: Int(sqlite3_column_int(statement, 2)),
-                activeURLCount: Int(sqlite3_column_int(statement, 3)),
-                createdAt: dateColumn(statement, index: 4) ?? Date(timeIntervalSince1970: 0),
-                updatedAt: dateColumn(statement, index: 5) ?? Date(timeIntervalSince1970: 0)
-            )
-        }
-    }
-
-    private func loadCollectionByNormalizedName(_ normalizedName: String) throws -> CollectionSummary? {
-        try database.fetchOne(
-            sql: """
-            SELECT id, name, sort_order, 0 AS active_url_count, created_at, updated_at
-            FROM collections
-            WHERE normalized_name = ?
-            LIMIT 1;
-            """,
-            binds: [sql(normalizedName)]
-        ) { statement in
-            CollectionSummary(
-                id: sqlite3_column_int64(statement, 0),
-                name: textColumn(statement, index: 1) ?? "",
-                sortOrder: Int(sqlite3_column_int(statement, 2)),
-                activeURLCount: Int(sqlite3_column_int(statement, 3)),
-                createdAt: dateColumn(statement, index: 4) ?? Date(timeIntervalSince1970: 0),
-                updatedAt: dateColumn(statement, index: 5) ?? Date(timeIntervalSince1970: 0)
-            )
-        }
     }
 
     private func migrateIfNeeded() throws {

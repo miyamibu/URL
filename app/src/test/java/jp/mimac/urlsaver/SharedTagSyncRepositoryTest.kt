@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import jp.mimac.urlsaver.data.AppDatabase
+import jp.mimac.urlsaver.data.AiLocalDataClearer
 import jp.mimac.urlsaver.data.DefaultTagRepository
 import jp.mimac.urlsaver.data.DefaultUsageSummaryDataSource
 import jp.mimac.urlsaver.data.MetadataScheduler
@@ -101,6 +102,7 @@ class SharedTagSyncRepositoryTest {
                 tagDao = db.tagDao(),
                 authSessionProvider = authProvider,
             ),
+            aiLocalDataClearer = AiLocalDataClearer { },
         )
     }
 

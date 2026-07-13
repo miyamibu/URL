@@ -2,8 +2,6 @@ package jp.mimac.urlsaver.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import jp.mimac.urlsaver.data.CollectionEntity
-import jp.mimac.urlsaver.data.CreateCollectionResult
 import jp.mimac.urlsaver.data.EntryCardDisplayModeStore
 import jp.mimac.urlsaver.data.MainListRepository
 import jp.mimac.urlsaver.data.ServiceFilterOrderStore
@@ -31,16 +29,6 @@ class MainListViewModel(
 ) : ViewModel() {
 
     private val selectedService = MutableStateFlow(ServiceType.ALL)
-    private val selectedCollectionId = MutableStateFlow<Long?>(null)
-
-    init {
-        viewModelScope.launch {
-            repository.reconcileLocalTagCollectionAssignments()
-        }
-    }
-
-    val collections: StateFlow<List<CollectionEntity>> = repository.observeCollections()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val localTagEntryRefs = repository.observeLocalTagEntryRefs()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -61,45 +49,23 @@ class MainListViewModel(
     val uiState: StateFlow<ListFilterUiState> = combine(
         repository.observeActiveEntries(),
         selectedService,
-        selectedCollectionId,
-        repository.observeLocalTagCollectionEntryRefs(),
-    ) { entries, selectedService, selectedCollection, localTagRefs ->
+    ) { entries, selectedService ->
         buildListFilterUiState(
             entries = entries,
             selectedService = selectedService,
-            selectedCollectionId = selectedCollection,
-            localTagCollectionEntryIds = localTagRefs.groupBy(
-                keySelector = { it.collectionId },
-                valueTransform = { it.entryId },
-            ).mapValues { (_, entryIds) -> entryIds.toSet() },
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ListFilterUiState())
 
     val selectedServiceFlow: StateFlow<ServiceType> = selectedService
-    val selectedCollectionIdFlow: StateFlow<Long?> = selectedCollectionId
 
     fun selectService(serviceType: ServiceType) {
         selectedService.value = serviceType
-        selectedCollectionId.value = null
-    }
-
-    fun selectCollection(collectionId: Long?) {
-        selectedCollectionId.value = collectionId
-        selectedService.value = ServiceType.ALL
     }
 
     fun toggleEntryCardDisplayMode() {
         viewModelScope.launch {
             displayModeStore.setDisplayMode(entryCardDisplayMode.value.toggled())
         }
-    }
-
-    suspend fun createCollection(name: String): CreateCollectionResult {
-        return repository.createCollection(name)
-    }
-
-    suspend fun reorderCollections(collectionIds: List<Long>): Boolean {
-        return repository.reorderCollections(collectionIds)
     }
 
     fun reorderServices(serviceOrder: List<ServiceType>) {
@@ -112,14 +78,6 @@ class MainListViewModel(
         viewModelScope.launch {
             topFilterOrderStore.setOrderTokens(tokens)
         }
-    }
-
-    suspend fun deleteCollection(collectionId: Long): Boolean {
-        val deleted = repository.deleteCollection(collectionId)
-        if (deleted && selectedCollectionId.value == collectionId) {
-            selectedCollectionId.value = null
-        }
-        return deleted
     }
 
     suspend fun createLocalTag(name: String): CreateTagResult {
@@ -155,10 +113,9 @@ class MainListViewModel(
 
     suspend fun submitManualInput(
         input: String,
-        collectionId: Long?,
         localTagIds: Set<Long> = emptySet(),
     ): ManualInputSubmitResult {
-        val result = repository.saveFromManualInput(input, collectionId)
+        val result = repository.saveFromManualInput(input)
         val savedEntryId = result.entryId
         var failedTagAssignmentCount = 0
         if (

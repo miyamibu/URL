@@ -163,8 +163,6 @@ import androidx.navigation.navArgument
 import coil.compose.AsyncImage
 import jp.mimac.urlsaver.R
 import jp.mimac.urlsaver.ads.AdsManager
-import jp.mimac.urlsaver.data.CollectionEntity
-import jp.mimac.urlsaver.data.DEFAULT_COLLECTION_ID
 import jp.mimac.urlsaver.data.LocalTagEntryRef
 import jp.mimac.urlsaver.data.UrlEntryEntity
 import jp.mimac.urlsaver.data.VideoDownloadEntity
@@ -203,7 +201,6 @@ import jp.mimac.urlsaver.ui.components.OrbitFilterChip
 import jp.mimac.urlsaver.ui.components.OrbitPanel
 import jp.mimac.urlsaver.ui.components.OrbitPanelTone
 import jp.mimac.urlsaver.ui.components.OrbitSectionLabel
-import jp.mimac.urlsaver.ui.components.CollectionFilterRow
 import jp.mimac.urlsaver.ui.components.EntryCard
 import jp.mimac.urlsaver.ui.components.ServiceBadge
 import jp.mimac.urlsaver.ui.components.ServiceFilterRow
@@ -218,13 +215,12 @@ import java.time.ZoneId
 import kotlin.math.abs
 import kotlin.math.min
 
-private const val SHOW_COLLECTION_UI = false
-
+@Suppress("UNUSED_PARAMETER")
 fun shouldShowSharedTagCloudEntryPoints(
     isConfigured: Boolean,
     hasSharedTags: Boolean,
     hasPendingInvite: Boolean = false,
-): Boolean = isConfigured || hasSharedTags || hasPendingInvite
+): Boolean = true
 
 @Composable
 fun UrlSaverRoot(
@@ -450,8 +446,6 @@ private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
             },
             onArchiveFailed = { activityViewModel.notifyArchiveFailed() },
             onDeleteFailed = { activityViewModel.notifyDeleteFailed() },
-            onCollectionDeleted = { activityViewModel.notifyCollectionDeleted() },
-            onCollectionDeleteFailed = { activityViewModel.notifyCollectionDeleteFailed() },
         )
     }
 
@@ -582,6 +576,7 @@ private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
                     contactSupportClient = context.appContainer().contactSupportClient,
                     authSessionProvider = context.appContainer().sharedTagAuthSessionProvider,
                     pendingInviteStore = context.appContainer().pendingInviteStore,
+                    localAccountCleanupStore = context.appContainer().localAccountCleanupStore,
                 )
             },
         )
@@ -673,17 +668,13 @@ private fun MainScreen(
     onBatchPendingDeleteEntries: (Map<Long, Long>) -> Unit,
     onArchiveFailed: () -> Unit,
     onDeleteFailed: () -> Unit,
-    onCollectionDeleted: () -> Unit,
-    onCollectionDeleteFailed: () -> Unit,
 ) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val collections by viewModel.collections.collectAsStateWithLifecycle()
     val localTagEntryRefs by viewModel.localTagEntryRefs.collectAsStateWithLifecycle()
     val sharedTags by tagViewModel.tags.collectAsStateWithLifecycle()
     val sharedTagGroups by tagViewModel.groups.collectAsStateWithLifecycle()
     val selectedService by viewModel.selectedServiceFlow.collectAsStateWithLifecycle()
-    val selectedCollectionId by viewModel.selectedCollectionIdFlow.collectAsStateWithLifecycle()
     val serviceFilterOrder by viewModel.serviceFilterOrder.collectAsStateWithLifecycle()
     val topFilterOrderTokens by viewModel.topFilterOrderTokens.collectAsStateWithLifecycle()
     val entryCardDisplayMode by viewModel.entryCardDisplayMode.collectAsStateWithLifecycle()
@@ -705,34 +696,22 @@ private fun MainScreen(
                     contactSupportClient = context.appContainer().contactSupportClient,
                     authSessionProvider = context.appContainer().sharedTagAuthSessionProvider,
                     pendingInviteStore = context.appContainer().pendingInviteStore,
+                    localAccountCleanupStore = context.appContainer().localAccountCleanupStore,
                 )
             },
         )
-    val pendingInvite by profileVm.pendingInvite.collectAsStateWithLifecycle()
     val profileCloudState by profileVm.cloudState.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val mainListState = rememberLazyListState()
-    val customCollections = remember(collections) {
-        if (SHOW_COLLECTION_UI) {
-            collections.filter { it.id != DEFAULT_COLLECTION_ID }
-        } else {
-            emptyList()
-        }
-    }
-    val localCollectionNameSet = remember(customCollections) {
-        customCollections.map { normalizeSharedTagName(it.name) }.toSet()
-    }
-    val visibleSharedTags = remember(sharedTags, localCollectionNameSet) {
+    val visibleSharedTags = remember(sharedTags) {
         sharedTags.filter { tag ->
-            tag.scope == SharedTagScope.SYNCED &&
-                normalizeSharedTagName(tag.name) !in localCollectionNameSet
+            tag.scope == SharedTagScope.SYNCED
         }
     }
-    val localSaveTags = remember(sharedTags, localCollectionNameSet) {
+    val localSaveTags = remember(sharedTags) {
         sharedTags
             .filter { tag ->
-                tag.scope == SharedTagScope.LOCAL_ONLY &&
-                    normalizeSharedTagName(tag.name) !in localCollectionNameSet
+                tag.scope == SharedTagScope.LOCAL_ONLY
             }
             .sortedByDescending { tag -> tag.id }
             .distinctBy { normalizeSharedTagName(it.name) }
@@ -748,17 +727,7 @@ private fun MainScreen(
                 names.filterNotNull().distinctBy { it.lowercase() }.sorted()
             }
     }
-    val showSharedTagCloudUi = shouldShowSharedTagCloudEntryPoints(
-        isConfigured = true,
-        hasSharedTags = visibleSharedTags.isNotEmpty() || sharedTagGroups.isNotEmpty(),
-        hasPendingInvite = pendingInvite != null,
-    )
-
-    LaunchedEffect(selectedCollectionId) {
-        if (!SHOW_COLLECTION_UI && selectedCollectionId != null) {
-            viewModel.selectCollection(null)
-        }
-    }
+    val showSharedTagCloudUi = true
 
     LaunchedEffect(Unit) {
         profileVm.refreshPendingInvite()
@@ -785,11 +754,10 @@ private fun MainScreen(
             uiState.entries.filter { it.id in matchingEntryIds }
         }
     }
-    val searchFilteredEntries = remember(localTagFilteredEntries, searchQueryLocal, customCollections, sharedTags, localTagEntryRefs) {
+    val searchFilteredEntries = remember(localTagFilteredEntries, searchQueryLocal, sharedTags, localTagEntryRefs) {
         filterEntriesBySearch(
             entries = localTagFilteredEntries,
             query = searchQueryLocal,
-            collections = customCollections,
             tags = sharedTags,
             localTagEntryRefs = localTagEntryRefs,
         )
@@ -805,7 +773,6 @@ private fun MainScreen(
     var manualInputState by remember { mutableStateOf(ManualInputUiState()) }
     var showPrivacyDialog by remember { mutableStateOf(false) }
     var showUsageGuide by rememberSaveable { mutableStateOf(false) }
-    var createCollectionState by remember { mutableStateOf(CreateCollectionDialogUiState()) }
     var sharedTagDialogState by remember { mutableStateOf(SharedTagDialogUiState()) }
     var sharedTagGroupDialogState by remember { mutableStateOf(SharedTagDialogUiState()) }
     var manualLocalTagDialogState by remember { mutableStateOf(SharedTagDialogUiState()) }
@@ -821,7 +788,6 @@ private fun MainScreen(
     var showProfileSheet by rememberSaveable { mutableStateOf(false) }
     val profileSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showLocalTagManagerSheet by rememberSaveable { mutableStateOf(false) }
-    var pendingDeleteCollection by remember { mutableStateOf<CollectionEntity?>(null) }
     var pendingDeleteLocalTag by remember { mutableStateOf<TagWithCount?>(null) }
     var selectedEntryIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var previousTopEntryId by remember { mutableStateOf<Long?>(null) }
@@ -868,7 +834,7 @@ private fun MainScreen(
         }
     }
 
-    LaunchedEffect(uiState.entries, selectedService, selectedCollectionId) {
+    LaunchedEffect(uiState.entries, selectedService) {
         val currentTopEntryId = uiState.entries.firstOrNull()?.id
         val visibleEntryCount = uiState.entries.size
         val addedToTop = currentTopEntryId != null &&
@@ -885,18 +851,7 @@ private fun MainScreen(
     }
 
     fun openManualInput() {
-        manualInputState = ManualInputUiState(
-            visible = true,
-            selectedCollectionId = if (SHOW_COLLECTION_UI) {
-                customCollections.firstOrNull { it.id == selectedCollectionId }?.id
-            } else {
-                null
-            },
-        )
-    }
-
-    fun closeCreateCollectionDialog() {
-        createCollectionState = CreateCollectionDialogUiState()
+        manualInputState = ManualInputUiState(visible = true)
     }
 
     fun closeCreateManualLocalTagDialog() {
@@ -921,10 +876,8 @@ private fun MainScreen(
         scope.launch {
             manualInputState = manualInputState.copy(isSaving = true)
             try {
-                val targetCollectionId = if (SHOW_COLLECTION_UI) manualInputState.selectedCollectionId else null
                 val submitResult = viewModel.submitManualInput(
                     input = manualInputState.inputText,
-                    collectionId = targetCollectionId,
                     localTagIds = manualInputState.selectedLocalTagIds,
                 )
                 val result = submitResult.saveResult
@@ -1023,53 +976,12 @@ private fun MainScreen(
         }
     }
 
-    fun confirmCreateCollection() {
-        scope.launch {
-            val result = viewModel.createCollection(createCollectionState.name)
-            when {
-                result.success && result.collectionId != null -> {
-                    manualInputState = manualInputState.copy(
-                        selectedCollectionId = result.collectionId,
-                        collectionError = null,
-                    )
-                    closeCreateCollectionDialog()
-                }
-
-                result.duplicateName -> {
-                    if (result.collectionId != null) {
-                        manualInputState = manualInputState.copy(
-                            selectedCollectionId = result.collectionId,
-                            collectionError = null,
-                        )
-                        closeCreateCollectionDialog()
-                    } else {
-                        createCollectionState = createCollectionState.copy(error = "同じ名前のタグがあります")
-                    }
-                }
-
-                result.invalidName -> {
-                    createCollectionState = createCollectionState.copy(error = "タグ名は1〜40文字で入力してください")
-                }
-
-                else -> {
-                    createCollectionState = createCollectionState.copy(error = "タグを作成できませんでした")
-                }
-            }
-        }
-    }
-
     fun confirmCreateSharedTag() {
         scope.launch {
-            val normalizedName = normalizeSharedTagName(sharedTagDialogState.name)
-            val error = when {
-                normalizedName in localCollectionNameSet -> {
-                    "同じ名前の通常タグがあります。通常タグとして追加してください"
-                }
-                else -> when (validateSharedTagName(sharedTagDialogState.name)) {
-                    SharedTagNameValidationError.BLANK -> "共有タグ名を入力してください"
-                    SharedTagNameValidationError.TOO_LONG -> "共有タグ名は50文字以内で入力してください"
-                    null -> null
-                }
+            val error = when (validateSharedTagName(sharedTagDialogState.name)) {
+                SharedTagNameValidationError.BLANK -> "共有タグ名を入力してください"
+                SharedTagNameValidationError.TOO_LONG -> "共有タグ名は50文字以内で入力してください"
+                null -> null
             }
             sharedTagDialogState = sharedTagDialogState.copy(error = error)
             if (error != null) return@launch
@@ -1231,20 +1143,6 @@ private fun MainScreen(
         }
     }
 
-    fun reorderCollections(collectionIds: List<Long>) {
-        scope.launch {
-            viewModel.reorderCollections(collectionIds)
-        }
-    }
-
-    fun toggleSelectedCollection(targetId: Long?) {
-        if (selectedCollectionId == targetId) {
-            viewModel.selectCollection(null)
-        } else {
-            viewModel.selectCollection(targetId)
-        }
-    }
-
     fun archiveActiveEntry(entryId: Long) {
         scope.launch {
             val archived = viewModel.archiveEntry(entryId)
@@ -1331,7 +1229,6 @@ private fun MainScreen(
         mainPane = MainPane.URLS
         showUsageGuide = false
         viewModel.selectService(ServiceType.ALL)
-        viewModel.selectCollection(null)
         scope.launch {
             mainListState.animateScrollToItem(0)
         }
@@ -1343,25 +1240,13 @@ private fun MainScreen(
         selectionModeActive = visibleEntryIds.isNotEmpty()
     }
 
-    fun deleteCollection(collection: CollectionEntity) {
-        scope.launch {
-            val deleted = viewModel.deleteCollection(collection.id)
-            if (deleted) {
-                onCollectionDeleted()
-            } else {
-                onCollectionDeleteFailed()
-            }
-        }
-    }
-
     fun deleteLocalTag(tag: TagWithCount) {
         scope.launch {
             val deleted = viewModel.deleteLocalTag(tag.id)
-            if (deleted) {
-                onCollectionDeleted()
-            } else {
-                onCollectionDeleteFailed()
-            }
+            snackbarHostState.showSnackbar(
+                if (deleted) "タグを削除しました" else "タグを削除できませんでした",
+                duration = SnackbarDuration.Short,
+            )
         }
     }
 
@@ -1382,11 +1267,8 @@ private fun MainScreen(
         visible = manualInputState.visible,
         inputText = manualInputState.inputText,
         inputError = manualInputState.inputError,
-        customCollections = customCollections,
         localTags = localSaveTags,
-        selectedTargetCollectionId = manualInputState.selectedCollectionId,
         selectedLocalTagIds = manualInputState.selectedLocalTagIds,
-        manualCollectionError = manualInputState.collectionError,
         manualLocalTagError = manualInputState.localTagError,
         isManualSaving = manualInputState.isSaving,
         onDismiss = {
@@ -1414,14 +1296,6 @@ private fun MainScreen(
                 )
             }
         },
-        onSelectCollection = { targetId ->
-            if (SHOW_COLLECTION_UI) {
-                manualInputState = manualInputState.copy(
-                    collectionError = null,
-                    selectedCollectionId = if (manualInputState.selectedCollectionId == targetId) null else targetId,
-                )
-            }
-        },
         onSelectLocalTag = { tagId ->
             manualInputState = manualInputState.copy(
                 selectedLocalTagIds = if (tagId in manualInputState.selectedLocalTagIds) {
@@ -1431,16 +1305,6 @@ private fun MainScreen(
                 },
                 localTagError = null,
             )
-        },
-        onRequestCreateCollection = if (SHOW_COLLECTION_UI) {
-            {
-                createCollectionState = createCollectionState.copy(
-                    visible = true,
-                    error = null,
-                )
-            }
-        } else {
-            null
         },
         onRequestCreateLocalTag = {
             createLocalTagForMainFilter = false
@@ -1475,32 +1339,6 @@ private fun MainScreen(
         onApply = { tags -> assignSelectedEntriesToLocalTags(tags) },
     )
 
-    pendingDeleteCollection?.let { collection ->
-        AlertDialog(
-            onDismissRequest = { pendingDeleteCollection = null },
-            title = { Text("タグを削除") },
-            text = {
-                Text("「${collection.name}」を削除します。URL自体は削除されず、受信箱に戻ります。")
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        pendingDeleteCollection = null
-                        deleteCollection(collection)
-                    },
-                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                ) {
-                    Text("削除する")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingDeleteCollection = null }) {
-                    Text("キャンセル")
-                }
-            },
-        )
-    }
-
     pendingDeleteLocalTag?.let { tag ->
         AlertDialog(
             onDismissRequest = { pendingDeleteLocalTag = null },
@@ -1526,20 +1364,6 @@ private fun MainScreen(
             },
         )
     }
-
-    CreateCollectionDialog(
-        visible = SHOW_COLLECTION_UI && createCollectionState.visible,
-        newCollectionName = createCollectionState.name,
-        createCollectionError = createCollectionState.error,
-        onDismiss = { closeCreateCollectionDialog() },
-        onNameChange = {
-            createCollectionState = createCollectionState.copy(
-                name = it,
-                error = null,
-            )
-        },
-        onConfirm = { confirmCreateCollection() },
-    )
 
     CreateSharedTagDialog(
         visible = sharedTagDialogState.visible && showSharedTagCloudUi,
@@ -1666,7 +1490,7 @@ private fun MainScreen(
         }
     }
 
-    if (showProfileSheet && showSharedTagCloudUi) {
+    if (showProfileSheet) {
         ModalBottomSheet(
             onDismissRequest = { showProfileSheet = false },
             sheetState = profileSheetState,
@@ -1865,13 +1689,11 @@ private fun MainScreen(
                 } else {
                     MainListContent(
                         uiState = displayedUiState,
-                        customCollections = customCollections,
                         localSaveTags = localSaveTags,
                         localTagNamesByEntryId = localTagNamesByEntryId,
                         sharedTags = visibleSharedTags,
                         showSharedTagCloudUi = showSharedTagCloudUi,
                         selectedService = selectedService,
-                        selectedCollectionId = selectedCollectionId,
                         selectedLocalTagId = selectedMainLocalTagId,
                         serviceFilterOrder = serviceFilterOrder,
                         topFilterOrderTokens = topFilterOrderTokens,
@@ -1889,10 +1711,6 @@ private fun MainScreen(
                         onReorderTopFilters = { tokens ->
                             viewModel.reorderTopFilters(tokens)
                         },
-                        onSelectCollection = { targetId ->
-                            selectedMainLocalTagId = null
-                            if (SHOW_COLLECTION_UI) toggleSelectedCollection(targetId)
-                        },
                         onSelectLocalTag = { tagId ->
                             selectedMainLocalTagId = tagId
                             if (tagId != null) {
@@ -1909,21 +1727,6 @@ private fun MainScreen(
                                 visible = true,
                                 name = tag.name,
                             )
-                        },
-                        onRequestCreateCollection = if (SHOW_COLLECTION_UI) {
-                            {
-                                createCollectionState = createCollectionState.copy(
-                                    visible = true,
-                                    error = null,
-                                )
-                            }
-                        } else {
-                            null
-                        },
-                        onReorderCollections = if (SHOW_COLLECTION_UI) {
-                            { collectionIds -> reorderCollections(collectionIds) }
-                        } else {
-                            null
                         },
                         onOpenTagDetail = onOpenTagDetail,
                         onRequestCreateSharedTag = {
@@ -1993,19 +1796,14 @@ private fun ManualInputSheet(
     visible: Boolean,
     inputText: String,
     inputError: ShareSaveResult?,
-    customCollections: List<jp.mimac.urlsaver.data.CollectionEntity>,
     localTags: List<jp.mimac.urlsaver.domain.TagWithCount>,
-    selectedTargetCollectionId: Long?,
     selectedLocalTagIds: Set<Long>,
-    manualCollectionError: String?,
     manualLocalTagError: String?,
     isManualSaving: Boolean,
     onDismiss: () -> Unit,
     onInputChange: (String) -> Unit,
     onPaste: () -> Unit,
-    onSelectCollection: (Long?) -> Unit,
     onSelectLocalTag: (Long) -> Unit,
-    onRequestCreateCollection: (() -> Unit)?,
     onRequestCreateLocalTag: () -> Unit,
     onSave: () -> Unit,
 ) {
@@ -2047,46 +1845,6 @@ private fun ManualInputSheet(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text("クリップボードを貼り付け")
-            }
-            if (onRequestCreateCollection != null) {
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = "タグ",
-                    style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.padding(bottom = 6.dp),
-                )
-                if (customCollections.isEmpty()) {
-                    Text(
-                        text = "タグがまだありません。必要なら作成してください",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                    )
-                } else {
-                    CollectionFilterRow(
-                        collections = customCollections,
-                        selectedCollectionId = selectedTargetCollectionId,
-                        includeAllOption = false,
-                        onSelect = { targetId -> onSelectCollection(targetId) },
-                    )
-                }
-                if (!manualCollectionError.isNullOrBlank()) {
-                    Text(
-                        text = manualCollectionError,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                    )
-                }
-                Spacer(Modifier.height(6.dp))
-                TextButton(
-                    onClick = onRequestCreateCollection,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("+")
-                }
             }
             Spacer(Modifier.height(8.dp))
             Text(
@@ -2276,51 +2034,6 @@ private fun LocalTagManagementSheet(
 
         }
     }
-}
-
-@Composable
-private fun CreateCollectionDialog(
-    visible: Boolean,
-    newCollectionName: String,
-    createCollectionError: String?,
-    onDismiss: () -> Unit,
-    onNameChange: (String) -> Unit,
-    onConfirm: () -> Unit,
-) {
-    if (!visible) return
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("タグを作成") },
-        text = {
-            OutlinedTextField(
-                value = newCollectionName,
-                onValueChange = onNameChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("名前") },
-                placeholder = { Text("仕事 / 後で読む / 学習 など") },
-                supportingText = {
-                    if (!createCollectionError.isNullOrBlank()) {
-                        Text(createCollectionError)
-                    }
-                },
-                isError = !createCollectionError.isNullOrBlank(),
-            )
-        },
-        confirmButton = {
-            TextButton(
-                onClick = onConfirm,
-                enabled = newCollectionName.trim().isNotEmpty(),
-            ) {
-                Text("作成")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("キャンセル")
-            }
-        },
-    )
 }
 
 @Composable
@@ -2951,13 +2664,11 @@ private fun MainEntryList(
 @OptIn(ExperimentalFoundationApi::class)
 private fun MainListContent(
     uiState: ListFilterUiState,
-    customCollections: List<jp.mimac.urlsaver.data.CollectionEntity>,
     localSaveTags: List<jp.mimac.urlsaver.domain.TagWithCount>,
     localTagNamesByEntryId: Map<Long, List<String>>,
     sharedTags: List<jp.mimac.urlsaver.domain.TagWithCount>,
     showSharedTagCloudUi: Boolean,
     selectedService: ServiceType,
-    selectedCollectionId: Long?,
     selectedLocalTagId: Long?,
     serviceFilterOrder: List<ServiceType>,
     topFilterOrderTokens: List<String>,
@@ -2968,12 +2679,9 @@ private fun MainListContent(
     onSelectService: (ServiceType) -> Unit,
     onReorderServices: (List<ServiceType>) -> Unit,
     onReorderTopFilters: (List<String>) -> Unit,
-    onSelectCollection: (Long?) -> Unit,
     onSelectLocalTag: (Long?) -> Unit,
     onRequestCreateLocalTag: () -> Unit,
     onRequestRenameLocalTag: (TagWithCount) -> Unit,
-    onRequestCreateCollection: (() -> Unit)?,
-    onReorderCollections: ((List<Long>) -> Unit)?,
     onOpenTagDetail: (Long) -> Unit,
     onRequestCreateSharedTag: () -> Unit,
     onOpenGroups: (() -> Unit)?,
@@ -2993,18 +2701,13 @@ private fun MainListContent(
         serviceOrder = serviceFilterOrder,
         topFilterOrderTokens = topFilterOrderTokens,
         onReorderServices = onReorderServices,
-        collections = customCollections,
-        selectedCollectionId = selectedCollectionId,
         localTags = localSaveTags,
         selectedLocalTagId = selectedLocalTagId,
         onSelectService = onSelectService,
-        onSelectCollection = onSelectCollection,
         onSelectLocalTag = onSelectLocalTag,
         onCreateLocalTag = onRequestCreateLocalTag,
         onRenameLocalTag = onRequestRenameLocalTag,
-        onCreateCollection = onRequestCreateCollection,
         onReorderTopFilters = onReorderTopFilters,
-        onReorderCollections = onReorderCollections,
     )
     Spacer(modifier = Modifier.height(8.dp))
     if (showSharedTagCloudUi) {
@@ -3081,17 +2784,9 @@ private data class ManualInputUiState(
     val visible: Boolean = false,
     val inputText: String = "",
     val inputError: ShareSaveResult? = null,
-    val selectedCollectionId: Long? = null,
     val selectedLocalTagIds: Set<Long> = emptySet(),
-    val collectionError: String? = null,
     val localTagError: String? = null,
     val isSaving: Boolean = false,
-)
-
-private data class CreateCollectionDialogUiState(
-    val visible: Boolean = false,
-    val name: String = "",
-    val error: String? = null,
 )
 
 private data class SharedTagDialogUiState(
@@ -4405,35 +4100,17 @@ private fun ArchiveScreen(
     onDeleteFailed: () -> Unit,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val collections by viewModel.collections.collectAsStateWithLifecycle()
     val allTagsWithCount by viewModel.allTagsWithCount.collectAsStateWithLifecycle()
     val selectedService by viewModel.selectedServiceFlow.collectAsStateWithLifecycle()
-    val selectedCollectionId by viewModel.selectedCollectionIdFlow.collectAsStateWithLifecycle()
     val selectedLocalTagId by viewModel.selectedLocalTagIdFlow.collectAsStateWithLifecycle()
     val serviceFilterOrder by viewModel.serviceFilterOrder.collectAsStateWithLifecycle()
     val topFilterOrderTokens by viewModel.topFilterOrderTokens.collectAsStateWithLifecycle()
     val entryCardDisplayMode by viewModel.entryCardDisplayMode.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
-    LaunchedEffect(selectedCollectionId) {
-        if (!SHOW_COLLECTION_UI && selectedCollectionId != null) {
-            viewModel.selectCollection(null)
-        }
-    }
-    val customCollections = remember(collections) {
-        if (SHOW_COLLECTION_UI) {
-            collections.filter { it.id != DEFAULT_COLLECTION_ID }
-        } else {
-            emptyList()
-        }
-    }
-    val localCollectionNameSet = remember(customCollections) {
-        customCollections.map { normalizeSharedTagName(it.name) }.toSet()
-    }
-    val localSaveTags = remember(allTagsWithCount, localCollectionNameSet) {
+    val localSaveTags = remember(allTagsWithCount) {
         allTagsWithCount
             .filter { tag ->
-                tag.scope == SharedTagScope.LOCAL_ONLY &&
-                    normalizeSharedTagName(tag.name) !in localCollectionNameSet
+                tag.scope == SharedTagScope.LOCAL_ONLY
             }
             .distinctBy { normalizeSharedTagName(it.name) }
     }
@@ -4443,14 +4120,9 @@ private fun ArchiveScreen(
             viewModel.selectLocalTag(null)
         }
     }
-    var createCollectionState by remember { mutableStateOf(CreateCollectionDialogUiState()) }
     var createLocalTagState by remember { mutableStateOf(SharedTagDialogUiState()) }
     var renameLocalTagState by remember { mutableStateOf(SharedTagDialogUiState()) }
     var pendingRenameLocalTagId by remember { mutableStateOf<Long?>(null) }
-
-    fun closeCreateCollectionDialog() {
-        createCollectionState = CreateCollectionDialogUiState()
-    }
 
     fun closeCreateLocalTagDialog() {
         createLocalTagState = SharedTagDialogUiState()
@@ -4459,35 +4131,6 @@ private fun ArchiveScreen(
     fun closeRenameLocalTagDialog() {
         renameLocalTagState = SharedTagDialogUiState()
         pendingRenameLocalTagId = null
-    }
-
-    fun confirmCreateCollection() {
-        scope.launch {
-            val result = viewModel.createCollection(createCollectionState.name)
-            when {
-                result.success && result.collectionId != null -> {
-                    viewModel.selectCollection(result.collectionId)
-                    closeCreateCollectionDialog()
-                }
-
-                result.duplicateName -> {
-                    if (result.collectionId != null) {
-                        viewModel.selectCollection(result.collectionId)
-                        closeCreateCollectionDialog()
-                    } else {
-                        createCollectionState = createCollectionState.copy(error = "同じ名前のタグがあります")
-                    }
-                }
-
-                result.invalidName -> {
-                    createCollectionState = createCollectionState.copy(error = "タグ名は1〜40文字で入力してください")
-                }
-
-                else -> {
-                    createCollectionState = createCollectionState.copy(error = "タグを作成できませんでした")
-                }
-            }
-        }
     }
 
     fun confirmCreateLocalTag() {
@@ -4546,12 +4189,6 @@ private fun ArchiveScreen(
         }
     }
 
-    fun reorderCollections(collectionIds: List<Long>) {
-        scope.launch {
-            viewModel.reorderCollections(collectionIds)
-        }
-    }
-
     fun restoreArchivedEntry(entryId: Long) {
         scope.launch {
             if (viewModel.restoreEntry(entryId)) {
@@ -4570,20 +4207,6 @@ private fun ArchiveScreen(
             }
         }
     }
-
-    CreateCollectionDialog(
-        visible = SHOW_COLLECTION_UI && createCollectionState.visible,
-        newCollectionName = createCollectionState.name,
-        createCollectionError = createCollectionState.error,
-        onDismiss = { closeCreateCollectionDialog() },
-        onNameChange = {
-            createCollectionState = createCollectionState.copy(
-                name = it,
-                error = null,
-            )
-        },
-        onConfirm = { confirmCreateCollection() },
-    )
 
     CreateSharedTagDialog(
         visible = createLocalTagState.visible,
@@ -4653,8 +4276,6 @@ private fun ArchiveScreen(
                     selectedService = selectedService,
                     serviceOrder = serviceFilterOrder,
                     topFilterOrderTokens = topFilterOrderTokens,
-                    collections = customCollections,
-                    selectedCollectionId = selectedCollectionId,
                     localTags = localSaveTags,
                     selectedLocalTagId = selectedLocalTagId,
                     onSelectService = { viewModel.selectService(it) },
@@ -4663,15 +4284,6 @@ private fun ArchiveScreen(
                     },
                     onReorderTopFilters = { tokens ->
                         viewModel.reorderTopFilters(tokens)
-                    },
-                    onSelectCollection = { targetId ->
-                        if (SHOW_COLLECTION_UI) {
-                            if (selectedCollectionId == targetId) {
-                                viewModel.selectCollection(null)
-                            } else {
-                                viewModel.selectCollection(targetId)
-                            }
-                        }
                     },
                     onSelectLocalTag = { tagId ->
                         viewModel.selectLocalTag(
@@ -4693,21 +4305,6 @@ private fun ArchiveScreen(
                             visible = true,
                             name = tag.name,
                         )
-                    },
-                    onCreateCollection = if (SHOW_COLLECTION_UI) {
-                        {
-                            createCollectionState = createCollectionState.copy(
-                                visible = true,
-                                error = null,
-                            )
-                        }
-                    } else {
-                        null
-                    },
-                    onReorderCollections = if (SHOW_COLLECTION_UI) {
-                        { collectionIds -> reorderCollections(collectionIds) }
-                    } else {
-                        null
                     },
                 )
                 Spacer(modifier = Modifier.height(8.dp))
@@ -4773,7 +4370,6 @@ private fun DetailScreen(
     val savedVideoDownloads by viewModel.savedVideoDownloads.collectAsStateWithLifecycle()
     val allTagsWithCount by viewModel.allTagsWithCount.collectAsStateWithLifecycle()
     val cloudState by viewModel.cloudState.collectAsStateWithLifecycle()
-    val collections by viewModel.collections.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -4796,7 +4392,6 @@ private fun DetailScreen(
     var newSharedTagName by rememberSaveable { mutableStateOf("") }
     var sharedTagError by rememberSaveable { mutableStateOf<String?>(null) }
     var showMediaViewer by rememberSaveable { mutableStateOf(false) }
-    var locallyRemovedCollectionIds by remember { mutableStateOf(emptySet<Long>()) }
     var locallyRemovedTagIds by remember { mutableStateOf(emptySet<Long>()) }
     var locallyAssignedTagIds by remember(entryId) { mutableStateOf(emptySet<Long>()) }
     val localTagSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -4817,37 +4412,19 @@ private fun DetailScreen(
     LaunchedEffect(assignedTagIds) {
         locallyRemovedTagIds = locallyRemovedTagIds.intersect(assignedTagIds)
     }
-    val customCollections = remember(collections) {
-        collections.filter { it.id != DEFAULT_COLLECTION_ID }
-    }
-    val currentCollection = remember(current?.collectionId, customCollections) {
-        customCollections.firstOrNull { it.id == current?.collectionId }
-    }
-    LaunchedEffect(current?.collectionId) {
-        val currentCollectionId = current?.collectionId
-        locallyRemovedCollectionIds = locallyRemovedCollectionIds.filterTo(mutableSetOf()) { it == currentCollectionId }
-    }
-    val localCollectionNameSet = remember(customCollections) {
-        customCollections.map { normalizeSharedTagName(it.name) }.toSet()
-    }
-    val assignedLocalTagNameSet = remember(assignedLocalTags, currentCollection) {
-        buildSet {
-            currentCollection?.let { add(normalizeSharedTagName(it.name)) }
-            assignedLocalTags.forEach { add(normalizeSharedTagName(it.name)) }
-        }
+    val assignedLocalTagNameSet = remember(assignedLocalTags) {
+        assignedLocalTags.mapTo(mutableSetOf()) { normalizeSharedTagName(it.name) }
     }
     val availableLocalTags = remember(
         allTagsWithCount,
         assignedTagIds,
         assignedLocalTagNameSet,
-        localCollectionNameSet,
     ) {
         allTagsWithCount
             .asSequence()
             .filter { it.scope == SharedTagScope.LOCAL_ONLY }
             .filterNot { it.id in assignedTagIds }
             .filter { tag -> normalizeSharedTagName(tag.name) !in assignedLocalTagNameSet }
-            .filter { tag -> normalizeSharedTagName(tag.name) !in localCollectionNameSet }
             .distinctBy { normalizeSharedTagName(it.name) }
             .toList()
     }
@@ -4857,33 +4434,12 @@ private fun DetailScreen(
             .map { normalizeSharedTagName(it.name) }
             .toSet()
     }
-    val localReservedTagNameSet = remember(localTagNameSet, localCollectionNameSet) {
-        localTagNameSet + localCollectionNameSet
-    }
-    val availableCollectionTags = remember(customCollections, current?.collectionId, assignedLocalTagNameSet) {
-        detailAvailableCollectionTags(
-            customCollections = customCollections,
-            currentCollectionId = current?.collectionId,
-            assignedLocalTagNameSet = assignedLocalTagNameSet,
-        )
-    }
-    val assignedLocalTagItems = remember(
-        assignedLocalTags,
-        currentCollection,
-        locallyRemovedCollectionIds,
-        locallyRemovedTagIds,
-    ) {
-        val currentCollectionName = currentCollection?.let { normalizeSharedTagName(it.name) }
-        buildList {
-            if (currentCollection != null && currentCollection.id !in locallyRemovedCollectionIds) {
-                add(DetailTagItem.Collection(currentCollection))
-            }
-            assignedLocalTags
-                .filterNot { it.id in locallyRemovedTagIds }
-                .filter { normalizeSharedTagName(it.name) != currentCollectionName }
-                .distinctBy { normalizeSharedTagName(it.name) }
-                .forEach { add(DetailTagItem.LocalTag(it)) }
-        }
+    val localReservedTagNameSet = remember(localTagNameSet) { localTagNameSet }
+    val assignedLocalTagItems = remember(assignedLocalTags, locallyRemovedTagIds) {
+        assignedLocalTags
+            .filterNot { it.id in locallyRemovedTagIds }
+            .distinctBy { normalizeSharedTagName(it.name) }
+            .map { DetailTagItem.LocalTag(it) }
     }
     val visibleAssignedSyncedTags = remember(assignedSyncedTags, locallyRemovedTagIds) {
         assignedSyncedTags.filterNot { it.id in locallyRemovedTagIds }
@@ -4935,15 +4491,6 @@ private fun DetailScreen(
 
     fun removeDetailTag(item: DetailTagItem) {
         when (item) {
-            is DetailTagItem.Collection -> {
-                val collectionName = normalizeSharedTagName(item.collection.name)
-                val matchingLocalTagIds = assignedLocalTags
-                    .filter { normalizeSharedTagName(it.name) == collectionName }
-                    .map { it.id }
-                locallyRemovedCollectionIds = locallyRemovedCollectionIds + item.collection.id
-                locallyRemovedTagIds = locallyRemovedTagIds + matchingLocalTagIds
-                viewModel.clearCollectionAndRemoveTags(matchingLocalTagIds)
-            }
             is DetailTagItem.LocalTag -> {
                 locallyRemovedTagIds = locallyRemovedTagIds + item.tag.id
                 locallyAssignedTagIds = locallyAssignedTagIds - item.tag.id
@@ -5440,11 +4987,7 @@ private fun DetailScreen(
                                     actionLabel = "外す",
                                     compact = true,
                                     enabled = item.canRemove,
-                                    actionTestTag = when (item) {
-                                        is DetailTagItem.Collection -> "detail_local_tag_remove_collection_${item.collection.id}"
-                                        is DetailTagItem.LocalTag -> "detail_local_tag_remove_tag_${item.tag.id}"
-                                        is DetailTagItem.SharedTag -> null
-                                    },
+                                    actionTestTag = "detail_local_tag_remove_tag_${item.tag.id}",
                                     onClick = {
                                         removeDetailTag(item)
                                     },
@@ -5456,7 +4999,7 @@ private fun DetailScreen(
 
                 OrbitPanel {
                     OrbitSectionLabel("追加できるタグ")
-                    if (availableLocalTags.isEmpty() && availableCollectionTags.isEmpty()) {
+                    if (availableLocalTags.isEmpty()) {
                         Text(
                             text = "追加できるタグはありません",
                             style = MaterialTheme.typography.bodyMedium,
@@ -5468,39 +5011,6 @@ private fun DetailScreen(
                             verticalSpacing = 10.dp,
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            availableCollectionTags.forEach { collection ->
-                                DetailTagAssignmentOptionRow(
-                                    label = collection.name,
-                                    actionLabel = "追加",
-                                    compact = true,
-                                    actionTestTag = "detail_local_tag_add_collection_${collection.id}",
-                                    onClick = {
-                                        scope.launch {
-                                            when (val result = viewModel.assignCollectionAndCreateLocalTag(collection)) {
-                                                CreateAndAssignTagResult.Success -> {
-                                                    newLocalTagName = ""
-                                                    localTagError = null
-                                                }
-                                                CreateAndAssignTagResult.Blank -> {
-                                                    localTagError = "タグ名を入力してください"
-                                                }
-                                                CreateAndAssignTagResult.TooLong -> {
-                                                    localTagError = "タグ名は50文字以内で入力してください"
-                                                }
-                                                CreateAndAssignTagResult.Duplicate -> {
-                                                    localTagError = "このタグはすでに割り当て済みです"
-                                                }
-                                                is CreateAndAssignTagResult.LimitReached -> {
-                                                    localTagError = result.message
-                                                }
-                                                CreateAndAssignTagResult.Failed -> {
-                                                    localTagError = "タグを追加できませんでした"
-                                                }
-                                            }
-                                        }
-                                    },
-                                )
-                            }
                             availableLocalTags.forEach { tag ->
                                 DetailTagAssignmentOptionRow(
                                     label = tag.name,
@@ -6533,17 +6043,6 @@ internal fun detailAssignedTagIds(
     return assignedTags.mapTo(mutableSetOf()) { it.id } + locallyAssignedTagIds
 }
 
-internal fun detailAvailableCollectionTags(
-    customCollections: List<CollectionEntity>,
-    currentCollectionId: Long?,
-    assignedLocalTagNameSet: Set<String>,
-): List<CollectionEntity> {
-    return customCollections.filter { collection ->
-        collection.id != currentCollectionId &&
-            normalizeSharedTagName(collection.name) !in assignedLocalTagNameSet
-    }
-}
-
 @Composable
 private fun DetailTagSummaryPanel(
     title: String,
@@ -6614,11 +6113,6 @@ private fun DetailTagSummaryPanel(
 private sealed interface DetailTagItem {
     val name: String
     val canRemove: Boolean
-
-    data class Collection(val collection: CollectionEntity) : DetailTagItem {
-        override val name: String = collection.name
-        override val canRemove: Boolean = true
-    }
 
     data class LocalTag(val tag: SharedTagRecord) : DetailTagItem {
         override val name: String = tag.name
@@ -7078,13 +6572,11 @@ private fun MainBottomNavItem(
 fun filterEntriesBySearch(
     entries: List<UrlEntryEntity>,
     query: String,
-    collections: List<CollectionEntity>,
     tags: List<TagWithCount>,
     localTagEntryRefs: List<LocalTagEntryRef> = emptyList(),
 ): List<UrlEntryEntity> {
     val normalizedQuery = query.trim().lowercase()
     if (normalizedQuery.isBlank()) return entries
-    val collectionNamesById = collections.associate { it.id to it.name.lowercase() }
     val tagNamesById = tags.associate { it.id to it.name.lowercase() }
     val tagIdsByEntryId = localTagEntryRefs.groupBy(
         keySelector = { it.entryId },
@@ -7104,7 +6596,6 @@ fun filterEntriesBySearch(
             entry.memo.lowercase().contains(normalizedQuery) ||
             entry.normalizedHost.lowercase().contains(normalizedQuery) ||
             filterLabelForService(entry.serviceType).lowercase().contains(normalizedQuery) ||
-            collectionNamesById[entry.collectionId]?.contains(normalizedQuery) == true ||
             entryTagNames.any { it.contains(normalizedQuery) }
     }
 }

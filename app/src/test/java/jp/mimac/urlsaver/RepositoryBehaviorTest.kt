@@ -4,15 +4,10 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import jp.mimac.urlsaver.data.AppDatabase
-import jp.mimac.urlsaver.data.CollectionEntity
-import jp.mimac.urlsaver.data.DEFAULT_COLLECTION_ID
-import jp.mimac.urlsaver.data.DEFAULT_COLLECTION_NAME
 import jp.mimac.urlsaver.data.DefaultUrlRepository
 import jp.mimac.urlsaver.data.DefaultUsageSummaryDataSource
 import jp.mimac.urlsaver.data.MetadataScheduler
 import jp.mimac.urlsaver.data.MetadataUpdate
-import jp.mimac.urlsaver.data.TagEntity
-import jp.mimac.urlsaver.data.TagUrlCrossRef
 import jp.mimac.urlsaver.data.UrlEntryEntity
 import jp.mimac.urlsaver.domain.ContentContext
 import jp.mimac.urlsaver.domain.MetadataError
@@ -50,8 +45,6 @@ class RepositoryBehaviorTest {
         repository = DefaultUrlRepository(
             database = db,
             dao = db.urlEntryDao(),
-            collectionDao = db.collectionDao(),
-            userLabelDao = db.userLabelDao(),
             tagDao = db.tagDao(),
             clock = clock,
             scheduler = scheduler,
@@ -66,39 +59,6 @@ class RepositoryBehaviorTest {
     @After
     fun tearDown() {
         db.close()
-    }
-
-    @Test
-    fun createCollection_andSaveIntoSelectedCollection() = runBlocking {
-        clock.now = 4_000L
-        val createdCollection = repository.createCollection("work")
-        assertTrue(createdCollection.success)
-        val targetCollectionId = createdCollection.collectionId
-        assertTrue(targetCollectionId != null && targetCollectionId > 0L)
-
-        val created = repository.saveFromManualInput("https://example.com/in-work", targetCollectionId)
-        assertEquals(ShareSaveResult.CREATED, created.result)
-
-        val saved = db.urlEntryDao().findById(created.entryId!!)!!
-        assertEquals(targetCollectionId, saved.collectionId)
-    }
-
-    @Test
-    fun duplicateActive_withTargetCollection_movesEntryToRequestedCollection() = runBlocking {
-        val c1 = repository.createCollection("later")
-        val c2 = repository.createCollection("today")
-        val c1Id = c1.collectionId!!
-        val c2Id = c2.collectionId!!
-
-        val first = repository.saveFromManualInput("https://example.com/move-me", c1Id)
-        assertEquals(ShareSaveResult.CREATED, first.result)
-
-        val duplicate = repository.saveFromManualInput("https://example.com/move-me", c2Id)
-        assertEquals(ShareSaveResult.DUPLICATE_ACTIVE, duplicate.result)
-        assertEquals(first.entryId, duplicate.entryId)
-
-        val updated = db.urlEntryDao().findById(first.entryId!!)!!
-        assertEquals(c2Id, updated.collectionId)
     }
 
     @Test
@@ -139,38 +99,6 @@ class RepositoryBehaviorTest {
         assertEquals(RecordState.ARCHIVED, restored.recordState)
         assertEquals(archivedAt, restored.archivedAt)
         assertEquals(null, restored.pendingDeletionUntil)
-    }
-
-    @Test
-    fun deleteCollection_removesSameNameLocalTagAndRefs() = runBlocking {
-        db.collectionDao().insert(
-            CollectionEntity(
-                id = DEFAULT_COLLECTION_ID,
-                name = DEFAULT_COLLECTION_NAME,
-                sortOrder = 0,
-                createdAt = clock.nowEpochMillis(),
-                updatedAt = clock.nowEpochMillis(),
-            ),
-        )
-        val createdCollection = repository.createCollection("たあか")
-        val collectionId = createdCollection.collectionId!!
-        val saved = repository.saveFromManualInput("https://example.com/tag-delete", collectionId)
-        val entryId = saved.entryId!!
-        val tagId = db.tagDao().insertTag(
-            TagEntity(
-                name = "たあか",
-                createdAt = clock.nowEpochMillis(),
-            ),
-        )
-        db.tagDao().insertCrossRef(TagUrlCrossRef(tagId = tagId, entryId = entryId))
-
-        val deleted = repository.deleteCollection(collectionId)
-
-        assertTrue(deleted)
-        assertEquals(null, db.collectionDao().findById(collectionId))
-        assertEquals(null, db.tagDao().findLocalTagByName("たあか"))
-        assertTrue(db.tagDao().getVisibleTagsForEntry(entryId, authUserId = null).isEmpty())
-        assertEquals(DEFAULT_COLLECTION_ID, db.urlEntryDao().findById(entryId)?.collectionId)
     }
 
     @Test

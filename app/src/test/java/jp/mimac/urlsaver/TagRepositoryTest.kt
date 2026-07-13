@@ -5,9 +5,15 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import jp.mimac.urlsaver.data.AppDatabase
-import jp.mimac.urlsaver.data.CollectionEntity
+import jp.mimac.urlsaver.data.AiLocalDataClearer
+import jp.mimac.urlsaver.data.AiDraftEntity
+import jp.mimac.urlsaver.data.AiDiffProposalEntity
+import jp.mimac.urlsaver.data.AiReceiptEntity
+import jp.mimac.urlsaver.data.AiTransparencyRepository
 import jp.mimac.urlsaver.data.DefaultTagRepository
 import jp.mimac.urlsaver.data.DefaultUsageSummaryDataSource
+import jp.mimac.urlsaver.data.LocalAccountCleanupMarker
+import jp.mimac.urlsaver.data.LocalAccountCleanupStore
 import jp.mimac.urlsaver.data.MetadataUpdate
 import jp.mimac.urlsaver.data.MetadataScheduler
 import jp.mimac.urlsaver.data.SaveMemoResult
@@ -49,6 +55,7 @@ import jp.mimac.urlsaver.domain.TagSharePayload
 import jp.mimac.urlsaver.domain.TagShareUrl
 import jp.mimac.urlsaver.domain.TransferSharedTagOwnershipResponse
 import jp.mimac.urlsaver.domain.AssignTagResult
+import jp.mimac.urlsaver.domain.SharedTagAccountDeletionResult
 import jp.mimac.urlsaver.domain.SaveResult
 import jp.mimac.urlsaver.domain.ShareSaveResult
 import jp.mimac.urlsaver.ui.CreateAndAssignTagResult
@@ -61,6 +68,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -76,6 +84,10 @@ class TagRepositoryTest {
     private lateinit var repository: DefaultTagRepository
     private lateinit var authProvider: FakeAuthSessionProvider
     private lateinit var syncScheduler: FakeSyncScheduler
+    private lateinit var remote: FakeRemoteDataSource
+    private lateinit var aiTransparencyRepository: AiTransparencyRepository
+    private lateinit var aiLocalDataClearer: CountingAiLocalDataClearer
+    private lateinit var localAccountCleanupStore: InMemoryLocalAccountCleanupStore
     private val scheduler = FakeScheduler()
     private val clock = FakeClock(1_000L)
 
@@ -87,6 +99,16 @@ class TagRepositoryTest {
             .build()
         authProvider = FakeAuthSessionProvider()
         syncScheduler = FakeSyncScheduler()
+        remote = FakeRemoteDataSource()
+        localAccountCleanupStore = InMemoryLocalAccountCleanupStore()
+        aiTransparencyRepository = AiTransparencyRepository(
+            database = db,
+            aiTransparencyDao = db.aiTransparencyDao(),
+            urlEntryDao = db.urlEntryDao(),
+            tagDao = db.tagDao(),
+            nowIso = { "2026-07-13T00:00:00Z" },
+        )
+        aiLocalDataClearer = CountingAiLocalDataClearer(aiTransparencyRepository)
         repository = DefaultTagRepository(
             database = db,
             tagDao = db.tagDao(),
@@ -107,7 +129,7 @@ class TagRepositoryTest {
                 clock = clock,
                 metadataScheduler = scheduler,
             ),
-            remoteDataSource = FakeRemoteDataSource(),
+            remoteDataSource = remote,
             remoteConfig = SharedTagSyncRemoteConfig(
                 enabled = true,
                 supabaseUrl = "https://example.supabase.co",
@@ -118,6 +140,8 @@ class TagRepositoryTest {
                 tagDao = db.tagDao(),
                 authSessionProvider = authProvider,
             ),
+            aiLocalDataClearer = aiLocalDataClearer,
+            localAccountCleanupStore = localAccountCleanupStore,
         )
     }
 
@@ -136,6 +160,165 @@ class TagRepositoryTest {
 
         val duplicateId = repository.createTag("shared")
         assertNull(duplicateId)
+    }
+
+    @Test
+    fun deleteAccount_successClearsLocalAiTransparencyData() = runBlocking {
+        val ids = seedAiTransparencyData()
+        authProvider.updateSession(
+            SharedTagAuthSession(
+                authUserId = "delete-user-success",
+                accessToken = "token",
+            ),
+        )
+
+        val result = repository.deleteAccount()
+
+        assertEquals(SharedTagAccountDeletionResult.Success, result)
+        assertNull(db.aiTransparencyDao().findReceipt(ids.first))
+        assertNull(db.aiTransparencyDao().findDraft(ids.second))
+        assertNull(db.aiTransparencyDao().findDiffProposal(ids.third))
+        assertNull(authProvider.session.value)
+        assertEquals(1, remote.deleteAccountCallCount)
+        assertEquals(1, aiLocalDataClearer.clearCallCount)
+        assertEquals(1, authProvider.clearSessionCallCount)
+        assertNull(localAccountCleanupStore.pending.value)
+    }
+
+    @Test
+    fun deleteAccount_remoteFailureKeepsLocalAiTransparencyData() = runBlocking {
+        val ids = seedAiTransparencyData()
+        remote.deleteAccountFailure = IllegalStateException("remote delete failed")
+        authProvider.updateSession(
+            SharedTagAuthSession(
+                authUserId = "delete-user-failure",
+                accessToken = "token",
+            ),
+        )
+
+        val result = repository.deleteAccount()
+
+        assertTrue(result is SharedTagAccountDeletionResult.Failure)
+        assertNotNull(db.aiTransparencyDao().findReceipt(ids.first))
+        assertNotNull(db.aiTransparencyDao().findDraft(ids.second))
+        assertNotNull(db.aiTransparencyDao().findDiffProposal(ids.third))
+        assertNotNull(authProvider.session.value)
+        assertEquals(1, remote.deleteAccountCallCount)
+        assertEquals(0, aiLocalDataClearer.clearCallCount)
+        assertEquals(0, authProvider.clearSessionCallCount)
+        assertNull(localAccountCleanupStore.pending.value)
+    }
+
+    @Test
+    fun deleteAccount_aiCleanupFailure_stillAttemptsSessionClear() = runBlocking {
+        authProvider.updateSession(
+            SharedTagAuthSession(
+                authUserId = "delete-user-ai-failure",
+                accessToken = "token",
+            ),
+        )
+        aiLocalDataClearer.clearFailure = IllegalStateException("AI cleanup failed")
+
+        val result = repository.deleteAccount()
+
+        val pending = result as SharedTagAccountDeletionResult.LocalCleanupRequired
+        assertTrue(pending.aiDataPending)
+        assertFalse(pending.sessionPending)
+        assertEquals(1, remote.deleteAccountCallCount)
+        assertEquals(1, aiLocalDataClearer.clearCallCount)
+        assertEquals(1, authProvider.clearSessionCallCount)
+        assertNull(authProvider.session.value)
+        assertEquals(
+            LocalAccountCleanupMarker(aiDataPending = true, sessionPending = false),
+            localAccountCleanupStore.pending.value,
+        )
+    }
+
+    @Test
+    fun retryLocalAccountCleanup_retriesOnlyLocalCleanup() = runBlocking {
+        authProvider.updateSession(
+            SharedTagAuthSession(
+                authUserId = "delete-user-retry",
+                accessToken = "token",
+            ),
+        )
+        aiLocalDataClearer.clearFailure = IllegalStateException("AI cleanup failed")
+
+        val firstResult = repository.deleteAccount()
+        assertTrue(firstResult is SharedTagAccountDeletionResult.LocalCleanupRequired)
+
+        aiLocalDataClearer.clearFailure = null
+        val retryResult = repository.retryLocalAccountCleanup()
+
+        assertEquals(SharedTagAccountDeletionResult.Success, retryResult)
+        assertEquals(1, remote.deleteAccountCallCount)
+        assertEquals(2, aiLocalDataClearer.clearCallCount)
+        assertEquals(1, authProvider.clearSessionCallCount)
+        assertNull(authProvider.session.value)
+        assertNull(localAccountCleanupStore.pending.value)
+    }
+
+    @Test
+    fun deleteAccount_sessionClearFailure_stillAttemptsAiCleanup() = runBlocking {
+        authProvider.updateSession(
+            SharedTagAuthSession(
+                authUserId = "delete-user-session-failure",
+                accessToken = "token",
+            ),
+        )
+        authProvider.sessionClearFailure = IllegalStateException("session cleanup failed")
+
+        val result = repository.deleteAccount()
+
+        val pending = result as SharedTagAccountDeletionResult.LocalCleanupRequired
+        assertFalse(pending.aiDataPending)
+        assertTrue(pending.sessionPending)
+        assertEquals(1, remote.deleteAccountCallCount)
+        assertEquals(1, aiLocalDataClearer.clearCallCount)
+        assertEquals(1, authProvider.clearSessionCallCount)
+        assertNotNull(authProvider.session.value)
+        assertEquals(
+            LocalAccountCleanupMarker(aiDataPending = false, sessionPending = true),
+            localAccountCleanupStore.pending.value,
+        )
+    }
+
+    @Test
+    fun retryLocalAccountCleanup_succeedsWhenSessionIsAlreadyNull() = runBlocking {
+        val result = repository.retryLocalAccountCleanup()
+
+        assertEquals(SharedTagAccountDeletionResult.Success, result)
+        assertEquals(0, remote.deleteAccountCallCount)
+        assertEquals(1, aiLocalDataClearer.clearCallCount)
+        assertEquals(0, authProvider.clearSessionCallCount)
+        assertNull(localAccountCleanupStore.pending.value)
+    }
+
+    @Test
+    fun localCleanupMarker_survivesRepositoryRegeneration() = runBlocking {
+        authProvider.updateSession(
+            SharedTagAuthSession(
+                authUserId = "delete-user-recreated-repository",
+                accessToken = "token",
+            ),
+        )
+        aiLocalDataClearer.clearFailure = IllegalStateException("AI cleanup failed")
+
+        val firstResult = repository.deleteAccount()
+        assertTrue(firstResult is SharedTagAccountDeletionResult.LocalCleanupRequired)
+
+        val recreatedRepository = createRepository(
+            remoteConfig = SharedTagSyncRemoteConfig(
+                enabled = true,
+                supabaseUrl = "https://example.supabase.co",
+                anonKey = "anon",
+            ),
+        )
+        aiLocalDataClearer.clearFailure = null
+
+        assertEquals(SharedTagAccountDeletionResult.Success, recreatedRepository.retryLocalAccountCleanup())
+        assertEquals(1, remote.deleteAccountCallCount)
+        assertNull(localAccountCleanupStore.pending.value)
     }
 
     @Test
@@ -606,7 +789,66 @@ class TagRepositoryTest {
                 tagDao = db.tagDao(),
                 authSessionProvider = authProvider,
             ),
+            aiLocalDataClearer = aiTransparencyRepository,
+            localAccountCleanupStore = localAccountCleanupStore,
         )
+    }
+
+    private class InMemoryLocalAccountCleanupStore : LocalAccountCleanupStore {
+        private val state = MutableStateFlow<LocalAccountCleanupMarker?>(null)
+        override val pending: StateFlow<LocalAccountCleanupMarker?> = state
+
+        override fun save(aiDataPending: Boolean, sessionPending: Boolean) {
+            state.value = if (aiDataPending || sessionPending) {
+                LocalAccountCleanupMarker(aiDataPending, sessionPending)
+            } else {
+                null
+            }
+        }
+
+        override fun clear() {
+            state.value = null
+        }
+    }
+
+    private suspend fun seedAiTransparencyData(): Triple<String, String, String> {
+        val receiptId = "delete-account-receipt"
+        val draftId = "delete-account-draft"
+        val proposalId = "delete-account-diff"
+        db.aiTransparencyDao().upsertReceipt(
+            AiReceiptEntity(
+                receiptId = receiptId,
+                actionKind = "EXPORT",
+                destination = "internal-preview",
+                generatedAtIso = "2026-07-13T00:00:00Z",
+                redactionProfile = "ai-safe-v1",
+                requestSizeBucket = "ZERO",
+                responseSizeBucket = "ZERO",
+                rawBodyIncluded = false,
+                rawPromptIncluded = false,
+            ),
+        )
+        db.aiTransparencyDao().upsertDraft(
+            AiDraftEntity(
+                draftId = draftId,
+                receiptId = receiptId,
+                generatedAtIso = "2026-07-13T00:00:00Z",
+                title = "候補",
+                body = "本文",
+                citedSourceIdsJson = "[]",
+                status = "DRAFT",
+            ),
+        )
+        db.aiTransparencyDao().upsertDiffProposal(
+            AiDiffProposalEntity(
+                proposalId = proposalId,
+                draftId = draftId,
+                generatedAtIso = "2026-07-13T00:00:00Z",
+                operationsJson = "[]",
+                applied = false,
+            ),
+        )
+        return Triple(receiptId, draftId, proposalId)
     }
 
     private class FakeScheduler : MetadataScheduler {
@@ -623,9 +865,21 @@ class TagRepositoryTest {
         override fun nowEpochMillis(): Long = now
     }
 
+    private class CountingAiLocalDataClearer(
+        private val delegate: AiLocalDataClearer,
+    ) : AiLocalDataClearer {
+        var clearCallCount: Int = 0
+        var clearFailure: Throwable? = null
+
+        override suspend fun clearLocalAiData() {
+            clearCallCount += 1
+            clearFailure?.let { throw it }
+            delegate.clearLocalAiData()
+        }
+    }
+
     private class FakeUrlRepository : UrlRepository {
         override fun observeActiveEntries() = flowOf(emptyList<UrlEntryEntity>())
-        override fun observeCollections() = flowOf(emptyList<CollectionEntity>())
         override fun observeArchiveEntries() = flowOf(emptyList<UrlEntryEntity>())
         override fun observeEntry(entryId: Long) = flowOf<UrlEntryEntity?>(null)
         override suspend fun saveFromManualInput(input: String): SaveResult = SaveResult(ShareSaveResult.SAVE_FAILED)
@@ -658,8 +912,14 @@ class TagRepositoryTest {
     private class FakeAuthSessionProvider : SharedTagAuthSessionProvider {
         private val state = MutableStateFlow<SharedTagAuthSession?>(null)
         override val session: StateFlow<SharedTagAuthSession?> = state
+        var clearSessionCallCount: Int = 0
+        var sessionClearFailure: Throwable? = null
 
         override fun updateSession(newSession: SharedTagAuthSession?) {
+            if (newSession == null) {
+                clearSessionCallCount += 1
+                sessionClearFailure?.let { throw it }
+            }
             state.value = newSession
         }
     }
@@ -698,6 +958,9 @@ class TagRepositoryTest {
     }
 
     private class FakeRemoteDataSource : SharedTagSyncRemoteDataSource {
+        var deleteAccountFailure: Throwable? = null
+        var deleteAccountCallCount: Int = 0
+
         override suspend fun applyOps(
             session: SharedTagAuthSession,
             operations: List<SharedTagSyncOperation>,
@@ -756,7 +1019,10 @@ class TagRepositoryTest {
             )
         }
 
-        override suspend fun deleteAccount(session: SharedTagAuthSession) = Unit
+        override suspend fun deleteAccount(session: SharedTagAuthSession) {
+            deleteAccountCallCount += 1
+            deleteAccountFailure?.let { throw it }
+        }
     }
 
     private class FakeSyncScheduler : SharedTagSyncScheduler {

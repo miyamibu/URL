@@ -6,6 +6,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import jp.mimac.urlsaver.data.AppDatabase
+import jp.mimac.urlsaver.data.AiLocalDataClearer
 import jp.mimac.urlsaver.data.DefaultTagRepository
 import jp.mimac.urlsaver.data.DefaultUrlRepository
 import jp.mimac.urlsaver.data.DefaultUsageSummaryDataSource
@@ -95,8 +96,6 @@ class SharedTagCloudLiveDeviceTest {
         val urlRepository = DefaultUrlRepository(
             database = db,
             dao = db.urlEntryDao(),
-            collectionDao = db.collectionDao(),
-            userLabelDao = db.userLabelDao(),
             tagDao = db.tagDao(),
             clock = SystemMillisClock,
             scheduler = metadataScheduler,
@@ -116,6 +115,7 @@ class SharedTagCloudLiveDeviceTest {
             remoteDataSource = syncRemote,
             remoteConfig = config,
             usageSummaryDataSource = usage,
+            aiLocalDataClearer = AiLocalDataClearer { },
         )
 
         val testId = UUID.randomUUID().toString().lowercase()

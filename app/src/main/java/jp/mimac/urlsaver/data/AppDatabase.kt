@@ -36,7 +36,6 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun urlEntryDao(): UrlEntryDao
     abstract fun collectionDao(): CollectionDao
     abstract fun tagDao(): TagDao
-    abstract fun userLabelDao(): UserLabelDao
     abstract fun sharedTagSyncDao(): SharedTagSyncDao
     abstract fun videoAssetDao(): VideoAssetDao
     abstract fun videoDownloadDao(): VideoDownloadDao

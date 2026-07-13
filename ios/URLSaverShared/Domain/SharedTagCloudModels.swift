@@ -6,6 +6,59 @@ struct SharedTagCloudState: Equatable, Sendable {
     let signedInEmail: String?
 }
 
+enum ChatGptPersonalLinkSyncStatus: Equatable, Sendable {
+    case idle
+    case loading
+    case success
+    case partial
+    case failure(String)
+}
+
+struct ChatGptPersonalLinkEligibility: Equatable, Sendable {
+    let eligibleCount: Int
+    let excludedCount: Int
+    let exclusionReasons: [String: Int]
+
+    static let empty = ChatGptPersonalLinkEligibility(
+        eligibleCount: 0,
+        excludedCount: 0,
+        exclusionReasons: [:]
+    )
+}
+
+struct ChatGptPersonalLinkSyncResult: Equatable, Sendable {
+    let attemptedCount: Int
+    let appliedCount: Int
+    let excludedCount: Int
+    let exclusionReasons: [String: Int]
+
+    var status: ChatGptPersonalLinkSyncStatus {
+        if attemptedCount == 0 || appliedCount == attemptedCount {
+            return .success
+        }
+        return .partial
+    }
+}
+
+enum ChatGptPersonalLinkSyncPolicy {
+    static func eligibility(for entry: URLRecord) -> (eligible: Bool, reasons: [String]) {
+        var reasons: [String] = []
+        if entry.localProvenanceCount <= 0 {
+            reasons.append("local_provenance_required")
+        }
+        if entry.sharedReferenceCount > 0 {
+            reasons.append("shared_tag_allocation")
+        }
+        if entry.recordState != .active {
+            reasons.append("active_only")
+        }
+        if entry.pendingDeletionUntil != nil {
+            reasons.append("pending_delete")
+        }
+        return (reasons.isEmpty, reasons.sorted())
+    }
+}
+
 enum SharedTagMemberRole: String, Codable, CaseIterable, Sendable {
     case owner
     case editor
@@ -94,10 +147,20 @@ struct SharedTagAuthSession: Codable, Equatable, Sendable {
     let userEmail: String?
 }
 
+struct SharedTagAccountLocalCleanupState: Equatable, Sendable {
+    let aiDataCleanupPending: Bool
+    let signOutCleanupPending: Bool
+
+    var requiresCleanup: Bool {
+        aiDataCleanupPending || signOutCleanupPending
+    }
+}
+
 enum SharedTagAccountDeletionResult: Equatable, Sendable {
     case success
     case authRequired
     case ownerTransferRequired
+    case localCleanupRequired(SharedTagAccountLocalCleanupState)
     case failure(String)
 }
 

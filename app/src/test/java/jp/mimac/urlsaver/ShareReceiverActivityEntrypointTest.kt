@@ -15,12 +15,6 @@ import jp.mimac.urlsaver.data.EXTRA_SHARE_NORMALIZED_URL
 import jp.mimac.urlsaver.data.EXTRA_SHARE_SAVE_RESULT
 import jp.mimac.urlsaver.data.EXTRA_SHARED_TAG_INVITE_INVALID
 import jp.mimac.urlsaver.data.EXTRA_SHARED_TAG_INVITE_TOKEN
-import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_CREATED
-import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_FAILED
-import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_MERGED
-import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_SKIPPED
-import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_TAG_ID
-import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_TAG_NAME
 import jp.mimac.urlsaver.domain.ShareSaveResult
 import jp.mimac.urlsaver.domain.UrlRules
 import kotlinx.coroutines.Dispatchers
@@ -314,7 +308,7 @@ class ShareReceiverActivityEntrypointTest {
     }
 
     @Test
-    fun actionSend_validTagJson_usesImportPath() = runBlocking {
+    fun actionSend_validTagJson_waitsForImportConfirmation() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
         val tagName = "共有タグ-${System.currentTimeMillis()}"
         val json = """
@@ -337,26 +331,15 @@ class ShareReceiverActivityEntrypointTest {
 
         val controller = Robolectric.buildActivity(ShareReceiverActivity::class.java, intent).setup()
         val activity = controller.get()
-        var startedIntent: Intent? = null
         for (attempt in 0 until 20) {
             ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
-            startedIntent = shadowOf(activity).nextStartedActivity
-            if (startedIntent != null) {
-                break
-            }
             if (attempt < 19) {
                 Thread.sleep(20)
             }
         }
-        val started = startedIntent ?: error("MainActivity intent should be started for tag import.")
-        assertTrue(activity.isFinishing)
-        assertEquals(tagName, started.getStringExtra(EXTRA_TAG_IMPORT_TAG_NAME))
-        assertTrue(started.hasExtra(EXTRA_TAG_IMPORT_TAG_ID))
-        assertEquals(1, started.getIntExtra(EXTRA_TAG_IMPORT_CREATED, -1))
-        assertEquals(0, started.getIntExtra(EXTRA_TAG_IMPORT_MERGED, -1))
-        assertEquals(0, started.getIntExtra(EXTRA_TAG_IMPORT_SKIPPED, -1))
-        assertEquals(1, started.getIntExtra(EXTRA_TAG_IMPORT_FAILED, -1))
-        assertFalse(started.hasExtra(EXTRA_SHARE_SAVE_RESULT))
+        assertFalse(activity.isFinishing)
+        assertNull(shadowOf(activity).nextStartedActivity)
+        assertNull(context.container.tagRepository.findLocalTagIdByName(tagName))
     }
 
     @Test

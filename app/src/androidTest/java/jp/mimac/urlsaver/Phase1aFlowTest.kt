@@ -6,12 +6,8 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.WorkManager
-import jp.mimac.urlsaver.data.CollectionEntity
-import jp.mimac.urlsaver.data.DEFAULT_COLLECTION_ID
-import jp.mimac.urlsaver.data.DEFAULT_COLLECTION_NAME
 import jp.mimac.urlsaver.data.EXTRA_SHARE_ENTRY_ID
 import jp.mimac.urlsaver.data.EXTRA_SHARE_SAVE_RESULT
-import jp.mimac.urlsaver.data.SharedTagAuthSession
 import jp.mimac.urlsaver.domain.MetadataError
 import jp.mimac.urlsaver.domain.MetadataState
 import jp.mimac.urlsaver.domain.RecordState
@@ -42,18 +38,7 @@ class Phase1aFlowTest {
         val app = context as UrlSaverApp
         app.container.sharedTagAuthSessionProvider.updateSession(null)
         runBlocking {
-            val db = app.container.database
-            db.clearAllTables()
-            val now = System.currentTimeMillis()
-            db.collectionDao().insert(
-                CollectionEntity(
-                    id = DEFAULT_COLLECTION_ID,
-                    name = DEFAULT_COLLECTION_NAME,
-                    sortOrder = 0,
-                    createdAt = now,
-                    updatedAt = now,
-                ),
-            )
+            app.container.database.clearAllTables()
         }
 
         waitForHome()
@@ -286,35 +271,25 @@ class Phase1aFlowTest {
     }
 
     @Test
-    fun detailLocalTags_addCandidateDoesNotReplaceCurrentTag_andCurrentTagCanBeRemoved() {
+    fun detailLocalTags_addCandidateDoesNotReplaceCurrentTag_andCurrentTagsCanBeRemoved() {
         val suffix = System.currentTimeMillis()
         val firstTagName = "first-$suffix"
         val secondTagName = "second-$suffix"
-        val orphanTagName = "orphan-$suffix"
         val url = uniqueUrl("detail-tags")
         val context = ApplicationProvider.getApplicationContext<Context>()
         val app = context as UrlSaverApp
-        val authUserId = "00000000-0000-0000-0000-000000000333"
-        app.container.sharedTagAuthSessionProvider.updateSession(
-            SharedTagAuthSession(
-                authUserId = authUserId,
-                accessToken = "token",
-            ),
-        )
-        val (_, secondTagId, entryId, sameNameSharedTagId, orphanLocalTagId) = runBlocking {
-            val first = app.container.repository.createCollection(firstTagName).collectionId!!
-            val second = app.container.repository.createCollection(secondTagName).collectionId!!
-            val saved = app.container.repository.saveFromManualInput(url, first)
-            val sharedResult = app.container.tagRepository.createSyncedTagWithResult(secondTagName)
-            check(sharedResult is CreateTagResult.Success)
-            val orphanResult = app.container.tagRepository.createLocalTagWithResult(orphanTagName)
-            check(orphanResult is CreateTagResult.Success)
+        val (firstTagId, secondTagId, entryId) = runBlocking {
+            val firstResult = app.container.tagRepository.createLocalTagWithResult(firstTagName)
+            check(firstResult is CreateTagResult.Success)
+            val secondResult = app.container.tagRepository.createLocalTagWithResult(secondTagName)
+            check(secondResult is CreateTagResult.Success)
+            val saved = app.container.repository.saveFromManualInput(url)
+            val entryId = checkNotNull(saved.entryId)
+            app.container.tagRepository.assignTag(firstResult.tagId, entryId)
             DetailLocalTagFixture(
-                firstTagId = first,
-                secondTagId = second,
-                entryId = saved.entryId!!,
-                sameNameSharedTagId = sharedResult.tagId,
-                orphanLocalTagId = orphanResult.tagId,
+                firstTagId = firstResult.tagId,
+                secondTagId = secondResult.tagId,
+                entryId = entryId,
             )
         }
 
@@ -323,13 +298,12 @@ class Phase1aFlowTest {
         waitForText(firstTagName)
         composeRule.onNodeWithTag("detail_local_tags_edit").performClick()
         waitForText("現在のタグ")
-        composeRule.onNodeWithTag("detail_local_tag_add_tag_$orphanLocalTagId").assertDoesNotExist()
+        composeRule.onNodeWithTag("detail_local_tag_add_tag_$secondTagId").assertExists()
 
-        composeRule.onNodeWithTag("detail_local_tag_add_collection_$secondTagId").performClick()
+        composeRule.onNodeWithTag("detail_local_tag_add_tag_$secondTagId").performClick()
         composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MS) {
-            val state = loadEntryTagState(entryId, authUserId)
-            state.collectionId == secondTagId &&
-                state.scopesFor(firstTagName) == listOf(SharedTagScope.LOCAL_ONLY) &&
+            val state = loadEntryTagState(entryId)
+            state.scopesFor(firstTagName) == listOf(SharedTagScope.LOCAL_ONLY) &&
                 state.scopesFor(secondTagName) == listOf(SharedTagScope.LOCAL_ONLY)
         }
         composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MS) {
@@ -338,62 +312,31 @@ class Phase1aFlowTest {
                 .isNotEmpty()
         }
 
-        val afterAdd = loadEntryTagState(entryId, authUserId)
-        assertEquals(secondTagId, afterAdd.collectionId)
+        val afterAdd = loadEntryTagState(entryId)
         assertEquals(listOf(SharedTagScope.LOCAL_ONLY), afterAdd.scopesFor(firstTagName))
         assertEquals(listOf(SharedTagScope.LOCAL_ONLY), afterAdd.scopesFor(secondTagName))
-        val secondLocalTagId = afterAdd.tagIdsFor(secondTagName).single()
-        composeRule.onNodeWithTag("detail_local_tag_add_tag_$secondLocalTagId").assertDoesNotExist()
+        composeRule.onNodeWithTag("detail_local_tag_add_tag_$secondTagId").assertDoesNotExist()
 
-        composeRule.onNodeWithText("閉じる").performClick()
+        composeRule.onNodeWithTag("detail_local_tag_remove_tag_$firstTagId").performClick()
         composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MS) {
-            composeRule.onAllNodesWithTag("detail_local_tag_add_collection_$secondTagId", useUnmergedTree = true)
-                .fetchSemanticsNodes()
-                .isEmpty()
-        }
-        composeRule.onNodeWithTag("detail_shared_tags_edit").performClick()
-        waitForText("共有タグを選ぶ / 作る")
-        composeRule.onNodeWithTag("detail_shared_tag_add_$sameNameSharedTagId").assertDoesNotExist()
-        composeRule.onNodeWithTag("detail_shared_tag_name_input").performTextInput(secondTagName)
-        composeRule.onNodeWithTag("detail_shared_tag_create").performClick()
-        waitForText("同じ名前の通常タグがあります。通常タグとして追加してください")
-        val afterSharedBlocked = loadEntryTagState(entryId, authUserId)
-        assertEquals(listOf(SharedTagScope.LOCAL_ONLY), afterSharedBlocked.scopesFor(secondTagName))
-        composeRule.onNodeWithTag("detail_shared_tags_close").performClick()
-        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MS) {
-            composeRule.onAllNodesWithText("共有タグを選ぶ / 作る", useUnmergedTree = true)
-                .fetchSemanticsNodes()
-                .isEmpty()
-        }
-        composeRule.onNodeWithTag("detail_local_tags_edit").performClick()
-        waitForText("現在のタグ")
-
-        val firstLocalTagId = afterAdd.tagIdsFor(firstTagName).single()
-        composeRule.onNodeWithTag("detail_local_tag_remove_tag_$firstLocalTagId").performClick()
-        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MS) {
-            val state = loadEntryTagState(entryId, authUserId)
-            state.collectionId == secondTagId &&
-                state.scopesFor(firstTagName).isEmpty() &&
+            val state = loadEntryTagState(entryId)
+            state.scopesFor(firstTagName).isEmpty() &&
                 state.scopesFor(secondTagName) == listOf(SharedTagScope.LOCAL_ONLY)
         }
 
-        val afterRemoveFirst = loadEntryTagState(entryId, authUserId)
-        assertEquals(secondTagId, afterRemoveFirst.collectionId)
+        val afterRemoveFirst = loadEntryTagState(entryId)
         assertTrue(afterRemoveFirst.scopesFor(firstTagName).isEmpty())
         assertEquals(listOf(SharedTagScope.LOCAL_ONLY), afterRemoveFirst.scopesFor(secondTagName))
 
-        val secondRemoveTag = "detail_local_tag_remove_collection_$secondTagId"
+        val secondRemoveTag = "detail_local_tag_remove_tag_$secondTagId"
         composeRule.onNodeWithTag(secondRemoveTag).performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag(secondRemoveTag).assertDoesNotExist()
         composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MS) {
-            val state = loadEntryTagState(entryId, authUserId)
-            state.collectionId == DEFAULT_COLLECTION_ID &&
-                state.scopesFor(secondTagName).isEmpty()
+            loadEntryTagState(entryId).scopesFor(secondTagName).isEmpty()
         }
 
-        val afterRemoveSecond = loadEntryTagState(entryId, authUserId)
-        assertEquals(DEFAULT_COLLECTION_ID, afterRemoveSecond.collectionId)
+        val afterRemoveSecond = loadEntryTagState(entryId)
         assertTrue(afterRemoveSecond.scopesFor(secondTagName).isEmpty())
     }
 
@@ -529,39 +472,29 @@ class Phase1aFlowTest {
         }
     }
 
-    private fun loadEntryTagState(entryId: Long, authUserId: String?): EntryTagState {
+    private fun loadEntryTagState(entryId: Long): EntryTagState {
         val context = ApplicationProvider.getApplicationContext<Context>()
         return runBlocking {
             val db = (context as UrlSaverApp).container.database
-            val entry = checkNotNull(db.urlEntryDao().findById(entryId))
-            val tags = db.tagDao().getVisibleTagsForEntry(entryId, authUserId = authUserId)
+            val tags = db.tagDao().getVisibleTagsForEntry(entryId, authUserId = null)
             EntryTagState(
-                collectionId = entry.collectionId,
                 tagScopes = tags
                     .groupBy { it.name }
                     .mapValues { (_, values) -> values.map { it.scope }.sortedBy { it.name } },
-                tagIds = tags
-                    .groupBy { it.name }
-                    .mapValues { (_, values) -> values.map { it.id }.sorted() },
             )
         }
     }
 
     private data class EntryTagState(
-        val collectionId: Long,
         val tagScopes: Map<String, List<SharedTagScope>>,
-        val tagIds: Map<String, List<Long>>,
     ) {
         fun scopesFor(name: String): List<SharedTagScope> = tagScopes[name].orEmpty()
-        fun tagIdsFor(name: String): List<Long> = tagIds[name].orEmpty()
     }
 
     private data class DetailLocalTagFixture(
         val firstTagId: Long,
         val secondTagId: Long,
         val entryId: Long,
-        val sameNameSharedTagId: Long,
-        val orphanLocalTagId: Long,
     )
 
     private fun entryCardTag(entryId: Long): String = "entry_card_$entryId"

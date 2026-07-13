@@ -2,7 +2,6 @@ package jp.mimac.urlsaver
 
 import jp.mimac.urlsaver.data.MainListRepository
 import jp.mimac.urlsaver.data.EntryCardDisplayModeStore
-import jp.mimac.urlsaver.data.CollectionEntity
 import jp.mimac.urlsaver.data.LocalTagEntryRef
 import jp.mimac.urlsaver.data.UrlEntryEntity
 import jp.mimac.urlsaver.domain.ContentContext
@@ -102,41 +101,18 @@ class MainListViewModelTest {
     }
 
     @Test
-    @OptIn(ExperimentalCoroutinesApi::class)
-    fun uiState_filtersBySelectedCollection() = runTest {
-        val repository = FakeRepository().apply {
-            activeEntries.value = listOf(
-                entry(id = 1L, serviceType = ServiceType.WEB, collectionId = 1L),
-                entry(id = 2L, serviceType = ServiceType.WEB, collectionId = 10L),
-                entry(id = 3L, serviceType = ServiceType.X, collectionId = 11L),
-            )
-        }
-        val viewModel = MainListViewModel(repository, FakeDisplayModeStore())
-        val job = backgroundScope.launch { viewModel.uiState.collect { } }
-
-        viewModel.selectCollection(1L)
-        advanceUntilIdle()
-        assertEquals(listOf(1L), viewModel.uiState.value.entries.map { it.id })
-
-        viewModel.selectCollection(10L)
-        advanceUntilIdle()
-        assertEquals(listOf(2L), viewModel.uiState.value.entries.map { it.id })
-        job.cancel()
-    }
-
-    @Test
-    fun submitManualInput_delegatesToRepositoryWithCollection() = runTest {
+    fun submitManualInput_delegatesToRepository() = runTest {
         val repository = FakeRepository().apply {
             manualSaveResult = SaveResult(ShareSaveResult.CREATED, entryId = 33L)
         }
         val viewModel = MainListViewModel(repository, FakeDisplayModeStore())
 
-        val result = viewModel.submitManualInput(" https://example.com ", collectionId = 12L)
+        val result = viewModel.submitManualInput(" https://example.com ")
 
         assertEquals(ShareSaveResult.CREATED, result.saveResult)
         assertEquals(33L, result.entryId)
         assertEquals(0, result.failedTagAssignmentCount)
-        assertEquals(listOf(" https://example.com " to 12L), repository.manualInputCalls)
+        assertEquals(listOf(" https://example.com "), repository.manualInputCalls)
     }
 
     @Test
@@ -162,33 +138,11 @@ class MainListViewModelTest {
         val result = filterEntriesBySearch(
             entries = entries,
             query = "旅行",
-            collections = emptyList(),
             tags = listOf(TagWithCount(id = 10L, name = "旅行", urlCount = 1)),
             localTagEntryRefs = listOf(LocalTagEntryRef(tagId = 10L, entryId = 2L)),
         )
 
         assertEquals(listOf(2L), result.map { it.id })
-    }
-
-    @Test
-    fun filterEntriesBySearch_matchesOwnCollectionName() {
-        val entries = listOf(
-            entry(id = 1L, serviceType = ServiceType.WEB, collectionId = 10L),
-            entry(id = 2L, serviceType = ServiceType.WEB, collectionId = 11L),
-        )
-
-        val result = filterEntriesBySearch(
-            entries = entries,
-            query = "資料",
-            collections = listOf(
-                CollectionEntity(id = 10L, name = "仕事資料", sortOrder = 0, createdAt = 0L, updatedAt = 0L),
-                CollectionEntity(id = 11L, name = "料理", sortOrder = 1, createdAt = 0L, updatedAt = 0L),
-            ),
-            tags = emptyList(),
-            localTagEntryRefs = emptyList(),
-        )
-
-        assertEquals(listOf(1L), result.map { it.id })
     }
 
     @Test
@@ -246,7 +200,6 @@ class MainListViewModelTest {
         val result = filterEntriesBySearch(
             entries = entries,
             query = "共有旅行",
-            collections = emptyList(),
             tags = listOf(TagWithCount(id = 20L, name = "共有旅行", urlCount = 1)),
             localTagEntryRefs = listOf(LocalTagEntryRef(tagId = 20L, entryId = 2L)),
         )
@@ -257,7 +210,7 @@ class MainListViewModelTest {
     private class FakeRepository : MainListRepository {
         val archiveCalls = mutableListOf<Long>()
         val pendingDeleteCalls = mutableListOf<Long>()
-        val manualInputCalls = mutableListOf<Pair<String, Long?>>()
+        val manualInputCalls = mutableListOf<String>()
         val activeEntries = MutableStateFlow<List<UrlEntryEntity>>(emptyList())
         val localTagEntryRefs = MutableStateFlow<List<LocalTagEntryRef>>(emptyList())
         val archiveResultsById = mutableMapOf<Long, Boolean>()
@@ -269,10 +222,8 @@ class MainListViewModelTest {
         override fun observeActiveEntries(): Flow<List<UrlEntryEntity>> = activeEntries
         override fun observeLocalTagEntryRefs(): Flow<List<LocalTagEntryRef>> = localTagEntryRefs
 
-        override suspend fun saveFromManualInput(input: String): SaveResult = saveFromManualInput(input, collectionId = null)
-
-        override suspend fun saveFromManualInput(input: String, collectionId: Long?): SaveResult {
-            manualInputCalls += input to collectionId
+        override suspend fun saveFromManualInput(input: String): SaveResult {
+            manualInputCalls += input
             return manualSaveResult
         }
 

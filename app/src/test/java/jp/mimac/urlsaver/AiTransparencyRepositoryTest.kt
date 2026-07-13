@@ -45,8 +45,10 @@ class AiTransparencyRepositoryTest {
             .allowMainThreadQueries()
             .build()
         repository = AiTransparencyRepository(
+            database = db,
             aiTransparencyDao = db.aiTransparencyDao(),
             urlEntryDao = db.urlEntryDao(),
+            tagDao = db.tagDao(),
             provider = MockAiProvider(),
             nowIso = { "2026-07-10T00:00:0${tick++}Z" },
             nowMillis = { 10_000L + tick },
@@ -120,7 +122,7 @@ class AiTransparencyRepositoryTest {
         val preview = previewOf(source(entryId, "safe-1"))
         val receipt = repository.saveReceipt(preview)
         val draft = repository.saveDraft(receipt, "候補", "本文", listOf("safe-1"))
-        val proposal = repository.saveDiffProposal(
+        val rejectedProposal = repository.saveDiffProposal(
             draft,
             listOf(
                 AiDiffOperation("safe-1", "userTitle", before = null, after = "新しいタイトル"),
@@ -129,8 +131,17 @@ class AiTransparencyRepositoryTest {
             ),
         )
 
-        assertFalse(repository.applyDiffProposal(proposal.proposalId, confirm = false))
+        assertFalse(repository.applyDiffProposal(rejectedProposal.proposalId, confirm = false))
+        assertFalse(repository.applyDiffProposal(rejectedProposal.proposalId, confirm = true))
         assertNull(db.urlEntryDao().findById(entryId)!!.userTitle)
+
+        val proposal = repository.saveDiffProposal(
+            draft,
+            listOf(
+                AiDiffOperation("safe-1", "userTitle", before = null, after = "新しいタイトル"),
+                AiDiffOperation("safe-1", "memo", before = "", after = "新しいメモ"),
+            ),
+        )
 
         assertTrue(repository.applyDiffProposal(proposal.proposalId, confirm = true))
         val updated = db.urlEntryDao().findById(entryId)!!

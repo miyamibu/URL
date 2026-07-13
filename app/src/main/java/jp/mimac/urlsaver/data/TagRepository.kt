@@ -68,6 +68,7 @@ interface TagRepository {
         SharedTagAuthResult.Failure("パスワード再設定メールを送信できませんでした")
     suspend fun signOut()
     suspend fun deleteAccount(): SharedTagAccountDeletionResult
+    suspend fun retryLocalAccountCleanup(): SharedTagAccountDeletionResult
     suspend fun createInviteLink(tagId: Long): SharedTagInviteCreationResult
     suspend fun createGroup(name: String): Boolean = false
     suspend fun createGroupWithResult(name: String): CreateSharedTagGroupResult =

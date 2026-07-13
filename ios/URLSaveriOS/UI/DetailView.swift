@@ -2,8 +2,6 @@ import AVKit
 import SwiftUI
 import UIKit
 
-private let showsCollectionUI = false
-
 struct DetailView: View {
     let entryID: Int64
     @ObservedObject var model: URLSaverAppModel
@@ -20,7 +18,6 @@ struct DetailView: View {
     @State private var isRetryingMetadata = false
     @State private var isShowingLocalTagEditor = false
     @State private var isShowingSharedTagEditor = false
-    @State private var isShowingCollectionEditor = false
     @State private var isRemovingTag = false
     @State private var isSavingMedia = false
     @State private var isShowingMediaViewer = false
@@ -66,11 +63,6 @@ struct DetailView: View {
 
     private var assignedLocalTags: [LocalTagSummary] {
         model.loadLocalTagsForEntry(entryID: entryID)
-    }
-
-    private var currentCollection: CollectionSummary? {
-        guard let entry else { return nil }
-        return model.collections.first { $0.id == entry.collectionID }
     }
 
     var body: some View {
@@ -316,22 +308,6 @@ struct DetailView: View {
                                     }
                                 }
 
-                                if showsCollectionUI {
-                                    AppPanel {
-                                        DetailSectionLabel(text: "保存先")
-                                        HStack(spacing: 10) {
-                                            DetailTagValuePill(
-                                                text: currentCollection?.name ?? "受信箱",
-                                                isEmpty: false,
-                                                canRemove: false,
-                                                onRemove: nil
-                                            )
-                                            DetailTagEditButton(action: { isShowingCollectionEditor = true })
-                                                .frame(maxWidth: 120)
-                                        }
-                                    }
-                                }
-
                                 AppPanel {
                                     DetailSectionLabel(text: "メモ")
                                     Text(entry.memo.isEmpty ? "メモはまだありません" : entry.memo)
@@ -468,16 +444,6 @@ struct DetailView: View {
                 entryID: entryID
             )
             .presentationDetents([.large])
-            .presentationDragIndicator(.hidden)
-            .presentationCornerRadius(32)
-        }
-        .sheet(isPresented: $isShowingCollectionEditor) {
-            EntryCollectionAssignmentSheet(
-                model: model,
-                entryID: entryID,
-                currentCollectionID: entry?.collectionID
-            )
-            .presentationDetents([.medium, .large])
             .presentationDragIndicator(.hidden)
             .presentationCornerRadius(32)
         }
@@ -871,112 +837,6 @@ private struct MemoEditorSheet: View {
     }
 }
 
-private struct EntryCollectionAssignmentSheet: View {
-    @Environment(\.dismiss) private var dismiss
-
-    @ObservedObject var model: URLSaverAppModel
-    let entryID: Int64
-    let currentCollectionID: Int64?
-
-    @State private var newCollectionName = ""
-    @State private var isWorking = false
-
-    var body: some View {
-        ScreenContainer {
-            VStack(alignment: .leading, spacing: 16) {
-                Capsule()
-                    .fill(AppPalette.outlineSoft)
-                    .frame(width: 72, height: 8)
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 10)
-
-                HStack {
-                    Text("保存先を変更")
-                        .font(.system(size: 24, weight: .heavy, design: .rounded))
-                        .foregroundStyle(AppPalette.textPrimary)
-                    Spacer()
-                    Button("閉じる") { dismiss() }
-                        .font(.system(size: 17, weight: .bold))
-                        .foregroundStyle(AppPalette.primaryStrong)
-                }
-
-                AppPanel {
-                    Text("新しいコレクション")
-                        .font(.system(size: 18, weight: .heavy, design: .rounded))
-                        .foregroundStyle(AppPalette.textPrimary)
-
-                    TextField(
-                        "",
-                        text: $newCollectionName,
-                        prompt: Text("コレクション名").foregroundStyle(AppPalette.textMuted)
-                    )
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(AppPalette.textPrimary)
-                    .tint(AppPalette.primaryStrong)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 18)
-                    .background(AppPalette.background, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(AppPalette.outlineSoft, lineWidth: 1.5)
-                    )
-
-                    AppActionButton(tone: .primary, enabled: !newCollectionName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isWorking) {
-                        guard !isWorking else { return }
-                        isWorking = true
-                        Task {
-                            if let collection = await model.createCollection(name: newCollectionName),
-                               await model.assignCollectionAndCreateLocalTag(entryID: entryID, collection: collection) {
-                                newCollectionName = ""
-                                dismiss()
-                            }
-                            isWorking = false
-                        }
-                    } label: {
-                        Text("作成して移動")
-                    }
-                }
-
-                AppPanel {
-                    Text("保存先")
-                        .font(.system(size: 18, weight: .heavy, design: .rounded))
-                        .foregroundStyle(AppPalette.textPrimary)
-
-                    LazyVGrid(
-                        columns: [GridItem(.adaptive(minimum: 150), spacing: 10, alignment: .leading)],
-                        alignment: .leading,
-                        spacing: 10
-                    ) {
-                        ForEach(model.collections) { collection in
-                            LocalTagAssignmentPill(
-                                name: collection.name,
-                                actionTitle: currentCollectionID == collection.id ? "選択中" : "移動",
-                                isWorking: isWorking || currentCollectionID == collection.id,
-                                onAction: {
-                                    guard !isWorking, currentCollectionID != collection.id else { return }
-                                    isWorking = true
-                                    Task {
-                                        if await model.assignCollectionAndCreateLocalTag(entryID: entryID, collection: collection) {
-                                            dismiss()
-                                        }
-                                        isWorking = false
-                                    }
-                                }
-                            )
-                        }
-                    }
-                }
-
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 24)
-        }
-    }
-}
-
 private struct EntryLocalTagAssignmentSheet: View {
     @Environment(\.dismiss) private var dismiss
 
@@ -986,6 +846,9 @@ private struct EntryLocalTagAssignmentSheet: View {
     @State private var assignedTags: [LocalTagSummary] = []
     @State private var newTagName = ""
     @State private var isWorking = false
+    @State private var pendingShareTag: LocalTagSummary?
+    @State private var isShowingShareSheet = false
+    @State private var shareItems: [Any] = []
 
     var body: some View {
         ScreenContainer {
@@ -1053,21 +916,35 @@ private struct EntryLocalTagAssignmentSheet: View {
 
                         TagAssignmentFlowLayout(horizontalSpacing: 10, verticalSpacing: 10, maxItemWidth: 260) {
                             ForEach(assignedTags) { tag in
-                                LocalTagAssignmentPill(
-                                    name: tag.name,
-                                    actionTitle: "外す",
-                                    isWorking: isWorking,
-                                    onAction: {
-                                        guard !isWorking else { return }
-                                        isWorking = true
-                                        Task {
-                                            if await model.removeEntry(entryID, fromLocalTag: tag.id) {
-                                                reloadAssignedTags()
+                                VStack(alignment: .leading, spacing: 8) {
+                                    LocalTagAssignmentPill(
+                                        name: tag.name,
+                                        actionTitle: "外す",
+                                        isWorking: isWorking,
+                                        onAction: {
+                                            guard !isWorking else { return }
+                                            isWorking = true
+                                            Task {
+                                                if await model.removeEntry(entryID, fromLocalTag: tag.id) {
+                                                    reloadAssignedTags()
+                                                }
+                                                isWorking = false
                                             }
-                                            isWorking = false
                                         }
+                                    )
+                                    Button {
+                                        pendingShareTag = tag
+                                    } label: {
+                                        Label("自作タグを共有", systemImage: "square.and.arrow.up")
+                                            .font(.system(size: 15, weight: .bold))
+                                            .foregroundStyle(AppPalette.primaryStrong)
+                                            .frame(minHeight: 44)
                                     }
-                                )
+                                    .buttonStyle(.plain)
+                                    .disabled(isWorking)
+                                    .accessibilityHint("このタグのURLだけをファイルで共有します")
+                                }
+                                .frame(maxWidth: 260, alignment: .leading)
                             }
                         }
                     }
@@ -1115,6 +992,32 @@ private struct EntryLocalTagAssignmentSheet: View {
             .padding(.bottom, 24)
         }
         .task { reloadAssignedTags() }
+        .confirmationDialog("自作タグを共有", isPresented: Binding(
+            get: { pendingShareTag != nil },
+            set: { if !$0 { pendingShareTag = nil } }
+        ), titleVisibility: .visible) {
+            Button("共有先を選ぶ") {
+                guard let tag = pendingShareTag else { return }
+                pendingShareTag = nil
+                guard model.localTagShareURLCount(tagID: tag.id) > 0,
+                      let fileURL = model.localTagShareFileURL(tagID: tag.id) else {
+                    model.showProfileStatusMessage("共有できるURLがありません")
+                    return
+                }
+                shareItems = [fileURL]
+                isShowingShareSheet = true
+            }
+            Button("キャンセル", role: .cancel) {
+                pendingShareTag = nil
+            }
+        } message: {
+            if let tag = pendingShareTag {
+                Text("タグ『\(tag.name)』とURL \(model.localTagShareURLCount(tagID: tag.id))件を共有します。タイトル、メモ、共有タグの情報は含まれません。")
+            }
+        }
+        .sheet(isPresented: $isShowingShareSheet) {
+            ActivityShareSheet(items: shareItems)
+        }
     }
 
     private func reloadAssignedTags() {

@@ -4,7 +4,6 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import jp.mimac.urlsaver.data.AppDatabase
-import jp.mimac.urlsaver.data.CollectionEntity
 import jp.mimac.urlsaver.data.TagEntity
 import jp.mimac.urlsaver.data.TagUrlCrossRef
 import jp.mimac.urlsaver.data.UrlEntryEntity
@@ -101,34 +100,6 @@ class TagDaoTest {
 
         val entriesForTag = tagDao.observeEntriesForTag(alphaId).first()
         assertEquals(listOf(olderEntryId, newerEntryId), entriesForTag.map { it.id })
-    }
-
-    @Test
-    fun observeLocalTagCollectionEntryRefs_mapsMatchingCollectionNamesToTaggedEntries() = runBlocking {
-        val collectionDao = db.collectionDao()
-        val inboxId = collectionDao.insert(
-            CollectionEntity(name = "受信箱", sortOrder = 0, createdAt = 1L, updatedAt = 1L),
-        )
-        val kasaCollectionId = collectionDao.insert(
-            CollectionEntity(name = "かさ", sortOrder = 1, createdAt = 1L, updatedAt = 1L),
-        )
-        val aCollectionId = collectionDao.insert(
-            CollectionEntity(name = "あ", sortOrder = 2, createdAt = 1L, updatedAt = 1L),
-        )
-        val tagDao = db.tagDao()
-        val kasaTagId = tagDao.insertTag(TagEntity(name = "かさ", createdAt = 1L))
-        val aTagId = tagDao.insertTag(TagEntity(name = "あ", createdAt = 1L))
-        val entryId = insertEntry("https://example.com/multi-tag")
-
-        tagDao.insertCrossRef(TagUrlCrossRef(tagId = kasaTagId, entryId = entryId))
-        tagDao.insertCrossRef(TagUrlCrossRef(tagId = aTagId, entryId = entryId))
-
-        val refs = tagDao.observeLocalTagCollectionEntryRefs(defaultCollectionId = inboxId).first()
-
-        assertEquals(
-            listOf(kasaCollectionId to entryId, aCollectionId to entryId),
-            refs.map { it.collectionId to it.entryId },
-        )
     }
 
     private suspend fun insertEntry(url: String, createdAt: Long = 1L): Long {

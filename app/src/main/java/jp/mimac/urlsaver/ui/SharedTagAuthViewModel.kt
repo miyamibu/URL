@@ -9,10 +9,13 @@ import jp.mimac.urlsaver.billing.GooglePlayBillingService
 import jp.mimac.urlsaver.data.ChatGptPersonalLinkSyncRepository
 import jp.mimac.urlsaver.data.ChatGptPersonalLinkSyncSettings
 import jp.mimac.urlsaver.data.ChatGptSyncResult
+import jp.mimac.urlsaver.data.ChatGptSyncEligibilitySnapshot
 import jp.mimac.urlsaver.data.ContactSupportClient
 import jp.mimac.urlsaver.data.ContactSupportRequest
 import jp.mimac.urlsaver.data.ContactSupportResult
 import jp.mimac.urlsaver.data.EntitlementGrantRepository
+import jp.mimac.urlsaver.data.LocalAccountCleanupStore
+import jp.mimac.urlsaver.data.NoopLocalAccountCleanupStore
 import jp.mimac.urlsaver.data.PendingInviteRecord
 import jp.mimac.urlsaver.data.PendingInviteStore
 import jp.mimac.urlsaver.data.PromoCodeRedemptionResult
@@ -31,8 +34,11 @@ import jp.mimac.urlsaver.domain.UserProfile
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import java.util.Base64
 
 class SharedTagAuthViewModel(
@@ -48,7 +54,28 @@ class SharedTagAuthViewModel(
     },
     private val authSessionProvider: SharedTagAuthSessionProvider? = null,
     private val pendingInviteStore: PendingInviteStore? = null,
+    localAccountCleanupStore: LocalAccountCleanupStore = NoopLocalAccountCleanupStore,
 ) : ViewModel() {
+
+    private var lastBillingRefreshUserId: String? = null
+
+    init {
+        val sessionProvider = authSessionProvider
+        val billingService = googlePlayBillingService
+        if (sessionProvider != null && billingService != null) {
+            viewModelScope.launch {
+                sessionProvider.session.collect { session ->
+                    val userId = session?.authUserId
+                    if (userId == null) {
+                        lastBillingRefreshUserId = null
+                    } else if (lastBillingRefreshUserId != userId) {
+                        val refreshed = runCatching { billingService.processCurrentPurchases() }.isSuccess
+                        if (refreshed) lastBillingRefreshUserId = userId
+                    }
+                }
+            }
+        }
+    }
 
     val cloudState: StateFlow<SharedTagCloudState> = tagRepository.cloudState
         .stateIn(
@@ -81,8 +108,40 @@ class SharedTagAuthViewModel(
                 SharingStarted.WhileSubscribed(5_000),
                 ChatGptPersonalLinkSyncSettings(),
             )
+    private val _chatGptSyncEligibility = MutableStateFlow(ChatGptSyncEligibilitySnapshot(
+        eligibleEntries = emptyList(),
+        excludedCount = 0,
+        exclusionsByReason = emptyMap(),
+    ))
+    val chatGptSyncEligibility: StateFlow<ChatGptSyncEligibilitySnapshot> = _chatGptSyncEligibility
+    val isChatGptSyncOperationEnabled: Boolean
+        get() = chatGptPersonalLinkSyncRepository?.isOperationEnabled == true
     private val _pendingInvite = MutableStateFlow(pendingInviteStore?.load())
     val pendingInvite: StateFlow<PendingInviteRecord?> = _pendingInvite
+    val localAccountCleanupPending: StateFlow<SharedTagAccountDeletionResult.LocalCleanupRequired?> =
+        localAccountCleanupStore.pending
+            .map { marker ->
+                marker?.let {
+                    SharedTagAccountDeletionResult.LocalCleanupRequired(
+                        aiDataPending = it.aiDataPending,
+                        sessionPending = it.sessionPending,
+                    )
+                }
+            }
+            .stateIn(
+                viewModelScope,
+                SharingStarted.WhileSubscribed(5_000),
+                localAccountCleanupStore.pending.value?.let {
+                    SharedTagAccountDeletionResult.LocalCleanupRequired(
+                        aiDataPending = it.aiDataPending,
+                        sessionPending = it.sessionPending,
+                    )
+                },
+            )
+
+    init {
+        refreshChatGptSyncEligibility()
+    }
 
     suspend fun signIn(email: String, password: String): SharedTagAuthResult {
         val result = tagRepository.signIn(email, password)
@@ -138,6 +197,10 @@ class SharedTagAuthViewModel(
         return tagRepository.deleteAccount()
     }
 
+    suspend fun retryLocalAccountCleanup(): SharedTagAccountDeletionResult {
+        return tagRepository.retryLocalAccountCleanup()
+    }
+
     suspend fun saveDisplayName(displayName: String) {
         userProfileStore.saveDisplayName(displayName)
         tagRepository.syncSharedProfileDisplayName(displayName)
@@ -187,6 +250,21 @@ class SharedTagAuthViewModel(
         val repository = chatGptPersonalLinkSyncRepository
             ?: return ChatGptSyncResult.Failure("ChatGPT連携はこのビルドで利用できません")
         return repository.setEnabled(enabled, contentFetchEnabled)
+    }
+
+    fun refreshChatGptSyncEligibility() {
+        val repository = chatGptPersonalLinkSyncRepository ?: return
+        viewModelScope.launch {
+            _chatGptSyncEligibility.value = runCatching {
+                repository.eligibilitySnapshot()
+            }.getOrDefault(_chatGptSyncEligibility.value)
+        }
+    }
+
+    suspend fun syncChatGptPersonalLinksNow(): ChatGptSyncResult {
+        val repository = chatGptPersonalLinkSyncRepository
+            ?: return ChatGptSyncResult.GateOff
+        return repository.syncNow()
     }
 
     suspend fun sendContactSupport(

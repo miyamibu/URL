@@ -81,27 +81,6 @@ interface TagDao {
     @Query(
         """
         SELECT
-            c.id AS collectionId,
-            r.entryId AS entryId
-        FROM collections AS c
-        INNER JOIN tags AS t
-            ON t.name = c.name
-           AND t.scope = 'LOCAL_ONLY'
-           AND t.deletedAt IS NULL
-        INNER JOIN tag_url_cross_refs AS r
-            ON r.tagId = t.id
-           AND r.deletedAt IS NULL
-        WHERE c.id != :defaultCollectionId
-        ORDER BY c.sortOrder ASC, c.id ASC, r.entryId ASC
-        """
-    )
-    fun observeLocalTagCollectionEntryRefs(
-        defaultCollectionId: Long = DEFAULT_COLLECTION_ID,
-    ): Flow<List<LocalTagCollectionEntryRef>>
-
-    @Query(
-        """
-        SELECT
             r.tagId AS tagId,
             r.entryId AS entryId
         FROM tag_url_cross_refs AS r
@@ -342,6 +321,17 @@ interface TagDao {
         """
     )
     suspend fun getLocalOnlyTagsForEntry(entryId: Long): List<SharedTagRecord>
+
+    @Query(
+        """
+        SELECT COUNT(*)
+        FROM tag_url_cross_refs
+        WHERE entryId = :entryId
+          AND scope = 'SYNCED'
+          AND deletedAt IS NULL
+        """
+    )
+    suspend fun countActiveSyncedRefsForEntry(entryId: Long): Int
 
     @Query(
         """

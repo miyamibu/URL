@@ -12,6 +12,27 @@ ok() {
   echo "OK $1"
 }
 
+if [[ -n "$(git status --porcelain)" ]]; then
+  fail "working tree is dirty; freeze and classify all changes before launch"
+else
+  ok "working tree is clean"
+fi
+
+read -r ahead behind < <(git rev-list --left-right --count HEAD...origin/main 2>/dev/null || echo "0 0")
+if [[ "${behind:-0}" -ne 0 ]]; then
+  fail "current HEAD is behind origin/main by ${behind} commit(s)"
+else
+  ok "current HEAD is not behind origin/main"
+fi
+
+active_untracked="$(git ls-files --others --exclude-standard | rg '^(app/src/main/|ios/|web/|supabase/|scripts/)' | rg -v '^(app/build/|ios/build/)' || true)"
+if [[ -n "$active_untracked" ]]; then
+  printf '%s\n' "$active_untracked"
+  fail "active source files are untracked"
+else
+  ok "no active untracked source files"
+fi
+
 require_file() {
   local path="$1"
   if [[ -f "$path" ]]; then
@@ -48,6 +69,45 @@ if grep -q "Final status: REPO_GO" docs/release/repo-go-evidence.md 2>/dev/null;
   ok "REPO_GO evidence status recorded"
 else
   fail "repo-go evidence does not record Final status: REPO_GO"
+fi
+
+today="$(date +%F)"
+if rg -q "$today" docs/release/repo-go-evidence.md 2>/dev/null; then
+  ok "REPO_GO evidence is dated today"
+else
+  fail "REPO_GO evidence is stale for today ($today)"
+fi
+
+if rg -q 'manual single-file apply from' supabase/migrations -g '*.sql' 2>/dev/null; then
+  fail "placeholder migration blocks fresh replay"
+else
+  ok "no placeholder migration blocks fresh replay"
+fi
+
+if python3 - <<'PY'
+import json
+from pathlib import Path
+
+manifest = Path("artifacts/store-assets/screenshots/2026-05-13/manifest.json")
+data = json.loads(manifest.read_text(encoding="utf-8"))
+missing = []
+for platform in ("android", "ios"):
+    section = data.get(platform, {})
+    directory = Path(section.get("directory", ""))
+    for item in section.get("screenshots", []):
+        filename = item.get("file")
+        if not filename:
+            continue
+        if not (directory / filename).is_file():
+            missing.append(str(directory / filename))
+if missing:
+    print("\n".join(missing))
+    raise SystemExit(1)
+PY
+then
+  ok "all manifest screenshot references exist"
+else
+  fail "manifest contains missing screenshot references"
 fi
 
 if find . -maxdepth 1 -type f \( -name '*clean-review*.zip' -o -name '*review*.zip' \) | grep -q .; then

@@ -21,9 +21,12 @@ import jp.mimac.urlsaver.domain.SubscriptionProductIds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import java.io.IOException
+import java.security.MessageDigest
 import kotlin.coroutines.resume
 
 sealed interface BillingPurchaseResult {
@@ -60,11 +63,15 @@ class GooglePlayBillingService(
         billingPeriod: BillingPeriod,
     ): BillingPurchaseResult {
         val session = authSessionProvider.session.value ?: return BillingPurchaseResult.AuthRequired
-        ensureReady()
+        val readyResult = ensureReady()
+        if (readyResult.responseCode != BillingClient.BillingResponseCode.OK) {
+            return BillingPurchaseResult.Failure(readyResult.debugMessage)
+        }
         val productId = SubscriptionProductIds.expectedProductId(planType, billingPeriod)
         val productDetails = queryProductDetails(productId) ?: return BillingPurchaseResult.ProductUnavailable
         val offerToken = productDetails.subscriptionOfferDetails?.firstOrNull()?.offerToken
             ?: return BillingPurchaseResult.ProductUnavailable
+        val obfuscatedAccountId = obfuscatedAccountId(session.authUserId)
         val result = billingClient.launchBillingFlow(
             activity,
             BillingFlowParams.newBuilder()
@@ -76,7 +83,8 @@ class GooglePlayBillingService(
                             .build(),
                     ),
                 )
-                .setObfuscatedAccountId(session.authUserId)
+                .setObfuscatedAccountId(obfuscatedAccountId)
+                .setObfuscatedProfileId(obfuscatedAccountId)
                 .build(),
         )
         return if (result.responseCode == BillingClient.BillingResponseCode.OK) {
@@ -87,16 +95,39 @@ class GooglePlayBillingService(
     }
 
     suspend fun processCurrentPurchases() {
-        ensureReady()
+        var lastFailure: IOException? = null
+        repeat(3) { attempt ->
+            try {
+                processCurrentPurchasesOnce()
+                return
+            } catch (error: IOException) {
+                lastFailure = error
+                if (attempt < 2) delay((attempt + 1) * 1_000L)
+            }
+        }
+        throw lastFailure ?: IOException("Google Play purchase query failed")
+    }
+
+    private suspend fun processCurrentPurchasesOnce() {
+        val readyResult = ensureReady()
+        if (readyResult.responseCode != BillingClient.BillingResponseCode.OK) {
+            throw IOException("Google Play Billing is not ready: ${readyResult.debugMessage}")
+        }
         val params = QueryPurchasesParams.newBuilder()
             .setProductType(BillingClient.ProductType.SUBS)
             .build()
-        suspendCancellableCoroutine { continuation ->
-            billingClient.queryPurchasesAsync(params) { _, purchases ->
-                purchases.forEach { scope.launchProcessPurchase(it) }
-                continuation.resume(Unit)
+        val purchases = suspendCancellableCoroutine<List<Purchase>> { continuation ->
+            billingClient.queryPurchasesAsync(params) { billingResult, purchases ->
+                if (billingResult.responseCode != BillingClient.BillingResponseCode.OK) {
+                    continuation.resumeWith(
+                        Result.failure(IOException("Google Play purchase query failed: ${billingResult.debugMessage}")),
+                    )
+                    return@queryPurchasesAsync
+                }
+                continuation.resume(purchases)
             }
         }
+        purchases.forEach { processPurchase(it) }
     }
 
     private suspend fun queryProductDetails(productId: String): ProductDetails? {
@@ -129,7 +160,9 @@ class GooglePlayBillingService(
                     continuation.resume(billingResult)
                 }
 
-                override fun onBillingServiceDisconnected() = Unit
+                override fun onBillingServiceDisconnected() {
+                    scope.launch { runCatching { processCurrentPurchases() } }
+                }
             })
         }
     }
@@ -138,16 +171,15 @@ class GooglePlayBillingService(
         if (purchase.purchaseState != Purchase.PurchaseState.PURCHASED) return
         val session = authSessionProvider.session.value ?: return
         val productId = purchase.products.firstOrNull() ?: return
-        val result = runCatching {
-            remoteDataSource.verifyStorePurchase(
-                session = session,
-                storePlatform = "google_play",
-                storeProductId = productId,
-                purchaseToken = purchase.purchaseToken,
-                storeTransactionId = purchase.orderId,
-            )
-        }.getOrNull()
-        if (!purchase.isAcknowledged && result?.status == "verified") {
+        val result = remoteDataSource.verifyStorePurchase(
+            session = session,
+            storePlatform = "google_play",
+            storeProductId = productId,
+            purchaseToken = purchase.purchaseToken,
+            storeTransactionId = purchase.orderId,
+        )
+        if (result.status != "verified") throw IOException("Google Play purchase was not verified")
+        if (!purchase.isAcknowledged) {
             acknowledgePurchase(purchase.purchaseToken)
         }
     }
@@ -159,14 +191,40 @@ class GooglePlayBillingService(
         withContext(Dispatchers.IO) {
             suspendCancellableCoroutine { continuation ->
                 billingClient.acknowledgePurchase(params) {
-                    continuation.resume(Unit)
+                    if (it.responseCode == BillingClient.BillingResponseCode.OK) {
+                        continuation.resume(Unit)
+                    } else {
+                        continuation.resumeWith(
+                            Result.failure(IOException("Google Play purchase acknowledgement failed: ${it.debugMessage}")),
+                        )
+                    }
                 }
             }
         }
     }
 
     private fun CoroutineScope.launchProcessPurchase(purchase: Purchase) {
-        launch { runCatching { processPurchase(purchase) } }
+        launch { runCatching { processPurchaseWithRetry(purchase) } }
+    }
+
+    private suspend fun processPurchaseWithRetry(purchase: Purchase) {
+        var lastFailure: IOException? = null
+        repeat(3) { attempt ->
+            try {
+                processPurchase(purchase)
+                return
+            } catch (error: IOException) {
+                lastFailure = error
+                if (attempt < 2) delay((attempt + 1) * 1_000L)
+            }
+        }
+        throw lastFailure ?: IOException("Google Play purchase processing failed")
+    }
+
+    private fun obfuscatedAccountId(userId: String): String {
+        return MessageDigest.getInstance("SHA-256")
+            .digest(userId.toByteArray(Charsets.UTF_8))
+            .joinToString("") { byte -> "%02x".format(byte) }
     }
 
     private companion object {

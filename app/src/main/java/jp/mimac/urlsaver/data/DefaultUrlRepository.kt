@@ -22,114 +22,61 @@ import kotlinx.coroutines.flow.flow
 class DefaultUrlRepository(
     private val database: AppDatabase,
     private val dao: UrlEntryDao,
-    private val collectionDao: CollectionDao,
-    private val userLabelDao: UserLabelDao,
     private val tagDao: TagDao,
     private val clock: AppClock,
     private val scheduler: MetadataScheduler,
     private val usageSummaryDataSource: UsageSummaryDataSource,
 ) : UrlRepository {
-    private val collectionsSupport = DefaultUrlRepositoryCollectionsSupport(
-        database = database,
-        dao = dao,
-        collectionDao = collectionDao,
-        userLabelDao = userLabelDao,
-        tagDao = tagDao,
-        clock = clock,
-    )
-
     override fun observeActiveEntries(): Flow<List<UrlEntryEntity>> = flow {
-        reconcileLocalTagCollectionAssignments()
         emitAll(dao.observeActiveEntries())
     }
 
     override fun observeArchiveEntries(): Flow<List<UrlEntryEntity>> = flow {
-        reconcileLocalTagCollectionAssignments()
         emitAll(dao.observeArchiveEntries())
     }
 
     override fun observeEntry(entryId: Long): Flow<UrlEntryEntity?> = dao.observeEntry(entryId)
-    override fun observeCollections(): Flow<List<CollectionEntity>> = collectionsSupport.observeCollections()
-    override fun observeLocalTagCollectionEntryRefs(): Flow<List<LocalTagCollectionEntryRef>> =
-        tagDao.observeLocalTagCollectionEntryRefs()
     override fun observeLocalTagEntryRefs(): Flow<List<LocalTagEntryRef>> =
         tagDao.observeLocalTagEntryRefs()
-    override fun observeUserLabels(): Flow<List<UserLabelEntity>> = collectionsSupport.observeUserLabels()
 
-    override suspend fun saveFromIntent(intent: Intent): SaveResult = saveFromIntent(intent, collectionId = null)
-
-    override suspend fun saveFromIntent(intent: Intent, collectionId: Long?): SaveResult {
+    override suspend fun saveFromIntent(intent: Intent): SaveResult {
         return when (val extracted = UrlRules.extractFromIntent(intent)) {
             is ShareExtractionResult.Found -> saveFromUrl(
                 extracted.url,
-                collectionId,
                 initialMemo = UrlRules.extractMemoWithoutUrlsFromIntent(intent),
             )
             ShareExtractionResult.InputTooLarge -> SaveResult(ShareSaveResult.INPUT_TOO_LARGE)
             ShareExtractionResult.InvalidUrl -> {
                 val text = UrlRules.extractTextFallbackFromIntent(intent)
                     ?: return SaveResult(ShareSaveResult.INVALID_URL)
-                saveFromTextCard(text, collectionId)
+                saveFromTextCard(text)
             }
             ShareExtractionResult.NoUrlFound -> {
                 val text = UrlRules.extractTextFallbackFromIntent(intent)
                     ?: return SaveResult(ShareSaveResult.NO_URL_FOUND)
-                saveFromTextCard(text, collectionId)
+                saveFromTextCard(text)
             }
         }
     }
 
-    override suspend fun saveFromManualInput(input: String): SaveResult = saveFromManualInput(input, collectionId = null)
-
-    override suspend fun saveFromManualInput(input: String, collectionId: Long?): SaveResult {
-        return saveFromManualInput(input, collectionId, initialMemo = UrlRules.extractMemoWithoutUrls(input))
+    override suspend fun saveFromManualInput(input: String): SaveResult {
+        return saveFromManualInput(input, initialMemo = UrlRules.extractMemoWithoutUrls(input))
     }
 
     override suspend fun saveFromManualInput(
         input: String,
-        collectionId: Long?,
         initialMemo: String?,
     ): SaveResult {
         return when (val extracted = UrlRules.extractForManualInput(input)) {
-            is ShareExtractionResult.Found -> saveFromUrl(extracted.url, collectionId, initialMemo)
+            is ShareExtractionResult.Found -> saveFromUrl(extracted.url, initialMemo)
             ShareExtractionResult.InputTooLarge -> SaveResult(ShareSaveResult.INPUT_TOO_LARGE)
             ShareExtractionResult.InvalidUrl -> SaveResult(ShareSaveResult.INVALID_URL)
-            ShareExtractionResult.NoUrlFound -> saveFromTextCard(input, collectionId)
+            ShareExtractionResult.NoUrlFound -> saveFromTextCard(input)
         }
-    }
-
-    override suspend fun createCollection(name: String): CreateCollectionResult = collectionsSupport.createCollection(name)
-
-    override suspend fun assignCollection(entryId: Long, collectionId: Long): Boolean {
-        val target = collectionDao.findById(collectionId) ?: return false
-        val entry = dao.findById(entryId) ?: return false
-        if (entry.collectionId == target.id) return true
-        dao.updateCollection(entryId = entryId, collectionId = target.id, updatedAt = clock.nowEpochMillis())
-        return true
-    }
-
-    override suspend fun reconcileLocalTagCollectionAssignments(): Int {
-        return dao.moveInboxEntriesToMatchingLocalTagCollection(
-            defaultCollectionId = DEFAULT_COLLECTION_ID,
-            updatedAt = clock.nowEpochMillis(),
-        )
-    }
-
-    override suspend fun reorderCollections(collectionIds: List<Long>): Boolean = collectionsSupport.reorderCollections(collectionIds)
-
-    override suspend fun deleteCollection(collectionId: Long): Boolean = collectionsSupport.deleteCollection(collectionId)
-
-    override suspend fun createUserLabel(name: String): Long = collectionsSupport.createUserLabel(name)
-
-    override suspend fun deleteUserLabel(labelId: Long) = collectionsSupport.deleteUserLabel(labelId)
-
-    override suspend fun assignLabel(entryId: Long, labelId: Long?): Boolean {
-        return collectionsSupport.assignLabel(entryId, labelId)
     }
 
     private suspend fun saveFromUrl(
         originalUrl: String,
-        requestedCollectionId: Long?,
         initialMemo: String? = null,
     ): SaveResult {
         val parsed = UrlRules.parseUrl(originalUrl) ?: return SaveResult(ShareSaveResult.INVALID_URL)
@@ -138,7 +85,6 @@ class DefaultUrlRepository(
 
         return try {
             database.withTransaction {
-                val targetCollectionId = collectionsSupport.resolveCollectionId(requestedCollectionId, now)
                 val existing = findExistingEntry(parsed.normalizedUrl)
                 if (existing != null) {
                     if (existing.localProvenanceCount <= 0) {
@@ -150,7 +96,6 @@ class DefaultUrlRepository(
                         }
                         val promoted = existing.copy(
                             localProvenanceCount = 1,
-                            collectionId = targetCollectionId,
                             recordState = RecordState.ACTIVE,
                             memo = mergeInitialMemo(existing.memo, memoForNewEntry),
                             archivedAt = null,
@@ -170,16 +115,8 @@ class DefaultUrlRepository(
                             normalizedUrl = promoted.normalizedUrl,
                         )
                     }
-                    when (existing.recordState) {
+                        when (existing.recordState) {
                         RecordState.ACTIVE -> {
-                            if (existing.collectionId != targetCollectionId) {
-                                dao.update(
-                                    existing.copy(
-                                        collectionId = targetCollectionId,
-                                        updatedAt = now,
-                                    ),
-                                )
-                            }
                             SaveResult(
                                 result = ShareSaveResult.DUPLICATE_ACTIVE,
                                 entryId = existing.id,
@@ -197,12 +134,6 @@ class DefaultUrlRepository(
 
                         RecordState.PENDING_DELETE -> {
                             var restored = dao.restoreFromPending(existing, now)
-                            if (restored.collectionId != targetCollectionId) {
-                                restored = restored.copy(
-                                    collectionId = targetCollectionId,
-                                    updatedAt = now,
-                                )
-                            }
                             if (restored.memo.isBlank() && memoForNewEntry.isNotBlank()) {
                                 restored = restored.copy(
                                     memo = memoForNewEntry,
@@ -238,7 +169,7 @@ class DefaultUrlRepository(
                             openUrl = parsed.openUrl,
                             normalizedHost = parsed.normalizedHost,
                             rawSourceHost = parsed.rawSourceHost,
-                            collectionId = targetCollectionId,
+                            collectionId = DEFAULT_COLLECTION_ID,
                             serviceType = parsed.serviceType,
                             contentContext = parsed.contentContext,
                             memo = memoForNewEntry,
@@ -262,7 +193,7 @@ class DefaultUrlRepository(
         }
     }
 
-    private suspend fun saveFromTextCard(input: String, requestedCollectionId: Long?): SaveResult {
+    private suspend fun saveFromTextCard(input: String): SaveResult {
         val parsed = UrlRules.parseTextCard(input) ?: return SaveResult(ShareSaveResult.NO_URL_FOUND)
         val body = parsed.originalUrl
         val title = UrlRules.textCardTitle(body)
@@ -270,7 +201,6 @@ class DefaultUrlRepository(
 
         return try {
             database.withTransaction {
-                val targetCollectionId = collectionsSupport.resolveCollectionId(requestedCollectionId, now)
                 val existing = findExistingEntry(parsed.normalizedUrl)
                 if (existing != null) {
                     if (existing.localProvenanceCount <= 0) {
@@ -282,7 +212,6 @@ class DefaultUrlRepository(
                         }
                         val promoted = existing.copy(
                             localProvenanceCount = 1,
-                            collectionId = targetCollectionId,
                             recordState = RecordState.ACTIVE,
                             archivedAt = null,
                             pendingDeletionUntil = null,
@@ -297,14 +226,6 @@ class DefaultUrlRepository(
                     }
                     when (existing.recordState) {
                         RecordState.ACTIVE -> {
-                            if (existing.collectionId != targetCollectionId) {
-                                dao.update(
-                                    existing.copy(
-                                        collectionId = targetCollectionId,
-                                        updatedAt = now,
-                                    ),
-                                )
-                            }
                             SaveResult(
                                 result = ShareSaveResult.DUPLICATE_ACTIVE,
                                 entryId = existing.id,
@@ -317,14 +238,7 @@ class DefaultUrlRepository(
                             normalizedUrl = existing.normalizedUrl,
                         )
                         RecordState.PENDING_DELETE -> {
-                            var restored = dao.restoreFromPending(existing, now)
-                            if (restored.collectionId != targetCollectionId) {
-                                restored = restored.copy(
-                                    collectionId = targetCollectionId,
-                                    updatedAt = now,
-                                )
-                                dao.update(restored)
-                            }
+                            val restored = dao.restoreFromPending(existing, now)
                             SaveResult(
                                 result = ShareSaveResult.RESTORED_FROM_PENDING_DELETE,
                                 entryId = restored.id,
@@ -347,7 +261,7 @@ class DefaultUrlRepository(
                             openUrl = parsed.openUrl,
                             normalizedHost = parsed.normalizedHost,
                             rawSourceHost = parsed.rawSourceHost,
-                            collectionId = targetCollectionId,
+                            collectionId = DEFAULT_COLLECTION_ID,
                             serviceType = ServiceType.WEB,
                             contentContext = ContentContext.POST,
                             fetchedTitle = title,

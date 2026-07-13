@@ -42,6 +42,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -72,7 +73,12 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import jp.mimac.urlsaver.BuildConfig
 import jp.mimac.urlsaver.R
+import jp.mimac.urlsaver.data.ChatGptPersonalLinkSyncSettings
+import jp.mimac.urlsaver.data.ChatGptSyncEligibilitySnapshot
+import jp.mimac.urlsaver.data.ChatGptSyncResult
 import jp.mimac.urlsaver.data.PendingInviteRecord
 import jp.mimac.urlsaver.domain.SharedTagAccountDeletionResult
 import jp.mimac.urlsaver.domain.SharedTagAuthResult
@@ -88,6 +94,38 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private const val CONTACT_SUPPORT_SUCCESS_MESSAGE = "問い合わせを送信完了しました"
+
+internal enum class ChatGptSyncPendingAction {
+    ENABLE,
+    DISABLE,
+    SYNC_NOW,
+}
+
+internal fun chatGptSyncConfirmationBody(
+    action: ChatGptSyncPendingAction,
+    eligibility: ChatGptSyncEligibilitySnapshot,
+): String {
+    if (action == ChatGptSyncPendingAction.DISABLE) {
+        return "同期をオフにします。\n" +
+            "対象 ${eligibility.eligibleEntries.size}件。\n" +
+            "除外 ${eligibility.excludedCount}件。\n" +
+            "今回の送信なし。以後、リンクは送信されません。"
+    }
+    val hosts = eligibility.eligibleEntries
+        .map { it.normalizedHost }
+        .distinct()
+        .sorted()
+    val targetSummary = when {
+        hosts.isEmpty() -> "送信対象はありません"
+        hosts.size <= 3 -> hosts.joinToString("、")
+        else -> "${hosts.take(3).joinToString("、")}、ほか${hosts.size - 3}ホスト"
+    }
+    val enablePrefix = if (action == ChatGptSyncPendingAction.ENABLE) "同期をオンにし、" else ""
+    return "${enablePrefix}対象 ${eligibility.eligibleEntries.size}件を同期します。\n" +
+        "除外 ${eligibility.excludedCount}件。\n" +
+        "送信対象概要: $targetSummary\n" +
+        "本文やプロンプトは送信しません。"
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -105,6 +143,19 @@ fun SharedTagCloudAuthScreen(
     val pendingInvite by viewModel.pendingInvite.collectAsStateWithLifecycle()
     val entitlements = viewModel.entitlements
     val scope = rememberCoroutineScope()
+    val chatGptSyncSettings by viewModel.chatGptSyncSettings.collectAsStateWithLifecycle()
+    val chatGptSyncEligibility by viewModel.chatGptSyncEligibility.collectAsStateWithLifecycle()
+    val localCleanupPending by viewModel.localAccountCleanupPending.collectAsStateWithLifecycle()
+    val aiTransparencyViewModel = if (BuildConfig.DEBUG && BuildConfig.AI_TRANSPARENCY_ENABLED) {
+        viewModel<AiTransparencyViewModel>(
+            key = "profile_ai_transparency",
+            factory = SimpleFactory {
+                AiTransparencyViewModel(context.appContainer().aiTransparencyRepository)
+            },
+        )
+    } else {
+        null
+    }
 
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -112,6 +163,7 @@ fun SharedTagCloudAuthScreen(
     var message by remember { mutableStateOf<String?>(null) }
     var isSubmitting by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var isRetryingLocalCleanup by remember { mutableStateOf(false) }
     var showContactPage by remember { mutableStateOf(false) }
     var contactEmail by remember { mutableStateOf("") }
     var contactName by remember { mutableStateOf("") }
@@ -122,6 +174,7 @@ fun SharedTagCloudAuthScreen(
     var promoMessage by remember { mutableStateOf<String?>(null) }
     var isRedeemingPromoCode by remember { mutableStateOf(false) }
     var isPurchasing by remember { mutableStateOf(false) }
+    var showAiTransparencySheet by remember { mutableStateOf(false) }
     var draftAvatarBase64 by remember { mutableStateOf<String?>(null) }
     val avatarBitmap = remember(draftAvatarBase64) { draftAvatarBase64.toImageBitmapOrNull() }
     val isAvatarChanged = draftAvatarBase64 != profile.avatarBase64
@@ -323,6 +376,22 @@ fun SharedTagCloudAuthScreen(
                     themeMode = themeMode,
                     onThemeModeChange = onThemeModeChange,
                 )
+                ChatGptPersonalLinkSyncCard(
+                    viewModel = viewModel,
+                    cloudState = cloudState,
+                    settings = chatGptSyncSettings,
+                    eligibility = chatGptSyncEligibility,
+                )
+                if (aiTransparencyViewModel != null) {
+                    OutlinedButton(
+                        onClick = { showAiTransparencySheet = true },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp),
+                    ) {
+                        Text("AI動作の確認（デバッグ）")
+                    }
+                }
                 pendingInvite?.let { record ->
                     PendingInviteResumeCard(
                         record = record,
@@ -357,6 +426,56 @@ fun SharedTagCloudAuthScreen(
                 }
                 message?.let {
                     ProfileStatusMessage(message = it)
+                }
+                localCleanupPending?.let { pending ->
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        shape = MaterialTheme.shapes.medium,
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                text = "アカウントは削除済みです",
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                            Text(localCleanupStatusMessage(pending))
+                            OutlinedButton(
+                                onClick = {
+                                    scope.launch {
+                                        isRetryingLocalCleanup = true
+                                        try {
+                                            when (val result = viewModel.retryLocalAccountCleanup()) {
+                                                SharedTagAccountDeletionResult.Success -> {
+                                                    message = "アカウント削除と端末内データの消去が完了しました"
+                                                }
+                                                is SharedTagAccountDeletionResult.LocalCleanupRequired -> {
+                                                    message = localCleanupStatusMessage(result)
+                                                }
+                                                else -> {
+                                                    message = "アカウントは削除済みです。端末内データの消去を再試行できませんでした"
+                                                }
+                                            }
+                                        } finally {
+                                            isRetryingLocalCleanup = false
+                                        }
+                                    }
+                                },
+                                enabled = !isRetryingLocalCleanup,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(
+                                    if (isRetryingLocalCleanup) {
+                                        "端末内データを消去中…"
+                                    } else {
+                                        "端末内データの消去を再試行"
+                                    },
+                                )
+                            }
+                        }
+                    }
                 }
 
                 if (!cloudState.isConfigured) {
@@ -513,6 +632,17 @@ fun SharedTagCloudAuthScreen(
         }
     }
 
+    if (showAiTransparencySheet && aiTransparencyViewModel != null) {
+        ModalBottomSheet(
+            onDismissRequest = { showAiTransparencySheet = false },
+        ) {
+            AiTransparencyPreviewScreen(
+                viewModel = aiTransparencyViewModel,
+                modifier = Modifier.fillMaxHeight(),
+            )
+        }
+    }
+
     if (showDeleteDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
@@ -527,6 +657,9 @@ fun SharedTagCloudAuthScreen(
                                 SharedTagAccountDeletionResult.AuthRequired -> "アカウント削除にはサインインが必要です"
                                 SharedTagAccountDeletionResult.OwnerTransferRequired ->
                                     "共有タグ詳細の参加者からオーナー権限を先に移譲してください"
+                                is SharedTagAccountDeletionResult.LocalCleanupRequired -> {
+                                    localCleanupStatusMessage(result)
+                                }
                                 is SharedTagAccountDeletionResult.Failure -> result.message
                             }
                             isSubmitting = false
@@ -547,6 +680,17 @@ fun SharedTagCloudAuthScreen(
             },
         )
     }
+}
+
+private fun localCleanupStatusMessage(
+    result: SharedTagAccountDeletionResult.LocalCleanupRequired,
+): String {
+    val pendingItems = buildList {
+        if (result.aiDataPending) add("端末内AIデータ")
+        if (result.sessionPending) add("ログイン情報")
+    }
+    val pendingLabel = pendingItems.joinToString("と").ifBlank { "端末内データ" }
+    return "アカウントは削除済みです。${pendingLabel}の消去が完了していません。"
 }
 
 @Composable
@@ -1082,6 +1226,187 @@ private fun ProfileCard(
                 Text("プロフィールを保存")
             }
         }
+    }
+}
+
+@Composable
+private fun ChatGptPersonalLinkSyncCard(
+    viewModel: SharedTagAuthViewModel,
+    cloudState: jp.mimac.urlsaver.domain.SharedTagCloudState,
+    settings: ChatGptPersonalLinkSyncSettings,
+    eligibility: ChatGptSyncEligibilitySnapshot,
+) {
+    val scope = rememberCoroutineScope()
+    var isLoading by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var pendingAction by remember { mutableStateOf<ChatGptSyncPendingAction?>(null) }
+    val gateOpen = viewModel.isChatGptSyncOperationEnabled
+    val canOperate = gateOpen && cloudState.isSignedIn && !isLoading
+
+    fun resultMessage(result: ChatGptSyncResult): String {
+        return when (result) {
+            is ChatGptSyncResult.Success -> "同期しました（送信 ${result.syncedCount}件 / 除外 ${result.excludedCount}件）"
+            is ChatGptSyncResult.Partial -> "一部を同期しました（送信 ${result.syncedCount}件 / 失敗 ${result.failedCount}件 / 除外 ${result.excludedCount}件）"
+            ChatGptSyncResult.AuthRequired -> "りんばむのアカウントでサインインしてください"
+            ChatGptSyncResult.GateOff -> "現在は利用できません"
+            ChatGptSyncResult.NotEnabled -> "同期をオンにするまでリンクは送信されません"
+            is ChatGptSyncResult.Failure -> result.message
+        }
+    }
+
+    fun runSync(action: suspend () -> ChatGptSyncResult) {
+        scope.launch {
+            isLoading = true
+            message = null
+            message = resultMessage(action())
+            isLoading = false
+            viewModel.refreshChatGptSyncEligibility()
+        }
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        tonalElevation = 1.dp,
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = "ChatGPTに保存リンクを同期",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            if (!gateOpen) {
+                Text("現在は利用できません", color = MaterialTheme.colorScheme.error)
+                Text(
+                    text = "外部接続の確認が完了するまでオフです",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else if (!cloudState.isSignedIn) {
+                Text("りんばむのアカウントでサインインしてください")
+            }
+            Text("同期対象 ${eligibility.eligibleEntries.size}件")
+            Text("除外 ${eligibility.excludedCount}件")
+            eligibility.exclusionsByReason.forEach { (reason, count) ->
+                Text(
+                    text = "除外理由: ${chatGptExclusionReasonLabel(reason)} ${count}件",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text(
+                text = "同期をオンにするまでリンクは送信されません",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            settings.lastSyncedAt?.let { syncedAt ->
+                Text(
+                    text = "最終同期: ${android.text.format.DateFormat.format("yyyy/MM/dd HH:mm", syncedAt)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            message?.let { currentMessage ->
+                Text(
+                    text = currentMessage,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Button(
+                onClick = { pendingAction = ChatGptSyncPendingAction.ENABLE },
+                enabled = canOperate && !settings.enabled,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+            ) {
+                Text("同期をオンにする")
+            }
+            OutlinedButton(
+                onClick = { pendingAction = ChatGptSyncPendingAction.DISABLE },
+                enabled = canOperate && settings.enabled,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+            ) {
+                Text("同期をオフにする")
+            }
+            Button(
+                onClick = { pendingAction = ChatGptSyncPendingAction.SYNC_NOW },
+                enabled = canOperate && settings.enabled,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+            ) {
+                Text(if (isLoading) "同期中…" else "今すぐ同期")
+            }
+            OutlinedButton(
+                onClick = { pendingAction = ChatGptSyncPendingAction.SYNC_NOW },
+                enabled = canOperate && settings.enabled,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+            ) {
+                Text("再試行")
+            }
+        }
+    }
+
+    pendingAction?.let { action ->
+        AlertDialog(
+            onDismissRequest = { pendingAction = null },
+            title = {
+                Text(
+                    when (action) {
+                        ChatGptSyncPendingAction.ENABLE -> "同期をオンにする"
+                        ChatGptSyncPendingAction.DISABLE -> "同期をオフにする"
+                        ChatGptSyncPendingAction.SYNC_NOW -> "リンクを同期する"
+                    },
+                )
+            },
+            text = {
+                Text(chatGptSyncConfirmationBody(action, eligibility))
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingAction = null
+                        runSync {
+                            when (action) {
+                                ChatGptSyncPendingAction.ENABLE -> viewModel.setChatGptPersonalLinkSync(
+                                    enabled = true,
+                                    contentFetchEnabled = false,
+                                )
+                                ChatGptSyncPendingAction.DISABLE -> viewModel.setChatGptPersonalLinkSync(
+                                    enabled = false,
+                                    contentFetchEnabled = false,
+                                )
+                                ChatGptSyncPendingAction.SYNC_NOW -> viewModel.syncChatGptPersonalLinksNow()
+                            }
+                        }
+                    },
+                ) {
+                    Text("確認して実行")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingAction = null }) {
+                    Text("キャンセル")
+                }
+            },
+        )
+    }
+}
+
+private fun chatGptExclusionReasonLabel(reason: String): String {
+    return when (reason) {
+        "active_required" -> "アーカイブまたは保存状態が対象外"
+        "no_local_provenance" -> "端末保存なし"
+        "shared_reference" -> "共有参照あり"
+        "pending_delete" -> "削除保留中"
+        "shared_tag_allocation" -> "共有タグ割り当てあり"
+        else -> "対象外条件"
     }
 }
 

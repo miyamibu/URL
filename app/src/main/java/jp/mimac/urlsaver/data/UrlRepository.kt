@@ -7,28 +7,13 @@ import kotlinx.coroutines.flow.flowOf
 
 interface MainListRepository {
     fun observeActiveEntries(): Flow<List<UrlEntryEntity>>
-    fun observeCollections(): Flow<List<CollectionEntity>> = flowOf(emptyList())
-    fun observeLocalTagCollectionEntryRefs(): Flow<List<LocalTagCollectionEntryRef>> = flowOf(emptyList())
     fun observeLocalTagEntryRefs(): Flow<List<LocalTagEntryRef>> = flowOf(emptyList())
-    fun observeUserLabels(): Flow<List<UserLabelEntity>> = flowOf(emptyList())
 
     suspend fun saveFromManualInput(input: String): SaveResult
-    suspend fun saveFromManualInput(input: String, collectionId: Long?): SaveResult = saveFromManualInput(input)
     suspend fun saveFromManualInput(
         input: String,
-        collectionId: Long?,
         initialMemo: String?,
-    ): SaveResult = saveFromManualInput(input, collectionId)
-    suspend fun createCollection(name: String): CreateCollectionResult {
-        return CreateCollectionResult(success = false, invalidName = true)
-    }
-    suspend fun assignCollection(entryId: Long, collectionId: Long): Boolean = false
-    suspend fun reconcileLocalTagCollectionAssignments(): Int = 0
-    suspend fun reorderCollections(collectionIds: List<Long>): Boolean = false
-    suspend fun deleteCollection(collectionId: Long): Boolean = false
-    suspend fun createUserLabel(name: String): Long = 0L
-    suspend fun deleteUserLabel(labelId: Long) = Unit
-    suspend fun assignLabel(entryId: Long, labelId: Long?): Boolean = false
+    ): SaveResult = saveFromManualInput(input)
 
     suspend fun archive(entryId: Long): Boolean
     suspend fun markPendingDelete(entryId: Long, gracePeriodMillis: Long = 5000): Long?
@@ -39,7 +24,6 @@ interface UrlRepository : MainListRepository {
     fun observeEntry(entryId: Long): Flow<UrlEntryEntity?>
 
     suspend fun saveFromIntent(intent: Intent): SaveResult
-    suspend fun saveFromIntent(intent: Intent, collectionId: Long?): SaveResult = saveFromIntent(intent)
 
     suspend fun unarchive(entryId: Long): Boolean
     suspend fun finalizePendingDelete(entryId: Long)

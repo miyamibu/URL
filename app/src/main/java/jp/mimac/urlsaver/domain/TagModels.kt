@@ -62,7 +62,7 @@ data class SharedTagGroupTagRecord(
 
 @Serializable
 data class TagSharePayload(
-    @SerialName("urlsaver_version") val urlsaverVersion: Int,
+    @SerialName("urlsaver_version") val urlsaverVersion: Int = 1,
     val tag: String,
     @SerialName("exported_at") val exportedAt: Long,
     val urls: List<TagShareUrl>,
@@ -250,12 +250,19 @@ sealed interface SharedTagAccountDeletionResult {
     data object Success : SharedTagAccountDeletionResult
     data object AuthRequired : SharedTagAccountDeletionResult
     data object OwnerTransferRequired : SharedTagAccountDeletionResult
+    data class LocalCleanupRequired(
+        val aiDataPending: Boolean,
+        val sessionPending: Boolean,
+    ) : SharedTagAccountDeletionResult
     data class Failure(val message: String) : SharedTagAccountDeletionResult
 }
 
+@OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
 val TagShareJson = Json {
     ignoreUnknownKeys = true
     isLenient = true
+    encodeDefaults = false
+    explicitNulls = false
 }
 
 fun normalizeSharedTagName(raw: String): String = raw.trim()
