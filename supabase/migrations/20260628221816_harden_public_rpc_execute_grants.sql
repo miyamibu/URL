@@ -33,7 +33,6 @@ revoke all on function public.delete_shared_tag_group(uuid) from public;
 revoke all on function public.remove_shared_tag_from_group(uuid, uuid) from public;
 revoke all on function public.remove_shared_tag_group_member(uuid, uuid) from public;
 revoke all on function public.rename_shared_tag_group(uuid, text) from public;
-revoke all on function public.rls_auto_enable() from public;
 revoke all on function public.transfer_shared_tag_group_ownership(uuid, uuid) from public;
 revoke all on function public.upsert_my_shared_profile(text) from public;
 

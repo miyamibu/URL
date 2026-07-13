@@ -37,6 +37,14 @@ create table if not exists public.promo_invite_code_events (
     created_at timestamptz not null default now()
 );
 
+-- 20260623120000 may have created this table with the newer code_id/
+-- actor_user_id/detail shape. Keep both shapes during the migration overlap
+-- so a fresh replay and an already-applied schema remain compatible.
+alter table public.promo_invite_code_events
+    add column if not exists promo_invite_code_id uuid null references public.promo_invite_codes(id) on delete set null,
+    add column if not exists user_id uuid null references auth.users(id) on delete set null,
+    add column if not exists reason text null;
+
 create index if not exists idx_promo_invite_code_events_user
     on public.promo_invite_code_events (user_id, created_at desc);
 
