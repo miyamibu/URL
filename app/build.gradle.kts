@@ -103,7 +103,7 @@ android {
         applicationId = "jp.miyamibu.urlalbum"
         minSdk = 26
         targetSdk = 35
-        versionCode = 16
+        versionCode = 17
         versionName = "1.0.14"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
