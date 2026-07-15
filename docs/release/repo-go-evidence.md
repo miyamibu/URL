@@ -2,7 +2,7 @@
 
 ## Final status: REPO_GO
 
-This file records repo-local evidence refreshed on 2026-07-15. Source verification is carried by the current branch tip `a44b0d31`. `REPO_GO` means the repository implementation, docs, scripts, tests, build checks, and release hygiene are ready for pre-publication operations. It does not mean production deploy, store submission, OpenAI submission, production secret entry, or live/store verification is complete.
+This file records repo-local evidence refreshed on 2026-07-15. Source implementation verification is carried by commit `a44b0d31`; this evidence update is committed separately so the implementation reference stays stable. `REPO_GO` means the repository implementation, docs, scripts, tests, build checks, and release hygiene are ready for pre-publication operations. It does not mean production deploy, store submission, OpenAI submission, production secret entry, or live/store verification is complete.
 
 ## Verified Areas
 
