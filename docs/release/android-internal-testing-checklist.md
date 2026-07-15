@@ -7,7 +7,7 @@ Prepare Android internal testing without Codex uploading to Play Console.
 
 - [ ] Check `app/build.gradle.kts`.
   - Expected: `applicationId = "jp.miyamibu.urlalbum"`.
-  - Expected current source: `versionName = "1.0.14"`, `versionCode = 15`.
+  - Expected current source: `versionName = "1.0.14"`, `versionCode = 17`.
   - Stop if: package name changes or version is not the intended release.
 
 ## Signing Config
