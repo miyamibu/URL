@@ -338,28 +338,32 @@ struct DetailView: View {
                                         onEdit: { isShowingLocalTagEditor = true }
                                     )
 
-                                    if model.sharedTagCloudState.isConfigured {
-                                        DetailTagSummaryPanel(
-                                            title: "共有タグ",
-                                            emptyText: "まだ共有タグは付いていません",
-                                            tags: assignedSharedTags.map { tag in
-                                                DetailTagSummaryItem(
-                                                    id: "shared-\(tag.remoteTagID)",
-                                                    name: tag.name,
-                                                    canRemove: !isRemovingTag && (tag.currentUserRole == .owner || tag.currentUserRole == .editor),
-                                                    onRemove: {
-                                                        guard !isRemovingTag else { return }
-                                                        isRemovingTag = true
-                                                        Task {
-                                                            _ = await model.removeEntry(entryID, fromSharedTag: tag.remoteTagID)
-                                                            isRemovingTag = false
-                                                        }
+                                    DetailTagSummaryPanel(
+                                        title: "共有タグ",
+                                        emptyText: model.sharedTagCloudState.isConfigured
+                                            ? "まだ共有タグは付いていません"
+                                            : "共有タグは現在利用できません",
+                                        tags: assignedSharedTags.map { tag in
+                                            DetailTagSummaryItem(
+                                                id: "shared-\(tag.remoteTagID)",
+                                                name: tag.name,
+                                                canRemove: !isRemovingTag && (tag.currentUserRole == .owner || tag.currentUserRole == .editor),
+                                                onRemove: {
+                                                    guard !isRemovingTag else { return }
+                                                    isRemovingTag = true
+                                                    Task {
+                                                        _ = await model.removeEntry(entryID, fromSharedTag: tag.remoteTagID)
+                                                        isRemovingTag = false
                                                     }
-                                                )
-                                            },
-                                            onEdit: { isShowingSharedTagEditor = true }
-                                        )
-                                    }
+                                                }
+                                            )
+                                        },
+                                        isEditEnabled: model.sharedTagCloudState.isConfigured,
+                                        onEdit: {
+                                            guard model.sharedTagCloudState.isConfigured else { return }
+                                            isShowingSharedTagEditor = true
+                                        }
+                                    )
                                 }
 
                                 AppPanel {
@@ -1158,6 +1162,7 @@ private struct DetailTagSummaryPanel: View {
     let title: String
     let emptyText: String
     let tags: [DetailTagSummaryItem]
+    var isEditEnabled = true
     let onEdit: () -> Void
 
     var body: some View {
@@ -1171,6 +1176,8 @@ private struct DetailTagSummaryPanel: View {
 
                     DetailTagEditButton(action: onEdit)
                         .frame(width: 72)
+                        .opacity(isEditEnabled ? 1 : 0.45)
+                        .disabled(!isEditEnabled)
                 }
 
                 if tags.isEmpty {
