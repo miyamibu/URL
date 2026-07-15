@@ -2,16 +2,16 @@
 
 ## Final status: REPO_GO
 
-This file records repo-local evidence refreshed on 2026-07-15. Source verification is carried by the current branch tip `fad7405c`. `REPO_GO` means the repository implementation, docs, scripts, tests, build checks, and release hygiene are ready for pre-publication operations. It does not mean production deploy, store submission, OpenAI submission, production secret entry, or live/store verification is complete.
+This file records repo-local evidence refreshed on 2026-07-15. Source verification is carried by the current branch tip `015598d1`. `REPO_GO` means the repository implementation, docs, scripts, tests, build checks, and release hygiene are ready for pre-publication operations. It does not mean production deploy, store submission, OpenAI submission, production secret entry, or live/store verification is complete.
 
 ## Verified Areas
 
 | Area | Result | Evidence |
 |---|---|---|
-| Android | PASS_WITH_SIGNING_GATE | `testDebugUnitTest`, `lintDebug`, packaging, and AndroidTest Kotlin compilation passed; after the Luna Max release bump, `bundleRelease` also passed for canonical package `jp.miyamibu.urlalbum`, `versionCode=17`, `versionName=1.0.14`. The generated AAB is structurally valid but has no signing entries; Play upload/signing remains pending. |
-| iOS | PASS | `xcodebuild -project ... -destination iPhone 17 Pro test` passed on 2026-07-13: 121 tests, 3 live Supabase tests skipped, 0 failures. Unsigned iPhoneOS Release build also passed. The alternate simulator was used because the store-shot simulator returned CoreSimulator Busy. |
+| Android | PASS_WITH_EXTERNAL_SIGNING_WAIT | `testDebugUnitTest`, `lintDebug`, packaging, and AndroidTest Kotlin compilation passed; canonical `jp.miyamibu.urlalbum`, `versionCode=17`, `versionName=1.0.14` produced a new-key signed AAB. Play accepted the file transfer but rejected it because the upload-key reset is not active yet; the console states re-upload is available after `2026-07-17 07:29:38 UTC`. |
+| iOS | PASS_WITH_UPLOAD_AUTH_GATE | `xcodebuild ... test` passed: 121 tests, 3 live Supabase tests skipped, 0 failures. A signed development archive was installed on the physical iPhone, and App Store export succeeded with Apple Distribution signing, `get-task-allow=false`; `altool` upload is blocked only because no App Store Connect JWT or app-specific password was supplied. |
 | Supabase migration/replay | REMOTE_APPLIED_WITH_VALIDATION_WARNING | Fresh local replay completed all 38 migrations through `20260713223000_reconcile_promo_invite_code_events.sql`; local `supabase db lint --local` exited 0 with one unused-variable warning, and the compatibility pgTAP test passed 5/5 in the existing replay evidence. The linked project accepted `20260712090000_purchase_security_binding.sql` and `20260713223000_reconcile_promo_invite_code_events.sql`; `supabase db query --linked` confirmed both versions. On the 2026-07-15 recheck, linked lint exited 0 with `--fail-on error` and exited 1 with `--fail-on warning` for the same warning; linked pgTAP could not resolve the linked DB host (`Name has no usable address`), so it ran 0 tests. |
-| Physical iPhone UI | PASS | Appium/XCUITest session verified bundle `com.mibu.codebridge.ios` on physical UDID `00008101-00066D96340A001E`: start screen, visible `共有タグ`, shared-tag chip/card rendering, upward scroll, and downward scroll. The current 2026-07-15 install/launch and home-screen screenshot is `artifacts/ui-review/2026-07-15/iphone-home-appium.png`; earlier scroll evidence remains under `artifacts/ui-review/2026-07-13/ios-appium/`. |
+| Physical iPhone UI | PASS | Appium/XCUITest session verified bundle `com.mibu.codebridge.ios` on physical UDID `00008101-00066D96340A001E` after the signed build15 overwrite install; `共有タグ`, `使い方`, `エクスポート`, `タグ`, and `アーカイブ` are present. Current evidence is `artifacts/ui-review/2026-07-15/iphone-home-appium-approved.png`; earlier scroll evidence remains under `artifacts/ui-review/2026-07-13/ios-appium/`. |
 | Physical Android latest candidate | BLOCKED | Canonical Pixel 9a is connected, but the latest release candidate is not Play-signature compatible for a data-preserving direct install. Play Internal update and post-update UI/data proof remain pending. |
 | MCP contract | PASS | `python3 scripts/verify_mcp_contract.py` passed. |
 | Web/admin | PASS | `cd web/admin && npm run typecheck` passed. |
@@ -22,7 +22,7 @@ This file records repo-local evidence refreshed on 2026-07-15. Source verificati
 | Release hygiene | PASS | `bash scripts/check_release_hygiene.sh` passed. |
 | Clean review archive | PASS | `bash scripts/create_clean_review_archive.sh` creates the archive under the OS temp directory, not repo root. Forbidden-file grep returned OK. |
 | Secret scan | PASS_WITH_EXPECTED_TEXT_HITS | Search hits were docs, example names, redaction patterns, Supabase role names in migrations, and local config references. No production secret values were found. |
-| 2026-07-15 local release recheck | PASS_WITH_EXTERNAL_GATES | `git diff --check`, `./gradlew testDebugUnitTest lintDebug bundleRelease`, iOS unsigned Release build, and repository readiness checks passed; MCP smoke safely skipped because `MCP_STAGING_BASE_URL` is not configured, `deno check supabase/functions/verify-store-purchase/index.ts` passed, and `deno test --allow-env supabase/functions/verify-store-purchase/index.test.ts` passed 4/4. The current Android v17 AAB is still unsigned; the canonical Pixel has Play-managed versionCode 16. Play Console is authenticated with the internal-test draft upload screen open, and App Store Connect is authenticated with iOS 1.0.14 / build 15 in 配信準備完了; no store upload or final submission was performed because Android upload-key reset/signing and iOS owner signing credentials remain pending. |
+| 2026-07-15 local release recheck | PASS_WITH_EXTERNAL_GATES | Repository checks passed and `LAUNCH_READY_REPO` is green. Android v17 AAB upload was attempted and rejected only by the Play reset activation window; the canonical Pixel remains Play-managed versionCode 16. iOS build15 was installed and App Store export produced `/tmp/URLSaveriOS-export-20260715/りんばむ.ipa`; App Store Connect upload was attempted and stopped by missing JWT/app-specific-password authentication. |
 
 ## Manual Steps Remaining After REPO_GO
 
@@ -31,10 +31,10 @@ This file records repo-local evidence refreshed on 2026-07-15. Source verificati
 | Production deploy | External publication action. |
 | Production MCP/OAuth registration | Requires owner-controlled provider console and secret entry. |
 | OpenAI Apps Developer Mode connection and submission | Requires owner ChatGPT/OpenAI account and deployed HTTPS MCP endpoint. |
-| App Store / Play Console upload or submission | Store-console action. |
+| App Store / Play Console upload or submission | Android re-upload is time-gated until the Play reset activation time; iOS upload needs App Store Connect JWT or app-specific password. |
 | Production secrets | Must be entered outside repo and chat. |
 | Store/live verification | External state changes over time and must be verified at release time. |
-| Signed iOS archive/upload | Requires Apple team, signing identity, provisioning, and App Store Connect access. |
+| Signed iOS archive/upload | Distribution-signed IPA is ready; only App Store Connect upload authentication remains. |
 
 ## REPO_GO vs LAUNCH_READY_REPO
 
