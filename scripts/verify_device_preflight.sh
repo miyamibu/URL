@@ -32,7 +32,7 @@ check "Appium server ${APPIUM_PORT}" \
   curl -fsS --max-time 2 "http://127.0.0.1:${APPIUM_PORT}/status"
 
 check "RemoteXPC tunnel ${REMOTE_XPC_PORT}" \
-  lsof -nP -iTCP:"${REMOTE_XPC_PORT}" -sTCP:LISTEN
+  bash -c 'curl -fsS --max-time 2 "http://127.0.0.1:${1}/remotexpc/tunnels" | rg -q '"'"'"activeTunnels"[[:space:]]*:[[:space:]]*[1-9][0-9]*'"'"'' _ "${REMOTE_XPC_PORT}"
 
 if command -v xcrun >/dev/null 2>&1; then
   xcrun xctrace list devices >/tmp/rinbam-preflight-check.out 2>/tmp/rinbam-preflight-check.err
