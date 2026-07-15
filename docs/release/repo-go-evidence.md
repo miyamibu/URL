@@ -2,7 +2,7 @@
 
 ## Final status: REPO_GO
 
-This file records repo-local evidence refreshed on 2026-07-13. Source verification used commit `bd0b8620`; the compatibility-test additions and this evidence update are carried by the current branch tip. `REPO_GO` means the repository implementation, docs, scripts, tests, build checks, and release hygiene are ready for pre-publication operations. It does not mean production deploy, store submission, OpenAI submission, production secret entry, or live/store verification is complete.
+This file records repo-local evidence refreshed on 2026-07-15. Source verification used commit `bd0b8620`; the compatibility-test additions and this evidence update are carried by the current branch tip. `REPO_GO` means the repository implementation, docs, scripts, tests, build checks, and release hygiene are ready for pre-publication operations. It does not mean production deploy, store submission, OpenAI submission, production secret entry, or live/store verification is complete.
 
 ## Verified Areas
 
@@ -22,6 +22,7 @@ This file records repo-local evidence refreshed on 2026-07-13. Source verificati
 | Release hygiene | PASS | `bash scripts/check_release_hygiene.sh` passed. |
 | Clean review archive | PASS | `bash scripts/create_clean_review_archive.sh` creates the archive under the OS temp directory, not repo root. Forbidden-file grep returned OK. |
 | Secret scan | PASS_WITH_EXPECTED_TEXT_HITS | Search hits were docs, example names, redaction patterns, Supabase role names in migrations, and local config references. No production secret values were found. |
+| 2026-07-15 local release recheck | PASS_WITH_EXTERNAL_GATES | `git diff --check` and repository readiness checks were rerun; MCP smoke safely skipped because `MCP_STAGING_BASE_URL` is not configured, and `deno test --allow-env supabase/functions/verify-store-purchase/index.test.ts` passed 4/4. Play Console and App Store Connect were not authenticated in the available browser session, so no store upload or submission was performed. |
 
 ## Manual Steps Remaining After REPO_GO
 
