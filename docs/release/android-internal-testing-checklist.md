@@ -24,7 +24,8 @@ Prepare Android internal testing without Codex uploading to Play Console.
 
 - Expected: tests/lint pass and release AAB is produced.
 - Evidence: Gradle summary, AAB path, versionCode/versionName.
-- Stop if: tests are weakened, release config turns AI flag on, or build output contains secrets.
+- Expected: when `media.resolver.backend.url` or `URLSAVER_MEDIA_RESOLVER_BACKEND_URL` is configured, release `ALLOW_LOCAL_MEDIA_DOWNLOADS=true`; otherwise the media-save action stays disabled.
+- Stop if: tests are weakened, release config turns AI flag on, configured media resolver is not HTTPS, or build output contains secrets.
 
 ## Play Console Internal Testing Upload
 

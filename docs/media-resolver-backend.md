@@ -32,6 +32,8 @@ and TikTok URLs into downloadable media candidates.
 - Use a public HTTPS host for physical-device and release verification.
 - Set Android with `URLSAVER_MEDIA_RESOLVER_BACKEND_URL` or
   `media.resolver.backend.url`.
+- Android release enables the media-save action only when this URL is non-empty;
+  a release with no resolver URL keeps the action disabled.
 - Set iOS in `ios/Config/URLSaverSecrets.xcconfig`:
 
 ```xcconfig

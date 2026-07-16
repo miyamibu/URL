@@ -44,6 +44,11 @@ val mediaResolverBackendUrl = configString(
     propertyName = "media.resolver.backend.url",
     envName = "URLSAVER_MEDIA_RESOLVER_BACKEND_URL",
 ).trim().trimEnd('/')
+val releaseLocalMediaDownloadsEnabled = configBoolean(
+    propertyName = "release.local.media.downloads.enabled",
+    envName = "URLSAVER_RELEASE_LOCAL_MEDIA_DOWNLOADS_ENABLED",
+    defaultValue = mediaResolverBackendUrl.isNotBlank(),
+)
 val contactSupportEndpointUrl = configString(
     propertyName = "contact.support.endpoint.url",
     envName = "URLSAVER_CONTACT_SUPPORT_ENDPOINT_URL",
@@ -92,6 +97,13 @@ if (releaseBuildRequested &&
             "URLSAVER_RELEASE_SUPABASE_ANON_KEY, and optionally URLSAVER_CONTACT_SUPPORT_ENDPOINT_URL. " +
             "For a local-only pre-contract release build, leave " +
             "release.shared.tag.cloud.enabled unset or false. Use a publishable/anon key, never service_role/secret.",
+    )
+}
+if (releaseBuildRequested && releaseLocalMediaDownloadsEnabled && !mediaResolverBackendUrl.startsWith("https://")) {
+    throw GradleException(
+        "Release media saving requires an HTTPS media.resolver.backend.url or " +
+            "URLSAVER_MEDIA_RESOLVER_BACKEND_URL. Leave release.local.media.downloads.enabled unset/false " +
+            "when no public resolver is configured.",
     )
 }
 
@@ -144,7 +156,7 @@ android {
             buildConfigField("String", "INVITE_LINK_BASE_URL", buildConfigString(publicInviteLinkBaseUrl))
             buildConfigField("String", "MEDIA_RESOLVER_BACKEND_URL", buildConfigString(mediaResolverBackendUrl))
             buildConfigField("String", "CONTACT_SUPPORT_ENDPOINT_URL", buildConfigString(releaseContactSupportEndpointUrl))
-            buildConfigField("boolean", "ALLOW_LOCAL_MEDIA_DOWNLOADS", "false")
+            buildConfigField("boolean", "ALLOW_LOCAL_MEDIA_DOWNLOADS", releaseLocalMediaDownloadsEnabled.toString())
             buildConfigField("boolean", "AI_TRANSPARENCY_ENABLED", "false")
             buildConfigField("boolean", "CHATGPT_PERSONAL_LINK_SYNC_OPERATION_ENABLED", "false")
             proguardFiles(

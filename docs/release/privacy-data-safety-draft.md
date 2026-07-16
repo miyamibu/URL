@@ -53,7 +53,7 @@
 - If the submitted binary disables shared-tag cloud, do not use the cloud-enabled privacy answers.
 - If ads are re-enabled or billing behavior changes, stop and rewrite this draft before submission.
 - If any production value is missing, mark the submission as blocked rather than guessing.
-- If admin audit/support/moderation handling, ChatGPT sync boundaries, or media-resolver wording remain unresolved, keep release status `BLOCKED_INTERNAL` rather than treating this draft as ready.
+- If admin audit/support/moderation handling, ChatGPT sync boundaries, or media-resolver wording remain unresolved, keep release status `NO_GO_INTERNAL` rather than treating this draft as ready.
 
 ## Evidence From Current Repo
 

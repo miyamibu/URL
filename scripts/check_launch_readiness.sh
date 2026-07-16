@@ -18,11 +18,18 @@ else
   ok "working tree is clean"
 fi
 
-read -r ahead behind < <(git rev-list --left-right --count HEAD...origin/main 2>/dev/null || echo "0 0")
-if [[ "${behind:-0}" -ne 0 ]]; then
-  fail "current HEAD is behind origin/main by ${behind} commit(s)"
+current_branch="$(git symbolic-ref --short -q HEAD || echo "DETACHED")"
+if [[ "$current_branch" == "main" ]]; then
+  ok "current branch is main"
 else
-  ok "current HEAD is not behind origin/main"
+  fail "current branch is '$current_branch'; integrate the release candidate into main before launch"
+fi
+
+read -r ahead behind < <(git rev-list --left-right --count HEAD...origin/main 2>/dev/null || echo "0 0")
+if [[ "${ahead:-0}" -ne 0 || "${behind:-0}" -ne 0 ]]; then
+  fail "current main differs from origin/main (ahead=${ahead:-0}, behind=${behind:-0}); publish the reviewed release commit before launch"
+else
+  ok "current main matches origin/main"
 fi
 
 active_untracked="$(git ls-files --others --exclude-standard | rg '^(app/src/main/|ios/|web/|supabase/|scripts/)' | rg -v '^(app/build/|ios/build/)' || true)"

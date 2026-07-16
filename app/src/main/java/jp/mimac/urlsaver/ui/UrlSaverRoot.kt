@@ -76,7 +76,7 @@ import androidx.compose.material.icons.outlined.IosShare
 import androidx.compose.material.icons.outlined.LinkOff
 import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.outlined.Groups
-import androidx.compose.material.icons.outlined.MenuBook
+import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Sell
@@ -1570,7 +1570,7 @@ private fun MainScreen(
                                 showUsageGuide = true
                             }) {
                                 Icon(
-                                    Icons.Outlined.MenuBook,
+                                    Icons.AutoMirrored.Outlined.MenuBook,
                                     contentDescription = "使い方",
                                     modifier = Modifier.size(MainTopBarActionIconSize),
                                 )
@@ -2519,7 +2519,7 @@ private fun RinbamAppIcon() {
                 .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(11.dp)),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(Icons.Outlined.MenuBook, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+            Icon(Icons.AutoMirrored.Outlined.MenuBook, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
         }
         Text("りんばむ", style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }

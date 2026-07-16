@@ -4,14 +4,14 @@
 `1prompt.docx` のAI透明化/個人リンク記憶要求を、現在の repo 実装状態に落として追跡する。
 
 ## Context
-2026-07-10時点の作業では、DB破壊・store提出・deploy・production secret投入は行っていない。`REPO_GO` はrepo内の実装/検証が外部公開前に揃ったという意味であり、production deploy、OpenAI submission、store submission、production secret投入、store/live再確認はManual stepsとして分離する。MCP/Store/Supabase live は未検証の外部ゲートであり、ローカル実装/検証とは分離する。
+2026-07-16時点の作業では、DB破壊・store提出・deploy・production secret投入は行っていない。`REPO_GO` はrepo内の実装/検証が外部公開前に揃ったという意味であり、production deploy、OpenAI submission、store submission、production secret投入、store/live再確認はManual stepsとして分離する。MCP/Store/Supabase live は未検証の外部ゲートであり、ローカル実装/検証とは分離する。
 
 ## Inventory
 | Area | Status | Evidence | Remaining gate |
 |---|---|---|---|
 | AI-safe Export ZIP / JSON | IMPLEMENTED_LOCAL | Android `ExportRepository.kt`, iOS `ExportArchiveBuilder.swift` が `schema.json`, `README_FOR_AI.md`, `redaction_report.json`, `publicSafeId`, `aiEligible`, excerpt/redaction, `savedSnapshotNotice` を出力する。 | external share-sheet/store proof is Manual step |
 | Raw fetched body exclusion | IMPLEMENTED_LOCAL | Export documentから `fetchedBody` を除外し、`bodyExcerpt` と `bodySummary` に限定。 | future opt-in body export requires new approval |
-| Shared tag AI boundary | IMPLEMENTED_LOCAL | 共有タグ付きentryは `aiEligible=false` / `shared_tag_default_excluded`。Android ChatGPT sync は local-only tags を送る。 | iOS personal-link syncのlocal-only tag parity review |
+| Shared tag AI boundary | IMPLEMENTED_LOCAL | 共有タグ付きentryは `aiEligible=false` / `shared_tag_default_excluded`。Android/iOSのChatGPT sync operationは、eligibleなローカルURLについてもローカルタグ名だけを送る。 | MCP/Store/Supabase live は未検証の外部ゲート |
 | ChatGPT personal-link sync card | IMPLEMENTED_LOCAL | Android/iOS の共有タグプロフィール画面にカードを表示。外部接続未設定時は「現在は利用できません」と表示し、操作不可とする。 | MCP/Store/Supabase live は未検証の外部ゲート |
 | Preview / Receipt / Draft / Diff | IMPLEMENTED_LOCAL | Android RoomとiOS SQLiteにReceipt/Draft/Diffをローカル保存。Androidの `DEBUG && AI_TRANSPARENCY_ENABLED`、iOSの `DEBUG`/Info.plist flag に限定された Debug-only UI で、通常のRelease UIには出ない。Mock providerでdeterministic draft生成。Diff applyは明示confirm時のみ許可フィールドを更新。 | production AI provider wiring is future opt-in |
 | Read-only MCP descriptors | IMPLEMENTED_LOCAL | `web/admin/lib/rinbamMcp.ts` が `search`, `fetch`, `rinbam.list_tags`, `rinbam.get_ai_receipt`, `rinbam.list_recent_saved_links` を定義。annotationsはread-only固定。 | deployed URL / OpenAI review are Manual steps |
@@ -30,6 +30,7 @@
 ## Validation
 - Android: `./gradlew testDebugUnitTest --tests jp.mimac.urlsaver.ExportRepositoryTest --tests jp.mimac.urlsaver.AiTransparencyPolicyTest --tests jp.mimac.urlsaver.AiTransparencyRepositoryTest --tests jp.mimac.urlsaver.LinkDeathInsuranceContractTest`
 - iOS: `xcodebuild ... build-for-testing` and `test-without-building` on a dedicated simulator.
+- iOS shared-tag boundary: `SharedTagStoreTests/testChatGptPersonalLinkPolicyKeepsLocalLinksAndExcludesSharedOnlyLinks`.
 - Web: `npm run typecheck` under `web/admin`
 - MCP static: `python3 scripts/verify_mcp_contract.py`
 

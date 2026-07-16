@@ -170,4 +170,62 @@ final class SharedTagStoreTests: XCTestCase {
         let entryIDs = try store.loadEntryIDsForTag(authUserID: "user-1", remoteTagID: "tag-1")
         XCTAssertEqual(entryIDs, [1])
     }
+
+    func testChatGptPersonalLinkPolicyKeepsLocalLinksAndExcludesSharedOnlyLinks() throws {
+        let local = try repository.saveFromResolvedURL("https://example.com/local-link")
+        let localEntryID = try XCTUnwrap(local.entryID)
+        let localEntry = try XCTUnwrap(repository.loadEntry(id: localEntryID))
+
+        try store.applySnapshot(
+            authUserID: "user-1",
+            snapshot: PullSharedTagSnapshotResponse(
+                pulledAt: "2026-04-23T10:00:00Z",
+                normalizationVersion: 1,
+                tags: [
+                    RemoteSharedTag(
+                        id: "tag-1",
+                        name: "共有リンク",
+                        createdAt: "2026-04-23T09:00:00Z",
+                        updatedAt: "2026-04-23T09:30:00Z",
+                        deletedAt: nil
+                    )
+                ],
+                members: [
+                    RemoteSharedTagMember(
+                        tagID: "tag-1",
+                        userID: "user-1",
+                        displayName: nil,
+                        role: "owner",
+                        status: "active",
+                        createdAt: "2026-04-23T09:00:00Z",
+                        updatedAt: "2026-04-23T09:30:00Z"
+                    )
+                ],
+                urls: [
+                    RemoteSharedTagURL(
+                        id: "url-1",
+                        tagID: "tag-1",
+                        rawURL: "https://example.com/shared-link",
+                        normalizedURL: "https://example.com/shared-link",
+                        deletedAt: nil
+                    )
+                ]
+            )
+        )
+
+        let sharedEntry = try XCTUnwrap(
+            try repository.loadChatGptPersonalLinkSnapshot().first {
+                $0.normalizedURL == "https://example.com/shared-link"
+            }
+        )
+
+        let localEligibility = ChatGptPersonalLinkSyncPolicy.eligibility(for: localEntry)
+        XCTAssertTrue(localEligibility.eligible)
+        XCTAssertTrue(localEligibility.reasons.isEmpty)
+
+        let sharedEligibility = ChatGptPersonalLinkSyncPolicy.eligibility(for: sharedEntry)
+        XCTAssertFalse(sharedEligibility.eligible)
+        XCTAssertTrue(sharedEligibility.reasons.contains("local_provenance_required"))
+        XCTAssertTrue(sharedEligibility.reasons.contains("shared_tag_allocation"))
+    }
 }

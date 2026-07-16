@@ -59,7 +59,7 @@ Define production secret names and flag handling without committing real values.
 
 ## Android / iOS Build Flags
 
-- Android release keeps `ALLOW_LOCAL_MEDIA_DOWNLOADS=false`.
+- Android release enables `ALLOW_LOCAL_MEDIA_DOWNLOADS` only when the release media resolver URL is configured; otherwise it remains false and the media-save action is not exposed. The current configured release candidate has the resolver URL and therefore enables media saving.
 - Android release keeps AI transparency off.
 - iOS local-only config keeps shared tag cloud disabled unless an approved cloud-sharing build explicitly passes ignored secret config.
 

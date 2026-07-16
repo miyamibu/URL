@@ -1,18 +1,20 @@
 # Release / Ops Readiness Baseline 2026-07-09
 
 ## Goal
-Track the current `1.0.14 (15)` repo readiness without mixing it with the historical `1.0.11` store submission log.
+Track the current `1.0.14` repo readiness without mixing it with the historical `1.0.11` store submission log.
 
 ## Current Status
 `REPO_GO` for the 2026-07-10 repo-local AI-safe Export / AI Receipt-Draft-Diff / read-only MCP / release hygiene remediation scope.
 
 This is a repo-local readiness classification only. Production deploy, production MCP/OAuth registration, OpenAI submission, App Store / Play Console submission, production secret input, and store/live recheck are Manual steps and are not repo-internal blockers.
 
-The older table below remains a broad ops baseline and historical risk ledger. Do not use its store/live/public-url rows as current proof for `1.0.14 (15)`, and do not mix those external checks into the repo-local `REPO_GO` classification.
+The older table below remains a broad ops baseline and historical risk ledger. Do not use its store/live/public-url rows as current proof for Android `1.0.14 (17)` / iOS `1.0.14 (15)`, and do not mix those external checks into the repo-local `REPO_GO` classification.
 
 ## Source Snapshot
-- Android: `jp.miyamibu.urlalbum`, `versionName = "1.0.14"`, `versionCode = 15`.
+- Android: `jp.miyamibu.urlalbum`, `versionName = "1.0.14"`, `versionCode = 17`.
 - iOS: `com.mibu.codebridge.ios`, `CFBundleShortVersionString = 1.0.14`, `CFBundleVersion = 15`.
+- Current release evidence was rechecked on 2026-07-16 against Android versionCode 17 / iOS build 15. The signed candidates are not store-submitted by this repo task.
+- Readiness must be run from the reviewed `main` branch after the release candidate is integrated; a feature branch is not a launch baseline.
 - iOS default config: tracked `ios/Config/URLSaverSecrets.local-only.xcconfig`; cloud-sharing builds must pass ignored `ios/Config/URLSaverSecrets.xcconfig` explicitly.
 
 ## P1 Blockers
