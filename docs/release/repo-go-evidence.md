@@ -2,7 +2,7 @@
 
 ## Final status: REPO_GO
 
-This file records repo-local evidence refreshed on 2026-07-16. The reviewed release baseline is Android `versionCode=17` / iOS `build=15`, with code/config/test changes carried by the current working change set after commit `f819101c`. `REPO_GO` means the repository implementation, docs, scripts, tests, build checks, and release hygiene are ready for pre-publication operations. It does not mean production deploy, store submission, OpenAI submission, production secret entry, or live/store verification is complete.
+This file records repo-local evidence refreshed on 2026-07-16. The reviewed release baseline is Android `versionCode=17` / iOS `build=15`, with code/config/test changes carried by commit `e923ea0d`. `REPO_GO` means the repository implementation, docs, scripts, tests, build checks, and release hygiene are ready for pre-publication operations. It does not mean production deploy, store submission, OpenAI submission, production secret entry, or live/store verification is complete.
 
 ## Verified Areas
 
