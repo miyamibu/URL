@@ -2,7 +2,7 @@
 
 ## Final status: REPO_GO
 
-This file records repo-local evidence refreshed on 2026-07-16. The reviewed release baseline is Android `versionCode=17` / iOS `build=15`; the exact source commit must be recorded again after the candidate is integrated into `main`. `REPO_GO` means the repository implementation, docs, scripts, tests, build checks, and release hygiene are ready for pre-publication operations. It does not mean production deploy, store submission, OpenAI submission, production secret entry, or live/store verification is complete.
+This file records repo-local evidence refreshed on 2026-07-16. The reviewed release baseline is Android `versionCode=17` / iOS `build=15`, with code/config/test changes carried by commit `f819101c` before this evidence-only update. `REPO_GO` means the repository implementation, docs, scripts, tests, build checks, and release hygiene are ready for pre-publication operations. It does not mean production deploy, store submission, OpenAI submission, production secret entry, or live/store verification is complete.
 
 ## Verified Areas
 
@@ -14,6 +14,7 @@ This file records repo-local evidence refreshed on 2026-07-16. The reviewed rele
 | Physical iPhone UI | PASS_WITH_CURRENT_APPIUM_E2E | Appium/XCUITest + RemoteXPC verified current build15 (`1.0.14`) of bundle `com.mibu.codebridge.ios` on physical UDID `00008101-00066D96340A001E`. The session opened an existing card's detail, opened and closed the 7-page media sheet, returned home, opened the manual URL form, saved a URL, and observed the normalized `example.com` card on home. Evidence: `artifacts/ui-review/2026-07-15/iphone-appium-e2e/`; prior navigation evidence remains under `artifacts/ui-review/2026-07-13/ios-appium/`. |
 | Physical Android latest candidate | BLOCKED | The canonical Pixel 9a was last observed on Play-managed `versionCode=16`; the v17 candidate is not Play-signature compatible for a data-preserving direct install. ADB is currently not connected, and Play Internal update plus post-update UI/data proof remain pending until the upload-key reset activates at `2026-07-17 07:29:38 UTC`. |
 | Release flag contract | PASS | Android release derives local media saving from a configured HTTPS resolver, keeps AI transparency off, keeps ChatGPT personal-link operation off, and keeps shared-tag cloud mode explicit. iOS shared-tag and AI flags remain separately controlled by xcconfig/Info.plist. |
+| Media resolver health | PASS_WITH_EXTERNAL_BACKEND | `https://rinbam-media-resolver.onrender.com/health` returned HTTP 200 on 2026-07-16; the current release BuildConfig contains the same HTTPS host and `ALLOW_LOCAL_MEDIA_DOWNLOADS=true`. Resolver local contract tests passed 24/24. |
 | MCP contract | PASS | `python3 scripts/verify_mcp_contract.py` passed. |
 | Web/admin | PASS | `cd web/admin && npm run typecheck` passed. |
 | Mobile UI contract | PASS | `python3 scripts/verify_mobile_ui_contract.py` passed. |
