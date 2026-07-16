@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { assertWritable, requireAdmin } from "@/lib/auth";
+import { recordAdminAudit } from "@/lib/audit";
 import { createServiceSupabaseClient } from "@/lib/supabase";
 
 function asErrorResponse(error: unknown): Response {
@@ -44,6 +45,13 @@ export async function POST(
       }
       throw error;
     }
+
+    await recordAdminAudit({
+      adminUserId: admin.id,
+      action: "promo_code_revoked",
+      reason,
+      afterValue: { codeId: id, status: "revoked" },
+    });
 
     return NextResponse.json({ ok: true });
   } catch (error) {

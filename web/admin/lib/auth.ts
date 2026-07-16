@@ -91,3 +91,9 @@ export function assertCanSearchUsers(admin: AdminContext) {
     throw new Response("この管理者ロールではユーザー検索できません", { status: 403 });
   }
 }
+
+export function assertCanModerate(admin: AdminContext) {
+  if (admin.role !== "owner" && admin.role !== "moderator") {
+    throw new Response("この管理者ロールでは管理運用を確認できません", { status: 403 });
+  }
+}

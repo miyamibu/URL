@@ -267,6 +267,38 @@ th {
   line-height: 1.4;
 }
 
+select {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  background: #fff;
+  color: var(--text);
+}
+
+.operationList {
+  display: grid;
+  gap: 12px;
+}
+
+.operationItem {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.operationItem p {
+  margin: 8px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.operationActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 @media (max-width: 820px) {
   .grid,
   .topbar,

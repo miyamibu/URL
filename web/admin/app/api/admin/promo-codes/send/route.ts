@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { assertWritable, requireAdmin } from "@/lib/auth";
+import { recordAdminAudit } from "@/lib/audit";
 import { normalizedEmail } from "@/lib/env";
 import { generatePromoCode, promoCodeHash, promoLinkForCode, sendPromoEmail } from "@/lib/promo";
 import { createServiceSupabaseClient } from "@/lib/supabase";
@@ -132,6 +133,13 @@ export async function POST(request: NextRequest) {
         { status: 503 },
       );
     }
+
+    await recordAdminAudit({
+      adminUserId: admin.id,
+      action: "promo_code_issued_and_sent",
+      reason: note,
+      afterValue: { codeId, expiresAt, deliveryStatus: "sent" },
+    });
 
     return NextResponse.json({
       id: codeId,
