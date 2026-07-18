@@ -872,6 +872,8 @@ final class ExportArchiveBuilderTests: XCTestCase {
         XCTAssertFalse(source.contains("ScrollView(.horizontal, showsIndicators: true)"))
         XCTAssertTrue(source.contains("chatGptPreviewTask?.cancel()"))
         XCTAssertTrue(source.contains("chatGptPreparationTask?.cancel()"))
+        XCTAssertTrue(source.contains("scheduleChatGptTemporaryFileCleanup()"))
+        XCTAssertTrue(source.contains("60_000_000_000"))
         XCTAssertTrue(source.contains("preparedChatGptGenerationID == chatGptGenerationID"))
         XCTAssertTrue(source.contains("invalidatePreparedChatGptFile(force: true)"))
         XCTAssertTrue(source.contains("rinbam-chatgpt-task-"))

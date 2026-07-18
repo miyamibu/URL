@@ -66,6 +66,7 @@ struct ExportSheet: View {
     @State private var chatGptGenerationID = UUID()
     @State private var chatGptPreviewTask: Task<Void, Never>?
     @State private var chatGptPreparationTask: Task<Void, Never>?
+    @State private var chatGptFileCleanupTask: Task<Void, Never>?
     @State private var hasConfirmedChatGptPreview = false
     @State private var preparedChatGptFileURL: URL?
     @State private var preparedChatGptEntryCount: Int?
@@ -195,6 +196,11 @@ struct ExportSheet: View {
             shareItems = []
             isSharingPreparedChatGptFile = false
             if shouldDeleteChatGptFile {
+                // ChatGPT may finish importing the file after the system share
+                // sheet has dismissed. Keep the temporary ZIP alive briefly so
+                // the recipient cannot race the cleanup and open an empty chat.
+                scheduleChatGptTemporaryFileCleanup()
+            } else {
                 invalidatePreparedChatGptFile(force: true)
             }
         }) {
@@ -218,7 +224,9 @@ struct ExportSheet: View {
             if !isShowingFileExporter && !isShowingShareSheet {
                 chatGptPreviewTask?.cancel()
                 chatGptPreparationTask?.cancel()
-                invalidatePreparedChatGptFile(force: true)
+                if chatGptFileCleanupTask == nil {
+                    invalidatePreparedChatGptFile(force: true)
+                }
             }
         }
     }
@@ -1033,6 +1041,8 @@ struct ExportSheet: View {
 
     private func invalidatePreparedChatGptFile(force: Bool = false) {
         guard force || !isShowingShareSheet else { return }
+        chatGptFileCleanupTask?.cancel()
+        chatGptFileCleanupTask = nil
         if let preparedChatGptFileURL {
             removeChatGptTemporaryFile(at: preparedChatGptFileURL)
         }
@@ -1042,6 +1052,21 @@ struct ExportSheet: View {
         preparedChatGptSelectedTagIDs = []
         preparedChatGptGenerationID = nil
         successMessage = nil
+    }
+
+    private func scheduleChatGptTemporaryFileCleanup() {
+        chatGptFileCleanupTask?.cancel()
+        guard let preparedChatGptFileURL else { return }
+        chatGptFileCleanupTask = Task { @MainActor in
+            do {
+                try await Task.sleep(nanoseconds: 60_000_000_000)
+            } catch {
+                return
+            }
+            guard self.preparedChatGptFileURL == preparedChatGptFileURL else { return }
+            self.chatGptFileCleanupTask = nil
+            self.invalidatePreparedChatGptFile(force: true)
+        }
     }
 
     private func removeChatGptTemporaryFile(at fileURL: URL) {

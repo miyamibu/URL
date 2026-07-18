@@ -12,7 +12,7 @@ This record freezes the latest Chapter 13 manual ChatGPT handoff evidence withou
 - The OS delivered `application/zip` directly to `com.openai.chatgpt/.MainActivity`. The normal composer showed `rinbam-chatgpt-20260718-203850.zip`, an empty question field, and an enabled send button. No question was entered and no send action was performed.
 - Evidence directory: `artifacts/device-verification/2026-07-18-android-ch13/`.
 
-## iOS current-source verification
+## iOS current-source verification (2026-07-18 initial run)
 
 - Device: iPhone 12, CoreDevice identifier `E9D5CA0F-0729-5DFD-94B9-EFE2AB589C0E`.
 - Canonical bundle: `com.mibu.codebridge.ios`.
@@ -21,6 +21,14 @@ This record freezes the latest Chapter 13 manual ChatGPT handoff evidence withou
 - Verified on the current source: home → export → `ChatGPTに聞く` → local tag selection → preview with `対象 3件` / `除外 0件` → redaction/disclosure review → explicit confirmation → ZIP creation (`3件のChatGPT用ZIPを作成しました`) → iOS share-sheet display.
 - Evidence directory: `artifacts/device-verification/2026-07-18-ios-ch13/` (`07-home*`, `08-preview*`, `09-after-zip*`, `10-share-sheet*`, and `11-after-share-close-source.xml`).
 - `xcrun devicectl device info apps` showed only `com.mibu.codebridge.ios` among the relevant apps; `com.openai.chatgpt` is not installed on this iPhone. Therefore selecting ChatGPT in the share sheet, attaching the ZIP in ChatGPT, confirming an empty question field, and the intentionally unsent state remain `NOT VERIFIED on physical iPhone` due to the external app not being installed.
+
+## iOS current-source retest (2026-07-19)
+
+- The user-provided ChatGPT installation was present in the iOS share-target list as `ChatGPT`; the actual app bundle reported by Appium was `com.openai.chat`.
+- After fixing the temporary-file cleanup race, the current source was rebuilt and signed with Apple Development, then overwrite-installed on the same physical iPhone without clearing app data.
+- Appium/WDA verified: `ChatGPTに聞く` → local tag `統合確認-20260710` → `対象 3件` / `除外 0件` → explicit disclosure confirmation → ZIP creation → iOS share sheet → `ChatGPT` selection.
+- ChatGPT opened its normal new-chat composer with a visible `ZIP` attachment card named `Rinbam Chatgpt 20260719 012406`; the question field remained empty and no send action was performed.
+- Evidence directory: `artifacts/device-verification/2026-07-19-ios-ch13/` (`02-share-sheet*` and `03-chatgpt-composer*`).
 
 ## Public Privacy deployment
 
