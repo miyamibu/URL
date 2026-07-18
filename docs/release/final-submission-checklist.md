@@ -4,15 +4,15 @@
 2026-06-28 historical submission log; current source re-baseline added 2026-07-09.
 
 ## Goal
-この文書の下部に残る `1.0.11` の表は、2026-06-27/28 の Google Play / App Store 提出時点の履歴ログとして扱う。現在の repo source は Android `1.0.14 (versionCode=17)` / iOS `1.0.14 (build=15)` であり、この履歴ログだけでは次回提出可否を判断しない。
+この文書の下部に残る `1.0.11` の表は、2026-06-27/28 の Google Play / App Store 提出時点の履歴ログとして扱う。現在の repo source は Android `1.0.15 (versionCode=18)` / iOS `1.0.15 (build=16)` であり、この履歴ログだけでは次回提出可否を判断しない。
 
 ## Current Source Snapshot (2026-07-16 Repo Gate)
-- Android source: `versionName = "1.0.14"`, `versionCode = 17`, package `jp.miyamibu.urlalbum`.
-- iOS source: `CFBundleShortVersionString = 1.0.14`, `CFBundleVersion = 15`, bundle `com.mibu.codebridge.ios`.
+- Android source: `versionName = "1.0.15"`, `versionCode = 18`, package `jp.miyamibu.urlalbum`.
+- iOS source: `CFBundleShortVersionString = 1.0.15`, `CFBundleVersion = 16`, bundle `com.mibu.codebridge.ios`.
 - Current release/ops readiness tracker: `docs/release/release-ops-readiness-2026-07-09.md`.
-- Current repo gate is `REPO_GO` when local code, docs, scripts, tests, build, release hygiene, and reviewed-main integration pass. This is a repo-only status, not store/public/OpenAI publication.
-- AI-safe export/MCP source contracts are tracked under `docs/ai/`; these local docs do not mean production MCP deployment, production OAuth registration, OpenAI submission, store submission, production secret entry, or store/live recheck is complete.
-- The `1.0.11` store submission, public URL, screenshot, signing, and console rows below are not current proof for Android `1.0.14 (17)` / iOS `1.0.14 (15)`.
+- Current working-tree gate remains `NO_GO_INTERNAL` for final submission, although the 2026-07-18 manual ChatGPT handoff local implementation, docs, tests, Release builds, pre-transfer confirmation, disclosure source review, and physical-iPhone-to-ChatGPT-composer proof pass. Changes are uncommitted/unpushed; Android physical E2E is not verified; Android AAB is unsigned; iOS distribution signing, store/public/OpenAI publication, and live recheck are not complete.
+- AI-safe export, manual ChatGPT handoff, and MCP source contracts are tracked separately under `docs/ai/`. Manual handoff is local ZIP + OS share with no question/API/OAuth; those local docs do not mean production MCP deployment, production OAuth registration, OpenAI submission, store submission, production secret entry, or store/live recheck is complete.
+- The `1.0.11` store submission, public URL, screenshot, signing, and console rows below are not current proof for Android `1.0.15 (18)` / iOS `1.0.15 (16)`.
 - Rows below that say `DONE` are historical `1.0.11` evidence unless the row explicitly names the 2026-07-10 repo gate. Do not use them as `LAUNCH_GO` evidence for the current source snapshot without re-running the manual launch checklist.
 
 ## Manual Steps Not Done By Codex
@@ -36,12 +36,12 @@
 - Apple account deletion: apps with account creation must let users initiate deletion in app.
 
 ## Historical Release Mode Finding (2026-06-28)
-Historical `1.0.11` repo snapshot was aligned to cloud-enabled submission at that time. This is not proof that current `1.0.14 (15)` production secrets or external consoles have been rechecked.
+Historical `1.0.11` repo snapshot was aligned to cloud-enabled submission at that time. This is not proof that current `1.0.15 (16)` production secrets or external consoles have been rechecked.
 
 - Android release config had `release.shared.tag.cloud.enabled=true` and production Supabase values in local release configuration for that historical submission.
 - iOS Release build settings read `ios/Config/URLSaverSecrets.xcconfig` and showed `URLSAVER_SHARED_TAG_CLOUD_ENABLED=true` plus production Supabase/contact-support values for that historical submission.
 - Ads, external analytics, and third-party crash reporting remain disabled. Google Play Billing / StoreKit subscriptions are enabled for paid plans.
-- Store forms must disclose account sign-in, shared-tag cloud sync/collaboration, invite sync, contact support processing, and account deletion.
+- Store forms must disclose account sign-in, shared-tag cloud sync/collaboration, invite sync, contact support processing, and account deletion. Manual user-directed OS sharing must be reviewed against the current platform definitions for the exact submitted binary; do not guess its collection/sharing classification.
 
 The repo-side cloud-enabled alignment is fixed. Google Play and App Store Connect submissions for `1.0.11` are now in review/waiting-for-review. Remaining follow-up risks are Android screenshot refresh if the listing is later replaced, Play App Signing SHA-256 for final App Links, and any reviewer-requested test-account details.
 
@@ -116,7 +116,7 @@ The repo-side cloud-enabled alignment is fixed. Google Play and App Store Connec
 | Release keystore/upload key | DONE | Existing upload keystore under `/Users/mimac/.urlsaver-signing/` produced verified signed AAB. | Keep secret material outside repo/chat. |
 | Apple Developer Program / Team | DONE | Updated Apple Developer agreement was accepted by the account holder; App Store Connect accepted the `1.0.11 (11)` submission under Team ID `8R3B5675ZJ`. | Monitor App Review result. |
 | App Store Connect record/SKU | DONE | App Store Connect shows `りんばむ` app record, Apple ID `6771251450`; submission ID `428bdf26-5233-47e2-89a2-c3925f32994b` is `審査待ち`. | Monitor App Review result. |
-| Production Supabase | HISTORICAL_DONE_FOR_1.0.11 | Historical Android/iOS local release settings contained production Supabase values; values are intentionally not printed in this doc. Current `1.0.14 (15)` launch still requires owner-controlled secret entry and recheck. | Follow `docs/release/production-secrets-and-flags.md` before marking `LAUNCH_GO`. |
+| Production Supabase | HISTORICAL_DONE_FOR_1.0.11 | Historical Android/iOS local release settings contained production Supabase values; values are intentionally not printed in this doc. Current `1.0.15 (16)` launch still requires owner-controlled secret entry and recheck. | Follow `docs/release/production-secrets-and-flags.md` before marking `LAUNCH_GO`. |
 | Public HTTPS deployment | DONE_PUBLIC_VERIFIED | Vercel serves `https://miyamibu.xyz`; account-deletion, privacy, and `.well-known` checks pass in `./scripts/verify_public_web_release.sh` on 2026-06-29. | Re-run public URL verification after deployment or release-copy changes. |
 | Final release screenshots | PARTIAL | iOS cloud-enabled screenshot captured; Android AVD capture blocked internally. | Decide whether existing Play screenshots can remain or capture later on a working emulator/device. |
 | Chrome console automation | DONE | Chrome launched and Play Console/App Store Connect were reachable. Play production release `11 (1.0.11)` was submitted for review on 2026-06-27. App Store Connect `1.0.11 (11)` was submitted on 2026-06-28. | Monitor both store review results. |
@@ -134,7 +134,7 @@ The repo-side cloud-enabled alignment is fixed. Google Play and App Store Connec
 | Android screenshot set | MANUAL_STEP | Older release-equivalent screenshots with demo data are saved under `artifacts/store-assets/screenshots/2026-05-13/android/`, but they do not prove cloud-enabled `1.0.11`; AVD launch failed on 2026-06-27. |
 | iOS simulator build | DONE | Debug simulator build installed and launched on `URLSaverStoreShot-iOS26-5` on 2026-06-27 for cloud-enabled `1.0.11` screenshot capture. |
 | iOS tests | DONE | `xcodebuild ... test` passed on 2026-05-11. |
-| iOS release settings | HISTORICAL_DONE_FOR_1.0.11 | `xcodebuild ... -configuration Release -showBuildSettings` on 2026-06-27 reported `URLSAVER_SHARED_TAG_CLOUD_ENABLED=true` and production Supabase/contact-support values for the historical `1.0.11` submission. Current `1.0.14 (15)` launch requires a fresh owner recheck. |
+| iOS release settings | HISTORICAL_DONE_FOR_1.0.11 | `xcodebuild ... -configuration Release -showBuildSettings` on 2026-06-27 reported `URLSAVER_SHARED_TAG_CLOUD_ENABLED=true` and production Supabase/contact-support values for the historical `1.0.11` submission. Current `1.0.15 (16)` launch requires a fresh owner recheck. |
 | iOS release-style build | DONE | `xcodebuild ... -configuration Release -destination generic/platform=iOS CODE_SIGNING_ALLOWED=NO build` passed on 2026-06-27. |
 | iOS archive/export/upload | DONE | Archive `build/archives/URLSaveriOS-1.0.11-11-20260628-0644.xcarchive` uploaded successfully on 2026-06-28; App Store Connect submission `428bdf26-5233-47e2-89a2-c3925f32994b` is `審査待ち`. |
 | iOS screenshot | PARTIAL | A simulator screenshot was captured from a build with `SharedTagCloudEnabled=true`; the temporary artifact was intentionally left out of git. Full store screenshot set still needs approval if replacing screenshots. |

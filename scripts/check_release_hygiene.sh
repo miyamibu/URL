@@ -88,12 +88,18 @@ grep -q 'buildConfigField("boolean", "ADS_ENABLED", "false")' app/build.gradle.k
   && pass "release ADS_ENABLED=false is configured" \
   || fail "release ADS_ENABLED=false is missing"
 
+if rg -n 'com\.google\.android\.gms\.ads|play-services-ads' app/src/main app/build.gradle.kts >/dev/null 2>&1; then
+  fail "NO_GO release source still references Google Mobile Ads"
+else
+  pass "release source has no Google Mobile Ads dependency or type reference"
+fi
+
 grep -q 'tools:node="remove"' app/src/release/AndroidManifest.xml \
   && pass "release manifest removes debug/ad-only declarations" \
   || fail "release manifest removal rules are missing"
 
 grep -q 'CFBundleShortVersionString' ios/URLSaveriOS/Info.plist \
-  && grep -q '<string>1.0.14</string>' ios/URLSaveriOS/Info.plist \
+  && grep -q '<string>1.0.15</string>' ios/URLSaveriOS/Info.plist \
   && pass "iOS version baseline is present" \
   || fail "iOS version baseline check failed"
 

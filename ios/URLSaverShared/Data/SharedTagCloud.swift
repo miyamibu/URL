@@ -1443,6 +1443,75 @@ final class SharedTagStore: @unchecked Sendable {
         }
     }
 
+    func loadVisibleTagsByNormalizedURL(
+        authUserID: String,
+        normalizedURLs: Set<String>
+    ) throws -> [String: [SharedTagSummary]] {
+        guard !normalizedURLs.isEmpty else { return [:] }
+        let orderedURLs = normalizedURLs.sorted()
+        let activeURLCounts = try database.fetchMany(
+            sql: """
+            SELECT tag_remote_id, COUNT(*)
+            FROM shared_tag_urls
+            WHERE auth_user_id = ?
+              AND deleted_at IS NULL
+            GROUP BY tag_remote_id;
+            """,
+            binds: [sql(authUserID)]
+        ) { statement in
+            (
+                remoteTagID: Self.textColumn(statement, index: 0) ?? "",
+                count: Int(sqlite3_column_int(statement, 1))
+            )
+        }
+        let activeURLCountByTagID = Dictionary(
+            uniqueKeysWithValues: activeURLCounts.map { ($0.remoteTagID, $0.count) }
+        )
+        var rows: [(normalizedURL: String, tag: SharedTagSummary)] = []
+        for chunkStart in stride(from: 0, to: orderedURLs.count, by: 500) {
+            let chunkEnd = min(chunkStart + 500, orderedURLs.count)
+            let chunk = Array(orderedURLs[chunkStart..<chunkEnd])
+            let placeholders = Array(repeating: "?", count: chunk.count).joined(separator: ", ")
+            rows += try database.fetchMany(
+                sql: """
+                SELECT
+                    shared_tag_urls.normalized_url,
+                    shared_tags.remote_tag_id,
+                    shared_tags.name,
+                    shared_tags.current_user_role,
+                    shared_tags.last_synced_at
+                FROM shared_tags
+                INNER JOIN shared_tag_urls
+                    ON shared_tag_urls.auth_user_id = shared_tags.auth_user_id
+                   AND shared_tag_urls.tag_remote_id = shared_tags.remote_tag_id
+                WHERE shared_tags.auth_user_id = ?
+                  AND shared_tags.deleted_at IS NULL
+                  AND shared_tag_urls.deleted_at IS NULL
+                  AND shared_tag_urls.normalized_url IN (\(placeholders))
+                ORDER BY shared_tag_urls.normalized_url ASC, shared_tags.name COLLATE NOCASE ASC;
+                """,
+                binds: [sql(authUserID)] + chunk.map(sql)
+            ) { statement in
+                let remoteTagID = Self.textColumn(statement, index: 1) ?? ""
+                return (
+                    normalizedURL: Self.textColumn(statement, index: 0) ?? "",
+                    tag: SharedTagSummary(
+                        remoteTagID: remoteTagID,
+                        name: Self.textColumn(statement, index: 2) ?? "",
+                        currentUserRole: Self.textColumn(statement, index: 3).flatMap(SharedTagMemberRole.init(rawValue:)),
+                        activeURLCount: activeURLCountByTagID[remoteTagID] ?? 0,
+                        lastSyncedAt: Self.dateColumn(statement, index: 4)
+                    )
+                )
+            }
+        }
+        var result: [String: [SharedTagSummary]] = [:]
+        for row in rows {
+            result[row.normalizedURL, default: []].append(row.tag)
+        }
+        return result
+    }
+
     func loadEntryIDsForTag(authUserID: String, remoteTagID: String) throws -> [Int64] {
         try database.fetchMany(
             sql: """
@@ -2019,6 +2088,21 @@ final class SharedTagCloudService: @unchecked Sendable {
         )
     }
 
+    func loadVisibleTagsByEntryID(entries: [URLRecord]) throws -> [Int64: [SharedTagSummary]] {
+        guard let session = try sessionStore.load() else {
+            return Dictionary(uniqueKeysWithValues: entries.map { ($0.id, []) })
+        }
+        let tagsByNormalizedURL = try store.loadVisibleTagsByNormalizedURL(
+            authUserID: session.authUserID,
+            normalizedURLs: Set(entries.map(\.normalizedURL))
+        )
+        return Dictionary(
+            uniqueKeysWithValues: entries.map { entry in
+                (entry.id, tagsByNormalizedURL[entry.normalizedURL] ?? [])
+            }
+        )
+    }
+
     func loadEntriesForTag(remoteTagID: String) throws -> [URLRecord] {
         guard let session = try sessionStore.load() else { return [] }
         let ids = try store.loadEntryIDsForTag(authUserID: session.authUserID, remoteTagID: remoteTagID)
@@ -2264,7 +2348,14 @@ final class SharedTagCloudService: @unchecked Sendable {
     }
 
     func syncCurrentSession() async -> Bool {
-        guard config.isConfigured, let session = try? sessionStore.load() else { return true }
+        let session: SharedTagAuthSession?
+        do {
+            session = try sessionStore.load()
+        } catch {
+            return false
+        }
+        guard let session else { return true }
+        guard config.isConfigured else { return false }
         do {
             try await refreshLocalState(session: session)
             return true

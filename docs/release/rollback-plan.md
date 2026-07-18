@@ -9,6 +9,13 @@ Disable unsafe AI/MCP/store release behavior quickly without deleting user data.
 - Confirm normal UI no longer shows AI entry.
 - Do not delete user saved URLs.
 
+## Disable Manual ChatGPT Handoff
+
+- Manual `ChatGPTに聞く` is an app-build feature, not the MCP/provider flag. Disabling `URLSAVER_MCP_ENABLED` does not remove this local ZIP + OS-share entry.
+- If its preview, redaction, confirmation, or archive contract is unsafe, halt the Android internal rollout / expire the iOS TestFlight build and return testers to a known-good build. Removing the entry requires an approved replacement app build unless an independently verified remote flag is added later.
+- The manual ChatGPT handoff currently has no independently verified remote kill switch. Do not claim it can be disabled through MCP/provider flags. For a privacy or attachment incident, stop the affected rollout, expire the affected TestFlight build where possible, and ship an approved replacement build before resuming.
+- A ZIP already sent to ChatGPT or another recipient cannot be recalled by disabling MCP. Follow the recipient's deletion path and the incident process; do not delete local user data as a substitute.
+
 ## Disable MCP Flag
 
 1. Set `URLSAVER_MCP_ENABLED=false`.

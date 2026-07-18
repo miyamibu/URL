@@ -7,7 +7,7 @@ Prepare Android internal testing without Codex uploading to Play Console.
 
 - [ ] Check `app/build.gradle.kts`.
   - Expected: `applicationId = "jp.miyamibu.urlalbum"`.
-  - Expected current source: `versionName = "1.0.14"`, `versionCode = 17`.
+  - Expected current source: `versionName = "1.0.15"`, `versionCode = 18`.
   - Stop if: package name changes or version is not the intended release.
 
 ## Signing Config
@@ -50,6 +50,7 @@ Required highlights:
 - upgrade from previous build
 - share-sheet save
 - Export and AI-safe Export content inspection
+- manual `ChatGPTに聞く` preview/redaction/confirmation and ChatGPT-direct-to-chooser fallback
 - shared tag default AI exclusion
 - feature flag off
 - local/account deletion clears AI receipt/draft
@@ -59,7 +60,7 @@ Required highlights:
 
 - Confirm Privacy Policy URL is public and current.
 - Confirm Data Safety includes account data, saved URLs, tags, shared-tag cloud sync if enabled, contact support, purchases/subscriptions where applicable.
-- Confirm AI test functionality is disclosed as selected saved URLs only, with shared tags excluded by default.
+- Confirm manual `ChatGPTに聞く` is disclosed as user-directed local ZIP + OS share with shared tags excluded, known-pattern redaction, unknown-secret confirmation, and no API/OAuth. Review current Data Safety definitions for the exact binary instead of guessing the form classification.
 - Stop if Data Safety says no collection while cloud sync/contact support/subscriptions are enabled.
 
 ## Ads and Data Collection
@@ -71,13 +72,14 @@ Required highlights:
 ## Feature Flag Default Off
 
 - Expected: `AI_TRANSPARENCY_ENABLED=false` for release.
-- Expected: normal UI has no public AI entry.
-- Stop if default release build exposes unapproved AI UI.
+- Expected: AI Transparency/Debug and unconfigured provider sync are not actionable. The separately documented manual `ChatGPTに聞く` export entry may remain visible.
+- Stop if default release build exposes unapproved Debug/provider UI or manual handoff bypasses preview/confirmation.
 
 ## AI-safe Export
 
 - Inspect `manifest.json`, `entries.jsonl`, `schema.json`, `README_FOR_AI.md`, `redaction_report.json`.
-- Stop if raw body, prompt, token, refresh token, attachment, or raw DB id appears.
+- Confirm known sensitive patterns are masked in every output field, preview equals ZIP, and unknown-secret warning/explicit confirmation is enforced.
+- Stop if raw body/app-owned credential/raw DB id appears, a known pattern remains, or unconfirmed sharing succeeds.
 
 ## Rollback To Previous Internal Build
 
@@ -95,4 +97,4 @@ Manual Play Console action:
 - Wrong package/signing.
 - raw body/prompt/token in Export/MCP/logs.
 - Shared-tag AI eligibility by default.
-- Normal UI exposes AI while flag is off.
+- Debug/provider UI is exposed while its flag/config is off, or manual handoff bypasses its safety contract.

@@ -1,27 +1,27 @@
 # Release / Ops Readiness Baseline 2026-07-09
 
 ## Goal
-Track the current `1.0.14` repo readiness without mixing it with the historical `1.0.11` store submission log.
+Track the current `1.0.15` repo readiness without mixing it with the historical `1.0.11` store submission log.
 
 ## Current Status
-`REPO_GO` for the 2026-07-10 repo-local AI-safe Export / AI Receipt-Draft-Diff / read-only MCP / release hygiene remediation scope.
+`NO_GO_INTERNAL` for the release as a whole. The 2026-07-18 manual ChatGPT handoff implementation, all-field known-pattern redaction, unknown-secret confirmation, Privacy/Store/App Review local text, automated tests, and iPhone-to-ChatGPT-composer E2E are GO on the current uncommitted working tree. Android physical E2E is not verified, Android AAB is unsigned, and iOS distribution signing/upload remains blocked. The earlier `REPO_GO` applies only to the 2026-07-10/16 baseline.
 
 This is a repo-local readiness classification only. Production deploy, production MCP/OAuth registration, OpenAI submission, App Store / Play Console submission, production secret input, and store/live recheck are Manual steps and are not repo-internal blockers.
 
-The older table below remains a broad ops baseline and historical risk ledger. Do not use its store/live/public-url rows as current proof for Android `1.0.14 (17)` / iOS `1.0.14 (15)`, and do not mix those external checks into the repo-local `REPO_GO` classification.
+The older table below remains a broad ops baseline and historical risk ledger. Do not use its store/live/public-url rows as current proof for Android `1.0.15 (18)` / iOS `1.0.15 (16)`. The 2026-07-17 feature proof applies to the current uncommitted working tree and is not `LAUNCH_GO` proof.
 
 ## Source Snapshot
-- Android: `jp.miyamibu.urlalbum`, `versionName = "1.0.14"`, `versionCode = 17`.
-- iOS: `com.mibu.codebridge.ios`, `CFBundleShortVersionString = 1.0.14`, `CFBundleVersion = 15`.
-- Current release evidence was rechecked on 2026-07-16 against Android versionCode 17 / iOS build 15. The signed candidates are not store-submitted by this repo task.
+- Android: `jp.miyamibu.urlalbum`, `versionName = "1.0.15"`, `versionCode = 18`.
+- iOS: `com.mibu.codebridge.ios`, `CFBundleShortVersionString = 1.0.15`, `CFBundleVersion = 16`.
+- Current release evidence was rechecked on 2026-07-16 against Android versionCode 18 / iOS build 16. The manual-handoff implementation/build/test/device-partial evidence was rechecked separately on 2026-07-17. Store submission remains an external console step.
 - Readiness must be run from the reviewed `main` branch after the release candidate is integrated; a feature branch is not a launch baseline.
 - iOS default config: tracked `ios/Config/URLSaverSecrets.local-only.xcconfig`; cloud-sharing builds must pass ignored `ios/Config/URLSaverSecrets.xcconfig` explicitly.
 
-## P1 Blockers
+## Current Gates / Proof Boundaries
 | Area | Status | Required before GO |
 |---|---|---|
 | Release docs/store state | MANUAL_STEP | Reverify App Store Connect / Play Console / public URLs for the exact next submitted build. Do not use `1.0.11` rows as current proof. |
-| Export contract | DONE_REPO | Current local implementation is ZIP / JSON with `manifest.json`, `entries.jsonl`, Markdown entry files, `schema.json`, `README_FOR_AI.md`, `redaction_report.json`, `publicSafeId`, redaction, AI eligibility, and saved snapshot notice. |
+| Export contract | DONE_REPO / AUTOMATED_TEST_GO / IPHONE_COMPOSER_VERIFIED / ANDROID_DEVICE_PARTIAL | ZIP / JSON includes `manifest.json`, `entries.jsonl`, Markdown entry files, `schema.json`, `README_FOR_AI.md`, `redaction_report.json`, `publicSafeId`, redaction, AI eligibility, and saved snapshot notice. Manual handoff preview/archive parity, all-field known-pattern redaction, unknown-secret confirmation, and no-question/API/OAuth contracts pass. iPhone reaches the normal ChatGPT composer with the ChatGPT-specific ZIP attached and question field empty; Android physical E2E remains `NOT_VERIFIED`. |
 | Admin audit | DONE_REPO | `web/admin/lib/audit.ts` records promo, support, and moderation actions in the existing immutable `admin_audit_logs` table; `/api/admin/audit` exposes the protected review view. |
 | Support operations | DONE_REPO_WITH_LIVE_ADMIN_AUTH | Support queue/status fields were added by migration `20260716100000_admin_ops_workflows.sql`; `/api/admin/support` and the admin UI provide queue, assignment, status, and note workflow. Live use still requires an authorized admin account. |
 | Moderation/report operations | DONE_REPO_WITH_LIVE_ADMIN_AUTH | `/api/admin/moderation` and the admin UI provide report review, reject/close actions, moderation history, and a user-suspension action. Live use still requires an authorized moderator/owner account. |

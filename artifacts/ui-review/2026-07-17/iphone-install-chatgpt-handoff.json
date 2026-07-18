@@ -1,0 +1,37 @@
+{
+  "info" : {
+    "arguments" : [
+      "devicectl",
+      "device",
+      "install",
+      "app",
+      "--device",
+      "E9D5CA0F-0729-5DFD-94B9-EFE2AB589C0E",
+      "--json-output",
+      "artifacts/ui-review/2026-07-17/iphone-install-chatgpt-handoff.json",
+      "/tmp/rinbam-chatgpt-device-20260717/Build/Products/Debug-iphoneos/URLSaveriOS.app"
+    ],
+    "commandType" : "devicectl.device.install.app",
+    "environment" : {
+      "TERM" : "dumb"
+    },
+    "jsonVersion" : 3,
+    "outcome" : "success",
+    "version" : "518.33"
+  },
+  "result" : {
+    "deviceIdentifier" : "E9D5CA0F-0729-5DFD-94B9-EFE2AB589C0E",
+    "installedApplications" : [
+      {
+        "bundleID" : "com.mibu.codebridge.ios",
+        "databaseSequenceNumber" : 4432,
+        "databaseUUID" : "68E1240A-E29A-48CA-9255-800AF680F70C",
+        "installationURL" : "file:///private/var/containers/Bundle/Application/F27E03A4-9AC4-416C-B6DE-60AD2FABF30D/URLSaveriOS.app/",
+        "launchServicesIdentifier" : "unknown",
+        "options" : {
+
+        }
+      }
+    ]
+  }
+}

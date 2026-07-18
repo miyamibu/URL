@@ -115,13 +115,11 @@ android {
         applicationId = "jp.miyamibu.urlalbum"
         minSdk = 26
         targetSdk = 35
-        versionCode = 17
-        versionName = "1.0.14"
+        versionCode = 18
+        versionName = "1.0.15"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
-        manifestPlaceholders["admobAppId"] =
-            providers.gradleProperty("admobAppId").getOrElse("ca-app-pub-3940256099942544~3347511713")
     }
 
     buildTypes {
@@ -220,8 +218,6 @@ dependencies {
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
     implementation("com.android.billingclient:billing:8.3.0")
-    compileOnly("com.google.android.gms:play-services-ads:23.6.0")
-    debugImplementation("com.google.android.gms:play-services-ads:23.6.0")
     implementation("io.coil-kt:coil-compose:2.6.0")
     implementation("org.jsoup:jsoup:1.18.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
