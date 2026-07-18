@@ -722,6 +722,23 @@ enum URLExportArchiveBuilder {
             throw URLExportError.invalidRequest("選択した自作タグを確認できませんでした。タグを選び直してください。")
         }
 
+        // Check the hard cap before constructing preview JSON/Markdown for every
+        // eligible entry. This keeps the fail-closed boundary cheap for very
+        // large tag selections and avoids a needless memory spike.
+        var eligibleCount = 0
+        for entry in entries {
+            let assignedTagIDs = localTagAssignments[entry.id] ?? []
+            guard !assignedTagIDs.isDisjoint(with: selectedLocalTagIDs) else { continue }
+            guard chatGptExclusionReason(
+                for: entry,
+                hasSharedTagAllocation: !(sharedTagsByEntryID[entry.id] ?? []).isEmpty
+            ) == nil else { continue }
+            eligibleCount += 1
+            if eligibleCount > chatGptMaxEntryCount {
+                throw URLExportError.invalidRequest("ChatGPT用ZIPは最大\(chatGptMaxEntryCount)件までです。タグを分けてお試しください。")
+            }
+        }
+
         var eligibleCandidates: [ChatGptDocumentCandidate] = []
         var excludedCount = 0
         var exclusionReasonCounts: [ChatGptExportExclusionReason: Int] = [:]

@@ -176,23 +176,13 @@ final class ExportArchiveBuilderTests: XCTestCase {
             makeRecord(id: Int64(id), host: "entry-\(id).example.com")
         }
         let assignments = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, Set<Int64>([1])) })
-        let preview = try URLSaveriOS.URLExportArchiveBuilder.buildChatGptExportPreview(
-            selectedLocalTagIDs: [1],
-            entries: entries,
-            localTags: [tag],
-            localTagAssignments: assignments,
-            sharedTagsByEntryID: [:]
-        )
-
         XCTAssertThrowsError(
-            try URLSaveriOS.URLExportArchiveBuilder.prepareChatGptExport(
+            try URLSaveriOS.URLExportArchiveBuilder.buildChatGptExportPreview(
                 selectedLocalTagIDs: [1],
-                expectedSnapshotToken: preview.snapshotToken,
                 entries: entries,
                 localTags: [tag],
                 localTagAssignments: assignments,
-                sharedTagsByEntryID: [:],
-                appVersion: "test"
+                sharedTagsByEntryID: [:]
             )
         ) { error in
             XCTAssertTrue(error.localizedDescription.contains("最大10000件"))
