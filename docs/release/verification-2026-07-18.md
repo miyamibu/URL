@@ -17,7 +17,7 @@ This record freezes the latest Chapter 13 manual ChatGPT handoff evidence withou
 - Device: iPhone 12, CoreDevice identifier `E9D5CA0F-0729-5DFD-94B9-EFE2AB589C0E`.
 - Canonical bundle: `com.mibu.codebridge.ios`.
 - Current source built with `DEVELOPMENT_TEAM=8R3B5675ZJ -allowProvisioningUpdates`, Apple Development signing, and installed/launched successfully with `devicectl`.
-- Appium server `127.0.0.1:4723` and RemoteXPC tunnel `127.0.0.1:42314` were unavailable. Therefore current-source iOS share-sheet, ChatGPT selection, attachment, empty composer, and unsent-state operation remain `NOT VERIFIED`.
+- Appium server `127.0.0.1:4723` responds, but `http://127.0.0.1:42314/remotexpc/tunnels` reports `activeTunnels=0`. Therefore current-source iOS share-sheet, ChatGPT selection, attachment, empty composer, and unsent-state operation remain `NOT VERIFIED`.
 
 ## Public Privacy deployment
 

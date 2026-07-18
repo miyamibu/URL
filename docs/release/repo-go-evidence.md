@@ -9,7 +9,7 @@ The historical evidence below is retained, but the current 2026-07-18 evidence p
 Current proof boundary:
 
 - Android/iOS manual-handoff implementation and automated tests prove local-tag selection, eligible-only preview/ZIP, preview/archive parity, zero-result rejection, filename/manifest contracts, known-pattern redaction, unknown-secret warning/confirmation, and no question/API/OAuth path.
-- Physical iPhone proof for the current source is limited to current-source Apple Development install/launch; Appium/WDA UI operation remains unverified because the Appium server and RemoteXPC tunnel are unavailable. Historical build16 composer evidence is retained separately and is not promoted to current-source proof.
+- Physical iPhone proof for the current source is limited to current-source Apple Development install/launch; Appium/WDA UI operation remains unverified because Appium responds but the RemoteXPC endpoint reports zero active iPhone tunnels. Historical build16 composer evidence is retained separately and is not promoted to current-source proof.
 - Physical Android manual handoff is verified on Pixel 9a `55211JEBF16639`: local tag selection, preview, explicit confirmation, ZIP creation, direct `com.openai.chatgpt` share, ZIP attachment in the normal composer, empty question field, and intentionally unsent state.
 - Android Release build succeeds but the generated AAB is unsigned. iOS current-source device build is Apple Development-signed; Distribution signing/upload remains blocked.
 - Privacy Policy source was deployed to Vercel production deployment `dpl_5YKkCQxcAAmjQ4NxqFHaojuDw2Re`; `scripts/verify_public_web_release.sh` passed against `https://miyamibu.xyz` after deployment.
