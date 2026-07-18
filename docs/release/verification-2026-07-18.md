@@ -16,8 +16,11 @@ This record freezes the latest Chapter 13 manual ChatGPT handoff evidence withou
 
 - Device: iPhone 12, CoreDevice identifier `E9D5CA0F-0729-5DFD-94B9-EFE2AB589C0E`.
 - Canonical bundle: `com.mibu.codebridge.ios`.
+- Physical-device backend: Appium + WebDriverAgent, Appium UDID `00008101-00066D96340A001E`, server `127.0.0.1:4723`.
 - Current source built with `DEVELOPMENT_TEAM=8R3B5675ZJ -allowProvisioningUpdates`, Apple Development signing, and installed/launched successfully with `devicectl`.
-- Appium server `127.0.0.1:4723` responds, but `http://127.0.0.1:42314/remotexpc/tunnels` reports `activeTunnels=0`. Therefore current-source iOS share-sheet, ChatGPT selection, attachment, empty composer, and unsent-state operation remain `NOT VERIFIED`.
+- Verified on the current source: home → export → `ChatGPTに聞く` → local tag selection → preview with `対象 3件` / `除外 0件` → redaction/disclosure review → explicit confirmation → ZIP creation (`3件のChatGPT用ZIPを作成しました`) → iOS share-sheet display.
+- Evidence directory: `artifacts/device-verification/2026-07-18-ios-ch13/` (`07-home*`, `08-preview*`, `09-after-zip*`, `10-share-sheet*`, and `11-after-share-close-source.xml`).
+- `xcrun devicectl device info apps` showed only `com.mibu.codebridge.ios` among the relevant apps; `com.openai.chatgpt` is not installed on this iPhone. Therefore selecting ChatGPT in the share sheet, attaching the ZIP in ChatGPT, confirming an empty question field, and the intentionally unsent state remain `NOT VERIFIED on physical iPhone` due to the external app not being installed.
 
 ## Public Privacy deployment
 
