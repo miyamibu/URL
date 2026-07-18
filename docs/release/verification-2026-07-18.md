@@ -7,7 +7,7 @@ This record freezes the latest Chapter 13 manual ChatGPT handoff evidence withou
 - Device: Pixel 9a, ADB serial `55211JEBF16639`.
 - Canonical package: `jp.miyamibu.urlalbum`.
 - Debug build: `versionName=1.0.15`, `versionCode=18`.
-- The existing Play-signed install was backed up before removal because its signature was incompatible with the Debug APK. Backup: `artifacts/device-backups/android/20260718-202117-55211JEBF16639-jp.miyamibu.urlalbum.tgz`.
+- The existing Play-signed install was incompatible with the Debug APK. The attempted `run-as` backup was invalid because the Play build was not debuggable; the 53-byte artifact contains only the error text and is not recoverable data. After explicit approval, the Play install was removed and Debug `versionCode=18` was installed/launched. The installer now validates the tar archive before any future destructive install.
 - Verified sequence: select a local tag, review one eligible URL, review the fixed included/excluded/redaction disclosure, confirm unknown-secret warning, create the ChatGPT ZIP, and tap `ChatGPTに送る`.
 - The OS delivered `application/zip` directly to `com.openai.chatgpt/.MainActivity`. The normal composer showed `rinbam-chatgpt-20260718-203850.zip`, an empty question field, and an enabled send button. No question was entered and no send action was performed.
 - Evidence directory: `artifacts/device-verification/2026-07-18-android-ch13/`.
