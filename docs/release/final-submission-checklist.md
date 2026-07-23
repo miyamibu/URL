@@ -4,15 +4,15 @@
 2026-06-28 historical submission log; current source re-baseline added 2026-07-09.
 
 ## Goal
-この文書の下部に残る `1.0.11` の表は、2026-06-27/28 の Google Play / App Store 提出時点の履歴ログとして扱う。現在の repo source は Android `1.0.15 (versionCode=18)` / iOS `1.0.15 (build=16)` であり、この履歴ログだけでは次回提出可否を判断しない。
+この文書の下部に残る `1.0.11` の表は、2026-06-27/28 の Google Play / App Store 提出時点の履歴ログとして扱う。現在の repo source は Android `1.0.15 (versionCode=18)` / iOS `1.0.15 (build=17)` であり、この履歴ログだけでは次回提出可否を判断しない。
 
 ## Current Source Snapshot (2026-07-23 Store Candidate)
 - Android source: `versionName = "1.0.15"`, `versionCode = 18`, package `jp.miyamibu.urlalbum`.
-- iOS source: `CFBundleShortVersionString = 1.0.15`, `CFBundleVersion = 16`, bundle `com.mibu.codebridge.ios`.
+- iOS source: `CFBundleShortVersionString = 1.0.15`, `CFBundleVersion = 17`, bundle `com.mibu.codebridge.ios`.
 - Current release/ops readiness tracker: `docs/release/release-ops-readiness-2026-07-09.md`.
 - Current working-tree gate remains `NO_GO_INTERNAL` for final submission, although the 2026-07-18 manual ChatGPT handoff local implementation, docs, tests, Release builds, pre-transfer confirmation, disclosure source review, and physical-iPhone-to-ChatGPT-composer proof pass. The hamburger-menu source change is integrated into `main`; Android physical E2E is not verified; Android AAB is unsigned; iOS distribution signing, store/public/OpenAI publication, and live recheck are not complete.
 - AI-safe export, manual ChatGPT handoff, and MCP source contracts are tracked separately under `docs/ai/`. Manual handoff is local ZIP + OS share with no question/API/OAuth; those local docs do not mean production MCP deployment, production OAuth registration, OpenAI submission, store submission, production secret entry, or store/live recheck is complete.
-- The `1.0.11` store submission, public URL, screenshot, signing, and console rows below are not current proof for Android `1.0.15 (18)` / iOS `1.0.15 (16)`.
+- The `1.0.11` store submission, public URL, screenshot, signing, and console rows below are not current proof for Android `1.0.15 (18)` / iOS `1.0.15 (17)`.
 - Rows below that say `DONE` are historical `1.0.11` evidence unless the row explicitly names the 2026-07-10 repo gate. Do not use them as `LAUNCH_GO` evidence for the current source snapshot without re-running the manual launch checklist.
 
 ## Manual Steps Not Done By Codex
