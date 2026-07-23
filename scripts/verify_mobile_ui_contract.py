@@ -154,8 +154,13 @@ def main() -> int:
         ),
         lambda: require(
             "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
-            "IconButton(onClick = { showProfileSheet = true })",
-            "Android home top bar must keep the profile button",
+            'contentDescription = "メニュー"',
+            "Android home top bar must expose the hamburger menu",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
+            'text = { Text("プロフィール") }',
+            "Android hamburger menu must keep the profile entry",
         ),
         lambda: require(
             "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
@@ -325,8 +330,13 @@ def main() -> int:
         ),
         lambda: require(
             "ios/URLSaveriOS/UI/RootView.swift",
-            'icon: "person.crop.circle"',
-            "iPhone home header must keep the profile button",
+            'icon: "line.3.horizontal"',
+            "iPhone home header must expose the hamburger menu",
+        ),
+        lambda: require(
+            "ios/URLSaveriOS/UI/RootView.swift",
+            'menuItem("プロフィール", systemImage: "person.crop.circle"',
+            "iPhone hamburger menu must keep the profile entry",
         ),
         lambda: require(
             "ios/URLSaveriOS/UI/RootView.swift",

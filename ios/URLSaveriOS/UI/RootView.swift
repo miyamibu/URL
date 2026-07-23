@@ -579,12 +579,18 @@ private struct MainScreen: View {
     let onOpenSharedTag: (String) -> Void
     let showsPendingInviteBanner: Bool
 
+    @State private var isShowingMainMenu = false
+
     var body: some View {
         VStack(spacing: 0) {
             let trailingButtons = mainTrailingButtons
             ScreenHeader(
                 title: "りんばむ",
-                leadingButton: nil,
+                leadingButton: ScreenHeaderButton(
+                    icon: "line.3.horizontal",
+                    accessibilityLabel: "メニュー",
+                    action: { isShowingMainMenu = true }
+                ),
                 trailingButtons: trailingButtons,
                 onTitleTap: {
                     selectedService = .all
@@ -595,6 +601,36 @@ private struct MainScreen: View {
                     onCancelSelection()
                 }
             )
+            .popover(
+                isPresented: $isShowingMainMenu,
+                attachmentAnchor: .rect(.bounds),
+                arrowEdge: .top
+            ) {
+                MainTopMenu(
+                    displayMode: displayMode,
+                    onOpenProfile: {
+                        isShowingMainMenu = false
+                        onOpenSharedTagCloud()
+                    },
+                    onToggleDisplayMode: {
+                        isShowingMainMenu = false
+                        displayMode = displayMode == .rich ? .compact : .rich
+                    },
+                    onEnterSelectionMode: {
+                        isShowingMainMenu = false
+                        onEnterSelectionMode()
+                    },
+                    onOpenUsageGuide: {
+                        isShowingMainMenu = false
+                        onOpenUsageGuide()
+                    },
+                    onOpenPrivacyInfo: {
+                        isShowingMainMenu = false
+                        onOpenPrivacyInfo()
+                    }
+                )
+            }
+            .presentationCompactAdaptation(.popover)
 
             if isShowingUsageGuide {
                 UsageGuideView(onBack: {
@@ -732,35 +768,7 @@ private struct MainScreen: View {
     }
 
     private var mainTrailingButtons: [ScreenHeaderButton] {
-        var buttons: [ScreenHeaderButton] = [
-            ScreenHeaderButton(
-                icon: displayMode == .rich ? "list.bullet.rectangle" : "rectangle.grid.1x2",
-                accessibilityLabel: displayMode == .rich ? "画像なし表示へ切り替える" : "画像つき表示へ切り替える",
-                action: { displayMode = displayMode == .rich ? .compact : .rich }
-            ),
-        ]
-        buttons.append(
-            ScreenHeaderButton(
-                icon: "person.crop.circle",
-                accessibilityLabel: "プロフィール",
-                action: onOpenSharedTagCloud
-            )
-        )
-        buttons.append(
-            ScreenHeaderButton(
-                icon: "checkmark.square",
-                accessibilityLabel: "選択",
-                action: onEnterSelectionMode
-            )
-        )
-        buttons.append(
-            ScreenHeaderButton(
-                icon: "book.fill",
-                accessibilityLabel: "使い方",
-                action: onOpenUsageGuide
-            )
-        )
-        buttons.append(
+        [
             ScreenHeaderButton(
                 icon: "magnifyingglass",
                 accessibilityLabel: "検索",
@@ -776,8 +784,7 @@ private struct MainScreen: View {
                     }
                 }
             )
-        )
-        return buttons
+        ]
     }
 
     private func localTagNames(for entry: URLRecord) -> [String] {
@@ -787,6 +794,62 @@ private struct MainScreen: View {
             .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
 
+}
+
+private struct MainTopMenu: View {
+    let displayMode: EntryListDisplayMode
+    let onOpenProfile: () -> Void
+    let onToggleDisplayMode: () -> Void
+    let onEnterSelectionMode: () -> Void
+    let onOpenUsageGuide: () -> Void
+    let onOpenPrivacyInfo: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("メニュー")
+                .font(.system(size: 17, weight: .heavy, design: .rounded))
+                .foregroundStyle(AppPalette.textPrimary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+
+            menuItem("プロフィール", systemImage: "person.crop.circle", action: onOpenProfile)
+            menuItem(
+                displayMode == .rich ? "画像なし表示に切り替える" : "画像つき表示に切り替える",
+                systemImage: displayMode == .rich ? "list.bullet.rectangle" : "rectangle.grid.1x2",
+                action: onToggleDisplayMode
+            )
+            menuItem("選択", systemImage: "checkmark.square", action: onEnterSelectionMode)
+            menuItem("使い方", systemImage: "book.fill", action: onOpenUsageGuide)
+            menuItem("データの取り扱い", systemImage: "shield", action: onOpenPrivacyInfo)
+        }
+        .padding(8)
+        .frame(width: 260)
+        .background(AppPalette.surface)
+    }
+
+    private func menuItem(
+        _ title: String,
+        systemImage: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 19, weight: .semibold))
+                    .frame(width: 24)
+                Text(title)
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(2)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(AppPalette.textPrimary)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .padding(.horizontal, 12)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+    }
 }
 
 private struct BottomHomeActionBar: View {
