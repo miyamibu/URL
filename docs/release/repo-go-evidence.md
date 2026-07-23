@@ -4,7 +4,7 @@ Final status: REPO_GO
 
 ## Current working-tree status: REPO_GO (external release gates remain separate)
 
-The historical evidence below is retained, but the current evidence proves the manual ChatGPT handoff through the normal ChatGPT composer on canonical Android and iOS physical devices. The current source baseline is Android `versionCode=18` / iOS `build=16`. Distribution signing, store upload/submission, OpenAI submission, production secret entry, and store-console review remain separate external/manual gates.
+The historical evidence below is retained, but the current evidence proves the manual ChatGPT handoff through the normal ChatGPT composer on canonical Android and iOS physical devices. The current source baseline is Android `versionCode=18` / iOS `build=16`, including the hamburger-menu source change. Distribution signing, store upload/submission, OpenAI submission, production secret entry, and store-console review remain separate external/manual gates.
 
 Current proof boundary:
 
@@ -45,7 +45,7 @@ Current proof boundary:
 | Production deploy | Privacy static site deployment is complete and verified; any future production service deployment remains external. |
 | Production MCP/OAuth registration | Requires owner-controlled provider console and secret entry. |
 | OpenAI Apps Developer Mode connection and submission | Requires owner ChatGPT/OpenAI account and deployed HTTPS MCP endpoint. |
-| App Store / Play Console upload or submission | App Store Connect iOS version `1.0.15` is created and left in `提出準備中`, but the distribution-signed build is unavailable. Android re-upload may remain time-gated until the Play reset activation time; iOS upload needs a distribution certificate/profile and upload authentication. |
+| App Store / Play Console upload or submission | App Store Connect iOS version `1.0.15` is present in `配信準備完了` with an existing build, but the integrated source build still needs distribution signing/upload. Android upload still needs the upload-key signing step; iOS upload needs a distribution certificate/profile and upload authentication. |
 | Production secrets | Must be entered outside repo and chat. |
 | Store/live verification | External state changes over time and must be verified at release time. |
 | Signed iOS archive/upload | A build16 development archive exists, but distribution archive/export and App Store Connect upload authentication remain to be completed for this release. |

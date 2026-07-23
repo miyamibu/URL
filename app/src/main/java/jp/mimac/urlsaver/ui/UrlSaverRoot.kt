@@ -76,6 +76,7 @@ import androidx.compose.material.icons.outlined.IosShare
 import androidx.compose.material.icons.outlined.LinkOff
 import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.outlined.Groups
+import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
@@ -85,6 +86,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -787,6 +790,7 @@ private fun MainScreen(
     val exportSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showProfileSheet by rememberSaveable { mutableStateOf(false) }
     val profileSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var showMainMenu by rememberSaveable { mutableStateOf(false) }
     var showLocalTagManagerSheet by rememberSaveable { mutableStateOf(false) }
     var pendingDeleteLocalTag by remember { mutableStateOf<TagWithCount?>(null) }
     var selectedEntryIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
@@ -1525,56 +1529,94 @@ private fun MainScreen(
                                 modifier = Modifier.clickable { returnToMainHome() },
                             )
                         },
+                        navigationIcon = {
+                            Box {
+                                IconButton(onClick = { showMainMenu = true }) {
+                                    Icon(
+                                        Icons.Outlined.Menu,
+                                        contentDescription = "メニュー",
+                                        modifier = Modifier.size(MainTopBarActionIconSize),
+                                    )
+                                }
+                                DropdownMenu(
+                                    expanded = showMainMenu,
+                                    onDismissRequest = { showMainMenu = false },
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("プロフィール") },
+                                        leadingIcon = {
+                                            Icon(Icons.Outlined.AccountCircle, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            showMainMenu = false
+                                            showProfileSheet = true
+                                        },
+                                    )
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                if (entryCardDisplayMode == EntryCardDisplayMode.RICH) {
+                                                    "画像なし表示に切り替える"
+                                                } else {
+                                                    "画像つき表示に切り替える"
+                                                },
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = if (entryCardDisplayMode == EntryCardDisplayMode.RICH) {
+                                                    Icons.AutoMirrored.Outlined.ViewList
+                                                } else {
+                                                    Icons.Outlined.ViewAgenda
+                                                },
+                                                contentDescription = null,
+                                            )
+                                        },
+                                        onClick = {
+                                            showMainMenu = false
+                                            viewModel.toggleEntryCardDisplayMode()
+                                        },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("選択") },
+                                        leadingIcon = {
+                                            Icon(Icons.Outlined.ChecklistRtl, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            showMainMenu = false
+                                            if (!selectionModeActive) {
+                                                startSelectionFromVisibleEntries()
+                                            }
+                                        },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("使い方") },
+                                        leadingIcon = {
+                                            Icon(Icons.AutoMirrored.Outlined.MenuBook, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            showMainMenu = false
+                                            selectedEntryIds = emptySet()
+                                            selectionModeActive = false
+                                            searchQueryLocal = ""
+                                            searchBarVisible = false
+                                            mainPane = MainPane.URLS
+                                            showUsageGuide = true
+                                        },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("データの取り扱い") },
+                                        onClick = {
+                                            showMainMenu = false
+                                            showPrivacyDialog = true
+                                        },
+                                    )
+                                }
+                            }
+                        },
                         colors = orbitTopAppBarColors(),
                         windowInsets = compactTopAppBarInsets(),
                         actions = {
-                            IconButton(onClick = { viewModel.toggleEntryCardDisplayMode() }) {
-                                Icon(
-                                    imageVector = if (entryCardDisplayMode == EntryCardDisplayMode.RICH) {
-                                        Icons.AutoMirrored.Outlined.ViewList
-                                    } else {
-                                        Icons.Outlined.ViewAgenda
-                                    },
-                                    contentDescription = if (entryCardDisplayMode == EntryCardDisplayMode.RICH) {
-                                        "画像なし表示へ切り替える"
-                                    } else {
-                                        "画像つき表示へ切り替える"
-                                    },
-                                    modifier = Modifier.size(MainTopBarActionIconSize),
-                                )
-                            }
-                            IconButton(onClick = { showProfileSheet = true }) {
-                                Icon(
-                                    Icons.Outlined.AccountCircle,
-                                    contentDescription = "プロフィール",
-                                    modifier = Modifier.size(MainTopBarActionIconSize),
-                                )
-                            }
-                            IconButton(onClick = {
-                                if (!selectionModeActive) {
-                                    startSelectionFromVisibleEntries()
-                                }
-                            }) {
-                                Icon(
-                                    Icons.Outlined.ChecklistRtl,
-                                    contentDescription = "選択",
-                                    modifier = Modifier.size(MainTopBarActionIconSize),
-                                )
-                            }
-                            IconButton(onClick = {
-                                selectedEntryIds = emptySet()
-                                selectionModeActive = false
-                                searchQueryLocal = ""
-                                searchBarVisible = false
-                                mainPane = MainPane.URLS
-                                showUsageGuide = true
-                            }) {
-                                Icon(
-                                    Icons.AutoMirrored.Outlined.MenuBook,
-                                    contentDescription = "使い方",
-                                    modifier = Modifier.size(MainTopBarActionIconSize),
-                                )
-                            }
                             IconButton(onClick = {
                                 if (showUsageGuide) {
                                     showUsageGuide = false
