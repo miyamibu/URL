@@ -25,8 +25,8 @@ def require(text: str, pattern: str, label: str) -> None:
         fail(f"readiness artifact missing {label}")
 
 
-def current_worktree_digest() -> str:
-    """Hash tracked diff plus untracked files, excluding this artifact itself."""
+def current_worktree_digest(base_commit: str) -> str:
+    """Hash changes from the readiness baseline plus untracked files."""
     digest = hashlib.sha256()
     diff = subprocess.check_output(
         [
@@ -34,7 +34,7 @@ def current_worktree_digest() -> str:
             "diff",
             "--no-ext-diff",
             "--binary",
-            "HEAD",
+            base_commit,
             "--",
             ".",
             f":(exclude){ARTIFACT_RELATIVE}",
@@ -98,24 +98,33 @@ def main() -> None:
     for key in required_top_level:
         require(artifact, rf"^{re.escape(key)}:", f"top-level key {key}")
 
-    expected_commit = subprocess.check_output(
+    current_head = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
     ).strip()
     commit_match = re.search(r'^commit:\s*"([0-9a-f]{40})"$', artifact, re.MULTILINE)
     if not commit_match:
         fail("commit must be a quoted 40-character SHA-1")
-    if commit_match.group(1) != expected_commit:
-        fail(
-            "readiness artifact commit does not match current HEAD "
-            f"({commit_match.group(1)} != {expected_commit})"
-        )
+    baseline_commit = commit_match.group(1)
+    if baseline_commit != current_head:
+        baseline_is_ancestor = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", baseline_commit, current_head],
+            cwd=ROOT,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        ).returncode == 0
+        if not baseline_is_ancestor:
+            fail(
+                "readiness artifact baseline commit is neither current HEAD nor an ancestor "
+                f"({baseline_commit} vs {current_head})"
+            )
 
     diff_match = re.search(
         r'^worktreeDiffSha256:\s*"([0-9a-f]{64})"$', artifact, re.MULTILINE
     )
     if not diff_match:
         fail("readiness artifact must bind the current dirty worktree digest")
-    current_digest = current_worktree_digest()
+    current_digest = current_worktree_digest(baseline_commit)
     if diff_match.group(1) != current_digest:
         fail(
             "readiness artifact worktree digest does not match current files "

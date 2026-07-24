@@ -2,9 +2,11 @@
 
 Status: `NO_GO_INTERNAL / NOT_VERIFIED_FOR_RELEASE`
 
-This document describes the uncommitted remediation worktree at commit
-`e7c4163abb338fb9219fc4f91df4ea1d202f7f7b`. It is not a store, production,
-physical-device, Supabase-applied, or OpenAI approval.
+This document describes the remediation diff based at commit
+`e7c4163abb338fb9219fc4f91df4ea1d202f7f7b`. The remediation was committed as
+`5567f1a2de7ab9dc972b968669882a47a083b240` on branch
+`codex/android-main-proof-20260710` and pushed to GitHub. It is not a store,
+production, physical-device, Supabase-applied, or OpenAI approval.
 
 ## Local scope
 
@@ -13,13 +15,15 @@ physical-device, Supabase-applied, or OpenAI approval.
 - Personal-link snapshot sync is fail-closed and disabled on Android/iOS.
 - MCP personal data requires both explicit flags and remains disabled.
 - Android release local media downloads are disabled; the iOS backend resolver is also compile-time disabled in Release builds.
-- No commit, push, deploy, store upload, production secret entry, or OpenAI submission was performed.
+- No deploy, store upload, production secret entry, or OpenAI submission was performed.
 
 ## Verification boundary
 
 The readiness YAML beside this file is the machine-readable source for this
-review. `scripts/verify_current_readiness.py` rejects a stale commit, a drifted
-dirty-worktree digest, identity drift, and fail-open feature gates. Local tests and builds do not close the
+review. Its `commit` value is the baseline for `worktreeDiffSha256`;
+`scripts/verify_current_readiness.py` accepts that baseline at the current HEAD
+or an unchanged descendant, and rejects a drifted digest, identity drift, and
+fail-open feature gates. Local tests and builds do not close the
 following gates:
 
 - Physical Android/iPhone UI, accessibility, and current screenshots.
