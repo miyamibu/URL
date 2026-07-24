@@ -386,11 +386,7 @@ class DefaultUrlRepository(
 
     override suspend fun finalizePendingDelete(entryId: Long) {
         val now = clock.nowEpochMillis()
-        val target = dao.findById(entryId) ?: return
-        if (target.recordState != RecordState.PENDING_DELETE) return
-        val due = target.pendingDeletionUntil ?: return
-        if (due <= now) {
-            dao.deleteById(entryId)
+        if (finalizeExpiredPendingDelete(entryId, now)) {
             withContext(Dispatchers.IO) {
                 appContext?.let { AppMediaStore.deleteForEntry(it, entryId) }
             }
@@ -404,10 +400,12 @@ class DefaultUrlRepository(
             .filter { it.pendingDeletionUntil?.let { due -> due <= now } == true }
             .map { it.id }
             .toList()
-        dao.cleanupExpiredPending(now)
+        val deletedEntryIds = expiredEntryIds.filter { entryId ->
+            finalizeExpiredPendingDelete(entryId, now)
+        }
         withContext(Dispatchers.IO) {
             appContext?.let { context ->
-                expiredEntryIds.forEach { entryId ->
+                deletedEntryIds.forEach { entryId ->
                     AppMediaStore.deleteForEntry(context, entryId)
                 }
                 runCatching { dao.loadAllEntries().mapTo(mutableSetOf()) { it.id } }
@@ -419,33 +417,35 @@ class DefaultUrlRepository(
         }
     }
 
+    private suspend fun finalizeExpiredPendingDelete(entryId: Long, now: Long): Boolean {
+        val deleted = dao.deleteExpiredPendingIfUnreferenced(entryId, now)
+        if (deleted > 0) return true
+
+        // A shared reference keeps the row as an ACTIVE shared-only record. The
+        // conditional update also makes restore/finalize ordering safe: if restore
+        // won the race, neither this update nor media cleanup runs.
+        dao.retainSharedAfterExpiredPending(entryId, now)
+        return false
+    }
+
     override suspend fun restore(entryId: Long): Boolean {
         val now = clock.nowEpochMillis()
         val target = dao.findById(entryId) ?: return false
         return when (target.recordState) {
             RecordState.PENDING_DELETE -> {
+                val pendingUntil = target.pendingDeletionUntil ?: return false
                 val restoreAsArchived = target.archivedAt != null
-                dao.update(
-                    target.copy(
-                        recordState = if (restoreAsArchived) RecordState.ARCHIVED else RecordState.ACTIVE,
-                        pendingDeletionUntil = null,
-                        archivedAt = if (restoreAsArchived) target.archivedAt else null,
-                        updatedAt = now,
-                    ),
-                )
-                true
+                dao.restorePendingDeleteIfUnchanged(
+                    entryId = entryId,
+                    pendingDeletionUntil = pendingUntil,
+                    recordState = if (restoreAsArchived) RecordState.ARCHIVED else RecordState.ACTIVE,
+                    archivedAt = if (restoreAsArchived) target.archivedAt else null,
+                    now = now,
+                ) > 0
             }
 
             RecordState.ARCHIVED -> {
-                dao.update(
-                    target.copy(
-                        recordState = RecordState.ACTIVE,
-                        pendingDeletionUntil = null,
-                        archivedAt = null,
-                        updatedAt = now,
-                    ),
-                )
-                true
+                dao.restoreArchivedIfUnchanged(entryId, target.archivedAt, now) > 0
             }
 
             RecordState.ACTIVE -> false

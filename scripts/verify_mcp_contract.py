@@ -30,9 +30,18 @@ for key, value in required_annotations.items():
     if not re.search(rf"{key}:\s*{value}\b", source):
         failures.append(f"missing annotation {key}: {value}")
 
-for forbidden in ["insert(", "delete(", "upsert(", "rpc("]:
+for forbidden in ["insert(", "upsert(", "rpc("]:
     if forbidden in source:
         failures.append(f"read-only MCP lib contains forbidden Supabase write call {forbidden}")
+
+# The MCP rate limiter is an in-memory Map and legitimately deletes expired
+# buckets. Detect Supabase-style delete calls without rejecting that cleanup.
+if "rateLimitBuckets.delete(" in source:
+    source_without_rate_limit_cleanup = source.replace("rateLimitBuckets.delete(", "")
+else:
+    source_without_rate_limit_cleanup = source
+if "delete(" in source_without_rate_limit_cleanup:
+    failures.append("read-only MCP lib contains forbidden Supabase write call delete(")
 
 for match in re.finditer(r"\.update\s*\(", source):
     window = source[max(0, match.start() - 120) : match.end()]
@@ -59,6 +68,15 @@ if ".eq(\"user_id\", ctx.userId)" not in source:
 
 if "include_shared_tags_requires_explicit_scope" not in source:
     failures.append("MCP includeSharedTags=true is not explicitly rejected")
+
+if '.in("record_state", allowedStates)' not in source or 'const allowedStates = includeArchived ? ["ACTIVE", "ARCHIVED"] : ["ACTIVE"]' not in source:
+    failures.append("MCP link queries do not enforce an explicit ACTIVE/ARCHIVED state boundary")
+
+if "MCP_SEARCH_MAX_ROWS" not in source or "MCP_FETCH_MAX_ROWS" not in source or "lookupTruncated" not in source:
+    failures.append("MCP search/fetch does not expose bounded pagination/truncation state")
+
+if "MCP_REFERENCE_BATCH_SIZE" not in source or "linkIds.slice(offset, offset + MCP_REFERENCE_BATCH_SIZE)" not in source:
+    failures.append("MCP tag-reference lookup is not split into bounded link-id batches")
 
 if "SAVED_SNAPSHOT_NOTICE" not in source or "savedSnapshotNotice" not in source:
     failures.append("MCP fetch output does not expose saved-time snapshot notice")

@@ -87,7 +87,7 @@ class RepositoryBehaviorTest {
         assertEquals(2_000L, archivedAt)
 
         clock.now = 3_000L
-        val pendingUntil = repository.markPendingDelete(entryId)
+        val pendingUntil = requireNotNull(repository.markPendingDelete(entryId))
         assertEquals(8_000L, pendingUntil)
         val pending = db.urlEntryDao().findById(entryId)!!
         assertEquals(RecordState.PENDING_DELETE, pending.recordState)
@@ -99,6 +99,84 @@ class RepositoryBehaviorTest {
         assertEquals(RecordState.ARCHIVED, restored.recordState)
         assertEquals(archivedAt, restored.archivedAt)
         assertEquals(null, restored.pendingDeletionUntil)
+    }
+
+    @Test
+    fun restorePendingDelete_usesPendingDeletionTimestampAsCompareAndSetToken() = runBlocking {
+        val created = repository.saveFromManualInput("https://example.com/restore-cas")
+        val entryId = created.entryId!!
+
+        clock.now = 2_000L
+        val pendingUntil = requireNotNull(repository.markPendingDelete(entryId))
+        val stalePending = db.urlEntryDao().findById(entryId)!!
+
+        db.urlEntryDao().update(
+            stalePending.copy(
+                pendingDeletionUntil = pendingUntil + 1_000L,
+                updatedAt = 2_500L,
+            ),
+        )
+
+        val updated = db.urlEntryDao().restorePendingDeleteIfUnchanged(
+            entryId = entryId,
+            pendingDeletionUntil = pendingUntil,
+            recordState = RecordState.ACTIVE,
+            archivedAt = null,
+            now = 3_000L,
+        )
+
+        assertEquals(0, updated)
+        assertEquals(pendingUntil + 1_000L, db.urlEntryDao().findById(entryId)!!.pendingDeletionUntil)
+    }
+
+    @Test
+    fun finalizePendingDelete_retainsSharedReference_andDeletesOnlyUnreferencedRows() = runBlocking {
+        val sharedId = db.urlEntryDao().insert(
+            UrlEntryEntity(
+                originalUrl = "https://example.com/shared/raw",
+                normalizedUrl = "https://example.com/shared",
+                displayUrl = "example.com/shared",
+                openUrl = "https://example.com/shared",
+                normalizedHost = "example.com",
+                rawSourceHost = "example.com",
+                serviceType = ServiceType.WEB,
+                contentContext = ContentContext.STANDARD,
+                localProvenanceCount = 1,
+                sharedReferenceCount = 1,
+                metadataState = MetadataState.PENDING,
+                recordState = RecordState.PENDING_DELETE,
+                createdAt = 100L,
+                updatedAt = 100L,
+                pendingDeletionUntil = 1_000L,
+            ),
+        )
+        val localOnlyId = db.urlEntryDao().insert(
+            UrlEntryEntity(
+                originalUrl = "https://example.com/local/raw",
+                normalizedUrl = "https://example.com/local",
+                displayUrl = "example.com/local",
+                openUrl = "https://example.com/local",
+                normalizedHost = "example.com",
+                rawSourceHost = "example.com",
+                serviceType = ServiceType.WEB,
+                contentContext = ContentContext.STANDARD,
+                metadataState = MetadataState.PENDING,
+                recordState = RecordState.PENDING_DELETE,
+                createdAt = 100L,
+                updatedAt = 100L,
+                pendingDeletionUntil = 1_000L,
+            ),
+        )
+
+        clock.now = 2_000L
+        repository.cleanupExpiredPendingDeletes()
+
+        val retained = db.urlEntryDao().findById(sharedId)!!
+        assertEquals(RecordState.ACTIVE, retained.recordState)
+        assertEquals(0, retained.localProvenanceCount)
+        assertEquals(1, retained.sharedReferenceCount)
+        assertEquals(null, retained.pendingDeletionUntil)
+        assertEquals(null, db.urlEntryDao().findById(localOnlyId))
     }
 
     @Test

@@ -1,8 +1,8 @@
-generatedAt: "2026-07-24"
+generatedAt: "2026-07-25"
 repository: "りんばむ"
 commit: "e7c4163abb338fb9219fc4f91df4ea1d202f7f7b"
 worktree: "committed_intentional_remediation_diff"
-worktreeDiffSha256: "04fb018b0e596fa5d5c1dbdedc8d02cfbcad39e52376e37d611ab52f1250acaa"
+worktreeDiffSha256: "6787c5166468ca4379965c701dc683514e061348faa294c7a868bd4a4e5740f4"
 status: "NO_GO_INTERNAL"
 verificationStatus: "NOT_VERIFIED_FOR_RELEASE"
 android:
@@ -56,7 +56,7 @@ external:
   scheduler: "not_verified"
 owners:
   implementation: "GPT-5.6 Lune 最大 requested; local remediation applied"
-  finalReview: "GPT-5.6 Sol Ultra read-only audit completed on final local diff; target scope requires no additional code fix; external gates remain unverified"
+  finalReview: "GPT-5.6 Sol Ultra read-only audit completed after remediation; CSP hash independently matched; CAS restore, CI portability, and MCP reference batching verified; no final P0/P1 found in the scoped recheck; main integration and external gates remain unverified"
   releaseDecision: "release owner"
 evidence:
   localChecks: "android_317_ios_129_passed_ios_3_skipped_web_deno_resolver_contracts_passed"

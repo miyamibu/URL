@@ -13,9 +13,11 @@ import jp.mimac.urlsaver.worker.NetworkTargetPolicy
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.Locale
+import kotlinx.coroutines.CancellationException
 
 class VideoDownloadWorker(
     appContext: Context,
@@ -51,14 +53,20 @@ class VideoDownloadWorker(
         )
         if (downloadUrl == null) {
             videoDownloadDao.markFailed(downloadId, "メディアURLを取得できませんでした")
-            return Result.success()
+            return Result.failure()
         }
-        return runCatching {
+        return try {
             download(downloadId, asset.entryId, asset.provider, asset.providerAssetId, asset.mediaType, asset.mimeType, downloadUrl)
             Result.success()
-        }.getOrElse { error ->
-            videoDownloadDao.markFailed(downloadId, error.message ?: "メディアを保存できませんでした")
-            Result.success()
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Throwable) {
+            if (isRetryableDownloadFailure(error)) {
+                Result.retry()
+            } else {
+                videoDownloadDao.markFailed(downloadId, error.message ?: "メディアを保存できませんでした")
+                Result.failure()
+            }
         }
     }
 
@@ -199,4 +207,10 @@ class VideoDownloadWorker(
                 .trim()
         }
     }
+}
+
+internal fun isRetryableDownloadFailure(error: Throwable): Boolean {
+    if (error is CancellationException) return false
+    if (error is IOException) return true
+    return error.message?.matches(Regex("HTTP_(408|425|429|5\\d{2})")) == true
 }

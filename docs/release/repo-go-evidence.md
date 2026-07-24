@@ -2,13 +2,35 @@
 
 ## Current status: NO_GO_INTERNAL / NOT_VERIFIED
 
-This is the current 2026-07-24 remediation status. The worktree contains the
-intentional remediation diff and has not been committed, pushed, deployed, or
-uploaded. Personal-link snapshot sync remains fail-closed and disabled, release
-media and external-provider controls still require live verification, and the
-new Supabase migrations have not been applied to a database in this review.
+This is the current 2026-07-25 remediation status. The branch contains the
+intentional remediation diff; it has not been deployed or uploaded. Personal-link
+snapshot sync remains fail-closed and disabled, release media and
+external-provider controls still require live verification, and the new
+Supabase migrations have not been applied to a database in this review.
 Physical-device, accessibility, store, production, and OpenAI verification are
 also not current evidence.
+
+## 2026-07-25 Local recheck
+
+- Android `testDebugUnitTest`, `lintDebug`, `lintRelease`, `assembleDebug`, and
+  `bundleRelease` passed after the pending-delete CAS and media worker
+  error-classification changes. The resulting local bundle is not Store upload
+  or physical-device proof.
+- `cd web/admin && npm run typecheck` and `npm run lint` passed; lint emitted
+  only the existing Next.js deprecation notice.
+- `python3 scripts/verify_mcp_contract.py`,
+  `python3 scripts/verify_mobile_ui_contract.py`,
+  `bash scripts/check_release_hygiene.sh`, and
+  `python3 scripts/verify_current_readiness.py` passed after the current
+  changes; release hygiene was also re-run with a failing `plutil` shim to
+  verify the Python plist fallback.
+- MCP remains disabled by its dual fail-closed flags; the local contract now
+  enforces explicit record-state filtering, bounded paged lookup, bounded
+  tag-reference batches, notification silence, and bounded expired-rate-bucket
+  cleanup.
+- This remains `NO_GO_INTERNAL / NOT_VERIFIED`; no store, production, external
+  provider, Supabase, OpenAI, or physical-device gate is closed by these local
+  checks.
 
 ## Historical status: REPO_GO (superseded)
 

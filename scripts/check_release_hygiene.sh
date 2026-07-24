@@ -43,11 +43,25 @@ if grep -R -E -q '(@AppStorage|UserDefaults)' ios/URLSaverShared ios/URLSaveriOS
 fi
 
 for privacy_manifest in ios/URLSaveriOS/PrivacyInfo.xcprivacy ios/URLSaverShareExtension/PrivacyInfo.xcprivacy; do
+  privacy_manifest_valid=false
   if [[ ! -f "$privacy_manifest" ]]; then
     fail "NO_GO missing iOS privacy manifest: $privacy_manifest"
-  elif ! plutil -lint "$privacy_manifest" >/dev/null 2>&1; then
-    fail "NO_GO invalid iOS privacy manifest: $privacy_manifest"
+  elif command -v plutil >/dev/null 2>&1 && plutil -lint "$privacy_manifest" >/dev/null 2>&1; then
+    privacy_manifest_valid=true
+  elif python3 - "$privacy_manifest" <<'PY'
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as handle:
+    plistlib.load(handle)
+PY
+  then
+    privacy_manifest_valid=true
   else
+    fail "NO_GO invalid iOS privacy manifest: $privacy_manifest"
+  fi
+
+  if [[ "$privacy_manifest_valid" == true ]]; then
     accessed_api_block="$(grep -A1 -F '<key>NSPrivacyAccessedAPITypes</key>' "$privacy_manifest" || true)"
     if [[ "$privacy_required_reason_usage_found" == true ]] && printf '%s\n' "$accessed_api_block" | grep -Eq '<array[[:space:]]*/>'; then
       fail "NO_GO iOS required-reason API usage is present but no approved reason is recorded in $privacy_manifest; do not guess a reason code"
@@ -60,6 +74,24 @@ done
 reset_password_page="web/invite-link/auth/reset-password/index.html"
 reset_password_cdn_url='src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.53.0/dist/umd/supabase.min.js"'
 reset_password_cdn_sri='integrity="sha384-H9dj4GG/hgfwNjlYa740FF9geXbzyXSgepgoobvIAW49UUAcfk+GAiBnLDIs4hRh"'
+reset_password_inline_csp_hash=""
+if [[ -f "$reset_password_page" ]] && ! reset_password_inline_csp_hash="$(python3 - "$reset_password_page" <<'PY'
+import base64
+import hashlib
+import re
+import sys
+from pathlib import Path
+
+html = Path(sys.argv[1]).read_text(encoding="utf-8")
+matches = re.findall(r"<script>\n(.*?)\n  </script>", html, re.DOTALL)
+if len(matches) != 1:
+    raise SystemExit("expected exactly one inline reset-password script")
+digest = hashlib.sha256(matches[0].encode("utf-8")).digest()
+print("sha256-" + base64.b64encode(digest).decode("ascii"))
+PY
+)"; then
+  fail "NO_GO reset-password inline script hash could not be computed"
+fi
 if [[ -f "$reset_password_page" ]] \
   && grep -Fq "$reset_password_cdn_url" "$reset_password_page" \
   && grep -Fq "$reset_password_cdn_sri" "$reset_password_page" \
@@ -72,7 +104,7 @@ fi
 if [[ -f web/invite-link/vercel.json ]] \
   && grep -Fq '"source": "/auth/reset-password/:path*"' web/invite-link/vercel.json \
   && grep -Fq '"key": "Content-Security-Policy"' web/invite-link/vercel.json \
-  && grep -Fq 'sha256-RAh35s8ZX25KPMRobh7ugOpopFd2XiiFHjsEuQ8/k90=' web/invite-link/vercel.json \
+  && grep -Fq "$reset_password_inline_csp_hash" web/invite-link/vercel.json \
   && grep -Fq 'sha256-IkDFeozcg3Saa4fKYO3EhGCqzC67yl4xj9I6f8cINtI=' web/invite-link/vercel.json \
   && ! grep -Eq 'unsafe-inline|unsafe-eval' web/invite-link/vercel.json; then
   pass "reset-password route has a strict hash-based CSP"

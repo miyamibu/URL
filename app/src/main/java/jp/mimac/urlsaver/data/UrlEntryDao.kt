@@ -59,11 +59,68 @@ interface UrlEntryDao {
     @Update
     suspend fun update(entry: UrlEntryEntity)
 
-    @Query("DELETE FROM url_entries WHERE id = :entryId")
-    suspend fun deleteById(entryId: Long)
+    @Query(
+        """
+        DELETE FROM url_entries
+        WHERE id = :entryId
+          AND recordState = 'PENDING_DELETE'
+          AND pendingDeletionUntil IS NOT NULL
+          AND pendingDeletionUntil <= :now
+          AND sharedReferenceCount = 0
+        """,
+    )
+    suspend fun deleteExpiredPendingIfUnreferenced(entryId: Long, now: Long): Int
 
-    @Query("DELETE FROM url_entries WHERE recordState = 'PENDING_DELETE' AND pendingDeletionUntil IS NOT NULL AND pendingDeletionUntil <= :now")
-    suspend fun cleanupExpiredPending(now: Long)
+    @Query(
+        """
+        UPDATE url_entries
+        SET localProvenanceCount = 0,
+            recordState = 'ACTIVE',
+            pendingDeletionUntil = NULL,
+            archivedAt = NULL,
+            updatedAt = :now
+        WHERE id = :entryId
+          AND recordState = 'PENDING_DELETE'
+          AND pendingDeletionUntil IS NOT NULL
+          AND pendingDeletionUntil <= :now
+          AND sharedReferenceCount > 0
+        """,
+    )
+    suspend fun retainSharedAfterExpiredPending(entryId: Long, now: Long): Int
+
+    @Query(
+        """
+        UPDATE url_entries
+        SET recordState = :recordState,
+            pendingDeletionUntil = NULL,
+            archivedAt = :archivedAt,
+            updatedAt = :now
+        WHERE id = :entryId
+          AND recordState = 'PENDING_DELETE'
+          AND pendingDeletionUntil = :pendingDeletionUntil
+        """,
+    )
+    suspend fun restorePendingDeleteIfUnchanged(
+        entryId: Long,
+        pendingDeletionUntil: Long,
+        recordState: RecordState,
+        archivedAt: Long?,
+        now: Long,
+    ): Int
+
+    @Query(
+        """
+        UPDATE url_entries
+        SET recordState = 'ACTIVE',
+            pendingDeletionUntil = NULL,
+            archivedAt = NULL,
+            updatedAt = :now
+        WHERE id = :entryId
+          AND recordState = 'ARCHIVED'
+          AND ((archivedAt = :archivedAt) OR (archivedAt IS NULL AND :archivedAt IS NULL))
+        """,
+    )
+    suspend fun restoreArchivedIfUnchanged(entryId: Long, archivedAt: Long?, now: Long): Int
 
     @Query("SELECT * FROM url_entries WHERE recordState = 'PENDING_DELETE' AND pendingDeletionUntil IS NOT NULL")
     suspend fun findPendingDeleteEntries(): List<UrlEntryEntity>

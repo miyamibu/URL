@@ -104,6 +104,11 @@ const readOnlyAnnotations: ToolAnnotation = {
 const SAVED_SNAPSHOT_NOTICE = "保存時点の情報であり、現在の内容とは異なる可能性があります";
 const MCP_RATE_LIMIT_WINDOW_MS = 60_000;
 const MCP_RATE_LIMIT_MAX_REQUESTS = 60;
+const MCP_RATE_LIMIT_CLEANUP_MAX = 100;
+const MCP_LINK_PAGE_SIZE = 200;
+const MCP_REFERENCE_BATCH_SIZE = 100;
+const MCP_SEARCH_MAX_ROWS = 2_000;
+const MCP_FETCH_MAX_ROWS = 10_000;
 const rateLimitBuckets = new Map<string, { windowStart: number; count: number }>();
 const sensitiveExternalQueryKey = /(?:token|access_token|refresh_token|code|state|nonce|signature|sig|expires|expiration|password|secret|api[_-]?key|auth|credential|invite)/i;
 const sensitiveExternalValue = /(?:eyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{8,}|(?:sk-|gh[pousr]_|glpat-)[A-Za-z0-9_-]{16,}|(?:refresh_token|access_token|service_role|sb_secret|invite[_-]?token|token)\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{8,})/i;
@@ -238,14 +243,10 @@ export async function handleRinbamMcpJsonRpcRequest(
 ): Promise<RinbamMcpJsonRpcResponse | null> {
   const parsed = parseRinbamMcpJsonRpcRequest(request);
   if (!("id" in parsed) || parsed.id === undefined) {
-    if (
-      parsed.method === "notifications/initialized" ||
-      parsed.method === "notifications/cancelled" ||
-      parsed.method === "notifications/progress"
-    ) {
-      return null;
-    }
-    throw new RinbamMcpJsonRpcError(-32600, "Requests require an id");
+    // JSON-RPC notifications, including unknown methods, never receive a
+    // response. This keeps an MCP client from being turned into a reflection
+    // oracle by a notification-shaped request.
+    return null;
   }
 
   const id = parsed.id;
@@ -287,8 +288,6 @@ export async function handleRinbamMcpJsonRpcRequest(
         throw error;
       }
     }
-    case "notifications/initialized":
-      return jsonRpcResult(id, {});
     default:
       throw new RinbamMcpJsonRpcError(-32601, "Method not found");
   }
@@ -368,6 +367,14 @@ export class RinbamMcpRateLimitError extends Error {
 }
 
 export function checkRinbamMcpRateLimit(ctx: RinbamMcpContext, now = Date.now()) {
+  let removed = 0;
+  for (const [userId, bucket] of rateLimitBuckets) {
+    if (now - bucket.windowStart >= MCP_RATE_LIMIT_WINDOW_MS) {
+      rateLimitBuckets.delete(userId);
+      removed += 1;
+      if (removed >= MCP_RATE_LIMIT_CLEANUP_MAX) break;
+    }
+  }
   const bucket = rateLimitBuckets.get(ctx.userId);
   if (!bucket || now - bucket.windowStart >= MCP_RATE_LIMIT_WINDOW_MS) {
     rateLimitBuckets.set(ctx.userId, { windowStart: now, count: 1 });
@@ -449,21 +456,44 @@ function searchableText(row: PersonalSavedLinkRow, tags: string[]): string {
     .toLowerCase();
 }
 
-async function loadRows(ctx: RinbamMcpContext, maxRows = 200) {
-  const supabase = createServiceSupabaseClient();
-  const { data: links, error: linkError } = await supabase
-    .from("personal_saved_links")
-    .select(
-      "id,effective_title,open_url,normalized_url,normalized_host,memo,body_summary,description,fetched_author_name,fetched_body_kind,service_type,record_state,metadata_state,metadata_error,source_created_at,source_updated_at,archived_at,content_fetch_allowed",
-    )
-    .eq("user_id", ctx.userId)
-    .is("deleted_at", null)
-    .is("disabled_at", null)
-    .order("source_updated_at", { ascending: false })
-    .limit(maxRows);
-  if (linkError) throw linkError;
+type LoadRowsOptions = {
+  includeArchived?: boolean;
+  maxRows?: number;
+};
 
-  const linkRows = (links ?? []) as PersonalSavedLinkRow[];
+async function loadRows(ctx: RinbamMcpContext, options: LoadRowsOptions = {}) {
+  const supabase = createServiceSupabaseClient();
+  const includeArchived = options.includeArchived === true;
+  const maxRows = Math.min(
+    Math.max(options.maxRows ?? MCP_SEARCH_MAX_ROWS, MCP_LINK_PAGE_SIZE),
+    MCP_FETCH_MAX_ROWS,
+  );
+  const allowedStates = includeArchived ? ["ACTIVE", "ARCHIVED"] : ["ACTIVE"];
+  const linkRows: PersonalSavedLinkRow[] = [];
+  let truncated = false;
+  for (let offset = 0; offset < maxRows; offset += MCP_LINK_PAGE_SIZE) {
+    const end = Math.min(offset + MCP_LINK_PAGE_SIZE, maxRows) - 1;
+    const { data: links, error: linkError } = await supabase
+      .from("personal_saved_links")
+      .select(
+        "id,effective_title,open_url,normalized_url,normalized_host,memo,body_summary,description,fetched_author_name,fetched_body_kind,service_type,record_state,metadata_state,metadata_error,source_created_at,source_updated_at,archived_at,content_fetch_allowed",
+      )
+      .eq("user_id", ctx.userId)
+      .in("record_state", allowedStates)
+      .is("deleted_at", null)
+      .is("disabled_at", null)
+      .order("source_updated_at", { ascending: false })
+      .range(offset, end);
+    if (linkError) throw linkError;
+    const page = (links ?? []) as PersonalSavedLinkRow[];
+    linkRows.push(...page);
+    if (page.length < MCP_LINK_PAGE_SIZE) break;
+    if (linkRows.length >= maxRows) {
+      truncated = true;
+      break;
+    }
+  }
+
   const linkIds = linkRows.map((row) => row.id);
   const { data: tags, error: tagError } = await supabase
     .from("personal_saved_link_tags")
@@ -475,12 +505,13 @@ async function loadRows(ctx: RinbamMcpContext, maxRows = 200) {
   const tagRows = (tags ?? []) as TagRow[];
   const tagNameById = new Map(tagRows.map((tag) => [tag.id, tag.name]));
   const tagNamesByLinkId = new Map<string, string[]>();
-  if (linkIds.length > 0) {
+  for (let offset = 0; offset < linkIds.length; offset += MCP_REFERENCE_BATCH_SIZE) {
+    const linkIdBatch = linkIds.slice(offset, offset + MCP_REFERENCE_BATCH_SIZE);
     const { data: refs, error: refError } = await supabase
       .from("personal_saved_link_tag_refs")
       .select("link_id,tag_id")
       .eq("user_id", ctx.userId)
-      .in("link_id", linkIds)
+      .in("link_id", linkIdBatch)
       .is("deleted_at", null);
     if (refError) throw refError;
     for (const ref of (refs ?? []) as TagRefRow[]) {
@@ -492,7 +523,7 @@ async function loadRows(ctx: RinbamMcpContext, maxRows = 200) {
     }
   }
 
-  return { links: linkRows, tagRows, tagNamesByLinkId };
+  return { links: linkRows, tagRows, tagNamesByLinkId, truncated };
 }
 
 function toSearchResult(ctx: RinbamMcpContext, row: PersonalSavedLinkRow, tags: string[]) {
@@ -518,10 +549,12 @@ export async function searchRinbamLinks(ctx: RinbamMcpContext, args: Record<stri
   const query = safeString(args.query).toLowerCase();
   const limit = clampLimit(args.limit);
   const includeArchived = args.includeArchived === true;
-  const { links, tagNamesByLinkId } = await loadRows(ctx);
+  const { links, tagNamesByLinkId, truncated } = await loadRows(ctx, {
+    includeArchived,
+    maxRows: MCP_SEARCH_MAX_ROWS,
+  });
 
   const results = links
-    .filter((row) => includeArchived || row.record_state !== "ARCHIVED")
     .filter((row) => {
       if (!query) return true;
       return searchableText(row, tagNamesByLinkId.get(row.id) ?? []).includes(query);
@@ -529,7 +562,7 @@ export async function searchRinbamLinks(ctx: RinbamMcpContext, args: Record<stri
     .slice(0, limit)
     .map((row) => toSearchResult(ctx, row, tagNamesByLinkId.get(row.id) ?? []));
 
-  return { results, includeSharedTags: false, rawBodyReturned: false };
+  return { results, includeSharedTags: false, rawBodyReturned: false, truncated };
 }
 
 export async function listRecentSavedLinks(ctx: RinbamMcpContext, args: Record<string, unknown>) {
@@ -538,7 +571,7 @@ export async function listRecentSavedLinks(ctx: RinbamMcpContext, args: Record<s
 }
 
 export async function listRinbamTags(ctx: RinbamMcpContext) {
-  const { tagRows } = await loadRows(ctx, 1);
+  const { tagRows } = await loadRows(ctx, { maxRows: MCP_LINK_PAGE_SIZE });
   return {
     tags: tagRows
       .map((tag) => ({ id: publicSafeId(ctx.userId, tag.id), name: safeText(tag.name, 120), sharedTagBoundary: "local_only" }))
@@ -550,9 +583,11 @@ export async function listRinbamTags(ctx: RinbamMcpContext) {
 
 export async function fetchRinbamLink(ctx: RinbamMcpContext, args: Record<string, unknown>) {
   const id = safeString(args.id);
-  const { links, tagNamesByLinkId } = await loadRows(ctx, 500);
+  const { links, tagNamesByLinkId, truncated } = await loadRows(ctx, {
+    maxRows: MCP_FETCH_MAX_ROWS,
+  });
   const row = links.find((candidate) => publicSafeId(ctx.userId, candidate.id) === id);
-  if (!row) return { id, found: false };
+  if (!row) return { id, found: false, lookupTruncated: truncated };
   const tags = tagNamesByLinkId.get(row.id) ?? [];
   const safeUrl = safeExternalUrl(row.open_url || row.normalized_url);
   const title = safeText(row.effective_title, 240) || row.normalized_host || "保存したリンク";
