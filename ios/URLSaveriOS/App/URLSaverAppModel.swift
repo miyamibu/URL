@@ -492,6 +492,12 @@ final class URLSaverAppModel: ObservableObject {
         await reload()
     }
 
+    func refreshAfterReturningToForeground() async {
+        await bootstrapIfNeeded()
+        await consumeShareHandoffReport()
+        await reload()
+    }
+
     func prepareManualSave(input: String, localTagIDs: Set<Int64> = []) async -> ManualSaveOutcome {
         switch ManualTagImportPreparation.prepare(input: input) {
         case .ready(let preview):
@@ -788,6 +794,8 @@ final class URLSaverAppModel: ObservableObject {
 
     func handleIncomingURL(_ url: URL) async {
         switch IncomingURLRoute(url: url) {
+        case .refresh:
+            await refreshAfterReturningToForeground()
         case .authCallback:
             await handleSharedTagAuthCallback(url)
         case .invite(let token):
@@ -2248,6 +2256,7 @@ func rinbamMediaFileNamePrecedes(_ lhs: String, _ rhs: String) -> Bool {
 }
 
 private enum IncomingURLRoute {
+    case refresh
     case authCallback
     case invite(String)
     case promo(String)
@@ -2277,6 +2286,8 @@ private enum IncomingURLRoute {
         }
 
         switch host {
+        case "refresh":
+            self = .refresh
         case "auth" where url.path == "/callback":
             self = .authCallback
         case "invite":

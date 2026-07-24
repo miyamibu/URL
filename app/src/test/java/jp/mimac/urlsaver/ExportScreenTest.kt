@@ -12,6 +12,7 @@ import jp.mimac.urlsaver.ui.MAX_CHATGPT_ARCHIVE_BYTES
 import jp.mimac.urlsaver.ui.buildChatGptDirectShareIntent
 import jp.mimac.urlsaver.ui.cacheExportArchive
 import jp.mimac.urlsaver.ui.cachedExportFileNamesToPrune
+import jp.mimac.urlsaver.ui.isChatGptOneTapShareEnabled
 import jp.mimac.urlsaver.ui.isChatGptZipCreationEnabled
 import jp.mimac.urlsaver.ui.shouldFallbackToChatGptChooser
 import jp.mimac.urlsaver.ui.shouldShowSharedTagExportPreset
@@ -105,6 +106,42 @@ class ExportScreenTest {
                 isContentConfirmed = true,
                 isPreviewLoading = false,
                 isPreparingArchive = true,
+            ),
+        )
+    }
+
+    @Test
+    fun isChatGptOneTapShareEnabled_requiresSelectionAndReadyTarget() {
+        assertFalse(
+            isChatGptOneTapShareEnabled(
+                selectedTagCount = 0,
+                targetCount = 1,
+                isPreviewLoading = false,
+                isPreparingArchive = false,
+            ),
+        )
+        assertFalse(
+            isChatGptOneTapShareEnabled(
+                selectedTagCount = 1,
+                targetCount = 0,
+                isPreviewLoading = false,
+                isPreparingArchive = false,
+            ),
+        )
+        assertFalse(
+            isChatGptOneTapShareEnabled(
+                selectedTagCount = 1,
+                targetCount = 1,
+                isPreviewLoading = true,
+                isPreparingArchive = false,
+            ),
+        )
+        assertTrue(
+            isChatGptOneTapShareEnabled(
+                selectedTagCount = 2,
+                targetCount = 3,
+                isPreviewLoading = false,
+                isPreparingArchive = false,
             ),
         )
     }

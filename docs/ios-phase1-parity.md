@@ -35,5 +35,5 @@ Done when
 ## Real parity gaps
 
 - iOS share sheet では Android の `ACTION_SEND` / `ACTION_SEND_MULTIPLE` フラグがないため、single-share と multi-share の完全一致判定はできず、payload 数ベースの近似になる。
-- Share Extension から host app を Android のように即時遷移させる保証はないため、通知の表示タイミングは app 復帰時になる場合がある。
+- Share Extension は保存結果を共有コンテナへ handoff した後、`urlsaver://refresh` で host app の表示更新を要求する。OS が extension からの起動を拒否した場合は、次回 app 復帰時の foreground refresh がフォールバックになる。
 - Android WorkManager の retry/backoff 時刻そのものは iOS の `BGTaskScheduler` では保証できない。

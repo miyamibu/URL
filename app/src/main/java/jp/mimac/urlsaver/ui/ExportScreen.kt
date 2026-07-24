@@ -109,23 +109,18 @@ fun ExportScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val availableTags by viewModel.availableTags.collectAsStateWithLifecycle()
-    val chatGptUiState by viewModel.chatGptUiState.collectAsStateWithLifecycle()
-    val availableChatGptTags by viewModel.availableChatGptTags.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     LaunchedEffect(Unit) {
         pruneCachedExportArchives(context)
     }
 
-    var exportMode by remember { mutableStateOf(ExportMode.STANDARD) }
     var isExporting by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var successMessage by remember { mutableStateOf<String?>(null) }
     var selectedFormat by remember { mutableStateOf(ExportOutputFormat.ZIP) }
     var selectedDestination by remember { mutableStateOf(ExportDestination.SHARE_SHEET) }
     var pendingFileArchive by remember { mutableStateOf<PreparedExportArchive?>(null) }
-    var chatGptShareError by remember { mutableStateOf<String?>(null) }
-    var chatGptShareSuccessMessage by remember { mutableStateOf<String?>(null) }
     val zipDocumentLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/zip"),
     ) { uri: Uri? ->
@@ -164,27 +159,13 @@ fun ExportScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text(
-                            text = "エクスポート",
-                            modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            text = "ChatGPT、\nCodex、Claudeにも\n共有できるよ！",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
-                            textAlign = TextAlign.End,
-                            maxLines = 3,
-                        )
-                    }
+                    Text(
+                        text = "エクスポート",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color.Transparent,
@@ -214,19 +195,6 @@ fun ExportScreen(
                     .padding(start = 18.dp, top = 0.dp, end = 18.dp, bottom = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                ExportModeSelector(
-                    selectedMode = exportMode,
-                    onModeSelected = { mode ->
-                        exportMode = mode
-                        error = null
-                        successMessage = null
-                        chatGptShareError = null
-                        chatGptShareSuccessMessage = null
-                    },
-                )
-
-                when (exportMode) {
-                    ExportMode.STANDARD -> {
                 ExportSectionLabel("選択中")
                 ExportChipRow {
                     selectedItems.forEach { item ->
@@ -342,57 +310,213 @@ fun ExportScreen(
                         }
                     }
                 )
-                    }
+            }
+        }
+    }
+}
 
-                    ExportMode.CHAT_GPT -> {
-                        ChatGptExportContent(
-                            availableTags = availableChatGptTags,
-                            uiState = chatGptUiState,
-                            preparedArchive = chatGptUiState.preparedArchive,
-                            isPreparingArchive = chatGptUiState.isArchivePreparing,
-                            error = chatGptShareError ?: chatGptUiState.archiveError,
-                            successMessage =
-                                chatGptShareSuccessMessage ?: chatGptUiState.archiveSuccessMessage,
-                            onToggleTag = { tagId ->
-                                chatGptShareError = null
-                                chatGptShareSuccessMessage = null
-                                viewModel.toggleChatGptTagSelection(tagId)
-                            },
-                            onRetryPreview = {
-                                chatGptShareError = null
-                                chatGptShareSuccessMessage = null
-                                viewModel.retryChatGptPreview()
-                            },
-                            onContentConfirmedChange = viewModel::setChatGptContentConfirmed,
-                            onPrepareArchive = {
-                                chatGptShareError = null
-                                chatGptShareSuccessMessage = null
-                                viewModel.prepareChatGptExport()
-                            },
-                            onSendToChatGpt = {
-                                chatGptUiState.preparedArchive?.let { archive ->
-                                    scope.launch {
-                                        runCatching {
-                                            shareChatGptArchive(context, archive)
-                                        }.fold(
-                                            onSuccess = {
-                                                chatGptShareError = null
-                                                chatGptShareSuccessMessage =
-                                                    "共有を開始しました。ChatGPTで質問を入力して送信してください"
-                                            },
-                                            onFailure = { throwable ->
-                                                chatGptShareSuccessMessage = null
-                                                chatGptShareError = throwable.message
-                                                    ?: "共有画面を開けませんでした。もう一度お試しください。"
-                                            },
-                                        )
-                                    }
-                                }
-                            },
-                        )
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ChatGptExportScreen(
+    viewModel: ExportViewModel,
+    onBack: () -> Unit,
+) {
+    val uiState by viewModel.chatGptUiState.collectAsStateWithLifecycle()
+    val availableTags by viewModel.availableChatGptTags.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    var shareRequested by remember { mutableStateOf(false) }
+    var shareError by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(Unit) {
+        pruneCachedExportArchives(context)
+    }
+    LaunchedEffect(uiState.preparedArchive, shareRequested) {
+        val archive = uiState.preparedArchive
+        if (!shareRequested || archive == null) return@LaunchedEffect
+        shareRequested = false
+        runCatching {
+            shareChatGptArchive(context, archive)
+        }.onFailure { throwable ->
+            shareError = throwable.message
+                ?: "共有画面を開けませんでした。もう一度お試しください。"
+        }
+    }
+    LaunchedEffect(uiState.archiveError, shareRequested) {
+        if (shareRequested && uiState.archiveError != null) {
+            shareRequested = false
+        }
+    }
+
+    val preview = uiState.preview
+    val targetCount = preview?.entries?.size ?: 0
+    val canSend = isChatGptOneTapShareEnabled(
+        selectedTagCount = uiState.selectedTagIds.size,
+        targetCount = targetCount,
+        isPreviewLoading = uiState.isPreviewLoading,
+        isPreparingArchive = uiState.isArchivePreparing,
+    )
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        text = "ChatGPT",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "戻る")
                     }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color.Transparent,
+                    scrolledContainerColor = Color.Transparent,
+                ),
+                windowInsets = WindowInsets(0.dp),
+            )
+        },
+        containerColor = Color.Transparent,
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .padding(paddingValues)
+                .fillMaxSize()
+                .widthIn(max = 560.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(start = 18.dp, top = 4.dp, end = 18.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Text(
+                text = "自作タグを選んで送る",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+            )
+
+            if (availableTags.isEmpty()) {
+                Text(
+                    text = "URLが付いた自作タグがありません",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                ExportTagGrid(
+                    tags = availableTags,
+                    selectedTagIds = uiState.selectedTagIds,
+                    onToggle = { tag ->
+                        shareError = null
+                        viewModel.toggleChatGptTagSelection(tag.id)
+                    },
+                )
+            }
+
+            ChatGptCompactStatus(
+                uiState = uiState,
+                onRetry = viewModel::retryChatGptPreview,
+            )
+
+            val visibleError = shareError ?: uiState.archiveError
+            if (visibleError != null) {
+                Text(
+                    text = visibleError,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+
+            Button(
+                onClick = {
+                    shareError = null
+                    shareRequested = true
+                    viewModel.setChatGptContentConfirmed(true)
+                    viewModel.prepareChatGptExport()
+                },
+                enabled = canSend && !shareRequested,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+            ) {
+                if (uiState.isArchivePreparing || shareRequested) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                    )
+                    Text(
+                        text = "準備しています",
+                        modifier = Modifier.padding(start = 10.dp),
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Outlined.IosShare,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Text(
+                        text = if (targetCount > 0) {
+                            "${targetCount}件をChatGPTに送る"
+                        } else {
+                            "ChatGPTに送る"
+                        },
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ChatGptCompactStatus(
+    uiState: ChatGptExportUiState,
+    onRetry: () -> Unit,
+) {
+    when {
+        uiState.selectedTagIds.isEmpty() -> {
+            Text(
+                text = "自作タグを1つ以上選んでください",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        uiState.isPreviewLoading -> {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                Text("対象を確認しています")
+            }
+        }
+        uiState.previewError != null -> {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = uiState.previewError,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                OutlinedButton(onClick = onRetry) {
+                    Text("もう一度確認")
+                }
+            }
+        }
+        uiState.preview?.entries?.isEmpty() == true -> {
+            Text(
+                text = "送れる保存リンクがありません",
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        uiState.preview != null -> {
+            val preview = uiState.preview
+            Text(
+                text = buildString {
+                    append("対象 ${preview.entries.size}件")
+                    if (preview.excludedCount > 0) {
+                        append("・除外 ${preview.excludedCount}件")
+                    }
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
@@ -410,6 +534,18 @@ internal fun isChatGptZipCreationEnabled(
     return selectedTagCount > 0 &&
         targetCount > 0 &&
         isContentConfirmed &&
+        !isPreviewLoading &&
+        !isPreparingArchive
+}
+
+internal fun isChatGptOneTapShareEnabled(
+    selectedTagCount: Int,
+    targetCount: Int,
+    isPreviewLoading: Boolean,
+    isPreparingArchive: Boolean,
+): Boolean {
+    return selectedTagCount > 0 &&
+        targetCount > 0 &&
         !isPreviewLoading &&
         !isPreparingArchive
 }
@@ -503,7 +639,7 @@ private fun ChatGptExportContent(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                text = "ChatGPTに聞く",
+                text = "ChatGPT",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
             )
@@ -1171,7 +1307,7 @@ private enum class ExportDestination(val label: String, val icon: ImageVector) {
 
 private enum class ExportMode(val label: String) {
     STANDARD("通常のエクスポート"),
-    CHAT_GPT("ChatGPTに聞く"),
+    CHAT_GPT("ChatGPT"),
 }
 
 private val servicePresetOrder = listOf(

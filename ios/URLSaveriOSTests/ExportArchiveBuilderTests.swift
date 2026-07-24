@@ -851,25 +851,13 @@ final class ExportArchiveBuilderTests: XCTestCase {
         XCTAssertNil(source.range(of: #"\bcase\s+csv\b"#, options: .regularExpression))
         XCTAssertNil(source.range(of: #"\bcase\s+html\b"#, options: .regularExpression))
         XCTAssertNil(source.range(of: #"\bcase\s+copy\b"#, options: .regularExpression))
-        XCTAssertTrue(source.contains("ChatGPTに聞く"))
-        XCTAssertTrue(source.contains("ChatGPT用ファイルを作成"))
+        XCTAssertTrue(source.contains("Text(exportMode == .chatGpt ? \"ChatGPT\" : \"エクスポート\")"))
         XCTAssertTrue(source.contains("ChatGPTに送る"))
-        XCTAssertTrue(source.contains("ここではZIPを作成するだけで、まだ共有されません"))
-        XCTAssertTrue(source.contains("自作タグを1つ以上選ぶと対象URLを表示します"))
-        XCTAssertTrue(source.contains("含まれるもの（固定）"))
-        XCTAssertTrue(source.contains("含まれないもの（固定）"))
+        XCTAssertTrue(source.contains("自作タグを選んで送る"))
+        XCTAssertTrue(source.contains("prepareAndShareChatGptFile"))
+        XCTAssertTrue(source.contains("ChatGptExportSheet"))
         XCTAssertTrue(source.contains("ActivityShareSheet(items: shareItems)"))
-        XCTAssertTrue(source.contains("1. 自作タグを選択"))
-        XCTAssertTrue(source.contains("2. 送る内容を確認"))
-        XCTAssertTrue(source.contains("3. ChatGPT用ZIPを作成"))
-        XCTAssertTrue(source.contains("4. ChatGPTへ共有"))
-        XCTAssertTrue(source.contains("対象URLと表示内容を確認し、未知の秘密が含まれていないことを確認しました"))
         XCTAssertTrue(source.contains("hasConfirmedChatGptPreview"))
-        XCTAssertTrue(source.contains("item.archiveEntryJSON"))
-        XCTAssertTrue(source.contains("ZIPに入る伏せ字後のJSON内容"))
-        XCTAssertTrue(source.contains(".fixedSize(horizontal: false, vertical: true)"))
-        XCTAssertTrue(source.contains("ScrollView(.vertical, showsIndicators: true)"))
-        XCTAssertFalse(source.contains("ScrollView(.horizontal, showsIndicators: true)"))
         XCTAssertTrue(source.contains("chatGptPreviewTask?.cancel()"))
         XCTAssertTrue(source.contains("chatGptPreparationTask?.cancel()"))
         XCTAssertTrue(source.contains("scheduleChatGptTemporaryFileCleanup()"))
@@ -877,11 +865,33 @@ final class ExportArchiveBuilderTests: XCTestCase {
         XCTAssertTrue(source.contains("preparedChatGptGenerationID == chatGptGenerationID"))
         XCTAssertTrue(source.contains("invalidatePreparedChatGptFile(force: true)"))
         XCTAssertTrue(source.contains("rinbam-chatgpt-task-"))
-        XCTAssertTrue(source.contains("作成中…"))
-        XCTAssertTrue(source.contains("現在の選択でChatGPTに送れる保存リンクは0件です"))
+        XCTAssertTrue(source.contains("準備しています"))
+        XCTAssertTrue(source.contains("送れる保存リンクがありません"))
         XCTAssertFalse(source.contains("OpenAI"))
         XCTAssertFalse(source.contains("OAuth"))
         XCTAssertFalse(source.contains("TextField(\"質問"))
+
+        let rootSource = try String(contentsOf: rootViewSourceURL(), encoding: .utf8)
+        XCTAssertTrue(rootSource.contains("onOpenChatGpt"))
+        XCTAssertTrue(rootSource.contains("ChatGptExportSheet(model: model)"))
+        XCTAssertTrue(rootSource.contains("Text(\"ChatGPT\")"))
+    }
+
+    func testShareSaveRefreshesWhenTheAppReturnsToForeground() throws {
+        let appSource = try String(contentsOf: appEntrySourceURL(), encoding: .utf8)
+        XCTAssertTrue(appSource.contains("@Environment(\\.scenePhase) private var scenePhase"))
+        XCTAssertTrue(appSource.contains("guard newPhase == .active else { return }"))
+        XCTAssertTrue(appSource.contains("await model.refreshAfterReturningToForeground()"))
+
+        let modelSource = try String(contentsOf: appModelSourceURL(), encoding: .utf8)
+        XCTAssertTrue(modelSource.contains("func refreshAfterReturningToForeground() async"))
+        XCTAssertTrue(modelSource.contains("await consumeShareHandoffReport()"))
+        XCTAssertTrue(modelSource.contains("await reload()"))
+
+        let shareExtensionSource = try String(contentsOf: shareExtensionSourceURL(), encoding: .utf8)
+        XCTAssertTrue(shareExtensionSource.contains("components.host = \"refresh\""))
+        XCTAssertTrue(shareExtensionSource.contains("await openHostApp(refreshURL)"))
+        XCTAssertTrue(shareExtensionSource.contains("if opened {"))
     }
 
     func testChatGptTemporaryDirectoryCleanupRemovesOnlyStaleGeneratedDirectories() throws {
@@ -1026,11 +1036,32 @@ final class ExportArchiveBuilderTests: XCTestCase {
             .appendingPathComponent("URLSaveriOS/UI/ExportSheet.swift")
     }
 
+    private func rootViewSourceURL() -> URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("URLSaveriOS/UI/RootView.swift")
+    }
+
     private func appModelSourceURL() -> URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .appendingPathComponent("URLSaveriOS/App/URLSaverAppModel.swift")
+    }
+
+    private func appEntrySourceURL() -> URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("URLSaveriOS/App/URLSaveriOSApp.swift")
+    }
+
+    private func shareExtensionSourceURL() -> URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("URLSaverShareExtension/ShareViewController.swift")
     }
 
     private func chatGptPublicSafeID(from archive: URLSaveriOS.PreparedExportArchive) throws -> String {

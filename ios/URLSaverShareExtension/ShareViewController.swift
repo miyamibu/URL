@@ -211,6 +211,13 @@ final class ShareViewController: UIViewController {
         extensionContext?.completeRequest(returningItems: nil)
     }
 
+    private func makeHostAppRefreshURL() -> URL? {
+        var components = URLComponents()
+        components.scheme = "urlsaver"
+        components.host = "refresh"
+        return components.url
+    }
+
     @MainActor
     private func updateStatus(_ text: String, finished: Bool) {
         if finished {
@@ -605,7 +612,18 @@ final class ShareViewController: UIViewController {
                 )
                 try? await ShareHandoffStore().write(report)
                 let statusText = "\(summary.total)件を処理しました（新規\(summary.created) / 既存\(summary.duplicate) / 復元\(summary.restored) / 失敗\(summary.failed)）"
-                await MainActor.run { updateStatus(statusText, finished: true) }
+                let opened = if let refreshURL = makeHostAppRefreshURL() {
+                    await openHostApp(refreshURL)
+                } else {
+                    false
+                }
+                await MainActor.run {
+                    if opened {
+                        finishExtension()
+                    } else {
+                        updateStatus(statusText, finished: true)
+                    }
+                }
             } else {
                 let result = (try? repository.saveFromResolvedURL(
                     pendingShare.urls[0],
@@ -622,8 +640,20 @@ final class ShareViewController: UIViewController {
                     createdAt: Date()
                 )
                 try? await ShareHandoffStore().write(report)
+                let opened = if let refreshURL = makeHostAppRefreshURL() {
+                    await openHostApp(refreshURL)
+                } else {
+                    false
+                }
                 await MainActor.run {
-                    updateStatus(shareStatusText(result: result.result, degradation: pendingShare.degradationNotice), finished: true)
+                    if opened {
+                        finishExtension()
+                    } else {
+                        updateStatus(
+                            shareStatusText(result: result.result, degradation: pendingShare.degradationNotice),
+                            finished: true
+                        )
+                    }
                 }
             }
         }

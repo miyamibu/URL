@@ -54,6 +54,31 @@ def main() -> int:
             "shared-tag row must not disappear in local-only or signed-out builds",
         ),
         lambda: require(
+            "docs/mobile-ui-regression-contract.md",
+            "ホーム右下の `タグ` / `アーカイブ` より上に置く独立した `ChatGPT`",
+            "manual ChatGPT handoff must remain a dedicated home route",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
+            'contentDescription = "ChatGPT"',
+            "Android home must expose the dedicated ChatGPT action",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/ExportScreen.kt",
+            "fun ChatGptExportScreen(",
+            "Android ChatGPT handoff must remain a dedicated screen",
+        ),
+        lambda: require(
+            "ios/URLSaveriOS/UI/RootView.swift",
+            "onOpenChatGpt",
+            "iPhone home must expose the dedicated ChatGPT action",
+        ),
+        lambda: require(
+            "ios/URLSaveriOS/UI/ExportSheet.swift",
+            "struct ChatGptExportSheet: View",
+            "iPhone ChatGPT handoff must remain a dedicated sheet",
+        ),
+        lambda: require(
             "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
             "val showSharedTagCloudUi = true",
             "Android shared-tag row must remain visible in every home state",
