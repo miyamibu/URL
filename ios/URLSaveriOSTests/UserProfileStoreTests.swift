@@ -41,6 +41,7 @@ final class UserProfileStoreTests: XCTestCase {
 
         XCTAssertEqual(result, .success("req-1"))
         XCTAssertEqual(ContactSupportURLProtocol.lastRequest?.httpMethod, "POST")
+        XCTAssertFalse(ContactSupportURLProtocol.lastRequest?.value(forHTTPHeaderField: "Idempotency-Key")?.isEmpty ?? true)
     }
 
     func testContactSupportClientLegacySuccess() async throws {

@@ -1,7 +1,13 @@
 # Privacy And Data Safety Draft
 
 ## Goal
-現在の source baseline（Android `1.0.14 (versionCode=17)` / iOS `1.0.14 (build=15)`）から次回提出する privacy / Data safety 回答を、選択した release mode と照合できる状態にする。過去の `1.0.11` 提出証跡は履歴として残すが、現在の提出可否の証明には使わない。
+現在の source baseline（Android `1.0.15 (versionCode=17)` / iOS `1.0.15 (build=17)`）から次回提出する privacy / Data safety 回答を、選択した release mode と照合できる状態にする。過去の提出証跡は履歴として残すが、現在の提出可否の証明には使わない。
+
+## Current readiness
+
+`NO_GO_INTERNAL / NOT_VERIFIED` as of 2026-07-24. This draft must not be used
+for store submission until the submitted binary flags, applied database
+schema, external providers, and live disclosure pages are rechecked.
 
 ## Release Assumption
 - Ads: disabled.
@@ -10,7 +16,7 @@
 - Third-party crash reporting: not used.
 - Shared-tag cloud: release mode dependent. Android reads release local/env config; iOS defaults to tracked local-only xcconfig and requires an explicit secrets xcconfig for cloud-sharing Archive/TestFlight.
 - Account sign-in: enabled only when shared-tag cloud is enabled for the submitted binary.
-- Current repo status: `REPO_GO`; external live/store verification remains a separate manual gate.
+- Current repo status: `NO_GO_INTERNAL / NOT_VERIFIED`; external live/store verification remains a separate manual gate.
 
 ## Data Stored Locally
 - Saved URL, normalized URL, display URL.

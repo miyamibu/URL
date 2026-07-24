@@ -106,6 +106,12 @@ class MetadataFetcherTest {
     }
 
     @Test
+    fun fetch_releasePolicy_rejectsLoopbackHttpBeforeOpeningConnection() {
+        val result = MetadataFetcher(allowLoopbackHttpForTests = false).fetch("http://127.0.0.1:8080/private")
+        assertEquals(FetchOutcome.Unavailable(MetadataError.UNSUPPORTED_SCHEME), result)
+    }
+
+    @Test
     fun fetch_canonicalXHost_extractsXStatusId() {
         withServer { server ->
             server.enqueue(

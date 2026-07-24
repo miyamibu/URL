@@ -198,6 +198,9 @@ final class URLSaverAppModel: ObservableObject {
         profile = (try? services.profileStore.load()) ?? .empty
         pendingInviteRecord = try? services.pendingInviteStore.load()
         try? services.repository.cleanupExpiredPendingDeletes()
+        if let validEntryIDs = try? services.repository.loadAllEntryIDs() {
+            IOSAppMediaStore.cleanupOrphanedEntryDirectories(validEntryIDs: Set(validEntryIDs))
+        }
         services.storePurchaseService.startTransactionUpdates()
         await reload()
         await refreshSharedTagCloudState()
@@ -768,8 +771,12 @@ final class URLSaverAppModel: ObservableObject {
         case .authCallback:
             await handleSharedTagAuthCallback(url)
         case .invite(let token):
-            guard !token.isEmpty else {
-                enqueueNotification(AppNotification(message: "共有招待リンクを開けませんでした", actionLabel: nil, action: nil, autoDismissAfter: 4))
+            do {
+                try services.pendingInviteStore.save(inviteToken: token)
+                pendingInviteRecord = try services.pendingInviteStore.load()
+            } catch {
+                pendingInviteRecord = nil
+                enqueueNotification(AppNotification(message: "共有招待を安全に保留できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 4))
                 return
             }
             inviteConfirmationToken = token
@@ -1079,6 +1086,9 @@ final class URLSaverAppModel: ObservableObject {
     }
 
     func signOutFromSharedTagCloud() async {
+        _ = clearPendingInviteStorage()
+        pendingInviteRecord = nil
+        inviteConfirmationToken = nil
         do {
             try services.sharedTagCloud.signOut()
             await refreshSharedTagCloudState()
@@ -1111,7 +1121,7 @@ final class URLSaverAppModel: ObservableObject {
         }
         switch await services.sharedTagCloud.acceptInvite(inviteToken: pendingInviteRecord.inviteToken) {
         case .accepted(let displayName, let inviteType, let role):
-            try? services.pendingInviteStore.clear()
+            _ = clearPendingInviteStorage()
             self.pendingInviteRecord = nil
             await refreshSharedTagCloudState()
             let roleText = role?.displayName ?? "メンバー"
@@ -1125,11 +1135,10 @@ final class URLSaverAppModel: ObservableObject {
                 )
             )
         case .authRequired:
-            try? services.pendingInviteStore.save(inviteToken: pendingInviteRecord.inviteToken)
             self.pendingInviteRecord = try? services.pendingInviteStore.load()
             enqueueNotification(AppNotification(message: "先に共有タグクラウドへサインインしてください", actionLabel: nil, action: nil, autoDismissAfter: 4))
         case .invalidInvite:
-            try? services.pendingInviteStore.clear()
+            _ = clearPendingInviteStorage()
             self.pendingInviteRecord = nil
             enqueueNotification(AppNotification(message: "招待リンクが無効か期限切れでした", actionLabel: nil, action: nil, autoDismissAfter: 4))
         case .failure(let message):
@@ -1150,9 +1159,15 @@ final class URLSaverAppModel: ObservableObject {
         let result = await services.sharedTagCloud.acceptInvite(inviteToken: inviteToken)
         switch result {
         case .accepted:
+            _ = clearPendingInviteStorage()
+            pendingInviteRecord = nil
             inviteConfirmationToken = nil
             await refreshSharedTagCloudState()
             await reload()
+        case .invalidInvite:
+            _ = clearPendingInviteStorage()
+            pendingInviteRecord = nil
+            inviteConfirmationToken = nil
         default:
             break
         }
@@ -1208,10 +1223,28 @@ final class URLSaverAppModel: ObservableObject {
     }
 
     private func refreshAfterRemoteAccountDeletion() async {
-        try? services.pendingInviteStore.clear()
+        _ = clearPendingInviteStorage()
         pendingInviteRecord = nil
         await refreshSharedTagCloudState()
         await reload()
+    }
+
+    @discardableResult
+    private func clearPendingInviteStorage() -> Bool {
+        do {
+            try services.pendingInviteStore.clear()
+            return true
+        } catch {
+            enqueueNotification(
+                AppNotification(
+                    message: "共有招待の端末内保留状態を消去できませんでした。端末内に残っている可能性があります。",
+                    actionLabel: nil,
+                    action: nil,
+                    autoDismissAfter: 5
+                )
+            )
+            return false
+        }
     }
 
     private func localAccountCleanupMessage(for state: SharedTagAccountLocalCleanupState) -> String {
@@ -1639,6 +1672,13 @@ final class URLSaverAppModel: ObservableObject {
         }
     }
 
+    func canOfferMediaAction(entryID: Int64) -> Bool {
+        guard let entry = entry(for: entryID) else { return false }
+        return entry.localProvenanceCount > 0 &&
+            entry.recordState == .active &&
+            IOSBackendMediaResolver.supports(serviceType: entry.serviceType)
+    }
+
     private func handleSaveResult(_ saveResult: SaveResult, degradationNotice: ShareDegradationNotice?) async {
         if saveResult.shouldScheduleMetadata, let entryID = saveResult.entryID {
             AppBackgroundScheduler.schedule()
@@ -1812,10 +1852,20 @@ final class URLSaverAppModel: ObservableObject {
         deleteTimers[entryID] = Task { [weak self] in
             let seconds = max(0, due.timeIntervalSinceNow)
             try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-            try? self?.services.repository.finalizePendingDelete(entryID: entryID)
-            await self?.reload()
+            guard let self else { return }
+            try? self.services.repository.finalizePendingDelete(entryID: entryID)
+            var entryWasDeleted = false
+            do {
+                entryWasDeleted = try self.services.repository.loadEntry(id: entryID) == nil
+            } catch {
+                entryWasDeleted = false
+            }
+            if entryWasDeleted {
+                IOSAppMediaStore.deleteFiles(entryID: entryID)
+            }
+            await self.reload()
             await MainActor.run {
-                self?.deleteTimers[entryID] = nil
+                self.deleteTimers[entryID] = nil
             }
         }
     }
@@ -1876,7 +1926,14 @@ private enum IOSMediaResolverError: Error {
 }
 
 private struct IOSBackendMediaResolver {
+    #if DEBUG
+    private static let isEnabled = true
+    #else
+    private static let isEnabled = false
+    #endif
+
     static func supports(serviceType: ServiceType) -> Bool {
+        guard isEnabled else { return false }
         switch serviceType {
         case .youtube, .tiktok, .instagram:
             return true
@@ -1894,8 +1951,15 @@ private struct IOSBackendMediaResolver {
         guard let baseURL = Self.backendBaseURL() else {
             throw IOSMediaResolverError.unconfigured
         }
+        let resolverURL = baseURL.appendingPathComponent("resolve")
+        guard await MetadataNetworkTargetPolicy.isAllowedForNetworkRequest(
+            resolverURL,
+            allowTestHosts: false
+        ) else {
+            throw IOSMediaResolverError.unconfigured
+        }
 
-        var request = URLRequest(url: baseURL.appendingPathComponent("resolve"))
+        var request = URLRequest(url: resolverURL)
         request.httpMethod = "POST"
         request.timeoutInterval = 75
         request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
@@ -1910,7 +1974,10 @@ private struct IOSBackendMediaResolver {
             options: []
         )
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.data(
+            for: request,
+            delegate: MetadataRedirectPolicyDelegate(allowTestHosts: false, maxRedirects: 5)
+        )
         guard let httpResponse = response as? HTTPURLResponse else {
             throw IOSMediaResolverError.httpStatus(-1)
         }
@@ -1924,8 +1991,7 @@ private struct IOSBackendMediaResolver {
         }
         return decoded.assets.filter { asset in
             guard let url = URL(string: asset.downloadURL),
-                  let scheme = url.scheme?.lowercased(),
-                  scheme == "https" || scheme == "http" else {
+                  MetadataNetworkTargetPolicy.isAllowed(url, allowTestHosts: false) else {
                 return false
             }
             return asset.mediaType == "IMAGE" || asset.mediaType == "VIDEO"
@@ -1984,8 +2050,10 @@ private struct IOSBackendMediaResolver {
 private enum IOSAppMediaSaver {
     static func save(asset: IOSResolvedMediaAsset, entryID: Int64, index: Int) async throws -> SavedAppMediaFile {
         guard let downloadURL = URL(string: asset.downloadURL),
-              let scheme = downloadURL.scheme?.lowercased(),
-              scheme == "https" || scheme == "http" else {
+              await MetadataNetworkTargetPolicy.isAllowedForNetworkRequest(
+                  downloadURL,
+                  allowTestHosts: false
+              ) else {
             throw IOSMediaResolverError.invalidDownloadURL
         }
 
@@ -1999,7 +2067,10 @@ private enum IOSAppMediaSaver {
             }
         }
 
-        let (temporaryURL, response) = try await URLSession.shared.download(for: request)
+        let (temporaryURL, response) = try await URLSession.shared.download(
+            for: request,
+            delegate: MetadataRedirectPolicyDelegate(allowTestHosts: false, maxRedirects: 5)
+        )
         guard let httpResponse = response as? HTTPURLResponse,
               (200..<300).contains(httpResponse.statusCode) else {
             try? FileManager.default.removeItem(at: temporaryURL)
@@ -2102,6 +2173,37 @@ private enum IOSAppMediaStore {
         }
     }
 
+    static func deleteFiles(entryID: Int64) {
+        guard entryID > 0,
+              let directory = try? directoryURL(entryID: entryID),
+              directory.lastPathComponent == String(entryID),
+              directory.hasDirectoryPath,
+              FileManager.default.fileExists(atPath: directory.path) else {
+            return
+        }
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    static func cleanupOrphanedEntryDirectories(validEntryIDs: Set<Int64>) {
+        guard let root = try? rootURL() else { return }
+        let directories = (try? FileManager.default.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        for directory in directories {
+            guard let entryID = Int64(directory.lastPathComponent),
+                  entryID > 0,
+                  let values = try? directory.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
+                  values.isDirectory == true,
+                  values.isSymbolicLink != true,
+                  !validEntryIDs.contains(entryID) else {
+                continue
+            }
+            try? FileManager.default.removeItem(at: directory)
+        }
+    }
+
     static func fileURL(entryID: Int64, fileName: String) throws -> URL {
         try directoryURL(entryID: entryID)
             .appendingPathComponent(fileName, isDirectory: false)
@@ -2159,7 +2261,7 @@ func rinbamMediaFileNamePrecedes(_ lhs: String, _ rhs: String) -> Bool {
     }
 }
 
-private enum IncomingURLRoute {
+enum IncomingURLRoute {
     case authCallback
     case invite(String)
     case promo(String)
@@ -2171,9 +2273,14 @@ private enum IncomingURLRoute {
         let scheme = url.scheme?.lowercased()
         let host = url.host?.lowercased()
         let token = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        if scheme == "http" || scheme == "https" {
+        if scheme == "https", host == "miyamibu.xyz" {
             let pathComponents = url.pathComponents.filter { $0 != "/" }
-            if pathComponents.count == 2, pathComponents.first?.lowercased() == "invite" {
+            if pathComponents.count == 2,
+               pathComponents.first?.lowercased() == "invite",
+               url.query == nil,
+               url.fragment == nil,
+               Self.hasNoPercentEncodedPath(url),
+               Self.isValidInviteToken(pathComponents[1]) {
                 self = .invite(pathComponents[1])
             } else if pathComponents.count == 1, pathComponents.first?.lowercased() == "promo" {
                 self = .promo(Self.promoCode(from: url))
@@ -2191,7 +2298,11 @@ private enum IncomingURLRoute {
         switch host {
         case "auth" where url.path == "/callback":
             self = .authCallback
-        case "invite":
+        case "invite"
+            where url.query == nil
+                && url.fragment == nil
+                && Self.hasNoPercentEncodedPath(url)
+                && Self.isValidInviteToken(token):
             self = .invite(token)
         case "promo":
             self = .promo(Self.promoCode(from: url))
@@ -2226,5 +2337,24 @@ private enum IncomingURLRoute {
             .first(where: { $0.name == "code" })?
             .value?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private static func isValidInviteToken(_ token: String) -> Bool {
+        guard token.utf8.count == 48 else { return false }
+        return token.utf8.allSatisfy { byte in
+            switch byte {
+            case 48...57, 65...70, 97...102:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
+    private static func hasNoPercentEncodedPath(_ url: URL) -> Bool {
+        guard let encodedPath = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath else {
+            return false
+        }
+        return encodedPath == url.path
     }
 }

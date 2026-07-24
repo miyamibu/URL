@@ -1,13 +1,17 @@
-name: Android CI
+name: Cross-platform CI
 
 on:
   push:
     branches:
       - "**"
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  verify:
+  android:
     runs-on: ubuntu-latest
 
     steps:
@@ -24,11 +28,116 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Assemble debug
-        run: ./gradlew assembleDebug
+      - name: Android tests, lint, and release build
+        run: ./gradlew testDebugUnitTest lintDebug assembleDebug bundleRelease
 
-      - name: Unit tests
-        run: ./gradlew testDebugUnitTest
+      - name: Android and release contracts
+        run: |
+          python3 scripts/verify_mobile_ui_contract.py
+          python3 scripts/verify_mcp_contract.py
+          bash scripts/check_release_hygiene.sh
+          python3 scripts/verify_current_readiness.py
 
-      - name: Lint debug
-        run: ./gradlew lintDebug
+  resolver:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python resolver checks
+        run: |
+          python3 -m py_compile scripts/media_resolver_backend.py
+          python3 -m unittest discover -s tests -p 'test_media_resolver_backend.py' -v
+
+  web:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/admin/package-lock.json
+
+      - name: Install admin dependencies
+        working-directory: web/admin
+        run: npm ci
+
+      - name: Admin typecheck, lint, and build
+        working-directory: web/admin
+        run: |
+          npm run typecheck
+          npm run lint
+          npm run build
+
+  supabase:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.8.1
+
+      - name: Edge function checks
+        run: |
+          deno check supabase/functions/contact-support/index.ts supabase/functions/contact-support-resend-webhook/index.ts
+          deno test --allow-env --allow-net supabase/functions/verify-store-purchase/index.test.ts
+
+      - name: Static migration hardening checks
+        run: |
+          test -f supabase/migrations/20260724110000_fail_closed_personal_link_sync.sql
+          test -f supabase/migrations/20260724210000_personal_link_deletion_and_gate.sql
+          test -f supabase/migrations/20260724230000_contact_support_atomicity.sql
+          test -f supabase/migrations/20260724240000_purchase_atomicity.sql
+          test -f supabase/migrations/20260724250000_admin_bootstrap_gate.sql
+          test -f supabase/tests/personal_link_hardening_validation.sql
+          test -f supabase/tests/transactional_hardening_validation.sql
+          rg -n "snapshot_protocol_required|pg_advisory_xact_lock|bootstrap_first_admin" supabase/migrations supabase/tests
+
+  ios:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Xcode toolchain
+        run: xcodebuild -version
+
+      - name: iOS simulator tests
+        run: |
+          destination="$(xcodebuild -workspace ios/URLSaveriOS.xcworkspace -scheme URLSaveriOS -showdestinations 2>/dev/null | sed -n 's/^[[:space:]]*{ \(platform:iOS Simulator[^}]*\) }$/\1/p' | grep -v unavailable | grep -v 'Any iOS Simulator Device' | head -n 1)"
+          test -n "$destination"
+          echo "Using simulator destination: $destination"
+          xcodebuild -workspace ios/URLSaveriOS.xcworkspace -scheme URLSaveriOS -destination "$destination" CODE_SIGNING_ALLOWED=NO test
+
+  security:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate source SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: rinbam-source-sbom.cdx.json
+          artifact-name: rinbam-source-sbom

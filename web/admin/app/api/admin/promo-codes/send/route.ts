@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { assertWritable, requireAdmin } from "@/lib/auth";
+import { assertRecentAuth, assertWritable, requireAdmin } from "@/lib/auth";
 import { normalizedEmail } from "@/lib/env";
 import { generatePromoCode, promoCodeHash, promoLinkForCode, sendPromoEmail } from "@/lib/promo";
 import { createServiceSupabaseClient } from "@/lib/supabase";
@@ -8,8 +8,8 @@ const MAX_CODE_INSERT_ATTEMPTS = 5;
 
 function asErrorResponse(error: unknown): Response {
   if (error instanceof Response) return error;
-  const message = error instanceof Error ? error.message : "優待コードを送信できませんでした";
-  return NextResponse.json({ error: message }, { status: 500 });
+  console.error("admin promo-code send failed", error instanceof Error ? error.name : "unknown");
+  return NextResponse.json({ error: "優待コードを送信できませんでした" }, { status: 500 });
 }
 
 async function insertEvent(
@@ -25,18 +25,12 @@ async function insertEvent(
   if (error) throw error;
 }
 
-function rpcMessage(error: unknown): string {
-  if (error && typeof error === "object" && "message" in error && typeof error.message === "string") {
-    return error.message;
-  }
-  return error instanceof Error ? error.message : "優待コードを送信できませんでした";
-}
-
 export async function POST(request: NextRequest) {
   let codeId: string | null = null;
   try {
     const admin = await requireAdmin(request);
     assertWritable(admin);
+    assertRecentAuth(admin);
 
     const body = await request.json().catch(() => ({}));
     const targetEmail = normalizedEmail(String(body.targetEmail ?? ""));
@@ -95,17 +89,17 @@ export async function POST(request: NextRequest) {
     try {
       delivery = await sendPromoEmail({ to: targetEmail, code, expiresAt, note });
     } catch (sendError) {
-      const message = sendError instanceof Error ? sendError.message : "メール送信に失敗しました";
+      console.error("admin promo email send failed", sendError instanceof Error ? sendError.name : "unknown");
       const { error: recordFailureError } = await supabase.rpc("admin_record_promo_email_failed", {
         p_code_id: codeId,
         p_admin_id: admin.id,
         p_actor_user_id: admin.userId,
-        p_error: message,
+        p_error: "provider_send_failed",
         p_event_at: new Date().toISOString(),
       });
       if (recordFailureError) throw recordFailureError;
 
-      return NextResponse.json({ error: message }, { status: 502 });
+      return NextResponse.json({ error: "メール送信に失敗しました。時間をおいて再度お試しください" }, { status: 502 });
     }
 
     try {
@@ -120,6 +114,7 @@ export async function POST(request: NextRequest) {
         throw recordError;
       }
     } catch (recordError) {
+      console.error("admin promo delivery state reconcile failed", recordError instanceof Error ? recordError.name : "unknown");
       return NextResponse.json(
         {
           id: codeId,
@@ -127,7 +122,7 @@ export async function POST(request: NextRequest) {
           expiresAt,
           deliveryMessageId: delivery.id ?? null,
           needsReconcile: true,
-          error: `メールは送信済みですが、配送状態の保存に失敗しました: ${rpcMessage(recordError)}`,
+          error: "メールは送信済みですが、配送状態の保存に失敗しました。管理者が再確認してください",
         },
         { status: 503 },
       );

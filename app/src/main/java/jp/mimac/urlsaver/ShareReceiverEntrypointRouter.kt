@@ -65,18 +65,20 @@ internal object ShareReceiverEntrypointRouter {
         if (!isInviteUri(uri)) return null
         val token = when {
             uri.scheme == "urlsaver" -> uri.pathSegments.singleOrNull()
-            uri.scheme == "http" || uri.scheme == "https" -> {
+            uri.scheme == "https" && uri.host == "miyamibu.xyz" -> {
                 uri.pathSegments.takeIf { it.firstOrNull() == "invite" }?.drop(1)?.singleOrNull()
             }
             else -> null
         }
-        return token?.trim()?.takeIf { it.isNotEmpty() }
+        return token?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?.takeIf(::isSafeInviteToken)
     }
 
     private fun isInviteUri(uri: android.net.Uri?): Boolean {
         uri ?: return false
         return (uri.scheme == "urlsaver" && uri.host == "invite") ||
-            ((uri.scheme == "http" || uri.scheme == "https") && uri.pathSegments.firstOrNull() == "invite")
+            (uri.scheme == "https" && uri.host == "miyamibu.xyz" && uri.pathSegments.firstOrNull() == "invite")
     }
 
     private fun parsePromoCode(uri: android.net.Uri?): String? {
@@ -88,12 +90,16 @@ internal object ShareReceiverEntrypointRouter {
             ?.substringBefore("&")
         return (codeFromQuery ?: codeFromFragment)
             ?.trim()
-            ?.takeIf { it.isNotEmpty() }
+            ?.takeIf { it.length in 4..128 && it.all { char -> char.isLetterOrDigit() || char in " _-" } }
     }
 
     private fun isPromoUri(uri: android.net.Uri?): Boolean {
         uri ?: return false
         return (uri.scheme == "urlsaver" && uri.host == "promo") ||
-            ((uri.scheme == "http" || uri.scheme == "https") && uri.pathSegments.firstOrNull() == "promo")
+            (uri.scheme == "https" && uri.host == "miyamibu.xyz" && uri.pathSegments.firstOrNull() == "promo")
+    }
+
+    private fun isSafeInviteToken(value: String): Boolean {
+        return value.length in 8..256 && value.all { it.isLetterOrDigit() || it in "._~-" }
     }
 }

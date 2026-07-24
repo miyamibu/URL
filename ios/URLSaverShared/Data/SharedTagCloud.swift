@@ -57,8 +57,10 @@ struct SharedTagCloudConfig: Sendable {
     }
 
     var isPersonalLinkSyncConfigured: Bool {
-        isConfigured && personalLinkSyncEnabled
+        isConfigured && personalLinkSyncEnabled && Self.personalLinkSnapshotProtocolEnabled
     }
+
+    private static let personalLinkSnapshotProtocolEnabled = false
 
     private static func parseEnabledFlag(_ raw: String) -> Bool {
         switch raw.lowercased() {
@@ -110,6 +112,7 @@ struct ContactSupportRequest: Codable, Equatable {
     let buildType: String
     let isSignedIn: Bool
     let authUserId: String?
+    var idempotencyKey: String = UUID().uuidString
 }
 
 enum ContactSupportResult: Equatable {
@@ -140,6 +143,7 @@ final class ContactSupportClient: @unchecked Sendable {
             request.httpMethod = "POST"
             request.timeoutInterval = 30
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(payload.idempotencyKey, forHTTPHeaderField: "Idempotency-Key")
             request.httpBody = try JSONEncoder().encode(payload)
 
             let (data, response) = try await session.data(for: request)
@@ -348,6 +352,7 @@ private struct KeychainSharedTagAuthSecureStorage: SharedTagAuthSecureStorage {
 struct SharedTagOAuthPendingState: Codable, Equatable, Sendable {
     let provider: String
     let codeVerifier: String
+    let state: String
     let redirectTo: String
     let expiresAt: Date
 }
@@ -379,7 +384,7 @@ final class SharedTagOAuthStateStore: @unchecked Sendable {
         try storage.save(try encoder.encode(pending))
     }
 
-    func consume(provider: String, redirectTo: String) throws -> SharedTagOAuthPendingState {
+    func consume(provider: String, redirectTo: String, state: String) throws -> SharedTagOAuthPendingState {
         guard let data = try storage.load() else {
             throw SharedTagCloudError.message("OAuth state is missing.")
         }
@@ -388,6 +393,7 @@ final class SharedTagOAuthStateStore: @unchecked Sendable {
         decoder.dateDecodingStrategy = .iso8601
         let pending = try decoder.decode(SharedTagOAuthPendingState.self, from: data)
         guard pending.provider == provider,
+              pending.state == state,
               pending.redirectTo == redirectTo else {
             throw SharedTagCloudError.message("OAuth state is invalid.")
         }
@@ -430,10 +436,12 @@ private struct SharedTagAuthRemoteDataSource {
         }
         let codeVerifier = Self.randomURLSafeString(byteCount: 48)
         let codeChallenge = Self.pkceCodeChallenge(for: codeVerifier)
+        let state = Self.randomURLSafeString(byteCount: 32)
         try oauthStateStore.save(
             SharedTagOAuthPendingState(
                 provider: provider,
                 codeVerifier: codeVerifier,
+                state: state,
                 redirectTo: redirectTo,
                 expiresAt: Date().addingTimeInterval(Self.oauthStateTTL)
             )
@@ -443,6 +451,7 @@ private struct SharedTagAuthRemoteDataSource {
             "redirect_to=\(Self.percentEncodedQueryValue(redirectTo))",
             "code_challenge=\(Self.percentEncodedQueryValue(codeChallenge))",
             "code_challenge_method=S256",
+            "state=\(Self.percentEncodedQueryValue(state))",
         ].joined(separator: "&")
         guard let url = URL(string: config.supabaseURL.trimmingTrailingSlashes() + "/auth/v1/authorize?\(query)") else {
             throw SharedTagCloudError.message("GoogleサインインURLを作成できませんでした")
@@ -468,9 +477,14 @@ private struct SharedTagAuthRemoteDataSource {
             try? oauthStateStore.clear()
             throw SharedTagCloudError.message("OAuth code callback is missing.")
         }
+        guard let state = params["state"], !state.isEmpty else {
+            try? oauthStateStore.clear()
+            throw SharedTagCloudError.message("OAuth state is missing.")
+        }
         let pending = try oauthStateStore.consume(
             provider: params["provider"] ?? "google",
-            redirectTo: Self.authCallbackURL
+            redirectTo: Self.authCallbackURL,
+            state: state
         )
         let response = try await executeAuthRequest(
             path: "/auth/v1/token?grant_type=pkce",
@@ -2179,7 +2193,8 @@ final class SharedTagCloudService: @unchecked Sendable {
         var excludedCount = 0
         var exclusionReasons: [String: Int] = [:]
         for record in records {
-            let result = ChatGptPersonalLinkSyncPolicy.eligibility(for: record)
+            let tags = try repository.loadLocalTagsForEntry(entryID: record.id).map(\.name)
+            let result = ChatGptPersonalLinkSyncPolicy.eligibility(for: record, tags: tags)
             if result.eligible {
                 eligibleCount += 1
             } else {
@@ -2203,7 +2218,8 @@ final class SharedTagCloudService: @unchecked Sendable {
         var eligibleRecords: [URLRecord] = []
         var exclusionReasons: [String: Int] = [:]
         for record in records {
-            let result = ChatGptPersonalLinkSyncPolicy.eligibility(for: record)
+            let tags = try repository.loadLocalTagsForEntry(entryID: record.id).map(\.name)
+            let result = ChatGptPersonalLinkSyncPolicy.eligibility(for: record, tags: tags)
             guard result.eligible else {
                 for reason in result.reasons {
                     exclusionReasons[reason, default: 0] += 1
@@ -2248,11 +2264,11 @@ final class SharedTagCloudService: @unchecked Sendable {
         ChatGptPersonalLinkOperation(
             opID: UUID().uuidString.lowercased(),
             clientEntryID: AiTransparencyPolicy.publicSafeID(for: record),
-            url: record.normalizedURL,
-            title: record.userTitle ?? record.fetchedTitle,
-            memo: record.memo.isEmpty ? nil : record.memo,
+            url: ExternalDataPolicy.safeURL(record.normalizedURL) ?? ExternalDataPolicy.excludedURLMarker,
+            title: ExternalDataPolicy.sanitizeText(record.userTitle ?? record.fetchedTitle),
+            memo: ExternalDataPolicy.sanitizeText(record.memo),
             updatedAt: Self.chatGptISO8601String(record.updatedAt),
-            tags: tags,
+            tags: tags.compactMap(ExternalDataPolicy.sanitizeText),
             metadata: ChatGptPersonalLinkMetadata(contentFetchAllowed: false)
         )
     }

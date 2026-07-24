@@ -93,7 +93,7 @@ grep -q 'tools:node="remove"' app/src/release/AndroidManifest.xml \
   || fail "release manifest removal rules are missing"
 
 grep -q 'CFBundleShortVersionString' ios/URLSaveriOS/Info.plist \
-  && grep -q '<string>1.0.14</string>' ios/URLSaveriOS/Info.plist \
+  && grep -q '<string>1.0.15</string>' ios/URLSaveriOS/Info.plist \
   && pass "iOS version baseline is present" \
   || fail "iOS version baseline check failed"
 

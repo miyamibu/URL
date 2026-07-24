@@ -7,7 +7,7 @@ Prepare Android internal testing without Codex uploading to Play Console.
 
 - [ ] Check `app/build.gradle.kts`.
   - Expected: `applicationId = "jp.miyamibu.urlalbum"`.
-  - Expected current source: `versionName = "1.0.14"`, `versionCode = 17`.
+  - Expected current source: `versionName = "1.0.15"`, `versionCode = 17`.
   - Stop if: package name changes or version is not the intended release.
 
 ## Signing Config
@@ -24,7 +24,7 @@ Prepare Android internal testing without Codex uploading to Play Console.
 
 - Expected: tests/lint pass and release AAB is produced.
 - Evidence: Gradle summary, AAB path, versionCode/versionName.
-- Expected: when `media.resolver.backend.url` or `URLSAVER_MEDIA_RESOLVER_BACKEND_URL` is configured, release `ALLOW_LOCAL_MEDIA_DOWNLOADS=true`; otherwise the media-save action stays disabled.
+- Expected: release `ALLOW_LOCAL_MEDIA_DOWNLOADS=false` even when a resolver URL is configured; the media-save action remains gated until authenticated, user-bound, signed-download, quota, and upstream network-boundary validation is complete.
 - Stop if: tests are weakened, release config turns AI flag on, configured media resolver is not HTTPS, or build output contains secrets.
 
 ## Play Console Internal Testing Upload

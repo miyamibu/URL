@@ -1,5 +1,6 @@
 package jp.mimac.urlsaver.data
 
+import android.content.Context
 import android.content.Intent
 import android.util.Log
 import androidx.room.withTransaction
@@ -15,9 +16,12 @@ import jp.mimac.urlsaver.domain.ShareExtractionResult
 import jp.mimac.urlsaver.domain.ShareSaveResult
 import jp.mimac.urlsaver.domain.UrlRules
 import jp.mimac.urlsaver.util.AppClock
+import jp.mimac.urlsaver.video.AppMediaStore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.withContext
 
 class DefaultUrlRepository(
     private val database: AppDatabase,
@@ -26,6 +30,7 @@ class DefaultUrlRepository(
     private val clock: AppClock,
     private val scheduler: MetadataScheduler,
     private val usageSummaryDataSource: UsageSummaryDataSource,
+    private val appContext: Context? = null,
 ) : UrlRepository {
     override fun observeActiveEntries(): Flow<List<UrlEntryEntity>> = flow {
         emitAll(dao.observeActiveEntries())
@@ -386,11 +391,32 @@ class DefaultUrlRepository(
         val due = target.pendingDeletionUntil ?: return
         if (due <= now) {
             dao.deleteById(entryId)
+            withContext(Dispatchers.IO) {
+                appContext?.let { AppMediaStore.deleteForEntry(it, entryId) }
+            }
         }
     }
 
     override suspend fun cleanupExpiredPendingDeletes() {
-        dao.cleanupExpiredPending(clock.nowEpochMillis())
+        val now = clock.nowEpochMillis()
+        val expiredEntryIds = dao.findPendingDeleteEntries()
+            .asSequence()
+            .filter { it.pendingDeletionUntil?.let { due -> due <= now } == true }
+            .map { it.id }
+            .toList()
+        dao.cleanupExpiredPending(now)
+        withContext(Dispatchers.IO) {
+            appContext?.let { context ->
+                expiredEntryIds.forEach { entryId ->
+                    AppMediaStore.deleteForEntry(context, entryId)
+                }
+                runCatching { dao.loadAllEntries().mapTo(mutableSetOf()) { it.id } }
+                    .getOrNull()
+                    ?.let { validEntryIds ->
+                        AppMediaStore.cleanupOrphanedEntryDirectories(context, validEntryIds)
+                    }
+            }
+        }
     }
 
     override suspend fun restore(entryId: Long): Boolean {

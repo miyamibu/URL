@@ -9,6 +9,7 @@ import jp.mimac.urlsaver.data.VideoAssetDao
 import jp.mimac.urlsaver.data.VideoDownloadDao
 import jp.mimac.urlsaver.data.VideoDownloadEntity
 import jp.mimac.urlsaver.util.AppClock
+import jp.mimac.urlsaver.worker.NetworkTargetPolicy
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
@@ -27,6 +28,7 @@ class VideoDownloadWorker(
     override suspend fun doWork(): Result {
         val assetId = inputData.getLong(KEY_VIDEO_ASSET_ID, 0L)
         if (assetId <= 0L) return Result.failure()
+        if (!BuildConfig.DEBUG) return Result.success()
         val asset = videoAssetDao.findById(assetId) ?: return Result.failure()
         urlEntryDao.findById(asset.entryId) ?: return Result.success()
         val downloadUrl = asset.downloadUrl
@@ -75,43 +77,63 @@ class VideoDownloadWorker(
         outputFile.parentFile?.mkdirs()
         temporaryFile.delete()
         try {
-            val connection = (URL(downloadUrl).openConnection() as HttpURLConnection).apply {
-                instanceFollowRedirects = true
-                connectTimeout = 20_000
-                readTimeout = 60_000
-                requestMethod = "GET"
-                setRequestProperty("User-Agent", DEFAULT_USER_AGENT)
-                setRequestProperty("Accept", "image/avif,image/webp,image/apng,image/*,video/*,*/*;q=0.8")
-                setRequestProperty("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+            var current = URI(downloadUrl)
+            var activeConnection: HttpURLConnection? = null
+            for (hop in 0 until 5) {
+                if (!isAllowedDownloadUrl(current.toString())) error("MEDIA_TARGET_NOT_ALLOWED")
+                val next = (URL(current.toString()).openConnection() as HttpURLConnection).apply {
+                    instanceFollowRedirects = false
+                    connectTimeout = 20_000
+                    readTimeout = 60_000
+                    requestMethod = "GET"
+                    setRequestProperty("User-Agent", DEFAULT_USER_AGENT)
+                    setRequestProperty("Accept", "image/avif,image/webp,image/apng,image/*,video/*,*/*;q=0.8")
+                    setRequestProperty("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                }
+                val code = next.responseCode
+                if (code in 300..399) {
+                    val location = next.getHeaderField("Location") ?: error("MEDIA_REDIRECT_INVALID")
+                    current = current.resolve(location)
+                    next.disconnect()
+                    if (hop == 4) error("MEDIA_TOO_MANY_REDIRECTS")
+                } else {
+                    activeConnection = next
+                    break
+                }
             }
-            val responseCode = connection.responseCode
-            if (responseCode !in 200..299) error("HTTP_$responseCode")
-            val totalBytes = connection.contentLengthLong.takeIf { it > 0 }
-            temporaryFile.outputStream().use { output ->
-                connection.inputStream.use { input ->
-                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                    var downloaded = 0L
-                    var lastProgress = -1
-                    while (true) {
-                        val read = input.read(buffer)
-                        if (read < 0) break
-                        output.write(buffer, 0, read)
-                        downloaded += read
-                        val progress = totalBytes?.let { ((downloaded * 100) / it).toInt().coerceIn(0, 99) } ?: 0
-                        if (progress != lastProgress && (progress == 0 || progress - lastProgress >= 5)) {
-                            videoDownloadDao.updateProgress(downloadId, progress, downloaded, totalBytes)
-                            lastProgress = progress
+            val connection = activeConnection ?: error("MEDIA_TOO_MANY_REDIRECTS")
+            try {
+                val responseCode = connection.responseCode
+                if (responseCode !in 200..299) error("HTTP_$responseCode")
+                val totalBytes = connection.contentLengthLong.takeIf { it > 0 }
+                temporaryFile.outputStream().use { output ->
+                    connection.inputStream.use { input ->
+                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                        var downloaded = 0L
+                        var lastProgress = -1
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            output.write(buffer, 0, read)
+                            downloaded += read
+                            val progress = totalBytes?.let { ((downloaded * 100) / it).toInt().coerceIn(0, 99) } ?: 0
+                            if (progress != lastProgress && (progress == 0 || progress - lastProgress >= 5)) {
+                                videoDownloadDao.updateProgress(downloadId, progress, downloaded, totalBytes)
+                                lastProgress = progress
+                            }
                         }
                     }
                 }
+                Files.move(temporaryFile.toPath(), outputFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                videoDownloadDao.markSaved(
+                    downloadId = downloadId,
+                    localUri = AppMediaStore.localUri(entryId, fileName),
+                    fileName = fileName,
+                    savedAt = clock.nowEpochMillis(),
+                )
+            } finally {
+                connection.disconnect()
             }
-            Files.move(temporaryFile.toPath(), outputFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
-            videoDownloadDao.markSaved(
-                downloadId = downloadId,
-                localUri = AppMediaStore.localUri(entryId, fileName),
-                fileName = fileName,
-                savedAt = clock.nowEpochMillis(),
-            )
         } catch (error: Throwable) {
             temporaryFile.delete()
             throw error
@@ -161,16 +183,10 @@ class VideoDownloadWorker(
         }
 
         private fun isAllowedDownloadUrl(url: String): Boolean {
-            val uri = runCatching { URI(url) }.getOrNull() ?: return false
-            val scheme = uri.scheme?.lowercase(Locale.US) ?: return false
-            if (scheme == "https") return true
-            if (scheme != "http" || !BuildConfig.ALLOW_LOCAL_MEDIA_DOWNLOADS) return false
-            val host = uri.host?.lowercase(Locale.US) ?: return false
-            return host == "localhost" ||
-                host == "127.0.0.1" ||
-                host.startsWith("10.") ||
-                host.startsWith("192.168.") ||
-                Regex("""172\.(1[6-9]|2[0-9]|3[0-1])\..+""").matches(host)
+            return NetworkTargetPolicy.isAllowed(
+                url,
+                allowTestHosts = BuildConfig.DEBUG && BuildConfig.ALLOW_LOCAL_MEDIA_DOWNLOADS,
+            )
         }
 
         private fun normalizeDownloadUrl(url: String): String {

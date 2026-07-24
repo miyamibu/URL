@@ -15,7 +15,7 @@ Drive the repo from `LAUNCH_READY_REPO` through manual `STAGING_GO`, `INTERNAL_T
 - [ ] Check:
   - Owner: Release owner
   - Command / Console: Review `docs/release/repo-go-evidence.md`
-  - Expected result: REPO_GO proof is current enough for this launch train.
+  - Expected result: The current evidence file explicitly reports the applicable status for this launch train; `NO_GO_INTERNAL` or `NOT_VERIFIED` stops the launch.
   - Evidence to save: Timestamped release decision note.
   - Stop if: Evidence predates meaningful code/config changes.
 

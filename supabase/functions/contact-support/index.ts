@@ -5,6 +5,7 @@ type ContactSupportRequest = {
   name?: unknown;
   message?: unknown;
   source?: unknown;
+  idempotencyKey?: unknown;
   honeypot?: unknown;
   platform?: unknown;
   appVersion?: unknown;
@@ -18,6 +19,7 @@ type NormalizedContactRequest = {
   name: string;
   message: string;
   source: string;
+  idempotencyKey: string;
   platform: string;
   appVersion: string;
   buildType: string;
@@ -28,16 +30,17 @@ type NormalizedContactRequest = {
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=utf-8",
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, idempotency-key",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const MAX_MESSAGE_LENGTH = 4000;
-const EMAIL_HOURLY_LIMIT = 10;
-const IP_HOURLY_LIMIT = 50;
-const IP_DAILY_LIMIT = 200;
+const MAX_REQUEST_BYTES = 16 * 1024;
+const MAX_MESSAGE_BYTES = 8 * 1024;
+const MAX_FIELD_BYTES = 512;
 const VALID_PLATFORMS = new Set(["android", "ios"]);
 const VALID_BUILD_TYPES = new Set(["debug", "release"]);
+
+class ContactPayloadTooLargeError extends Error {}
 
 Deno.serve(async (request) => {
   const requestId = crypto.randomUUID();
@@ -56,7 +59,7 @@ Deno.serve(async (request) => {
     const databaseUrl = requiredEnv("SUPABASE_DB_URL");
 
     const body = await readContactRequest(request);
-    const normalized = normalizeContactRequest(body);
+    const normalized = normalizeContactRequest(body, request.headers.get("idempotency-key"));
 
     if (typeof body.honeypot === "string" && body.honeypot.trim()) {
       return jsonResponse({ requestId, status: "accepted" }, 202);
@@ -70,20 +73,35 @@ Deno.serve(async (request) => {
     const emailHash = await hashClient(normalized.email);
     const authUserIdHash = normalized.authUserId ? await hashClient(normalized.authUserId) : null;
     const ipHash = await hashClient(clientIp(request));
-    const rateLimit = await enforceRateLimit(databaseUrl, ipHash, emailHash);
-    if (!rateLimit.ok) {
-      return jsonResponse({ error: rateLimit.error, requestId }, rateLimit.status);
+    const reserved = await reserveContactSubmission(
+      databaseUrl,
+      requestId,
+      normalized,
+      emailHash,
+      authUserIdHash,
+      ipHash,
+      await hashClient(normalized.idempotencyKey),
+    );
+    if (!reserved.ok) {
+      return jsonResponse({ error: reserved.error, requestId }, reserved.status);
+    }
+    if (reserved.existing && reserved.deliveryStatus !== "pending" && reserved.deliveryStatus !== "failed") {
+      return jsonResponse({ requestId: reserved.requestId, status: "accepted" }, 202);
     }
 
-    const queued = await recordSubmission(databaseUrl, requestId, normalized, emailHash, authUserIdHash, ipHash);
-    if (!queued.ok) {
-      return jsonResponse({ error: queued.error, requestId }, queued.status);
-    }
-
-    const sent = await sendWithResend(resendApiKey, contactFromEmail, contactToEmail, requestId, normalized);
+    // Reuse the durable request id on retries so the provider sees one
+    // idempotency key even when the first attempt failed after reservation.
+    const deliveryRequestId = reserved.requestId;
+    const sent = await sendWithResend(
+      resendApiKey,
+      contactFromEmail,
+      contactToEmail,
+      deliveryRequestId,
+      normalized,
+    );
     await updateSubmissionStatus(
       databaseUrl,
-      queued.id,
+      reserved.id,
       sent.ok ? "sent" : "failed",
       sent.ok ? sent.messageId : null,
       sent.ok ? null : sent.error,
@@ -92,8 +110,11 @@ Deno.serve(async (request) => {
       return jsonResponse({ error: "send_failed", requestId }, 502);
     }
 
-    return jsonResponse({ requestId, status: "accepted" }, 202);
+    return jsonResponse({ requestId: reserved.requestId, status: "accepted" }, 202);
   } catch (error) {
+    if (error instanceof ContactPayloadTooLargeError) {
+      return jsonResponse({ error: "request_too_large", requestId }, 413);
+    }
     console.error("contact-support failed", error);
     return jsonResponse({ error: "server_error", requestId }, 502);
   }
@@ -107,21 +128,31 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 async function readContactRequest(request: Request): Promise<ContactSupportRequest> {
+  const contentLength = Number(request.headers.get("content-length") ?? "0");
+  if (Number.isFinite(contentLength) && contentLength > MAX_REQUEST_BYTES) {
+    throw new ContactPayloadTooLargeError("request_too_large");
+  }
   try {
-    const body = await request.json();
+    const bytes = new Uint8Array(await request.arrayBuffer());
+    if (bytes.byteLength > MAX_REQUEST_BYTES) {
+      throw new ContactPayloadTooLargeError("request_too_large");
+    }
+    const body = JSON.parse(new TextDecoder().decode(bytes));
     return body && typeof body === "object" ? body as ContactSupportRequest : {};
-  } catch {
+  } catch (error) {
+    if (error instanceof ContactPayloadTooLargeError) throw error;
     return {};
   }
 }
 
-function normalizeContactRequest(body: ContactSupportRequest): NormalizedContactRequest {
+function normalizeContactRequest(body: ContactSupportRequest, headerIdempotencyKey: string | null): NormalizedContactRequest {
   const platform = stringValue(body.platform);
   return {
     email: stringValue(body.email).toLowerCase(),
     name: stringValue(body.name),
     message: stringValue(body.message),
     source: stringValue(body.source) || (platform ? `mobile:${platform}` : "unknown"),
+    idempotencyKey: stringValue(headerIdempotencyKey) || stringValue(body.idempotencyKey),
     platform: platform || "unknown",
     appVersion: stringValue(body.appVersion) || "unknown",
     buildType: stringValue(body.buildType) || "unknown",
@@ -131,13 +162,13 @@ function normalizeContactRequest(body: ContactSupportRequest): NormalizedContact
 }
 
 function validateContactRequest(body: NormalizedContactRequest): string | null {
-  if (!body.email || !body.name || !body.message) {
+  if (!body.email || !body.name || !body.message || !body.idempotencyKey) {
     return "missing_required_fields";
   }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) {
     return "invalid_email";
   }
-  if (body.message.length > MAX_MESSAGE_LENGTH) {
+  if (byteLength(body.message) > MAX_MESSAGE_BYTES) {
     return "message_too_long";
   }
   if (!VALID_PLATFORMS.has(body.platform)) {
@@ -145,6 +176,11 @@ function validateContactRequest(body: NormalizedContactRequest): string | null {
   }
   if (!VALID_BUILD_TYPES.has(body.buildType)) {
     return "invalid_build_type";
+  }
+  if (byteLength(body.email) > MAX_FIELD_BYTES || byteLength(body.name) > MAX_FIELD_BYTES ||
+    byteLength(body.source) > MAX_FIELD_BYTES || byteLength(body.appVersion) > MAX_FIELD_BYTES ||
+    byteLength(body.idempotencyKey) > MAX_FIELD_BYTES || !/^[A-Za-z0-9._~-]{16,128}$/.test(body.idempotencyKey)) {
+    return "invalid_request";
   }
   return null;
 }
@@ -154,95 +190,60 @@ function stringValue(value: unknown): string {
 }
 
 function clientIp(request: Request): string {
-  return request.headers.get("cf-connecting-ip") ??
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    "unknown";
+  // Only the edge's canonical client-IP header is trusted. Arbitrary
+  // x-forwarded-for values are user-controlled at this function boundary.
+  return request.headers.get("cf-connecting-ip")?.trim().slice(0, 128) || "unknown";
 }
 
-async function enforceRateLimit(
-  databaseUrl: string,
-  ipHash: string,
-  emailHash: string,
-): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
-  const sql = postgres(databaseUrl, { prepare: false });
-  try {
-    const [emailHourly, ipHourly, ipDaily] = await Promise.all([
-      sql`
-        select count(*)::int as count
-        from public.contact_support_requests
-        where created_at > now() - interval '1 hour'
-          and email_hash = ${emailHash}
-      `,
-      sql`
-        select count(*)::int as count
-        from public.contact_support_requests
-        where created_at > now() - interval '1 hour'
-          and ip_hash = ${ipHash}
-      `,
-      sql`
-        select count(*)::int as count
-        from public.contact_support_requests
-        where created_at > now() - interval '24 hour'
-          and ip_hash = ${ipHash}
-      `,
-    ]);
-
-    if (Number(emailHourly[0]?.count ?? 0) >= EMAIL_HOURLY_LIMIT) {
-      return { ok: false, status: 429, error: "rate_limited_email" };
-    }
-    if (Number(ipHourly[0]?.count ?? 0) >= IP_HOURLY_LIMIT || Number(ipDaily[0]?.count ?? 0) >= IP_DAILY_LIMIT) {
-      return { ok: false, status: 429, error: "rate_limited" };
-    }
-    return { ok: true };
-  } finally {
-    await sql.end();
-  }
-}
-
-async function recordSubmission(
+async function reserveContactSubmission(
   databaseUrl: string,
   requestId: string,
   body: NormalizedContactRequest,
   emailHash: string,
   authUserIdHash: string | null,
   ipHash: string,
-): Promise<{ ok: true; id: string } | { ok: false; status: number; error: string }> {
+  idempotencyKeyHash: string,
+): Promise<
+  | { ok: true; id: string; requestId: string; deliveryStatus: string; existing: boolean }
+  | { ok: false; status: number; error: string }
+> {
   const sql = postgres(databaseUrl, { prepare: false });
   try {
     const rows = await sql`
-      insert into public.contact_support_requests (
-        request_id,
-        email_hash,
-        auth_user_id_hash,
-        ip_hash,
-        platform,
-        app_version,
-        build_type,
-        is_signed_in,
-        delivery_status
-      )
-      values (
+      select * from public.reserve_contact_support_request(
         ${requestId},
+        ${idempotencyKeyHash},
         ${emailHash},
         ${authUserIdHash},
         ${ipHash},
         ${body.platform},
         ${body.appVersion},
         ${body.buildType},
-        ${body.isSignedIn},
-        'pending'
+        ${body.isSignedIn}
       )
-      returning id
     `;
-    const id = rows[0]?.id;
-    if (!id) return { ok: false, status: 500, error: "record_failed" };
-    return { ok: true, id: String(id) };
+    const row = rows[0];
+    if (!row?.id || !row?.request_id) return { ok: false, status: 500, error: "record_failed" };
+    return {
+      ok: true,
+      id: String(row.id),
+      requestId: String(row.request_id),
+      deliveryStatus: String(row.delivery_status ?? "pending"),
+      existing: row.existing === true,
+    };
   } catch (error) {
-    console.error("recordSubmission failed", error);
+    const message = error instanceof Error ? error.message : "";
+    if (message.includes("rate_limited_email")) return { ok: false, status: 429, error: "rate_limited_email" };
+    if (message.includes("rate_limited")) return { ok: false, status: 429, error: "rate_limited" };
+    console.error("reserveContactSubmission failed", message.split("\n")[0]?.slice(0, 160));
     return { ok: false, status: 500, error: "record_failed" };
   } finally {
     await sql.end();
   }
+}
+
+function byteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
 }
 
 async function updateSubmissionStatus(
@@ -263,6 +264,22 @@ async function updateSubmissionStatus(
           delivery_event_at = now(),
           delivery_error = ${errorMessage}
       where id = ${id}
+        and (
+          case delivery_status
+            when 'pending' then 0
+            when 'sent' then 10
+            when 'delivery_delayed' then 20
+            when 'delivered' then 30
+            else 40
+          end <= case ${status}
+            when 'pending' then 0
+            when 'sent' then 10
+            when 'delivery_delayed' then 20
+            when 'delivered' then 30
+            else 40
+          end
+          or delivery_event_at is null
+        )
     `;
   } finally {
     await sql.end();
@@ -281,6 +298,7 @@ async function sendWithResend(
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
+      "Idempotency-Key": requestId,
     },
     body: JSON.stringify({
       from,
@@ -313,7 +331,7 @@ async function sendWithResend(
   });
 
   if (!response.ok) {
-    return { ok: false, error: await response.text() };
+    return { ok: false, error: "resend_send_failed" };
   }
   const responseBody = await response.json().catch(() => ({}));
   const messageId = typeof responseBody?.id === "string" ? responseBody.id : null;
@@ -321,7 +339,7 @@ async function sendWithResend(
 }
 
 async function hashClient(value: string): Promise<string> {
-  const salt = Deno.env.get("CONTACT_RATE_LIMIT_SALT") ?? "";
+  const salt = requiredEnv("CONTACT_RATE_LIMIT_SALT");
   const data = new TextEncoder().encode(`${salt}:${value.split(",")[0].trim()}`);
   const digest = await crypto.subtle.digest("SHA-256", data);
   return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");

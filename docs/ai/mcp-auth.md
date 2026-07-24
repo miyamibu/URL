@@ -7,7 +7,7 @@ MCP endpoints must never expose personal saved links without explicit enablement
 The repo includes a read-only MCP foundation under `web/admin`. Production hosting, OAuth registration, and OpenAI submission are Manual steps.
 
 ## Constraints
-- Endpoint default is disabled unless `URLSAVER_MCP_ENABLED=true`.
+- Endpoint default is disabled unless both `URLSAVER_MCP_ENABLED=true` and `URLSAVER_PERSONAL_LINK_SNAPSHOT_PROTOCOL_ENABLED=true`.
 - When enabled, POST requires Bearer auth.
 - Token is verified through Supabase `auth.getUser`.
 - Every personal saved-link/tag query filters by `user_id = ctx.userId`.

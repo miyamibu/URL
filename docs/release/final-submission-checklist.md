@@ -7,10 +7,15 @@
 この文書の下部に残る `1.0.11` の表は、2026-06-27/28 の Google Play / App Store 提出時点の履歴ログとして扱う。現在の repo source は Android `1.0.15 (versionCode=17)` / iOS `1.0.15 (build=17)` であり、この履歴ログだけでは次回提出可否を判断しない。
 
 ## Current Source Snapshot (2026-07-23 Store Candidate)
+- Current status override (2026-07-24): `NO_GO_INTERNAL / NOT_VERIFIED_FOR_RELEASE`.
+  The source snapshot below is identity/version context only; it is not a release
+  approval and must not be used without the current readiness artifact.
 - Android source: `versionName = "1.0.15"`, `versionCode = 17`, package `jp.miyamibu.urlalbum`.
 - iOS source: `CFBundleShortVersionString = 1.0.15`, `CFBundleVersion = 17`, bundle `com.mibu.codebridge.ios`.
 - Current release/ops readiness tracker: `docs/release/release-ops-readiness-2026-07-09.md`.
-- Current repo gate is `REPO_GO` when local code, docs, scripts, tests, build, release hygiene, and reviewed-main integration pass. This is a repo-only status, not store/public/OpenAI publication.
+- The historical repo-gate rule is retained for reference, but the current repo
+  gate is `NO_GO_INTERNAL / NOT_VERIFIED_FOR_RELEASE` until the remediation and
+  external gates are rechecked.
 - AI-safe export/MCP source contracts are tracked under `docs/ai/`; these local docs do not mean production MCP deployment, production OAuth registration, OpenAI submission, store submission, production secret entry, or store/live recheck is complete.
 - The `1.0.11` store submission, public URL, screenshot, signing, and console rows below are not current proof for Android `1.0.15 (17)` / iOS `1.0.15 (17)`.
 - Rows below that say `DONE` are historical `1.0.11` evidence unless the row explicitly names the 2026-07-10 repo gate. Do not use them as `LAUNCH_GO` evidence for the current source snapshot without re-running the manual launch checklist.

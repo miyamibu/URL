@@ -1,5 +1,6 @@
 package jp.mimac.urlsaver.worker
 
+import jp.mimac.urlsaver.BuildConfig
 import jp.mimac.urlsaver.domain.MetadataError
 import jp.mimac.urlsaver.domain.MetadataBodyKind
 import jp.mimac.urlsaver.domain.UrlRules
@@ -15,6 +16,7 @@ import org.jsoup.nodes.Document
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
+import java.net.InetAddress
 import java.net.SocketTimeoutException
 import java.net.URI
 import java.net.URLEncoder
@@ -73,6 +75,7 @@ class MetadataFetcher(
     },
     private val connectTimeoutMillis: Int = 10_000,
     private val readTimeoutMillis: Int = 30_000,
+    private val allowLoopbackHttpForTests: Boolean = BuildConfig.DEBUG,
 ) {
     fun fetch(url: String): FetchOutcome {
         return try {
@@ -91,7 +94,7 @@ class MetadataFetcher(
     private fun fetchInternal(inputUrl: String): FetchOutcome {
         val initialUri = runCatching { URI(inputUrl) }.getOrNull()
             ?: return FetchOutcome.Unavailable(MetadataError.PARSE_FAILED)
-        if (!isFetchableScheme(initialUri)) {
+        if (!isFetchableScheme(initialUri, allowLoopbackHttp = allowLoopbackHttpForTests)) {
             return FetchOutcome.Unavailable(MetadataError.UNSUPPORTED_SCHEME)
         }
 
@@ -1136,7 +1139,7 @@ class MetadataFetcher(
         while (true) {
             val currentUri = runCatching { URI(current) }.getOrNull()
                 ?: return FetchOutcome.Unavailable(MetadataError.PARSE_FAILED)
-            if (!isFetchableScheme(currentUri)) {
+            if (!isFetchableScheme(currentUri, allowLoopbackHttp = allowLoopbackHttpForTests && isLoopbackHttpUrl(initialUrl))) {
                 return FetchOutcome.Unavailable(MetadataError.UNSUPPORTED_SCHEME)
             }
 
@@ -1202,7 +1205,7 @@ class MetadataFetcher(
         while (true) {
             val currentUri = runCatching { URI(current) }.getOrNull()
                 ?: return FetchOutcome.Unavailable(MetadataError.PARSE_FAILED)
-            if (!isFetchableScheme(currentUri)) {
+            if (!isFetchableScheme(currentUri, allowLoopbackHttp = allowLoopbackHttpForTests && isLoopbackHttpUrl(initialUrl))) {
                 return FetchOutcome.Unavailable(MetadataError.UNSUPPORTED_SCHEME)
             }
 
@@ -1275,7 +1278,7 @@ class MetadataFetcher(
         while (true) {
             val currentUri = runCatching { URI(current) }.getOrNull()
                 ?: return FetchOutcome.Unavailable(MetadataError.PARSE_FAILED)
-            if (!isFetchableScheme(currentUri)) {
+            if (!isFetchableScheme(currentUri, allowLoopbackHttp = allowLoopbackHttpForTests && isLoopbackHttpUrl(inputUrl))) {
                 return FetchOutcome.Unavailable(MetadataError.UNSUPPORTED_SCHEME)
             }
 
@@ -1982,7 +1985,7 @@ class MetadataFetcher(
 
         while (true) {
             val currentUri = runCatching { URI(current) }.getOrNull() ?: return null
-            if (!isFetchableScheme(currentUri)) return null
+            if (!isFetchableScheme(currentUri, allowLoopbackHttp = allowLoopbackHttpForTests && isLoopbackHttpUrl(url))) return null
 
             val connection = connectionFactory(current).apply {
                 instanceFollowRedirects = false
@@ -2400,17 +2403,63 @@ class MetadataFetcher(
             }.getOrDefault(false)
     }
 
-    private fun isFetchableScheme(uri: URI): Boolean {
+    private fun isFetchableScheme(uri: URI, allowLoopbackHttp: Boolean = false): Boolean {
+        val host = uri.host?.lowercase(Locale.ROOT) ?: return false
+        if (uri.userInfo != null) return false
         return when (uri.scheme?.lowercase(Locale.ROOT)) {
-            "https" -> true
-            // Allow loopback http for local test infrastructure only.
-            "http" -> {
-                val host = uri.host?.lowercase(Locale.ROOT)
-                host == "127.0.0.1" || host == "localhost" || host == "::1"
-            }
+            "https" -> !isPrivateNetworkHost(host)
+            "http" -> allowLoopbackHttp && isLoopbackHost(host)
 
             else -> false
         }
+    }
+
+    private fun isLoopbackHttpUrl(url: String): Boolean {
+        val uri = runCatching { URI(url) }.getOrNull() ?: return false
+        return uri.scheme.equals("http", ignoreCase = true) &&
+            uri.host?.lowercase(Locale.ROOT)?.let(::isLoopbackHost) == true
+    }
+
+    private fun isLoopbackHost(host: String): Boolean {
+        return host == "127.0.0.1" || host == "localhost" || host == "::1"
+    }
+
+    private fun isPrivateNetworkHost(host: String): Boolean {
+        if (host == "localhost" || host.endsWith(".localhost") ||
+            host.endsWith(".local") || host.endsWith(".internal") ||
+            host.endsWith(".home.arpa")
+        ) {
+            return true
+        }
+        // Reserved .test hosts are used only by injected unit-test transports.
+        if (host.endsWith(".test")) return !allowLoopbackHttpForTests
+
+        val addresses = runCatching { InetAddress.getAllByName(host) }.getOrNull() ?: return true
+        return addresses.any(::isPrivateNetworkAddress)
+    }
+
+    private fun isPrivateNetworkAddress(address: InetAddress): Boolean {
+        if (address.isAnyLocalAddress || address.isLoopbackAddress ||
+            address.isLinkLocalAddress || address.isSiteLocalAddress ||
+            address.isMulticastAddress
+        ) {
+            return true
+        }
+        val bytes = address.address.map { it.toInt() and 0xff }
+        if (bytes.size == 4) {
+            val first = bytes[0]
+            val second = bytes[1]
+            return (first == 100 && second in 64..127) ||
+                (first == 169 && second == 254) ||
+                (first == 198 && second in 18..19) ||
+                (first == 192 && second == 0 && bytes[2] == 0) ||
+                (first == 192 && second == 0 && bytes[2] == 2) ||
+                (first == 198 && second == 51 && bytes[2] == 100) ||
+                (first == 203 && second == 0 && bytes[2] == 113)
+        }
+        return bytes.size == 16 &&
+            ((bytes[0] and 0xfe) == 0xfc ||
+                (bytes[0] == 0xfe && (bytes[1] and 0xc0) == 0x80))
     }
 
     private fun classifyHtmlMetadataService(host: String?): HtmlMetadataService {

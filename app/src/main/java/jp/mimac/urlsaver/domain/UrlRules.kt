@@ -221,7 +221,7 @@ object UrlRules {
         if (scheme != "https" && !(scheme == "http" && isLoopbackHost(host))) {
             return null
         }
-        val userInfo = uri.userInfo
+        if (uri.userInfo != null) return null
 
         val port = when {
             scheme == "http" && uri.port == 80 -> -1
@@ -238,7 +238,7 @@ object UrlRules {
         return try {
             URI(
                 scheme,
-                userInfo,
+                null,
                 host,
                 port,
                 path,
@@ -273,10 +273,11 @@ object UrlRules {
         val scheme = uri.scheme?.lowercase(Locale.ROOT) ?: return null
         if (scheme != "https") return null
         val host = uri.host?.takeIf { it.isNotBlank() } ?: return null
+        if (uri.userInfo != null) return null
         return runCatching {
             URI(
                 "http",
-                uri.userInfo,
+                null,
                 host,
                 uri.port,
                 uri.rawPath,

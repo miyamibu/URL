@@ -16,6 +16,32 @@ final class AiTransparencyTests: XCTestCase {
         repository = nil
     }
 
+    func testExternalDataPolicyExcludesSensitiveURLAndRedactsText() {
+        let result = ExternalDataPolicy.inspect(
+            url: "https://example.com/download?X-Amz-Signature=abcdef0123456789abcdef0123456789",
+            texts: ["contact@example.com token=sk-12345678901234567890", "/Users/mimac/private.txt"]
+        )
+
+        XCTAssertFalse(result.allowed)
+        XCTAssertTrue(result.reasons.contains("sensitive_query_key"))
+        XCTAssertTrue(result.reasons.contains("email"))
+        XCTAssertEqual(
+            ExternalDataPolicy.safeURL("https://example.com/download?token=abcdef0123456789"),
+            ExternalDataPolicy.excludedURLMarker
+        )
+        XCTAssertTrue(ExternalDataPolicy.sanitizeText("token=sk-12345678901234567890")?.contains("[redacted:token]") == true)
+    }
+
+    func testExternalDataPolicyRejectsNonWebAndPathSecretsInURLs() {
+        let fileResult = ExternalDataPolicy.inspect(url: "file:///Users/mimac/private.txt")
+        let pathResult = ExternalDataPolicy.inspect(url: "https://example.com/contact@example.com")
+
+        XCTAssertFalse(fileResult.allowed)
+        XCTAssertTrue(fileResult.reasons.contains("url_scheme") || fileResult.reasons.contains("url_parse_failed"))
+        XCTAssertFalse(pathResult.allowed)
+        XCTAssertTrue(pathResult.reasons.contains("email"))
+    }
+
     func testPreviewExcludesSharedArchivedAndPendingDeleteSources() throws {
         let active = try saveEntry("https://example.com/active")
         let shared = try saveEntry("https://example.com/shared")

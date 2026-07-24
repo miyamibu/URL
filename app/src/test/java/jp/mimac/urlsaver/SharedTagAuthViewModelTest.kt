@@ -8,6 +8,8 @@ import jp.mimac.urlsaver.data.ContactSupportRequest
 import jp.mimac.urlsaver.data.ContactSupportResult
 import jp.mimac.urlsaver.data.LocalAccountCleanupMarker
 import jp.mimac.urlsaver.data.LocalAccountCleanupStore
+import jp.mimac.urlsaver.data.PendingInviteRecord
+import jp.mimac.urlsaver.data.PendingInviteStore
 import jp.mimac.urlsaver.data.SharedPreferencesSharedTagAuthSessionProvider
 import jp.mimac.urlsaver.data.SharedTagAuthSession
 import jp.mimac.urlsaver.data.SharedTagAuthSessionProvider
@@ -47,6 +49,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -151,6 +154,41 @@ class SharedTagAuthViewModelTest {
         assertEquals(expected, recreatedViewModel.localAccountCleanupPending.value)
     }
 
+    @Test
+    fun signOut_clearsPendingInviteBeforeRemoteSignOut() = runBlocking {
+        val pendingStore = InMemoryPendingInviteStore()
+        val viewModel = SharedTagAuthViewModel(
+            tagRepository = FakeTagRepository(),
+            userProfileStore = FakeUserProfileStore(),
+            entitlementGrantRepository = fakeEntitlementGrantRepository(),
+            pendingInviteStore = pendingStore,
+        )
+        pendingStore.save("invite-token", 5_000L)
+        viewModel.refreshPendingInvite()
+
+        viewModel.signOut()
+
+        assertNull(viewModel.pendingInvite.value)
+        assertNull(pendingStore.load())
+    }
+
+    @Test
+    fun deleteAccount_clearsPendingInviteEvenWhenRemoteDeletionRequiresAuth() = runBlocking {
+        val pendingStore = InMemoryPendingInviteStore()
+        val viewModel = SharedTagAuthViewModel(
+            tagRepository = FakeTagRepository(),
+            userProfileStore = FakeUserProfileStore(),
+            entitlementGrantRepository = fakeEntitlementGrantRepository(),
+            pendingInviteStore = pendingStore,
+        )
+        pendingStore.save("invite-token", 5_000L)
+        viewModel.refreshPendingInvite()
+
+        assertEquals(SharedTagAccountDeletionResult.AuthRequired, viewModel.deleteAccount())
+        assertNull(viewModel.pendingInvite.value)
+        assertNull(pendingStore.load())
+    }
+
     private fun fakeEntitlementGrantRepository(
         redeemResult: List<EntitlementGrant> = emptyList(),
     ): EntitlementGrantRepository {
@@ -188,6 +226,20 @@ private class InMemoryLocalAccountCleanupStore : LocalAccountCleanupStore {
 
     override fun clear() {
         state.value = null
+    }
+}
+
+private class InMemoryPendingInviteStore : PendingInviteStore {
+    private var record: PendingInviteRecord? = null
+
+    override fun load(): PendingInviteRecord? = record
+
+    override fun save(inviteToken: String, savedAt: Long) {
+        record = PendingInviteRecord(inviteToken, savedAt)
+    }
+
+    override fun clear() {
+        record = null
     }
 }
 

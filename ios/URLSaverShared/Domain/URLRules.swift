@@ -231,6 +231,7 @@ enum URLRules {
         guard scheme == "https" || (scheme == "http" && isLoopbackHost(host)) else {
             return nil
         }
+        guard components.user == nil, components.password == nil else { return nil }
 
         components.scheme = scheme
         components.host = host

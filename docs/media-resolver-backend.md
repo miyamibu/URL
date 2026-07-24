@@ -5,6 +5,10 @@
 Deploy `scripts/media_resolver_backend.py` as the backend used by the app-side
 `MediaResolverBackendURL` setting.
 
+The current release contract keeps media saving disabled. This is an operator
+note for a future, separately gated deployment; a non-empty resolver URL alone
+must not enable the release action.
+
 ## Context
 
 The Android and iOS apps call:
@@ -32,8 +36,9 @@ and TikTok URLs into downloadable media candidates.
 - Use a public HTTPS host for physical-device and release verification.
 - Set Android with `URLSAVER_MEDIA_RESOLVER_BACKEND_URL` or
   `media.resolver.backend.url`.
-- Android release enables the media-save action only when this URL is non-empty;
-  a release with no resolver URL keeps the action disabled.
+- Android release keeps `ALLOW_LOCAL_MEDIA_DOWNLOADS=false` even when this URL
+  is non-empty. The feature remains disabled until authenticated, user-bound,
+  signed-download, quota, and upstream network-boundary gates are verified.
 - Set iOS in `ios/Config/URLSaverSecrets.xcconfig`:
 
 ```xcconfig
@@ -46,6 +51,11 @@ URLSAVER_MEDIA_RESOLVER_BACKEND_URL = https:/$()/your-host.example.com
 python3 -m pip install -r requirements-media-resolver.txt
 python3 scripts/media_resolver_backend.py --host 127.0.0.1 --port 8080 --public-base-url http://127.0.0.1:8080
 curl -i http://127.0.0.1:8080/health
+# /resolve and /files require the runtime-only token.
+curl -H 'Authorization: Bearer local-only-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://www.youtube.com/watch?v=example","serviceType":"youtube"}' \
+  http://127.0.0.1:8080/resolve
 ```
 
 ## Deploy
@@ -104,7 +114,12 @@ the YouTube resolver host itself. Requests forwarded by the backend include an
 internal loop-guard header so an accidental recursive configuration does not
 delegate indefinitely.
 
-`GET /health` intentionally reports only safe cookie diagnostics:
+`GET /health` is the only public liveness endpoint and intentionally reports
+only safe cookie diagnostics. `/resolve` and `/files/{name}` require the
+runtime `MEDIA_RESOLVER_AUTH_TOKEN`; no reusable token is embedded in mobile
+binaries.
+
+The health response intentionally reports only safe cookie diagnostics:
 
 ```text
 fileConfigured / fileReadable / contentConfigured
@@ -158,12 +173,13 @@ YT_DLP_COOKIES
 ## Done When
 
 - `GET /health` returns HTTP 200 on the public host.
-- `POST /resolve` returns at least one asset for a supported public URL.
+- `POST /resolve` is not release evidence merely because it returns an asset.
+  Authentication, rate/concurrency, byte/time/resolution, cache,
+  signed-download, and upstream network-policy tests must pass first.
 - Instagram reel/photo/sidecar posts that require login return assets when the
   host has an Instagram cookies file configured.
-- Android and iOS builds contain a non-empty `MediaResolverBackendURL`.
-- Physical-device verification confirms that a supported entry can start media
-  saving and produce a saved download record.
+- Android and iOS release builds keep the media action disabled until those
+  gates and physical-device proof are complete.
 
 ## Failure Handling
 

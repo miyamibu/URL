@@ -156,8 +156,8 @@
     const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       auth: {
         detectSessionInUrl: true,
-        persistSession: true,
-        autoRefreshToken: true,
+        persistSession: false,
+        autoRefreshToken: false,
       },
     });
 
@@ -231,6 +231,15 @@
       await client.auth.signOut();
       show("パスワードを変更しました。管理画面に戻って、新しいパスワードでサインインしてください。", "success");
     });
+
+    function clearRecoverySession() {
+      if (recoveryReady) {
+        client.auth.signOut({ scope: "local" }).catch(() => {});
+      }
+    }
+
+    window.addEventListener("pagehide", clearRecoverySession);
+    window.addEventListener("beforeunload", clearRecoverySession);
   </script>
 </body>
 </html>

@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { assertWritable, requireAdmin } from "@/lib/auth";
+import { assertRecentAuth, assertWritable, requireAdmin } from "@/lib/auth";
 import { createServiceSupabaseClient } from "@/lib/supabase";
 
 function asErrorResponse(error: unknown): Response {
   if (error instanceof Response) return error;
-  const message = error instanceof Error ? error.message : "優待コードを取り消せませんでした";
-  return NextResponse.json({ error: message }, { status: 500 });
+  console.error("admin promo-code revoke failed", error instanceof Error ? error.name : "unknown");
+  return NextResponse.json({ error: "優待コードを取り消せませんでした" }, { status: 500 });
 }
 
 function rpcErrorMessage(error: unknown): string {
@@ -22,6 +22,7 @@ export async function POST(
   try {
     const admin = await requireAdmin(request);
     assertWritable(admin);
+    assertRecentAuth(admin);
     const { id } = await context.params;
     const body = await request.json().catch(() => ({}));
     const reason = String(body.reason ?? "admin_revoked").trim() || "admin_revoked";

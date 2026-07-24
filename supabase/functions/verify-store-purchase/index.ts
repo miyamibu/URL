@@ -18,6 +18,8 @@ type NormalizedStorePurchaseRequest = {
   storeTransactionId: string;
 };
 
+class PurchasePayloadTooLargeError extends Error {}
+
 type ProductPlan = {
   plan: "standard" | "pro";
   billingPeriod: "monthly" | "yearly";
@@ -44,8 +46,13 @@ const JSON_HEADERS = {
 };
 
 const CANONICAL_APP_STORE_BUNDLE_ID = "com.mibu.codebridge.ios";
+const CANONICAL_ANDROID_APPLICATION_ID = "jp.miyamibu.urlalbum";
+const MAX_REQUEST_BYTES = 64 * 1024;
+const MAX_PURCHASE_TOKEN_LENGTH = 32 * 1024;
 
 let appleVerifierPromise: Promise<SignedDataVerifier> | null = null;
+let googleAccessTokenPromise: Promise<string> | null = null;
+let googleAccessTokenCache: { value: string; expiresAtMillis: number } | null = null;
 
 export async function handleRequest(request: Request): Promise<Response> {
   if (request.method === "OPTIONS") return jsonResponse(null, 204);
@@ -60,6 +67,8 @@ export async function handleRequest(request: Request): Promise<Response> {
     user = await requireUser(supabaseUrl, serviceRoleKey, authorization);
 
     normalized = normalizeRequest(await readJson(request));
+    const allowed = await reservePurchaseAttempt(supabaseUrl, serviceRoleKey, user.id);
+    if (!allowed) throw new Error("rate_limited");
     const expected = await activePlanForProduct(
       supabaseUrl,
       serviceRoleKey,
@@ -75,18 +84,15 @@ export async function handleRequest(request: Request): Promise<Response> {
       ? await verifyAppStorePurchase(normalized, expected, user.id)
       : await verifyGooglePlayPurchase(normalized, expected, user.id);
 
-    const verificationId = await recordVerification(
+    const committed = await completePurchaseVerification(
       supabaseUrl,
       serviceRoleKey,
       user.id,
       normalized,
       verified,
-      "verified",
-      null,
-      null,
     );
-    const grantId = await upsertGrant(supabaseUrl, serviceRoleKey, user.id, verified);
-    await attachGrant(supabaseUrl, serviceRoleKey, verificationId, grantId);
+    const verificationId = committed.verificationId;
+    const grantId = committed.grantId;
 
     return jsonResponse({
       status: "verified",
@@ -96,10 +102,13 @@ export async function handleRequest(request: Request): Promise<Response> {
       billingPeriod: verified.billingPeriod,
     });
   } catch (error) {
+    if (error instanceof PurchasePayloadTooLargeError) {
+      return jsonResponse({ error: "request_too_large" }, 413);
+    }
     const message = error instanceof Error ? error.message : "server_error";
     const safeReason = publicFailureReason(message);
     console.error("verify-store-purchase failed", safeReason);
-    if (user && normalized) {
+    if (user && normalized && shouldRecordVerificationFailure(safeReason)) {
       try {
         const supabaseUrl = requiredEnv("SUPABASE_URL").replace(/\/+$/, "");
         const serviceRoleKey = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
@@ -115,7 +124,11 @@ export async function handleRequest(request: Request): Promise<Response> {
       ? 401
       : safeReason === "invalid_request"
       ? 400
+      : safeReason === "rate_limited"
+      ? 429
       : safeReason === "purchase_already_claimed"
+      ? 409
+      : safeReason === "purchase_state_conflict"
       ? 409
       : 502;
     return jsonResponse({ error: safeReason }, status);
@@ -125,10 +138,19 @@ export async function handleRequest(request: Request): Promise<Response> {
 if (import.meta.main) Deno.serve(handleRequest);
 
 async function readJson(request: Request): Promise<StorePurchaseRequest> {
+  const contentLength = Number(request.headers.get("content-length") ?? "0");
+  if (Number.isFinite(contentLength) && contentLength > MAX_REQUEST_BYTES) {
+    throw new PurchasePayloadTooLargeError("request_too_large");
+  }
   try {
-    const body = await request.json();
+    const bytes = new Uint8Array(await request.arrayBuffer());
+    if (bytes.byteLength > MAX_REQUEST_BYTES) {
+      throw new PurchasePayloadTooLargeError("request_too_large");
+    }
+    const body = JSON.parse(new TextDecoder().decode(bytes));
     return body && typeof body === "object" ? body as StorePurchaseRequest : {};
-  } catch {
+  } catch (error) {
+    if (error instanceof PurchasePayloadTooLargeError) throw error;
     return {};
   }
 }
@@ -138,7 +160,9 @@ export function normalizeRequest(body: StorePurchaseRequest): NormalizedStorePur
   const storeProductId = stringValue(body.storeProductId);
   const purchaseToken = stringValue(body.purchaseToken);
   const storeTransactionId = stringValue(body.storeTransactionId);
-  if (!["google_play", "app_store"].includes(storePlatform) || !storeProductId || !purchaseToken) {
+  if (!["google_play", "app_store"].includes(storePlatform) || !storeProductId || !purchaseToken ||
+    byteLength(storeProductId) > 128 || byteLength(purchaseToken) > MAX_PURCHASE_TOKEN_LENGTH ||
+    byteLength(storeTransactionId) > 512) {
     throw new Error("invalid_request");
   }
   return {
@@ -174,6 +198,56 @@ async function activePlanForProduct(
   if (catalogPlan !== "standard" && catalogPlan !== "pro") return null;
   if (catalogPeriod !== "monthly" && catalogPeriod !== "yearly") return null;
   return { plan: catalogPlan, billingPeriod: catalogPeriod };
+}
+
+async function reservePurchaseAttempt(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  userId: string,
+): Promise<boolean> {
+  const response = await fetch(`${supabaseUrl}/rest/v1/rpc/reserve_store_purchase_attempt`, {
+    method: "POST",
+    headers: restHeaders(serviceRoleKey),
+    body: JSON.stringify({ p_user_id: userId }),
+  });
+  if (!response.ok) throw new Error("purchase_rate_limit_unavailable");
+  const body = await response.json();
+  if (typeof body === "boolean") return body;
+  return body?.[0]?.reserve_store_purchase_attempt === true;
+}
+
+async function completePurchaseVerification(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  userId: string,
+  request: NormalizedStorePurchaseRequest,
+  verified: VerifiedPurchase,
+): Promise<{ verificationId: string; grantId: string }> {
+  const response = await fetch(`${supabaseUrl}/rest/v1/rpc/complete_store_purchase_verification`, {
+    method: "POST",
+    headers: restHeaders(serviceRoleKey),
+    body: JSON.stringify({
+      p_user_id: userId,
+      p_store_platform: verified.storePlatform,
+      p_store_product_id: verified.storeProductId,
+      p_store_transaction_id: verified.storeTransactionId,
+      p_purchase_token_hash: await sha256Hex(request.purchaseToken),
+      p_plan: verified.plan,
+      p_billing_period: verified.billingPeriod,
+      p_original_transaction_id: verified.originalTransactionId,
+      p_subscription_key: verified.subscriptionKey,
+      p_expires_at: verified.expiresAt,
+    }),
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    const reason = body.match(/purchase_already_claimed|invalid_verified_purchase/)?.[0];
+    throw new Error(reason ?? "purchase_commit_failed");
+  }
+  const rows = await response.json();
+  const row = Array.isArray(rows) ? rows[0] : rows;
+  if (!row?.verification_id || !row?.grant_id) throw new Error("purchase_commit_failed");
+  return { verificationId: String(row.verification_id), grantId: String(row.grant_id) };
 }
 
 async function requireUser(supabaseUrl: string, serviceRoleKey: string, authorization: string): Promise<AuthUser> {
@@ -267,6 +341,7 @@ async function verifyGooglePlayPurchase(
   userId: string,
 ): Promise<VerifiedPurchase> {
   const packageName = requiredEnv("GOOGLE_PLAY_PACKAGE_NAME");
+  if (packageName !== CANONICAL_ANDROID_APPLICATION_ID) throw new Error("invalid_google_play_package_name");
   const accessToken = await googleAccessToken();
   const url =
     `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${encodeURIComponent(packageName)}` +
@@ -315,6 +390,21 @@ async function verifyGooglePlayPurchase(
 }
 
 async function googleAccessToken(): Promise<string> {
+  const now = Date.now();
+  if (googleAccessTokenCache && googleAccessTokenCache.expiresAtMillis - 60_000 > now) {
+    return googleAccessTokenCache.value;
+  }
+  if (googleAccessTokenPromise) return googleAccessTokenPromise;
+
+  googleAccessTokenPromise = createGoogleAccessToken();
+  try {
+    return await googleAccessTokenPromise;
+  } finally {
+    googleAccessTokenPromise = null;
+  }
+}
+
+async function createGoogleAccessToken(): Promise<string> {
   const serviceAccount = JSON.parse(requiredEnv("GOOGLE_PLAY_SERVICE_ACCOUNT_JSON"));
   const now = Math.floor(Date.now() / 1000);
   const privateKey = await crypto.subtle.importKey(
@@ -344,6 +434,12 @@ async function googleAccessToken(): Promise<string> {
   if (!response.ok) throw new Error("google_play_auth_failed");
   const body = await response.json();
   if (typeof body.access_token !== "string") throw new Error("google_play_auth_failed");
+  const expiresIn = Number(body.expires_in);
+  const effectiveExpiresIn = Number.isFinite(expiresIn) && expiresIn > 60 ? expiresIn : 3600;
+  googleAccessTokenCache = {
+    value: body.access_token,
+    expiresAtMillis: Date.now() + effectiveExpiresIn * 1000,
+  };
   return body.access_token;
 }
 
@@ -449,111 +545,6 @@ async function findExistingVerification(
   return originalRows?.[0] ?? null;
 }
 
-async function upsertGrant(
-  supabaseUrl: string,
-  serviceRoleKey: string,
-  userId: string,
-  verified: VerifiedPurchase,
-): Promise<string> {
-  const existing = await findGrantBySubscription(supabaseUrl, serviceRoleKey, verified);
-  if (existing?.id) {
-    if (existing.user_id !== userId) throw new Error("purchase_already_claimed");
-    await refreshExistingGrant(supabaseUrl, serviceRoleKey, existing.id, verified);
-    return existing.id;
-  }
-
-  const response = await fetch(`${supabaseUrl}/rest/v1/user_entitlement_grants`, {
-    method: "POST",
-    headers: restHeaders(serviceRoleKey, { Prefer: "return=representation" }),
-    body: JSON.stringify({
-      user_id: userId,
-      plan: verified.plan,
-      source: "store_subscription",
-      store_platform: verified.storePlatform,
-      store_transaction_id: verified.storeTransactionId,
-      store_subscription_key: verified.subscriptionKey,
-      starts_at: new Date().toISOString(),
-      expires_at: verified.expiresAt,
-      status: "active",
-    }),
-  });
-  if (!response.ok) {
-    const raced = await findGrantBySubscription(supabaseUrl, serviceRoleKey, verified);
-    if (raced?.id) {
-      if (raced.user_id !== userId) throw new Error("purchase_already_claimed");
-      await refreshExistingGrant(supabaseUrl, serviceRoleKey, raced.id, verified);
-      return raced.id;
-    }
-    throw new Error(`grant_create_failed:${response.status}`);
-  }
-  const rows = await response.json();
-  const id = rows?.[0]?.id;
-  if (!id) throw new Error("grant_create_failed");
-  return id;
-}
-
-async function refreshExistingGrant(
-  supabaseUrl: string,
-  serviceRoleKey: string,
-  grantId: string,
-  verified: VerifiedPurchase,
-): Promise<void> {
-  const response = await fetch(
-    `${supabaseUrl}/rest/v1/user_entitlement_grants?id=eq.${encodeURIComponent(grantId)}`,
-    {
-      method: "PATCH",
-      headers: restHeaders(serviceRoleKey),
-      body: JSON.stringify({
-        plan: verified.plan,
-        store_product_id: verified.storeProductId,
-        store_transaction_id: verified.storeTransactionId,
-        store_subscription_key: verified.subscriptionKey,
-        expires_at: verified.expiresAt,
-        status: "active",
-      }),
-    },
-  );
-  if (!response.ok) throw new Error(`grant_refresh_failed:${response.status}`);
-}
-
-async function findGrantBySubscription(
-  supabaseUrl: string,
-  serviceRoleKey: string,
-  verified: VerifiedPurchase,
-): Promise<{ id: string; user_id: string } | null> {
-  const response = await fetch(
-    `${supabaseUrl}/rest/v1/user_entitlement_grants?select=id,user_id&source=eq.store_subscription&store_platform=eq.${verified.storePlatform}&store_subscription_key=eq.${encodeURIComponent(verified.subscriptionKey)}&limit=1`,
-    { headers: restHeaders(serviceRoleKey) },
-  );
-  if (!response.ok) throw new Error(`grant_lookup_failed:${response.status}`);
-  const rows = await response.json();
-  const row = rows?.[0];
-  if (row?.id && row?.user_id) return { id: row.id, user_id: row.user_id };
-
-  const legacyResponse = await fetch(
-    `${supabaseUrl}/rest/v1/user_entitlement_grants?select=id,user_id&source=eq.store_subscription&store_platform=eq.${verified.storePlatform}&store_transaction_id=eq.${encodeURIComponent(verified.storeTransactionId)}&limit=1`,
-    { headers: restHeaders(serviceRoleKey) },
-  );
-  if (!legacyResponse.ok) throw new Error(`grant_lookup_failed:${legacyResponse.status}`);
-  const legacyRows = await legacyResponse.json();
-  const legacyRow = legacyRows?.[0];
-  return legacyRow?.id && legacyRow?.user_id ? { id: legacyRow.id, user_id: legacyRow.user_id } : null;
-}
-
-async function attachGrant(
-  supabaseUrl: string,
-  serviceRoleKey: string,
-  verificationId: string,
-  grantId: string,
-): Promise<void> {
-  const response = await fetch(`${supabaseUrl}/rest/v1/store_purchase_verifications?id=eq.${verificationId}`, {
-    method: "PATCH",
-    headers: restHeaders(serviceRoleKey),
-    body: JSON.stringify({ grant_id: grantId }),
-  });
-  if (!response.ok) throw new Error(`verification_grant_attach_failed:${await response.text()}`);
-}
-
 function restHeaders(serviceRoleKey: string, extra: Record<string, string> = {}): HeadersInit {
   return {
     apikey: serviceRoleKey,
@@ -578,6 +569,10 @@ function millisToIso(value: unknown): string | null {
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function byteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
 }
 
 function requiredEnv(name: string): string {
@@ -607,6 +602,10 @@ function publicFailureReason(message: string): string {
   if (message.startsWith("missing_env_")) return "store_verification_not_configured";
   const candidate = message.includes(":") ? message.split(":")[0] : message;
   return /^[a-z0-9_]{1,80}$/.test(candidate) ? candidate : "store_verification_failed";
+}
+
+export function shouldRecordVerificationFailure(safeReason: string): boolean {
+  return safeReason !== "rate_limited" && safeReason !== "auth_required";
 }
 
 function jsonResponse(body: unknown, status = 200): Response {

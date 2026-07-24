@@ -1,0 +1,73 @@
+generatedAt: "2026-07-24"
+repository: "りんばむ"
+commit: "e7c4163abb338fb9219fc4f91df4ea1d202f7f7b"
+worktree: "dirty_intentional_remediation_diff"
+worktreeDiffSha256: "4f7f37f832cf84c49933f9b545f7cd7cb18679620b8e8f10885fa471bbe9854a"
+status: "NO_GO_INTERNAL"
+verificationStatus: "NOT_VERIFIED_FOR_RELEASE"
+android:
+  applicationId: "jp.miyamibu.urlalbum"
+  versionName: "1.0.15"
+  build: 17
+  tests:
+    unit: "passed_317_failed_0"
+    lint: "passed"
+    debugBuild: "passed"
+    releaseBundle: "passed_unsigned_local_artifact"
+ios:
+  bundleId: "com.mibu.codebridge.ios"
+  version: "1.0.15"
+  build: 17
+  tests:
+    simulator: "executed_132_passed_129_skipped_3_failed_0"
+    physicalUI: "not_verified"
+web:
+  admin:
+    typecheck: "passed"
+    lint: "passed_with_next_lint_deprecation_notice"
+    build: "passed"
+supabase:
+  migrationsApplied: false
+  staticValidation: "passed_static_inspection_and_function_tests"
+  rlsAndPgtap: "not_run"
+  schedulerReconciliation: "not_verified"
+resolver:
+  unitTests: "passed_24"
+  runtime: "not_verified"
+  quotasAndSignedDownloads: "not_implemented_release_blocker"
+mcp:
+  contract: "passed"
+  personalDataEnabled: false
+  dualFlagRequired: true
+privacy:
+  exportRedaction: "implemented_local_tests_passed"
+  passwordResetSession: "implemented_local_review"
+  accountDeletion: "migration_not_applied"
+screenshots:
+  physicalAndroid: "not_verified"
+  physicalIPhone: "not_verified"
+  accessibility: "not_verified"
+  currentCandidate: "not_verified"
+external:
+  productionSecrets: "not_verified"
+  storeUploadSubmission: "not_verified"
+  openAIConnector: "not_verified"
+  providerWebhooks: "not_verified"
+  scheduler: "not_verified"
+owners:
+  implementation: "GPT-5.6 Lune 最大 requested; local remediation applied"
+  finalReview: "GPT-5.6 Sol Ultra read-only audit completed on final local diff; target scope requires no additional code fix; external gates remain unverified"
+  releaseDecision: "release owner"
+evidence:
+  localChecks: "android_317_ios_129_passed_ios_3_skipped_web_deno_resolver_contracts_passed"
+  physicalDeviceUI: "not_verified"
+  supabaseMigrationApply: "not_run"
+  productionStoreOpenAI: "not_verified"
+blockers:
+  - "Supabase migrations and RLS/pgTAP behavior were not applied and executed in this review."
+  - "Account-deletion live behavior, concurrent deletion, and the complete shared-data attribution matrix remain unverified until the migration is applied in a disposable Supabase environment."
+  - "Metadata SSRF protection preflight-checks DNS results and rejects unsafe redirects, but DNS resolution-to-connection pinning is not implemented; Android and iOS rebinding remains a residual risk."
+  - "iOS and Android media download release paths are fail-closed, while authenticated user-bound signed downloads, quotas, and runtime resolver proof are not implemented."
+  - "Durable support outbox/reconciliation, one-time external intent ledger, common redaction corpus, stable pagination bounds, and transactional moderation API tests remain incomplete."
+  - "Physical Android/iPhone UI, accessibility, and store-signed candidate evidence is not current."
+  - "External provider, scheduler, production secret, store, and OpenAI gates remain outside repo-local proof."

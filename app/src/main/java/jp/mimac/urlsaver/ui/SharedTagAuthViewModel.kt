@@ -168,6 +168,7 @@ class SharedTagAuthViewModel(
     }
 
     suspend fun signOut() {
+        clearPendingInvite()
         tagRepository.signOut()
     }
 
@@ -194,6 +195,7 @@ class SharedTagAuthViewModel(
     }
 
     suspend fun deleteAccount(): SharedTagAccountDeletionResult {
+        clearPendingInvite()
         return tagRepository.deleteAccount()
     }
 

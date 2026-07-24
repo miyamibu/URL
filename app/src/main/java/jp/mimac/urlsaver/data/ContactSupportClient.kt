@@ -10,6 +10,7 @@ import kotlinx.serialization.json.Json
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.UUID
 
 interface ContactSupportClient {
     suspend fun send(request: ContactSupportRequest): ContactSupportResult
@@ -25,6 +26,7 @@ data class ContactSupportRequest(
     val buildType: String,
     val isSignedIn: Boolean,
     val authUserId: String? = null,
+    val idempotencyKey: String = UUID.randomUUID().toString(),
 )
 
 sealed interface ContactSupportResult {
@@ -52,6 +54,7 @@ class ConfiguredContactSupportClient(
                 connectTimeout = CONNECT_TIMEOUT_MS
                 readTimeout = READ_TIMEOUT_MS
                 setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("Idempotency-Key", request.idempotencyKey)
             }
             connection.outputStream.use { stream ->
                 stream.write(json.encodeToString(request).toByteArray(Charsets.UTF_8))

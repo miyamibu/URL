@@ -2,8 +2,11 @@ package jp.mimac.urlsaver.video
 
 import jp.mimac.urlsaver.data.UrlEntryEntity
 import jp.mimac.urlsaver.domain.ServiceType
+import jp.mimac.urlsaver.BuildConfig
+import jp.mimac.urlsaver.worker.NetworkTargetPolicy
 import org.json.JSONObject
 import java.net.HttpURLConnection
+import java.net.URI
 import java.net.URL
 
 interface VideoResolver {
@@ -16,9 +19,22 @@ class BackendVideoResolver(
     override suspend fun resolve(entry: UrlEntryEntity): VideoResolveResult {
         val provider = providerFor(entry.serviceType)
             ?: return VideoResolveResult("generic", emptyList(), "UNKNOWN", "UNAVAILABLE", "UNSUPPORTED_SERVICE")
+        if (!BuildConfig.DEBUG) {
+            return VideoResolveResult(
+                provider = provider,
+                assets = emptyList(),
+                hasVideo = "UNKNOWN",
+                resolveStatus = "UNAVAILABLE",
+                errorReason = "MEDIA_RESOLVER_DISABLED_IN_RELEASE",
+            )
+        }
         val baseUrl = backendBaseUrl.trim().trimEnd('/')
         if (baseUrl.isBlank()) {
             return VideoResolveResult(provider, emptyList(), "UNKNOWN", "UNAVAILABLE", "MEDIA_RESOLVER_BACKEND_UNCONFIGURED")
+        }
+        val allowTestHosts = BuildConfig.DEBUG && BuildConfig.ALLOW_LOCAL_MEDIA_DOWNLOADS
+        if (!NetworkTargetPolicy.isAllowed("$baseUrl/resolve", allowTestHosts)) {
+            return VideoResolveResult(provider, emptyList(), "UNKNOWN", "UNAVAILABLE", "MEDIA_RESOLVER_TARGET_NOT_ALLOWED")
         }
         val payload = postJson(
             url = "$baseUrl/resolve",
@@ -49,6 +65,7 @@ class BackendVideoResolver(
             val downloadUrl = asset.optString("downloadUrl")
                 .normalizeMediaUrl()
                 .takeIf { it.startsWith("http://") || it.startsWith("https://") }
+                ?.takeIf { NetworkTargetPolicy.isAllowed(it, allowTestHosts) }
                 ?: return@mapNotNull null
             val mediaType = asset.optString("mediaType").takeIf { it == "IMAGE" || it == "VIDEO" }
                 ?: if (downloadUrl.substringBefore('?').endsWith(".mp4", ignoreCase = true)) "VIDEO" else "IMAGE"
@@ -99,19 +116,37 @@ class BackendVideoResolver(
     }
 
     private fun postJson(url: String, json: String): String {
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            instanceFollowRedirects = true
-            connectTimeout = 20_000
-            readTimeout = 60_000
-            requestMethod = "POST"
-            doOutput = true
-            setRequestProperty("User-Agent", "Rinbam Android")
-            setRequestProperty("Content-Type", "application/json; charset=UTF-8")
-            setRequestProperty("Accept", "application/json")
+        var current = URI(url)
+        for (hop in 0 until 5) {
+            if (!NetworkTargetPolicy.isAllowed(current.toString(), BuildConfig.DEBUG && BuildConfig.ALLOW_LOCAL_MEDIA_DOWNLOADS)) {
+                error("MEDIA_RESOLVER_TARGET_NOT_ALLOWED")
+            }
+            val connection = (URL(current.toString()).openConnection() as HttpURLConnection).apply {
+                instanceFollowRedirects = false
+                connectTimeout = 20_000
+                readTimeout = 60_000
+                requestMethod = "POST"
+                doOutput = true
+                setRequestProperty("User-Agent", "Rinbam Android")
+                setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                setRequestProperty("Accept", "application/json")
+            }
+            try {
+                connection.outputStream.use { it.write(json.toByteArray(Charsets.UTF_8)) }
+                val responseCode = connection.responseCode
+                if (responseCode in 300..399) {
+                    val location = connection.getHeaderField("Location") ?: error("MEDIA_RESOLVER_REDIRECT_INVALID")
+                    current = current.resolve(location)
+                    if (hop == 4) error("MEDIA_RESOLVER_TOO_MANY_REDIRECTS")
+                    continue
+                }
+                val stream = if (responseCode in 200..299) connection.inputStream else connection.errorStream
+                return stream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            } finally {
+                connection.disconnect()
+            }
         }
-        connection.outputStream.use { it.write(json.toByteArray(Charsets.UTF_8)) }
-        val stream = if (connection.responseCode in 200..299) connection.inputStream else connection.errorStream
-        return stream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+        error("MEDIA_RESOLVER_TOO_MANY_REDIRECTS")
     }
 
     private fun String.escapeJson(): String = replace("\\", "\\\\").replace("\"", "\\\"")

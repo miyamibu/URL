@@ -14,6 +14,31 @@ object AppMediaStore {
         return File(directory, fileName)
     }
 
+    /** Removes only the canonical media directory owned by one URL entry. */
+    fun deleteForEntry(context: Context, entryId: Long) {
+        val root = File(context.filesDir, ROOT_DIRECTORY).canonicalFile
+        val directory = File(root, entryId.toString()).canonicalFile
+        if (entryId <= 0L || directory.parentFile != root || !directory.exists()) return
+        directory.deleteRecursively()
+    }
+
+    /** Removes numeric entry directories that no longer have a database row. */
+    fun cleanupOrphanedEntryDirectories(context: Context, validEntryIds: Set<Long>) {
+        val root = File(context.filesDir, ROOT_DIRECTORY).canonicalFile
+        if (!root.isDirectory) return
+        root.listFiles()
+            .orEmpty()
+            .filter { it.isDirectory && it.name.toLongOrNull()?.let { id -> id > 0L } == true }
+            .forEach { directory ->
+                val entryId = directory.name.toLongOrNull() ?: return@forEach
+                val canonicalDirectory = runCatching { directory.canonicalFile }.getOrNull()
+                    ?: return@forEach
+                if (canonicalDirectory.parentFile == root && entryId !in validEntryIds) {
+                    canonicalDirectory.deleteRecursively()
+                }
+            }
+    }
+
     fun localUri(entryId: Long, fileName: String): String {
         return Uri.Builder()
             .scheme(SCHEME)

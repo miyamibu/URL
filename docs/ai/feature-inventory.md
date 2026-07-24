@@ -3,6 +3,14 @@
 ## Goal
 `1prompt.docx` のAI透明化/個人リンク記憶要求を、現在の repo 実装状態に落として追跡する。
 
+## Current status override (2026-07-24)
+
+`NO_GO_INTERNAL / NOT_VERIFIED_FOR_RELEASE`。この文書の 2026-07-16
+スコープ説明や `REPO_GO` 表現は履歴・機能インベントリとして残すが、現在の
+リリース判定には使わない。現行の判定は
+`docs/release/current-readiness-2026-07-24.yaml` と
+`docs/release/repo-go-evidence.md` の current status を参照する。
+
 ## Context
 2026-07-16時点の作業では、DB破壊・store提出・deploy・production secret投入は行っていない。`REPO_GO` はrepo内の実装/検証が外部公開前に揃ったという意味であり、production deploy、OpenAI submission、store submission、production secret投入、store/live再確認はManual stepsとして分離する。MCP/Store/Supabase live は未検証の外部ゲートであり、ローカル実装/検証とは分離する。
 
@@ -15,7 +23,7 @@
 | ChatGPT personal-link sync card | IMPLEMENTED_LOCAL | Android/iOS の共有タグプロフィール画面にカードを表示。外部接続未設定時は「現在は利用できません」と表示し、操作不可とする。 | MCP/Store/Supabase live は未検証の外部ゲート |
 | Preview / Receipt / Draft / Diff | IMPLEMENTED_LOCAL | Android RoomとiOS SQLiteにReceipt/Draft/Diffをローカル保存。Androidの `DEBUG && AI_TRANSPARENCY_ENABLED`、iOSの `DEBUG`/Info.plist flag に限定された Debug-only UI で、通常のRelease UIには出ない。Mock providerでdeterministic draft生成。Diff applyは明示confirm時のみ許可フィールドを更新。 | production AI provider wiring is future opt-in |
 | Read-only MCP descriptors | IMPLEMENTED_LOCAL | `web/admin/lib/rinbamMcp.ts` が `search`, `fetch`, `rinbam.list_tags`, `rinbam.get_ai_receipt`, `rinbam.list_recent_saved_links` を定義。annotationsはread-only固定。 | deployed URL / OpenAI review are Manual steps |
-| MCP data access | IMPLEMENTED_LOCAL | `URLSAVER_MCP_ENABLED=true` が無い限りendpointはdefault disabled。Bearer tokenを `auth.getUser` し、全queryで `user_id` を固定。rate limitあり。raw `fetched_body` は返さない。 | production OAuth/client registration is Manual step |
+| MCP data access | FAIL_CLOSED_LOCAL | `URLSAVER_MCP_ENABLED=true` に加え、明示的な `URLSAVER_PERSONAL_LINK_SNAPSHOT_PROTOCOL_ENABLED=true` が無い限りendpointはdisabled。Bearer tokenを `auth.getUser` し、全queryで `user_id` を固定。raw `fetched_body` は返さない。 | snapshot protocol deployment and production OAuth/client registration are Manual steps |
 | Link death insurance | IMPLEMENTED_LOCAL | 保存時点のtitle/author/body kind/summary/excerpt/thumbnail/metadata source/fetched timeをExport/MCPに出し、保存時点情報の注意文を出す。 | Wayback/headless/browser external resolver remains out of repo default |
 | OpenAI submission | MANUAL_STEP | 公式提出・review・production installは未実施。 | owner approval, deployed production endpoint, privacy/security review |
 

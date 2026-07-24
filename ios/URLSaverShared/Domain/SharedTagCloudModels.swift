@@ -41,7 +41,7 @@ struct ChatGptPersonalLinkSyncResult: Equatable, Sendable {
 }
 
 enum ChatGptPersonalLinkSyncPolicy {
-    static func eligibility(for entry: URLRecord) -> (eligible: Bool, reasons: [String]) {
+    static func eligibility(for entry: URLRecord, tags: [String] = []) -> (eligible: Bool, reasons: [String]) {
         var reasons: [String] = []
         if entry.localProvenanceCount <= 0 {
             reasons.append("local_provenance_required")
@@ -55,6 +55,11 @@ enum ChatGptPersonalLinkSyncPolicy {
         if entry.pendingDeletionUntil != nil {
             reasons.append("pending_delete")
         }
+        let externalData = ExternalDataPolicy.inspect(
+            url: entry.normalizedURL,
+            texts: [entry.userTitle, entry.fetchedTitle, entry.memo] + tags.map(Optional.some)
+        )
+        reasons.append(contentsOf: externalData.reasons.map { "external_data_\($0)" })
         return (reasons.isEmpty, reasons.sorted())
     }
 }

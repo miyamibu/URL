@@ -1,6 +1,41 @@
 import XCTest
+@testable import URLSaveriOS
 
 final class URLRulesTests: XCTestCase {
+    func testIncomingURLRouteAcceptsOnlyCanonicalInviteShape() {
+        let token = String(repeating: "a", count: 48)
+        guard let url = URL(string: "https://miyamibu.xyz/invite/\(token)") else {
+            return XCTFail("valid invite URL could not be constructed")
+        }
+
+        guard case .invite(let parsedToken) = IncomingURLRoute(url: url) else {
+            return XCTFail("canonical invite URL was rejected")
+        }
+        XCTAssertEqual(parsedToken, token)
+    }
+
+    func testIncomingURLRouteRejectsUntrustedInviteVariants() {
+        let token = String(repeating: "a", count: 48)
+        let urls = [
+            "http://miyamibu.xyz/invite/\(token)",
+            "https://evil.example/invite/\(token)",
+            "https://miyamibu.xyz/invite/\(token)?next=1",
+            "https://miyamibu.xyz/invite/\(token)#fragment",
+            "https://miyamibu.xyz/invite/%61\(String(repeating: "a", count: 47))",
+            "urlsaver://invite/\(token)?next=1",
+            "urlsaver://invite/not-a-token",
+        ]
+
+        for rawURL in urls {
+            guard let url = URL(string: rawURL) else {
+                return XCTFail("invalid test URL: \(rawURL)")
+            }
+            if case .invite = IncomingURLRoute(url: url) {
+                XCTFail("untrusted invite URL was accepted: \(rawURL)")
+            }
+        }
+    }
+
     func testNormalizeAppliesPhaseRules() {
         XCTAssertEqual(
             URLRules.normalize("HTTPS://Example.COM:443/path/?a=1#frag"),
@@ -16,6 +51,10 @@ final class URLRulesTests: XCTestCase {
         XCTAssertNil(URLRules.normalize("example.com/path"))
         XCTAssertNil(URLRules.normalize("http://example.com/path"))
         XCTAssertNil(URLRules.normalize("ftp://example.com/path"))
+    }
+
+    func testNormalizeRejectsURLUserInfo() {
+        XCTAssertNil(URLRules.normalize("https://user:password@example.com/private"))
     }
 
     func testNormalizeAllowsLoopbackHTTP() {

@@ -2,6 +2,9 @@ package jp.mimac.urlsaver.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import android.util.Base64 as AndroidBase64
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
@@ -16,8 +19,13 @@ import java.net.URLDecoder
 import java.net.URLEncoder
 import java.net.URL
 import java.security.MessageDigest
+import java.security.KeyStore
 import java.security.SecureRandom
 import java.util.Base64
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
 
 private const val AUTH_CALLBACK_URL = "urlsaver://auth/callback"
 
@@ -53,29 +61,42 @@ class SupabaseSharedTagAuthRemoteDataSource(
 
     override fun oauthUrl(provider: String, redirectTo: String): String {
         check(config.isConfigured) { "Supabase shared tag sync is not configured." }
+        require(provider == "google") { "Unsupported OAuth provider." }
+        require(redirectTo == AUTH_CALLBACK_URL) { "OAuth redirect URL is not allowed." }
         val pending = SharedTagOAuthPendingState.create(redirectTo = redirectTo)
         oauthStateStore.save(pending)
         val encodedProvider = URLEncoder.encode(provider, Charsets.UTF_8.name())
         val encodedRedirect = URLEncoder.encode(redirectTo, Charsets.UTF_8.name())
         val encodedChallenge = URLEncoder.encode(pending.codeChallenge, Charsets.UTF_8.name())
+        val encodedState = URLEncoder.encode(pending.state, Charsets.UTF_8.name())
         return "${config.supabaseUrl.trimEnd('/')}/auth/v1/authorize" +
             "?provider=$encodedProvider" +
             "&redirect_to=$encodedRedirect" +
             "&code_challenge=$encodedChallenge" +
-            "&code_challenge_method=S256"
+            "&code_challenge_method=S256" +
+            "&state=$encodedState"
     }
 
     override suspend fun signInWithOAuthCallback(callbackUrl: String): SharedTagAuthRemoteResult {
         validateCallbackUrl(callbackUrl)
         val params = parseCallbackParams(callbackUrl)
-        params["error_description"]?.takeIf { it.isNotBlank() }?.let { throw IOException(it) }
-        params["error"]?.takeIf { it.isNotBlank() }?.let { throw IOException(it) }
+        params["error_description"]?.takeIf { it.isNotBlank() }?.let {
+            oauthStateStore.clear()
+            throw IOException(it)
+        }
+        params["error"]?.takeIf { it.isNotBlank() }?.let {
+            oauthStateStore.clear()
+            throw IOException(it)
+        }
         if (!params["access_token"].isNullOrBlank() || !params["refresh_token"].isNullOrBlank()) {
             oauthStateStore.clear()
             throw IOException("OAuth callbackにtokenが含まれています。PKCE code callbackだけを受け付けます。")
         }
         val code = params["code"]?.takeIf { it.isNotBlank() }
-            ?: throw IOException("Googleサインインの認可コードを受け取れませんでした。")
+            ?: run {
+                oauthStateStore.clear()
+                throw IOException("Googleサインインの認可コードを受け取れませんでした。")
+            }
         val pending = oauthStateStore.load()
             ?: throw IOException("Googleサインインの開始情報が見つかりません。もう一度やり直してください。")
         if (pending.isExpired()) {
@@ -83,6 +104,11 @@ class SupabaseSharedTagAuthRemoteDataSource(
             throw IOException("Googleサインインの有効期限が切れました。もう一度やり直してください。")
         }
         if (pending.redirectTo != AUTH_CALLBACK_URL) {
+            oauthStateStore.clear()
+            throw IOException("Googleサインインのstate検証に失敗しました。")
+        }
+        val callbackState = params["state"]?.takeIf { it.isNotBlank() }
+        if (callbackState == null || !constantTimeEquals(callbackState, pending.state)) {
             oauthStateStore.clear()
             throw IOException("Googleサインインのstate検証に失敗しました。")
         }
@@ -264,20 +290,38 @@ class SharedPreferencesSharedTagOAuthStateStore(context: Context) : SharedTagOAu
         context.getSharedPreferences("shared_tag_oauth_state", Context.MODE_PRIVATE)
 
     override fun save(state: SharedTagOAuthPendingState) {
+        val encrypted = listOf(state.codeVerifier, state.codeChallenge, state.state, state.redirectTo)
+            .map { runCatching { encrypt(it) }.getOrNull() }
+        if (encrypted.any { it == null }) {
+            clear()
+            return
+        }
         prefs.edit()
-            .putString(KEY_VERIFIER, state.codeVerifier)
-            .putString(KEY_CHALLENGE, state.codeChallenge)
-            .putString(KEY_REDIRECT_TO, state.redirectTo)
+            .putString(KEY_ENCRYPTED_VERIFIER, encrypted[0])
+            .putString(KEY_ENCRYPTED_CHALLENGE, encrypted[1])
+            .putString(KEY_ENCRYPTED_STATE, encrypted[2])
+            .putString(KEY_ENCRYPTED_REDIRECT_TO, encrypted[3])
+            .remove(KEY_VERIFIER)
+            .remove(KEY_CHALLENGE)
+            .remove(KEY_STATE)
+            .remove(KEY_REDIRECT_TO)
             .putLong(KEY_CREATED_AT, state.createdAtMillis)
             .apply()
     }
 
     override fun load(): SharedTagOAuthPendingState? {
-        val verifier = prefs.getString(KEY_VERIFIER, null)?.takeIf { it.isNotBlank() } ?: return null
-        val challenge = prefs.getString(KEY_CHALLENGE, null)?.takeIf { it.isNotBlank() } ?: return null
-        val redirectTo = prefs.getString(KEY_REDIRECT_TO, null)?.takeIf { it.isNotBlank() } ?: return null
-        val createdAt = prefs.getLong(KEY_CREATED_AT, 0L).takeIf { it > 0L } ?: return null
-        return SharedTagOAuthPendingState(verifier, challenge, redirectTo, createdAt)
+        val verifier = decrypt(prefs.getString(KEY_ENCRYPTED_VERIFIER, null)) ?: run {
+            if (prefs.contains(KEY_VERIFIER)) clear()
+            return null
+        }
+        val challenge = decrypt(prefs.getString(KEY_ENCRYPTED_CHALLENGE, null)) ?: run { clear(); return null }
+        val state = decrypt(prefs.getString(KEY_ENCRYPTED_STATE, null)) ?: run { clear(); return null }
+        val redirectTo = decrypt(prefs.getString(KEY_ENCRYPTED_REDIRECT_TO, null)) ?: run { clear(); return null }
+        val createdAt = prefs.getLong(KEY_CREATED_AT, 0L).takeIf { it > 0L } ?: run {
+            clear()
+            return null
+        }
+        return SharedTagOAuthPendingState(verifier, challenge, state, redirectTo, createdAt)
     }
 
     override fun clear() {
@@ -287,8 +331,63 @@ class SharedPreferencesSharedTagOAuthStateStore(context: Context) : SharedTagOAu
     private companion object {
         const val KEY_VERIFIER = "code_verifier"
         const val KEY_CHALLENGE = "code_challenge"
+        const val KEY_STATE = "state"
         const val KEY_REDIRECT_TO = "redirect_to"
+        const val KEY_ENCRYPTED_VERIFIER = "encrypted_code_verifier"
+        const val KEY_ENCRYPTED_CHALLENGE = "encrypted_code_challenge"
+        const val KEY_ENCRYPTED_STATE = "encrypted_state"
+        const val KEY_ENCRYPTED_REDIRECT_TO = "encrypted_redirect_to"
         const val KEY_CREATED_AT = "created_at"
+        const val KEYSTORE_PROVIDER = "AndroidKeyStore"
+        const val KEY_ALIAS = "jp.miyamibu.urlalbum.oauth_state"
+        const val TRANSFORMATION = "AES/GCM/NoPadding"
+
+        fun key(): SecretKey {
+            val keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER).apply { load(null) }
+            (keyStore.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
+            return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, KEYSTORE_PROVIDER).run {
+                init(
+                    KeyGenParameterSpec.Builder(
+                        KEY_ALIAS,
+                        KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
+                    )
+                        .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                        .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                        .setUserAuthenticationRequired(false)
+                        .build(),
+                )
+                generateKey()
+            }
+        }
+
+        fun encrypt(value: String): String {
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            cipher.init(Cipher.ENCRYPT_MODE, key())
+            val iv = AndroidBase64.encodeToString(cipher.iv, AndroidBase64.NO_WRAP)
+            val payload = AndroidBase64.encodeToString(
+                cipher.doFinal(value.toByteArray(Charsets.UTF_8)),
+                AndroidBase64.NO_WRAP,
+            )
+            return "$iv.$payload"
+        }
+
+        fun decrypt(value: String?): String? {
+            if (value.isNullOrBlank()) return null
+            return runCatching {
+                val parts = value.split('.', limit = 2)
+                require(parts.size == 2)
+                val cipher = Cipher.getInstance(TRANSFORMATION)
+                cipher.init(
+                    Cipher.DECRYPT_MODE,
+                    key(),
+                    GCMParameterSpec(128, AndroidBase64.decode(parts[0], AndroidBase64.DEFAULT)),
+                )
+                String(
+                    cipher.doFinal(AndroidBase64.decode(parts[1], AndroidBase64.DEFAULT)),
+                    Charsets.UTF_8,
+                )
+            }.getOrNull()
+        }
     }
 }
 
@@ -306,11 +405,12 @@ private class InMemorySharedTagOAuthStateStore : SharedTagOAuthStateStore {
 data class SharedTagOAuthPendingState(
     val codeVerifier: String,
     val codeChallenge: String,
+    val state: String,
     val redirectTo: String,
     val createdAtMillis: Long,
 ) {
     fun isExpired(nowMillis: Long = System.currentTimeMillis()): Boolean =
-        nowMillis - createdAtMillis > EXPIRY_MILLIS
+        createdAtMillis > nowMillis || nowMillis - createdAtMillis > EXPIRY_MILLIS
 
     companion object {
         private const val EXPIRY_MILLIS = 10 * 60 * 1000L
@@ -320,6 +420,7 @@ data class SharedTagOAuthPendingState(
             return SharedTagOAuthPendingState(
                 codeVerifier = verifier,
                 codeChallenge = sha256Base64UrlNoPadding(verifier),
+                state = randomUrlSafe(lengthBytes = 32),
                 redirectTo = redirectTo,
                 createdAtMillis = System.currentTimeMillis(),
             )
@@ -344,6 +445,13 @@ private fun randomUrlSafe(lengthBytes: Int): String {
 private fun sha256Base64UrlNoPadding(value: String): String {
     val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.US_ASCII))
     return Base64.getUrlEncoder().withoutPadding().encodeToString(digest)
+}
+
+private fun constantTimeEquals(left: String, right: String): Boolean {
+    return MessageDigest.isEqual(
+        left.toByteArray(Charsets.US_ASCII),
+        right.toByteArray(Charsets.US_ASCII),
+    )
 }
 
 private fun parseCallbackParams(callbackUrl: String): Map<String, String> {

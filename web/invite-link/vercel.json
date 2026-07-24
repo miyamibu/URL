@@ -23,6 +23,14 @@
         {
           "key": "Content-Security-Policy",
           "value": "default-src 'none'; base-uri 'none'; connect-src https://xocumgxbylmpoobfqows.supabase.co; form-action 'self'; frame-ancestors 'none'; font-src 'none'; img-src 'none'; media-src 'none'; object-src 'none'; script-src 'self' https://cdn.jsdelivr.net 'sha256-RAh35s8ZX25KPMRobh7ugOpopFd2XiiFHjsEuQ8/k90='; style-src 'self' 'sha256-IkDFeozcg3Saa4fKYO3EhGCqzC67yl4xj9I6f8cINtI='; worker-src 'none'"
+        },
+        {
+          "key": "Cache-Control",
+          "value": "no-store, max-age=0"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "no-referrer"
         }
       ]
     }

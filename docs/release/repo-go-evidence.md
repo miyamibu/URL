@@ -1,8 +1,21 @@
-# REPO_GO Evidence
+# Revalidated Current-Head Evidence
 
-## Final status: REPO_GO
+## Current status: NO_GO_INTERNAL / NOT_VERIFIED
 
-This file records repo-local evidence refreshed on 2026-07-23. The reviewed release candidate is Android `versionCode=17` / `versionName=1.0.15` and iOS `build=17` / `version=1.0.15`, based on the hamburger-menu commit `babd35d5` and the release-version updates in the current candidate. `REPO_GO` means the repository implementation, docs, scripts, tests, build checks, and release hygiene are ready for pre-publication operations. It does not mean production deploy, store submission, OpenAI submission, production secret entry, or live/store verification is complete.
+This is the current 2026-07-24 remediation status. The worktree contains the
+intentional remediation diff and has not been committed, pushed, deployed, or
+uploaded. Personal-link snapshot sync remains fail-closed and disabled, release
+media and external-provider controls still require live verification, and the
+new Supabase migrations have not been applied to a database in this review.
+Physical-device, accessibility, store, production, and OpenAI verification are
+also not current evidence.
+
+## Historical status: REPO_GO (superseded)
+
+The following rows record historical repo-local evidence refreshed on
+2026-07-23. They are retained for traceability and are not current launch
+approval. Their version, device, database, and external-state claims must not be
+used as evidence for the 2026-07-24 remediation candidate.
 
 ## Verified Areas
 
@@ -49,3 +62,14 @@ This file records repo-local evidence refreshed on 2026-07-23. The reviewed rele
 
 - Any test weakening, removed redaction, noauth MCP personal data, raw body/prompt/token output, AI feature flag default on, shared-tag default inclusion, or root review archive returns the repo to `NO_GO_INTERNAL`.
 - CoreSimulator-only failures after build-for-testing passes are not automatically internal blockers; classify as `NOT_VERIFIED` unless a code/test failure is found.
+
+## 2026-07-24 Revalidation Override
+
+The historical rows above are retained as evidence and are not a current launch
+approval. The current remediation worktree adds fail-closed gates for
+personal-link snapshot sync/MCP and keeps Android release media downloads off;
+the historical statement that a configured resolver made release media
+`ALLOW_LOCAL_MEDIA_DOWNLOADS=true` must not be used for the current candidate.
+Current build/test results and external deployment, store, database-apply,
+physical-device, and accessibility evidence must be refreshed before any
+`REPO_GO` or launch claim is restored.

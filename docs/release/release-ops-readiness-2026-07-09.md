@@ -1,9 +1,16 @@
 # Release / Ops Readiness Baseline 2026-07-09
 
+## Superseded current status (2026-07-24)
+
+`NO_GO_INTERNAL / NOT_VERIFIED_FOR_RELEASE`。この 2026-07-09 baseline は
+履歴・運用論点の参照用であり、下記の `REPO_GO` や 1.0.14/1.0.14 の
+source snapshot を現在の証拠として再利用してはならない。現行判定は
+`docs/release/current-readiness-2026-07-24.yaml` を参照する。
+
 ## Goal
 Track the current `1.0.14` repo readiness without mixing it with the historical `1.0.11` store submission log.
 
-## Current Status
+## Historical Status (superseded)
 `REPO_GO` for the 2026-07-10 repo-local AI-safe Export / AI Receipt-Draft-Diff / read-only MCP / release hygiene remediation scope.
 
 This is a repo-local readiness classification only. Production deploy, production MCP/OAuth registration, OpenAI submission, App Store / Play Console submission, production secret input, and store/live recheck are Manual steps and are not repo-internal blockers.

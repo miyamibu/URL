@@ -13,6 +13,7 @@ protocol PendingInviteSecureStorage: Sendable {
 }
 
 final class PendingInviteStore: @unchecked Sendable {
+    private static let maxAge: TimeInterval = 24 * 60 * 60
     private let storage: any PendingInviteSecureStorage
 
     init(
@@ -26,13 +27,23 @@ final class PendingInviteStore: @unchecked Sendable {
         self.storage = storage
     }
 
-    func load() throws -> PendingInviteRecord? {
+    func load(now: Date = Date()) throws -> PendingInviteRecord? {
         guard let data = try storage.load() else { return nil }
-        return try JSONDecoder().decode(PendingInviteRecord.self, from: data)
+        let record = try JSONDecoder().decode(PendingInviteRecord.self, from: data)
+        guard !record.inviteToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              record.savedAt <= now,
+              now.timeIntervalSince(record.savedAt) <= Self.maxAge else {
+            try storage.clear()
+            return nil
+        }
+        return record
     }
 
     func save(inviteToken: String, now: Date = Date()) throws {
-        let record = PendingInviteRecord(inviteToken: inviteToken, savedAt: now)
+        let savedAt = try load(now: now)
+            .flatMap { $0.inviteToken == inviteToken ? $0.savedAt : nil }
+            ?? now
+        let record = PendingInviteRecord(inviteToken: inviteToken, savedAt: savedAt)
         let payload = try JSONEncoder().encode(record)
         try storage.save(payload)
     }
@@ -69,7 +80,10 @@ private struct KeychainPendingInviteSecureStorage: PendingInviteSecureStorage {
     func save(_ data: Data) throws {
         let status = SecItemAdd(
             baseQuery(returnData: false).merging(
-                [kSecValueData as String: data],
+                [
+                    kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+                    kSecValueData as String: data,
+                ],
                 uniquingKeysWith: { _, new in new }
             ) as CFDictionary,
             nil
@@ -77,7 +91,10 @@ private struct KeychainPendingInviteSecureStorage: PendingInviteSecureStorage {
         if status == errSecDuplicateItem {
             let updateStatus = SecItemUpdate(
                 baseQuery(returnData: false) as CFDictionary,
-                [kSecValueData as String: data] as CFDictionary
+                [
+                    kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+                    kSecValueData as String: data,
+                ] as CFDictionary
             )
             guard updateStatus == errSecSuccess else {
                 throw PendingInviteStoreError.keychainFailure(updateStatus)

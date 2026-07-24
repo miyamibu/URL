@@ -54,7 +54,7 @@
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
-		<true/>
+		<false/>
 	</dict>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>

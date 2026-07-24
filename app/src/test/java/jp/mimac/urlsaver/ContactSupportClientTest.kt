@@ -19,6 +19,7 @@ class ContactSupportClientTest {
         assertEquals(ContactSupportResult.Success("req-1"), result)
         val request = server.takeRequest()
         assertEquals("POST", request.method)
+        assertTrue(request.getHeader("Idempotency-Key")?.isNotBlank() == true)
         assertTrue(request.body.readUtf8().contains("hello"))
     }
 

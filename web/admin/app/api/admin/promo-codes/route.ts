@@ -4,8 +4,8 @@ import { createServiceSupabaseClient } from "@/lib/supabase";
 
 function asErrorResponse(error: unknown): Response {
   if (error instanceof Response) return error;
-  const message = error instanceof Error ? error.message : "管理APIでエラーが発生しました";
-  return NextResponse.json({ error: message }, { status: 500 });
+  console.error("admin promo-code list failed", error instanceof Error ? error.name : "unknown");
+  return NextResponse.json({ error: "管理APIでエラーが発生しました" }, { status: 500 });
 }
 
 function deriveStatus(row: Record<string, unknown>): string {

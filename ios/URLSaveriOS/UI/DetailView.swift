@@ -32,10 +32,7 @@ struct DetailView: View {
     }
 
     private var canOfferMediaAction: Bool {
-        guard let entry else { return false }
-        return entry.localProvenanceCount > 0 &&
-            entry.recordState == .active &&
-            [.youtube, .tiktok, .instagram].contains(entry.serviceType)
+        model.canOfferMediaAction(entryID: entryID)
     }
 
     private var shouldShowMediaAction: Bool {

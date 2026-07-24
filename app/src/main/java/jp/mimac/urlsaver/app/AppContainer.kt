@@ -269,6 +269,7 @@ class AppContainer(context: Context) {
             clock = clock,
             scheduler = scheduler,
             usageSummaryDataSource = usageSummaryDataSource,
+            appContext = appContext,
         )
     }
 

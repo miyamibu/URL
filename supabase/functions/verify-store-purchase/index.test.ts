@@ -4,6 +4,7 @@ import {
   expectedPlanForProduct,
   handleRequest,
   normalizeRequest,
+  shouldRecordVerificationFailure,
 } from "./index.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -57,6 +58,9 @@ Deno.test("malformed App Store JWS fails closed without granting", async () => {
     if (url.includes("/rest/v1/subscription_products?")) {
       return new Response(JSON.stringify([{ plan: "standard", billing_period: "monthly" }]), { status: 200 });
     }
+    if (url.endsWith("/rest/v1/rpc/reserve_store_purchase_attempt")) {
+      return new Response("true", { status: 200 });
+    }
     if (url.includes("/rest/v1/store_purchase_verifications?")) {
       return new Response("[]", { status: 200 });
     }
@@ -98,4 +102,10 @@ Deno.test("request normalization does not accept a missing purchase token", () =
     rejected = true;
   }
   assert(rejected, "missing purchase token should be rejected");
+});
+
+Deno.test("rate-limit and auth failures do not create purchase failure rows", () => {
+  assert(!shouldRecordVerificationFailure("rate_limited"), "rate-limit should not be persisted");
+  assert(!shouldRecordVerificationFailure("auth_required"), "auth failure should not be persisted");
+  assert(shouldRecordVerificationFailure("store_verification_failed"), "provider failures remain auditable");
 });

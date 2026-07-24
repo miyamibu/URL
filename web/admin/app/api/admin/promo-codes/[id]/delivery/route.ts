@@ -9,8 +9,8 @@ type Params = {
 
 function asErrorResponse(error: unknown): Response {
   if (error instanceof Response) return error;
-  const message = error instanceof Error ? error.message : "配送状態を確認できませんでした";
-  return NextResponse.json({ error: message }, { status: 500 });
+  console.error("admin promo delivery lookup failed", error instanceof Error ? error.name : "unknown");
+  return NextResponse.json({ error: "配送状態を確認できませんでした" }, { status: 500 });
 }
 
 export async function GET(request: NextRequest, { params }: Params) {
@@ -37,8 +37,7 @@ export async function GET(request: NextRequest, { params }: Params) {
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
-      const message = typeof body?.message === "string" ? body.message : `Resend failed: ${response.status}`;
-      return NextResponse.json({ error: message }, { status: response.status });
+      return NextResponse.json({ error: "配送状態を取得できませんでした" }, { status: response.status });
     }
 
     return NextResponse.json({

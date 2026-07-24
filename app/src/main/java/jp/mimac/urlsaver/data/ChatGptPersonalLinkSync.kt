@@ -204,14 +204,14 @@ class ChatGptPersonalLinkSyncRepository(
     private val tagDao: TagDao,
     private val settingsStore: ChatGptPersonalLinkSyncSettingsStore,
     private val remoteDataSource: ChatGptPersonalLinkRemoteDataSource,
-    private val operationEnabled: Boolean = true,
+    private val operationEnabled: Boolean = false,
 ) {
     val settings: StateFlow<ChatGptPersonalLinkSyncSettings> = settingsStore.settings
-    val isOperationEnabled: Boolean get() = operationEnabled
+    val isOperationEnabled: Boolean get() = operationEnabled && SNAPSHOT_PROTOCOL_ENABLED
 
     @Suppress("UNUSED_PARAMETER")
     suspend fun setEnabled(enabled: Boolean, contentFetchEnabled: Boolean): ChatGptSyncResult {
-        if (!operationEnabled) return ChatGptSyncResult.GateOff
+        if (!isOperationEnabled) return ChatGptSyncResult.GateOff
         val session = authSessionProvider.session.value ?: return ChatGptSyncResult.AuthRequired
         return runCatching {
             remoteDataSource.setSyncEnabled(session, enabled, contentFetchEnabled = false)
@@ -228,7 +228,7 @@ class ChatGptPersonalLinkSyncRepository(
     }
 
     suspend fun syncNow(): ChatGptSyncResult {
-        if (!operationEnabled) return ChatGptSyncResult.GateOff
+        if (!isOperationEnabled) return ChatGptSyncResult.GateOff
         if (!settingsStore.snapshot().enabled) return ChatGptSyncResult.NotEnabled
         val session = authSessionProvider.session.value ?: return ChatGptSyncResult.AuthRequired
         return runCatching { syncCurrentSnapshot(session) }.getOrElse {
@@ -241,6 +241,7 @@ class ChatGptPersonalLinkSyncRepository(
         val entries = urlEntryDao.loadAllEntries()
         val eligibility = entries.map { entry ->
             val sharedTagAllocation = tagDao.countActiveSyncedRefsForEntry(entry.id) > 0
+            val localTags = tagDao.getLocalOnlyTagsForEntry(entry.id).map { it.name }
             val reasons = buildList {
                 if (entry.recordState != RecordState.ACTIVE) {
                     add("active_required")
@@ -249,6 +250,14 @@ class ChatGptPersonalLinkSyncRepository(
                 if (entry.sharedReferenceCount != 0) add("shared_reference")
                 if (entry.pendingDeletionUntil != null) add("pending_delete")
                 if (sharedTagAllocation) add("shared_tag_allocation")
+                addAll(
+                    ExternalDataPolicy.inspect(
+                        url = entry.normalizedUrl,
+                        title = entry.userTitle ?: entry.fetchedTitle,
+                        memo = entry.memo,
+                        tags = localTags,
+                    ).reasons.map { "external_data_$it" },
+                )
             }
             ChatGptSyncEligibility(
                 entryId = entry.id,
@@ -309,10 +318,10 @@ class ChatGptPersonalLinkSyncRepository(
         return ChatGptPersonalLinkSyncOperation(
             opId = UUID.randomUUID().toString().lowercase(),
             clientEntryId = AiTransparencyPolicy.publicSafeIdForEntry(this),
-            url = normalizedUrl,
-            title = userTitle ?: fetchedTitle,
-            memo = memo.takeIf { it.isNotBlank() },
-            tags = tags,
+            url = ExternalDataPolicy.safeUrl(normalizedUrl),
+            title = ExternalDataPolicy.sanitizeText(userTitle ?: fetchedTitle),
+            memo = ExternalDataPolicy.sanitizeText(memo),
+            tags = tags.mapNotNull(ExternalDataPolicy::sanitizeText),
             metadata = buildJsonObject {
                 put("normalized_host", JsonPrimitive(normalizedHost))
                 put("service_type", JsonPrimitive(serviceType.name.lowercase()))
@@ -321,6 +330,12 @@ class ChatGptPersonalLinkSyncRepository(
             isArchived = false,
             updatedAt = Instant.ofEpochMilli(updatedAt).toString(),
         )
+    }
+
+    private companion object {
+        // The legacy operation RPC is not a full snapshot protocol: it cannot
+        // represent an empty snapshot or reliably delete stale remote rows.
+        const val SNAPSHOT_PROTOCOL_ENABLED = false
     }
 }
 

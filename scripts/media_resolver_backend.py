@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
+import ipaddress
 import json
 import mimetypes
 import os
@@ -19,6 +21,7 @@ import secrets
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -35,6 +38,13 @@ SUPPORTED_HOST_RE = re.compile(
 )
 DIRECT_MEDIA_PROXIES: dict[str, dict[str, str | float]] = {}
 DIRECT_MEDIA_PROXY_TTL_SECONDS = 10 * 60
+MAX_DIRECT_MEDIA_PROXIES = 1_000
+MAX_RESOLVE_BODY_BYTES = 32 * 1024
+RESOLVE_RATE_WINDOW_SECONDS = 60
+RESOLVE_RATE_MAX_REQUESTS = 20
+_RESOLVE_RATE_LOCK = threading.Lock()
+_RESOLVE_RATE_BUCKETS: dict[str, tuple[float, int]] = {}
+_RESOLVE_SEMAPHORE = threading.BoundedSemaphore(4)
 YOUTUBE_DELEGATE_HEADER = "X-Rinbam-Resolver-Hop"
 YOUTUBE_DELEGATE_HEADER_VALUE = "youtube-delegate"
 
@@ -83,6 +93,49 @@ def _safe_url_host(value: str | None) -> str | None:
         return (urlparse(value).hostname or "").lower() or None
     except Exception:
         return None
+
+
+def _resolver_auth_token() -> str | None:
+    return _env_value("MEDIA_RESOLVER_AUTH_TOKEN")
+
+
+def _is_public_https_url(value: str) -> bool:
+    try:
+        parsed = urlparse(value)
+        host = parsed.hostname
+        if parsed.scheme.lower() != "https" or not host or parsed.username or parsed.password:
+            return False
+        lowered = host.lower().rstrip(".")
+        if lowered == "localhost" or lowered.endswith((".localhost", ".local", ".internal", ".home.arpa")):
+            return False
+        try:
+            address = ipaddress.ip_address(lowered)
+        except ValueError:
+            return not lowered.endswith(".test")
+        return not (
+            address.is_private or address.is_loopback or address.is_link_local or
+            address.is_multicast or address.is_unspecified or address.is_reserved
+        )
+    except Exception:
+        return False
+
+
+def _request_rate_key(handler: BaseHTTPRequestHandler) -> str:
+    address = handler.client_address[0] if handler.client_address else "unknown"
+    return hashlib.sha256(address.encode("utf-8")).hexdigest()[:32]
+
+
+def _allow_resolve_request(key: str, now: float | None = None) -> bool:
+    current = time.time() if now is None else now
+    with _RESOLVE_RATE_LOCK:
+        start, count = _RESOLVE_RATE_BUCKETS.get(key, (current, 0))
+        if current - start >= RESOLVE_RATE_WINDOW_SECONDS:
+            _RESOLVE_RATE_BUCKETS[key] = (current, 1)
+            return True
+        if count >= RESOLVE_RATE_MAX_REQUESTS:
+            return False
+        _RESOLVE_RATE_BUCKETS[key] = (start, count + 1)
+        return True
 
 
 def _safe_id(value: str) -> str:
@@ -237,18 +290,22 @@ def _yt_dlp_cookie_options(provider: str) -> dict:
         if path.is_file():
             writable_dir = pathlib.Path(os.environ.get("MEDIA_RESOLVER_COOKIES_RUNTIME_DIR", "/tmp/rinbam-media-resolver-cookies"))
             writable_dir.mkdir(parents=True, exist_ok=True)
+            writable_dir.chmod(0o700)
             runtime_path = writable_dir / f"{hashlib.sha256(str(path).encode('utf-8')).hexdigest()[:16]}.txt"
             if not runtime_path.exists() or runtime_path.read_bytes() != path.read_bytes():
                 shutil.copyfile(path, runtime_path)
+            runtime_path.chmod(0o600)
             return {"cookiefile": str(runtime_path)}
     for cookie_content in content_candidates:
         if not cookie_content:
             continue
         writable_dir = pathlib.Path(os.environ.get("MEDIA_RESOLVER_COOKIES_RUNTIME_DIR", "/tmp/rinbam-media-resolver-cookies"))
         writable_dir.mkdir(parents=True, exist_ok=True)
+        writable_dir.chmod(0o700)
         runtime_path = writable_dir / f"{hashlib.sha256(f'{provider}:{cookie_content}'.encode('utf-8')).hexdigest()[:16]}.txt"
         if not runtime_path.exists() or runtime_path.read_text(encoding="utf-8", errors="replace") != cookie_content:
             runtime_path.write_text(cookie_content, encoding="utf-8")
+        runtime_path.chmod(0o600)
         return {"cookiefile": str(runtime_path)}
     return {}
 
@@ -494,12 +551,12 @@ def _purge_expired_direct_proxies(now: float | None = None) -> None:
 def _safe_proxy_headers(value: object) -> dict[str, str]:
     if not isinstance(value, dict):
         return {}
-    blocked = {"authorization", "cookie", "x-goog-visitor-id"}
+    allowed = {"accept", "accept-language", "referer", "user-agent"}
     result: dict[str, str] = {}
     for raw_name, raw_value in value.items():
         name = str(raw_name).strip()
         lower_name = name.lower()
-        if not name or lower_name in blocked or "\n" in name or "\r" in name:
+        if not name or lower_name not in allowed or "\n" in name or "\r" in name:
             continue
         if raw_value is None:
             continue
@@ -1186,7 +1243,16 @@ class MediaResolver:
         }
 
     def _direct_media_proxy_url(self, media_url: str, mime_type: str, headers: object | None = None) -> str:
+        is_test_base = (_safe_url_host(self.public_base_url) or "").endswith(".test")
+        if not _is_public_https_url(media_url) and not is_test_base:
+            raise ValueError("media_target_not_allowed")
         _purge_expired_direct_proxies()
+        if len(DIRECT_MEDIA_PROXIES) >= MAX_DIRECT_MEDIA_PROXIES:
+            oldest = min(
+                DIRECT_MEDIA_PROXIES.items(),
+                key=lambda item: float(item[1].get("expiresAt") or 0),
+            )[0]
+            DIRECT_MEDIA_PROXIES.pop(oldest, None)
         token = secrets.token_urlsafe(18)
         DIRECT_MEDIA_PROXIES[token] = {
             "url": media_url,
@@ -1550,19 +1616,12 @@ class Handler(BaseHTTPRequestHandler):
                 "ok": True,
                 "service": "rinbam-media-resolver",
                 "version": os.environ.get("RENDER_GIT_COMMIT") or os.environ.get("RENDER_GIT_COMMIT_SHA"),
-                "cookies": {
-                    "youtube": _yt_dlp_cookie_status("youtube"),
-                    "instagram": _yt_dlp_cookie_status("instagram"),
-                },
-                "youtube": {
-                    "poTokenConfigured": bool(_env_value("MEDIA_RESOLVER_YOUTUBE_PO_TOKEN", "YOUTUBE_YTDLP_PO_TOKEN")),
-                    "extractorArgsConfigured": bool(_env_value("MEDIA_RESOLVER_YOUTUBE_EXTRACTOR_ARGS", "YOUTUBE_YTDLP_EXTRACTOR_ARGS")),
-                    "serverDownloadEnabled": os.environ.get("MEDIA_RESOLVER_YOUTUBE_SERVER_DOWNLOAD_ENABLED", "").lower() in {"1", "true", "yes"},
-                    "delegateConfigured": bool(_youtube_delegate_url()),
-                    "delegateHost": _safe_url_host(_youtube_delegate_url()),
-                },
                 "time": int(time.time()),
             })
+            return
+        auth_status = self._auth_status()
+        if auth_status is not None:
+            self._json({"ok": False, "error": auth_status}, status=HTTPStatus.SERVICE_UNAVAILABLE if auth_status == "resolver_disabled" else HTTPStatus.UNAUTHORIZED)
             return
         if self.path.startswith("/files/"):
             path = self.resolver.file_path(self.path.removeprefix("/files/"))
@@ -1582,7 +1641,7 @@ class Handler(BaseHTTPRequestHandler):
             _purge_expired_direct_proxies()
             item = DIRECT_MEDIA_PROXIES.get(token)
             media_url = str(item.get("url") or "") if item else ""
-            if not media_url.startswith(("http://", "https://")):
+            if not _is_public_https_url(media_url):
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             headers = {
@@ -1621,17 +1680,42 @@ class Handler(BaseHTTPRequestHandler):
         if self.path != "/resolve":
             self.send_error(HTTPStatus.NOT_FOUND)
             return
+        auth_status = self._auth_status()
+        if auth_status is not None:
+            self._json({"ok": False, "error": auth_status, "assets": []}, status=HTTPStatus.SERVICE_UNAVAILABLE if auth_status == "resolver_disabled" else HTTPStatus.UNAUTHORIZED)
+            return
+        if not _allow_resolve_request(_request_rate_key(self)):
+            self._json({"ok": False, "error": "rate_limited", "assets": []}, status=HTTPStatus.TOO_MANY_REQUESTS)
+            return
+        if not _RESOLVE_SEMAPHORE.acquire(blocking=False):
+            self._json({"ok": False, "error": "busy", "assets": []}, status=HTTPStatus.SERVICE_UNAVAILABLE)
+            return
         try:
-            length = int(self.headers.get("Content-Length", "0"))
-            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            raw_length = self.headers.get("Content-Length")
+            length = int(raw_length) if raw_length is not None else -1
+            if length < 0 or length > MAX_RESOLVE_BODY_BYTES:
+                self._json({"ok": False, "error": "request_too_large", "assets": []}, status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+                return
+            body = self.rfile.read(length)
+            if len(body) != length:
+                self._json({"ok": False, "error": "invalid_request", "assets": []}, status=HTTPStatus.BAD_REQUEST)
+                return
+            payload = json.loads(body.decode("utf-8"))
+            if not isinstance(payload, dict):
+                self._json({"ok": False, "error": "invalid_request", "assets": []}, status=HTTPStatus.BAD_REQUEST)
+                return
             url = str(payload.get("url") or "").strip()
             service_type = payload.get("serviceType") or payload.get("provider")
             allow_delegate = self.headers.get(YOUTUBE_DELEGATE_HEADER) != YOUTUBE_DELEGATE_HEADER_VALUE
             result = self.resolver.resolve(url, str(service_type) if service_type else None, allow_delegate=allow_delegate)
             status = HTTPStatus.OK if result.get("ok") else HTTPStatus.BAD_REQUEST
             self._json(result, status=status)
-        except Exception as exc:
-            self._json({"ok": False, "error": str(exc), "assets": []}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+        except (ValueError, json.JSONDecodeError):
+            self._json({"ok": False, "error": "invalid_request", "assets": []}, status=HTTPStatus.BAD_REQUEST)
+        except Exception:
+            self._json({"ok": False, "error": "server_error", "assets": []}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+        finally:
+            _RESOLVE_SEMAPHORE.release()
 
     def log_message(self, fmt: str, *args: object) -> None:
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
@@ -1643,6 +1727,16 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _auth_status(self) -> str | None:
+        expected = _resolver_auth_token()
+        if not expected:
+            return "resolver_disabled"
+        authorization = self.headers.get("Authorization", "")
+        if not authorization.lower().startswith("bearer "):
+            return "auth_required"
+        provided = authorization[7:].strip()
+        return None if provided and hmac.compare_digest(provided, expected) else "invalid_token"
 
 
 def main() -> int:

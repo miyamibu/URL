@@ -32,6 +32,11 @@ class UrlRulesTest {
     }
 
     @Test
+    fun normalize_rejectsUrlUserInfo() {
+        assertNull(UrlRules.normalize("https://user:password@example.com/private"))
+    }
+
+    @Test
     fun normalize_allowsLoopbackHttp_forLocalTestInfra() {
         assertEquals("http://127.0.0.1/path", UrlRules.normalize("http://127.0.0.1/path"))
     }

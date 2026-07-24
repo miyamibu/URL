@@ -520,6 +520,20 @@ private struct ExportSourceEntry {
         if entry.recordState == .pendingDelete || entry.pendingDeletionUntil != nil {
             exclusionReasons.append("pending_delete_excluded")
         }
+        let externalURLPolicy = ExternalDataPolicy.inspect(url: entry.normalizedURL)
+        exclusionReasons.append(contentsOf: externalURLPolicy.reasons.map { "external_data_\($0)" })
+        let externalTextPolicy = ExternalDataPolicy.inspect(
+            url: nil,
+            texts: [
+                entry.userTitle,
+                entry.fetchedTitle,
+                entry.fetchedAuthorName,
+                entry.bodySummary,
+                entry.fetchedBody,
+                entry.description,
+                entry.memo,
+            ] + tags.map { $0.name }
+        )
         let bodySummary = URLExportArchiveBuilder.redact(entry.bodySummary)
         let bodyExcerpt = URLExportArchiveBuilder.redact(
             entry.fetchedBody.map {
@@ -536,47 +550,56 @@ private struct ExportSourceEntry {
                 .union(bodyExcerpt.redactions)
                 .union(description.redactions)
                 .union(memoExcerpt.redactions)
+                .union(externalURLPolicy.reasons)
+                .union(externalTextPolicy.reasons)
         ).sorted()
+        let safeTags = tags.map { tag in
+            ExportTagSummary(
+                id: tag.id,
+                name: ExternalDataPolicy.sanitizeText(tag.name) ?? "[redacted:tag]",
+                scope: tag.scope
+            )
+        }
 
         return ExportEntryDocument(
             id: entry.id,
             publicSafeId: URLExportArchiveBuilder.publicSafeId(entryID: entry.id, normalizedURL: entry.normalizedURL),
-            originalUrl: entry.originalURL,
-            normalizedUrl: entry.normalizedURL,
-            displayUrl: entry.displayURL,
-            openUrl: entry.openURL,
-            providerPermalink: URLExportArchiveBuilder.providerPermalink(for: entry),
-            providerCanonicalId: entry.canonicalID,
+            originalUrl: ExternalDataPolicy.safeURL(entry.originalURL) ?? ExternalDataPolicy.excludedURLMarker,
+            normalizedUrl: ExternalDataPolicy.safeURL(entry.normalizedURL) ?? ExternalDataPolicy.excludedURLMarker,
+            displayUrl: ExternalDataPolicy.safeURL(entry.displayURL) ?? ExternalDataPolicy.excludedURLMarker,
+            openUrl: ExternalDataPolicy.safeURL(entry.openURL) ?? ExternalDataPolicy.excludedURLMarker,
+            providerPermalink: ExternalDataPolicy.safeURL(URLExportArchiveBuilder.providerPermalink(for: entry)) ?? ExternalDataPolicy.excludedURLMarker,
+            providerCanonicalId: ExternalDataPolicy.sanitizeText(entry.canonicalID),
             serviceType: entry.serviceType.rawValue.uppercased(),
             contentContext: entry.contentContext.rawValue.uppercased(),
             recordState: entry.recordState.rawValue,
             createdAt: URLExportArchiveBuilder.isoString(entry.createdAt),
             updatedAt: URLExportArchiveBuilder.isoString(entry.updatedAt),
             archivedAt: entry.archivedAt.map(URLExportArchiveBuilder.isoString(_:)),
-            userTitle: entry.userTitle,
-            fetchedTitle: entry.fetchedTitle,
-            fetchedAuthorName: entry.fetchedAuthorName,
+            userTitle: ExternalDataPolicy.sanitizeText(entry.userTitle),
+            fetchedTitle: ExternalDataPolicy.sanitizeText(entry.fetchedTitle),
+            fetchedAuthorName: ExternalDataPolicy.sanitizeText(entry.fetchedAuthorName),
             fetchedBodyKind: entry.fetchedBodyKind?.rawValue.uppercased(),
             bodySummary: bodySummary.value,
             bodyExcerpt: bodyExcerpt.value,
             description: description.value,
             memoExcerpt: memoExcerpt.value,
-            thumbnailUrl: entry.thumbnailURL,
-            badgeImageUrl: entry.badgeImageURL,
-            canonicalId: entry.canonicalID,
-            normalizedHost: entry.normalizedHost,
-            rawSourceHost: entry.rawSourceHost,
+            thumbnailUrl: ExternalDataPolicy.safeURL(entry.thumbnailURL),
+            badgeImageUrl: ExternalDataPolicy.safeURL(entry.badgeImageURL),
+            canonicalId: ExternalDataPolicy.sanitizeText(entry.canonicalID),
+            normalizedHost: ExternalDataPolicy.sanitizeText(entry.normalizedHost) ?? "保存したリンク",
+            rawSourceHost: ExternalDataPolicy.sanitizeText(entry.rawSourceHost) ?? "",
             metadataState: entry.metadataState.rawValue,
             metadataError: entry.metadataError?.rawValue,
             metadataFetchedAt: entry.metadataFetchedAt.map(URLExportArchiveBuilder.isoString(_:)),
             metadataSource: URLExportArchiveBuilder.metadataSource(for: entry),
             savedSnapshotNotice: URLExportArchiveBuilder.savedSnapshotNotice(for: entry),
             collection: nil,
-            tags: tags.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending },
-            effectiveTitle: entry.effectiveTitle,
+            tags: safeTags.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending },
+            effectiveTitle: ExternalDataPolicy.sanitizeText(entry.effectiveTitle) ?? "保存したリンク",
             sharedTagBoundary: hasSharedTag ? "contains_shared_tag" : "local_or_untagged",
-            aiEligible: exclusionReasons.isEmpty,
-            aiExclusionReason: exclusionReasons,
+            aiEligible: Set(exclusionReasons).isEmpty,
+            aiExclusionReason: Array(Set(exclusionReasons)).sorted(),
             redactionApplied: redactionApplied
         )
     }

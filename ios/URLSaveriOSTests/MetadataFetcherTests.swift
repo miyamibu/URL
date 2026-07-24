@@ -12,6 +12,21 @@ final class MetadataFetcherTests: XCTestCase {
         super.tearDown()
     }
 
+    func testNetworkTargetPolicyRejectsPrivateAndUserInfoTargets() {
+        XCTAssertFalse(MetadataNetworkTargetPolicy.isAllowed(URL(string: "https://127.0.0.1/private")!))
+        XCTAssertFalse(MetadataNetworkTargetPolicy.isAllowed(URL(string: "https://user:pass@example.com/path")!))
+        XCTAssertFalse(MetadataNetworkTargetPolicy.isAllowed(URL(string: "http://example.com/path")!))
+        XCTAssertTrue(MetadataNetworkTargetPolicy.isAllowed(URL(string: "https://example.com/path")!))
+    }
+
+    func testNetworkTargetPolicyPerformsDNSPreflightForNumericTargets() async {
+        let allowed = await MetadataNetworkTargetPolicy.isAllowedForNetworkRequest(
+            URL(string: "https://127.0.0.1/private")!,
+            allowTestHosts: false
+        )
+        XCTAssertFalse(allowed)
+    }
+
     func testTikTokUsesOEmbedMetadata() async {
         let endpoint = URL(string: "https://mock.local/tiktok-oembed")!
         MockURLProtocol.responses[endpoint.absoluteString] = .json(
@@ -655,7 +670,8 @@ final class MetadataFetcherTests: XCTestCase {
             xArticleGraphQLEndpointBuilder: xArticleGraphQLEndpointBuilder,
             xPublicBearerToken: xPublicBearerToken,
             instagramPublicOEmbedEndpointBuilder: instagramPublicOEmbedEndpointBuilder,
-            instagramCaptionedEmbedEndpointBuilder: instagramCaptionedEmbedEndpointBuilder
+            instagramCaptionedEmbedEndpointBuilder: instagramCaptionedEmbedEndpointBuilder,
+            allowTestHosts: true
         )
     }
 

@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 struct MetadataFetcher: Sendable {
     private let session: URLSession
@@ -12,6 +13,7 @@ struct MetadataFetcher: Sendable {
     private let xPublicBearerToken: String
     private let instagramPublicOEmbedEndpointBuilder: @Sendable (URL) -> URL?
     private let instagramCaptionedEmbedEndpointBuilder: @Sendable (URL) -> URL?
+    private let allowTestHosts: Bool
 
     init(
         session: URLSession = .shared,
@@ -24,7 +26,8 @@ struct MetadataFetcher: Sendable {
         xArticleGraphQLEndpointBuilder: @escaping @Sendable (String) -> URL? = MetadataFetcher.xArticleGraphQLURL(for:),
         xPublicBearerToken: String = MetadataFetcher.xPublicBearerToken,
         instagramPublicOEmbedEndpointBuilder: @escaping @Sendable (URL) -> URL? = MetadataFetcher.instagramPublicOEmbedURL(for:),
-        instagramCaptionedEmbedEndpointBuilder: @escaping @Sendable (URL) -> URL? = MetadataFetcher.instagramCaptionedEmbedURL(for:)
+        instagramCaptionedEmbedEndpointBuilder: @escaping @Sendable (URL) -> URL? = MetadataFetcher.instagramCaptionedEmbedURL(for:),
+        allowTestHosts: Bool = false
     ) {
         self.session = session
         self.youtubeOEmbedEndpointBuilder = youtubeOEmbedEndpointBuilder
@@ -37,6 +40,7 @@ struct MetadataFetcher: Sendable {
         self.xPublicBearerToken = xPublicBearerToken
         self.instagramPublicOEmbedEndpointBuilder = instagramPublicOEmbedEndpointBuilder
         self.instagramCaptionedEmbedEndpointBuilder = instagramCaptionedEmbedEndpointBuilder
+        self.allowTestHosts = allowTestHosts
     }
 
     func fetch(for record: URLRecord) async -> MetadataUpdate {
@@ -57,6 +61,12 @@ struct MetadataFetcher: Sendable {
                 normalizedHost: nil,
                 rawSourceHost: nil
             )
+        }
+        guard await MetadataNetworkTargetPolicy.isAllowedForNetworkRequest(
+            url,
+            allowTestHosts: allowTestHosts
+        ) else {
+            return unavailableUpdate(error: .unsupportedScheme)
         }
 
         switch record.serviceType {
@@ -190,13 +200,19 @@ struct MetadataFetcher: Sendable {
     }
 
     private func fetchHTMLDocument(url: URL) async throws -> HTMLDocument {
+        guard await MetadataNetworkTargetPolicy.isAllowedForNetworkRequest(
+            url,
+            allowTestHosts: allowTestHosts
+        ) else {
+            throw FetchFailure.unavailable(.unsupportedScheme)
+        }
         var request = URLRequest(url: url)
         request.timeoutInterval = 30
         request.setValue(Self.browserLikeUserAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("text/html,application/xhtml+xml", forHTTPHeaderField: "Accept")
         request.setValue(Locale.preferredLanguages.first ?? "ja-JP", forHTTPHeaderField: "Accept-Language")
 
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw FetchFailure.unavailable(.parseFailed)
         }
@@ -215,7 +231,11 @@ struct MetadataFetcher: Sendable {
             throw FetchFailure.unavailable(.parseFailed)
         }
 
-        return HTMLDocument(html: html, finalURL: httpResponse.url ?? url)
+        let finalURL = httpResponse.url ?? url
+        guard MetadataNetworkTargetPolicy.isAllowed(finalURL, allowTestHosts: allowTestHosts) else {
+            throw FetchFailure.unavailable(.unsupportedScheme)
+        }
+        return HTMLDocument(html: html, finalURL: finalURL)
     }
 
     private func fetchBadgeImageURL(from pageURLString: String?) async -> String? {
@@ -270,10 +290,21 @@ struct MetadataFetcher: Sendable {
 
     private func fetchJSONObject(request: URLRequest) async -> [String: Any]? {
         do {
-            let (data, response) = try await session.data(for: request)
+            guard let requestURL = request.url,
+                  await MetadataNetworkTargetPolicy.isAllowedForNetworkRequest(
+                      requestURL,
+                      allowTestHosts: allowTestHosts
+                  ) else {
+                return nil
+            }
+            let (data, response) = try await data(for: request)
             guard let httpResponse = response as? HTTPURLResponse else { return nil }
             try validateHTTPResponse(httpResponse)
             guard data.count <= Self.maxBodyBytes else { return nil }
+            let finalURL = httpResponse.url ?? requestURL
+            guard MetadataNetworkTargetPolicy.isAllowed(finalURL, allowTestHosts: allowTestHosts) else {
+                return nil
+            }
             return try JSONSerialization.jsonObject(with: data) as? [String: Any]
         } catch {
             return nil
@@ -290,6 +321,23 @@ struct MetadataFetcher: Sendable {
         if (500...599).contains(response.statusCode) {
             throw FetchFailure.failed(.http5xx)
         }
+    }
+
+    private func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        guard let requestURL = request.url,
+              await MetadataNetworkTargetPolicy.isAllowedForNetworkRequest(
+                  requestURL,
+                  allowTestHosts: allowTestHosts
+              ) else {
+            throw FetchFailure.unavailable(.unsupportedScheme)
+        }
+        return try await session.data(
+            for: request,
+            delegate: MetadataRedirectPolicyDelegate(
+                allowTestHosts: allowTestHosts,
+                maxRedirects: Self.maxRedirects
+            )
+        )
     }
 
     private func failedUpdate(error: MetadataError) -> MetadataUpdate {
@@ -1562,6 +1610,7 @@ struct MetadataFetcher: Sendable {
     }
 
     private static let maxBodyBytes = 2_000_000
+    private static let maxRedirects = 5
     private static let xArticleBodyMaxLength = 200_000
     private static let xPublicBearerToken =
         "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
@@ -1613,6 +1662,197 @@ private struct ExtractedMetadata {
 private struct HTMLDocument {
     let html: String
     let finalURL: URL
+}
+
+final class MetadataRedirectPolicyDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let allowTestHosts: Bool
+    private let maxRedirects: Int
+    private var redirectCount = 0
+
+    init(allowTestHosts: Bool, maxRedirects: Int) {
+        self.allowTestHosts = allowTestHosts
+        self.maxRedirects = maxRedirects
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        redirectCount += 1
+        guard redirectCount <= maxRedirects,
+              let url = request.url,
+              MetadataNetworkTargetPolicy.isAllowedAndResolves(
+                  url,
+                  allowTestHosts: allowTestHosts
+              ) else {
+            completionHandler(nil)
+            return
+        }
+        completionHandler(request)
+    }
+}
+
+public enum MetadataNetworkTargetPolicy {
+    public static func isAllowedForNetworkRequest(
+        _ url: URL,
+        allowTestHosts: Bool = false
+    ) async -> Bool {
+        guard isAllowed(url, allowTestHosts: allowTestHosts) else {
+            return false
+        }
+        // Test URLProtocol hosts are intentionally synthetic and do not need
+        // real DNS resolution. Production callers always use false here.
+        if allowTestHosts {
+            return true
+        }
+        guard let host = url.host?.lowercased(), !host.isEmpty else {
+            return false
+        }
+        return await Task.detached(priority: .utility) {
+            isAllowedResolvedHostname(host)
+        }.value
+    }
+
+    static func isAllowedAndResolves(_ url: URL, allowTestHosts: Bool = false) -> Bool {
+        guard isAllowed(url, allowTestHosts: allowTestHosts) else {
+            return false
+        }
+        if allowTestHosts {
+            return true
+        }
+        guard let host = url.host?.lowercased(), !host.isEmpty else {
+            return false
+        }
+        return isAllowedResolvedHostname(host)
+    }
+
+    public static func isAllowed(_ url: URL, allowTestHosts: Bool = false) -> Bool {
+        guard let scheme = url.scheme?.lowercased(),
+              let host = url.host?.lowercased(),
+              !host.isEmpty,
+              url.user == nil else {
+            return false
+        }
+        guard scheme == "https" || (allowTestHosts && scheme == "http") else {
+            return false
+        }
+        if host == "localhost" || host.hasSuffix(".localhost") ||
+            host.hasSuffix(".local") || host.hasSuffix(".internal") ||
+            host.hasSuffix(".home.arpa") {
+            return allowTestHosts
+        }
+        if host.contains(":") {
+            // Reject IPv6 literals conservatively until the URLSession connection
+            // is bound to the validated DNS result.
+            return false
+        }
+        let octets = host.split(separator: ".").compactMap { Int($0) }
+        if octets.count == 4 && host.split(separator: ".").count == 4 {
+            let first = octets[0]
+            let second = octets[1]
+            let isPrivate = octets.allSatisfy { (0...255).contains($0) } && (
+                first == 10 ||
+                (first == 172 && (16...31).contains(second)) ||
+                (first == 192 && second == 168) ||
+                first == 127 ||
+                (first == 169 && second == 254) ||
+                (first == 100 && (64...127).contains(second)) ||
+                (first == 198 && (18...19).contains(second)) ||
+                first == 0 ||
+                first >= 224
+            )
+            if isPrivate { return false }
+        }
+        if host.hasSuffix(".test") { return allowTestHosts }
+        return true
+    }
+
+    private static func isAllowedResolvedHostname(_ host: String) -> Bool {
+        var hints = addrinfo()
+        hints.ai_family = AF_UNSPEC
+        hints.ai_socktype = SOCK_STREAM
+        hints.ai_flags = AI_ADDRCONFIG
+
+        var result: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(host, nil, &hints, &result) == 0,
+              let result else {
+            return false
+        }
+        defer { freeaddrinfo(result) }
+
+        var cursor: UnsafeMutablePointer<addrinfo>? = result
+        var foundAddress = false
+        while let current = cursor {
+            guard let numericAddress = numericAddress(from: current.pointee) else {
+                return false
+            }
+            foundAddress = true
+            if isDisallowedIPAddress(numericAddress) {
+                return false
+            }
+            cursor = current.pointee.ai_next
+        }
+        return foundAddress
+    }
+
+    private static func numericAddress(from info: addrinfo) -> String? {
+        guard let address = info.ai_addr else { return nil }
+        var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+        let status = buffer.withUnsafeMutableBufferPointer { mutableBuffer in
+            getnameinfo(
+                address,
+                info.ai_addrlen,
+                mutableBuffer.baseAddress,
+                socklen_t(mutableBuffer.count),
+                nil,
+                0,
+                NI_NUMERICHOST
+            )
+        }
+        guard status == 0 else { return nil }
+        return String(cString: buffer)
+    }
+
+    private static func isDisallowedIPAddress(_ address: String) -> Bool {
+        let octets = address.split(separator: ".").compactMap { Int($0) }
+        if octets.count == 4 && address.split(separator: ".").count == 4 {
+            guard octets.allSatisfy({ (0...255).contains($0) }) else { return true }
+            let first = octets[0]
+            let second = octets[1]
+            return first == 0 ||
+                first == 10 ||
+                first == 127 ||
+                (first == 100 && (64...127).contains(second)) ||
+                (first == 169 && second == 254) ||
+                (first == 172 && (16...31).contains(second)) ||
+                (first == 192 && second == 168) ||
+                (first == 198 && (18...19).contains(second)) ||
+                first >= 224
+        }
+
+        var ipv6 = in6_addr()
+        guard address.withCString({ inet_pton(AF_INET6, $0, &ipv6) }) == 1 else {
+            return true
+        }
+        let bytes = withUnsafeBytes(of: ipv6) { Array($0) }
+        let isIPv4Mapped = bytes.count == 16 &&
+            bytes[0..<10].allSatisfy { $0 == 0 } &&
+            bytes[10] == 0xff && bytes[11] == 0xff
+        if isIPv4Mapped {
+            let mapped = bytes[12..<16].map(String.init).joined(separator: ".")
+            return isDisallowedIPAddress(mapped)
+        }
+        let allZero = bytes.allSatisfy { $0 == 0 }
+        let isLoopback = allZero == false && bytes.dropLast().allSatisfy { $0 == 0 } && bytes[15] == 1
+        let isUniqueLocal = (bytes[0] & 0xfe) == 0xfc
+        let isLinkLocal = bytes[0] == 0xfe && (bytes[1] & 0xc0) == 0x80
+        let isMulticast = bytes[0] == 0xff
+        let isDocumentation = bytes[0] == 0x20 && bytes[1] == 0x01 && bytes[2] == 0x0d && bytes[3] == 0xb8
+        return allZero || isLoopback || isUniqueLocal || isLinkLocal || isMulticast || isDocumentation || bytes[0] == 0
+    }
 }
 
 private enum FetchFailure: Error {

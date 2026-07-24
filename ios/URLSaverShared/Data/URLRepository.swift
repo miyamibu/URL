@@ -351,6 +351,14 @@ final class URLRepository: @unchecked Sendable {
         return try fetchOne(sql: statementSQL, binds: [sql(id)])
     }
 
+    func loadAllEntryIDs() throws -> [Int64] {
+        try database.fetchMany(
+            sql: "SELECT id FROM url_entries ORDER BY id ASC;"
+        ) { statement in
+            sqlite3_column_int64(statement, 0)
+        }
+    }
+
     func loadPendingDeleteEntries() throws -> [URLRecord] {
         try fetchEntries(
             whereClause: "record_state = 'PENDING_DELETE' AND pending_deletion_until IS NOT NULL ORDER BY pending_deletion_until ASC"

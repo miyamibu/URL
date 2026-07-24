@@ -1,7 +1,13 @@
 # Store Listing Draft
 
 ## Goal
-App Store / Google Play へ次回提出する文言を、現在の source baseline（Android `1.0.14 (versionCode=17)` / iOS `1.0.14 (build=15)`）と、実際に選択した release mode に一致させる。
+App Store / Google Play へ次回提出する文言を、現在の source baseline（Android `1.0.15 (versionCode=17)` / iOS `1.0.15 (build=17)`）と、実際に選択した release mode に一致させる。
+
+## Current readiness
+
+`NO_GO_INTERNAL / NOT_VERIFIED` as of 2026-07-24. This draft is not approval to
+submit. The current remediation candidate still needs database-apply,
+external-provider, store, and physical-device evidence.
 
 ## App Identity
 - App name: りんばむ
@@ -15,13 +21,13 @@ App Store / Google Play へ次回提出する文言を、現在の source baseli
 - Account deletion URL: required for this cloud-enabled release. Use the deployed public deletion route that matches `web/invite-link/account-deletion/index.html`.
 
 ## Current Release Branch Decision
-Current source baseline is Android `1.0.14 (versionCode=17)` and iOS `1.0.14 (build=15)`, but store/live submission state was not reverified in this document. Do not reuse the historical `1.0.11` submission state as current proof.
+Current source baseline is Android `1.0.15 (versionCode=17)` and iOS `1.0.15 (build=17)`, but store/live submission state was not reverified in this document. Do not reuse historical submission states as current proof.
 
 - Android release mode depends on `release.shared.tag.cloud.enabled` and release Supabase values from local/env configuration.
 - iOS defaults to tracked local-only xcconfig; cloud-sharing Archive/TestFlight must pass ignored `ios/Config/URLSaverSecrets.xcconfig` explicitly.
 - Ads, external analytics, and third-party crash reporting remain disabled. Google Play Billing / StoreKit subscriptions are enabled for paid plans.
 - Store forms must disclose account sign-in, shared-tag cloud sync/collaboration, invite sync, and contact support processing only when those features are enabled in the submitted binary.
-- Current repo readiness is `REPO_GO`; store/live submission remains a separate external gate that must be reverified for the submitted binary.
+- Current repo readiness is `NO_GO_INTERNAL / NOT_VERIFIED`; store/live submission remains a separate external gate that must be reverified for the submitted binary.
 
 ## Short Description
 SNSやメッセージで見つけたURLを保存し、あとで一覧・詳細・アーカイブから開き直せます。
@@ -89,5 +95,5 @@ URL, bookmark, share, later, archive, save, link, productivity
 
 ## Done When
 - Final screenshots match the submitted build.
-- App Store / Google Play wording matches the actually submitted Android `1.0.14 (versionCode=17)` / iOS `1.0.14 (build=15)` or later binary.
+- App Store / Google Play wording matches the actually submitted Android `1.0.15 (versionCode=17)` / iOS `1.0.15 (build=17)` or later binary.
 - Privacy and Data safety answers match the submitted binary.

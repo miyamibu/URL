@@ -138,6 +138,103 @@ enum AiTransparencyFeature {
     }
 }
 
+struct ExternalDataPolicyResult: Equatable, Sendable {
+    let allowed: Bool
+    let reasons: [String]
+}
+
+/** Shared fail-closed boundary for values that may leave the device. */
+enum ExternalDataPolicy {
+    static let excludedURLMarker = "[excluded:sensitive_external_data]"
+
+    private static let sensitiveQueryKeyPattern = "(?i)(token|access_token|refresh_token|code|state|nonce|signature|sig|expires|expiration|password|passwd|secret|api[_-]?key|auth|credential|invite)"
+    private static let labeledSecretPattern = "(?i)(refresh_token|access_token|service_role|sb_secret|invite[_-]?token|password|secret|api[_-]?key|token)\\s*[:=]\\s*[\\\"']?[A-Za-z0-9._~+/=-]{8,}"
+    private static let jwtPattern = "eyJ[A-Za-z0-9_-]{16,}\\.[A-Za-z0-9_-]{16,}\\.[A-Za-z0-9_-]{8,}"
+    private static let knownKeyPattern = "(?i)(sk-[A-Za-z0-9]{16,}|gh[pousr]_[A-Za-z0-9]{16,}|glpat-[A-Za-z0-9_-]{16,})"
+    private static let emailPattern = "(?i)[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}"
+    private static let phonePattern = "(?<!\\d)(?:\\+?\\d[\\d\\s().-]{8,}\\d)(?!\\d)"
+    private static let localPathPattern = "(?:/Users/|/private/var/|file://)[^\\s)]+"
+
+    static func inspect(url: String?, texts: [String?] = []) -> ExternalDataPolicyResult {
+        var reasons = Set<String>()
+        if let url, !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            guard let components = URLComponents(string: url), components.user != nil || components.password != nil || components.host != nil else {
+                reasons.insert("url_parse_failed")
+                return ExternalDataPolicyResult(allowed: false, reasons: reasons.sorted())
+            }
+            if components.user != nil || components.password != nil {
+                reasons.insert("url_userinfo")
+            }
+            if !["http", "https"].contains(components.scheme?.lowercased() ?? "") {
+                reasons.insert("url_scheme")
+            }
+            for item in components.queryItems ?? [] {
+                let key = item.name.lowercased()
+                if matches(sensitiveQueryKeyPattern, in: key) {
+                    reasons.insert("sensitive_query_key")
+                }
+                if let value = item.value, value.count >= 40, isHighEntropy(value) {
+                    reasons.insert("high_entropy_query_value")
+                }
+            }
+            if matches(labeledSecretPattern, in: url) || matches(jwtPattern, in: url) || matches(knownKeyPattern, in: url) {
+                reasons.insert("sensitive_url_value")
+            }
+            if matches(emailPattern, in: url) { reasons.insert("email") }
+            if matches(localPathPattern, in: url) { reasons.insert("local_path") }
+        } else if url != nil {
+            reasons.insert("url_parse_failed")
+        }
+
+        for text in texts.compactMap({ $0 }).filter({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+            if matches(labeledSecretPattern, in: text) || matches(jwtPattern, in: text) || matches(knownKeyPattern, in: text) {
+                reasons.insert("sensitive_text")
+            }
+            if matches(emailPattern, in: text) { reasons.insert("email") }
+            if matches(phonePattern, in: text) { reasons.insert("phone") }
+            if matches(localPathPattern, in: text) { reasons.insert("local_path") }
+        }
+        return ExternalDataPolicyResult(allowed: reasons.isEmpty, reasons: reasons.sorted())
+    }
+
+    static func safeURL(_ value: String?) -> String? {
+        guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return inspect(url: value).allowed ? value : excludedURLMarker
+    }
+
+    static func sanitizeText(_ value: String?) -> String? {
+        guard var output = value?.trimmingCharacters(in: .whitespacesAndNewlines), !output.isEmpty else { return nil }
+        output = replace(labeledSecretPattern, in: output, with: "[redacted:token]")
+        output = replace(jwtPattern, in: output, with: "[redacted:token]")
+        output = replace(knownKeyPattern, in: output, with: "[redacted:key]")
+        output = replace(emailPattern, in: output, with: "[redacted:email]")
+        output = replace(phonePattern, in: output, with: "[redacted:phone]")
+        output = replace(localPathPattern, in: output, with: "[redacted:local_path]")
+        return output
+    }
+
+    private static func matches(_ pattern: String, in value: String) -> Bool {
+        guard let expression = try? NSRegularExpression(pattern: pattern, options: []) else { return false }
+        let range = NSRange(value.startIndex..<value.endIndex, in: value)
+        return expression.firstMatch(in: value, options: [], range: range) != nil
+    }
+
+    private static func replace(_ pattern: String, in value: String, with replacement: String) -> String {
+        guard let expression = try? NSRegularExpression(pattern: pattern, options: []) else { return value }
+        let range = NSRange(value.startIndex..<value.endIndex, in: value)
+        return expression.stringByReplacingMatches(in: value, options: [], range: range, withTemplate: replacement)
+    }
+
+    private static func isHighEntropy(_ value: String) -> Bool {
+        let scalars = value.unicodeScalars
+        let hasLower = scalars.contains { CharacterSet.lowercaseLetters.contains($0) }
+        let hasUpper = scalars.contains { CharacterSet.uppercaseLetters.contains($0) }
+        let hasDigit = scalars.contains { CharacterSet.decimalDigits.contains($0) }
+        let hasSymbol = scalars.contains { !CharacterSet.alphanumerics.contains($0) }
+        return Set(value).count >= 12 && [hasLower, hasUpper, hasDigit, hasSymbol].filter { $0 }.count >= 3
+    }
+}
+
 enum AiTransparencyPolicy {
     static let savedSnapshotNotice = "保存時点の情報であり、現在の内容とは異なる可能性があります"
 
@@ -248,10 +345,15 @@ enum AiTransparencyPolicy {
         if entry.recordState == .archived { reasons.append("archived_default_excluded") }
         if entry.recordState == .pendingDelete { reasons.append("pending_delete_excluded") }
         if entry.pendingDeletionUntil != nil { reasons.append("pending_delete_excluded") }
+        let externalData = ExternalDataPolicy.inspect(
+            url: entry.normalizedURL,
+            texts: [entry.userTitle, entry.fetchedTitle] + tagNames.map(Optional.some)
+        )
+        reasons.append(contentsOf: externalData.reasons.map { "external_data_\($0)" })
         return AiTransparencySource(
             publicSafeID: publicSafeID,
             localEntryID: entry.id,
-            title: entry.userTitle ?? entry.fetchedTitle ?? entry.normalizedHost,
+            title: ExternalDataPolicy.sanitizeText(entry.userTitle ?? entry.fetchedTitle ?? entry.normalizedHost) ?? "保存したリンク",
             normalizedURL: entry.normalizedURL,
             tagNames: tagNames,
             sharedTagBoundary: hasSharedTag ? .containsSharedTag : .localOrUntagged,

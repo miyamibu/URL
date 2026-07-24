@@ -105,9 +105,12 @@ const SAVED_SNAPSHOT_NOTICE = "保存時点の情報であり、現在の内容�
 const MCP_RATE_LIMIT_WINDOW_MS = 60_000;
 const MCP_RATE_LIMIT_MAX_REQUESTS = 60;
 const rateLimitBuckets = new Map<string, { windowStart: number; count: number }>();
+const sensitiveExternalQueryKey = /(?:token|access_token|refresh_token|code|state|nonce|signature|sig|expires|expiration|password|secret|api[_-]?key|auth|credential|invite)/i;
+const sensitiveExternalValue = /(?:eyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{8,}|(?:sk-|gh[pousr]_|glpat-)[A-Za-z0-9_-]{16,}|(?:refresh_token|access_token|service_role|sb_secret|invite[_-]?token|token)\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{8,})/i;
 
 export function isRinbamMcpEnabled() {
-  return optionalEnv("URLSAVER_MCP_ENABLED") === "true";
+  return optionalEnv("URLSAVER_MCP_ENABLED") === "true" &&
+    optionalEnv("URLSAVER_PERSONAL_LINK_SNAPSHOT_PROTOCOL_ENABLED") === "true";
 }
 
 export const rinbamMcpTools: RinbamMcpToolDescriptor[] = [
@@ -404,6 +407,23 @@ function safeText(value: string | null | undefined, maxLength = 1200): string {
   return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength - 1)}…` : trimmed;
 }
 
+function safeExternalUrl(value: string | null | undefined): string | null {
+  const input = safeString(value);
+  if (!input) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(input);
+  } catch {
+    return null;
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) return null;
+  for (const [key, queryValue] of parsed.searchParams.entries()) {
+    if (sensitiveExternalQueryKey.test(key)) return null;
+    if (queryValue.length >= 40 && new Set(queryValue).size >= 12) return null;
+  }
+  return sensitiveExternalValue.test(input) ? null : input;
+}
+
 function rejectSharedTagOptIn(args: Record<string, unknown>) {
   if (args.includeSharedTags === true) {
     throw new RinbamMcpInputError("include_shared_tags_requires_explicit_scope");
@@ -476,16 +496,18 @@ async function loadRows(ctx: RinbamMcpContext, maxRows = 200) {
 }
 
 function toSearchResult(ctx: RinbamMcpContext, row: PersonalSavedLinkRow, tags: string[]) {
+  const url = safeExternalUrl(row.open_url || row.normalized_url);
   return {
     id: publicSafeId(ctx.userId, row.id),
-    title: row.effective_title || row.normalized_host || "保存したリンク",
-    url: row.open_url || row.normalized_url || "",
+    title: safeText(row.effective_title, 240) || row.normalized_host || "保存したリンク",
+    url,
     bodyKind: row.fetched_body_kind,
-    author: row.fetched_author_name,
-    tags: tags.slice().sort(),
+    author: safeText(row.fetched_author_name, 240),
+    tags: tags.map((tag) => safeText(tag, 120)).filter(Boolean).sort(),
     createdAt: row.source_created_at,
     matchReason: "personal_saved_links",
-    aiEligible: row.record_state === "ACTIVE",
+    aiEligible: row.record_state === "ACTIVE" && url !== null,
+    externalDataExcluded: url === null,
     sharedTagBoundary: "local_personal_link_sync_only",
     rawBodyReturned: false,
   };
@@ -519,7 +541,8 @@ export async function listRinbamTags(ctx: RinbamMcpContext) {
   const { tagRows } = await loadRows(ctx, 1);
   return {
     tags: tagRows
-      .map((tag) => ({ id: publicSafeId(ctx.userId, tag.id), name: tag.name, sharedTagBoundary: "local_only" }))
+      .map((tag) => ({ id: publicSafeId(ctx.userId, tag.id), name: safeText(tag.name, 120), sharedTagBoundary: "local_only" }))
+      .filter((tag) => Boolean(tag.name))
       .sort((a, b) => a.name.localeCompare(b.name)),
     rawBodyReturned: false,
   };
@@ -531,7 +554,8 @@ export async function fetchRinbamLink(ctx: RinbamMcpContext, args: Record<string
   const row = links.find((candidate) => publicSafeId(ctx.userId, candidate.id) === id);
   if (!row) return { id, found: false };
   const tags = tagNamesByLinkId.get(row.id) ?? [];
-  const title = row.effective_title || row.normalized_host || "保存したリンク";
+  const safeUrl = safeExternalUrl(row.open_url || row.normalized_url);
+  const title = safeText(row.effective_title, 240) || row.normalized_host || "保存したリンク";
   const hasSavedMetadata = Boolean(
     row.source_updated_at ||
       row.body_summary ||
@@ -541,10 +565,10 @@ export async function fetchRinbamLink(ctx: RinbamMcpContext, args: Record<string
   );
   const text = [
     `# ${title}`,
-    `URL: ${row.open_url || row.normalized_url || ""}`,
+    safeUrl ? `URL: ${safeUrl}` : "URL: [excluded:sensitive_external_data]",
     `Service: ${row.service_type ?? ""}`,
     `State: ${row.record_state ?? ""}`,
-    tags.length > 0 ? `Tags: ${tags.slice().sort().join(", ")}` : "Tags: none",
+    tags.length > 0 ? `Tags: ${tags.map((tag) => safeText(tag, 120)).filter(Boolean).sort().join(", ")}` : "Tags: none",
     row.body_summary ? `Summary: ${safeText(row.body_summary)}` : null,
     row.description ? `Description: ${safeText(row.description)}` : null,
     row.memo ? `Memo excerpt: ${safeText(row.memo)}` : null,
@@ -556,7 +580,7 @@ export async function fetchRinbamLink(ctx: RinbamMcpContext, args: Record<string
     id,
     title,
     text,
-    url: row.open_url || row.normalized_url || "",
+    url: safeUrl,
     metadata: {
       recordState: row.record_state,
       metadataState: row.metadata_state,
@@ -569,6 +593,7 @@ export async function fetchRinbamLink(ctx: RinbamMcpContext, args: Record<string
       archivedAt: row.archived_at,
       contentFetchAllowed: row.content_fetch_allowed === true,
       rawBodyReturned: false,
+      externalDataExcluded: safeUrl === null,
       sharedTagBoundary: "local_personal_link_sync_only",
     },
   };

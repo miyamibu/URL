@@ -8,6 +8,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import java.net.URI
+import java.net.URLDecoder
 import java.security.MessageDigest
 
 enum class AiActionKind {
@@ -134,6 +136,99 @@ class MockAiProvider : AiProvider {
     }
 }
 
+data class ExternalDataPolicyResult(
+    val allowed: Boolean,
+    val reasons: List<String>,
+)
+
+/** Shared fail-closed corpus for data that may leave the device. */
+object ExternalDataPolicy {
+    private val suspiciousQueryKey = Regex(
+        "(?i)(token|access_token|refresh_token|code|state|nonce|signature|sig|expires|expiration|" +
+            "password|passwd|secret|api[_-]?key|auth|credential|invite)",
+    )
+    private val labeledSecret = Regex(
+        "(?i)(refresh_token|access_token|service_role|sb_secret|invite[_-]?token|password|secret|api[_-]?key|token)" +
+            "\\s*[:=]\\s*[\\\"']?[A-Za-z0-9._~+/=-]{8,}",
+    )
+    private val jwt = Regex("eyJ[A-Za-z0-9_-]{16,}\\.[A-Za-z0-9_-]{16,}\\.[A-Za-z0-9_-]{8,}")
+    private val knownKeyPrefix = Regex("(?i)(sk-[A-Za-z0-9]{16,}|gh[pousr]_[A-Za-z0-9]{16,}|glpat-[A-Za-z0-9_-]{16,})")
+    private val email = Regex("[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}", RegexOption.IGNORE_CASE)
+    private val phone = Regex("(?<!\\d)(?:\\+?\\d[\\d\\s().-]{8,}\\d)(?!\\d)")
+    private val localPath = Regex("(?:/Users/|/private/var/|file://)[^\\s)]+")
+
+    fun inspect(
+        url: String?,
+        title: String? = null,
+        memo: String? = null,
+        tags: List<String> = emptyList(),
+        metadata: List<String?> = emptyList(),
+    ): ExternalDataPolicyResult {
+        val reasons = linkedSetOf<String>()
+        val parsed = url?.let { runCatching { URI(it) }.getOrNull() }
+        if (url.isNullOrBlank() || parsed == null || parsed.userInfo != null || parsed.host.isNullOrBlank()) {
+            if (parsed?.userInfo != null) reasons += "url_userinfo"
+            else if (!url.isNullOrBlank()) reasons += "url_parse_failed"
+        } else {
+            if (parsed.scheme?.lowercase() !in setOf("http", "https")) reasons += "url_scheme"
+            val queryItems = parsed.rawQuery.orEmpty().split('&').filter { it.isNotBlank() }
+            queryItems.forEach { item ->
+                val decodedItem = runCatching {
+                    URLDecoder.decode(item, Charsets.UTF_8.name())
+                }.getOrDefault(item)
+                val key = decodedItem.substringBefore('=', decodedItem).lowercase()
+                val value = decodedItem.substringAfter('=', "")
+                if (suspiciousQueryKey.containsMatchIn(key)) reasons += "sensitive_query_key"
+                if (value.length >= 40 && highEntropy(value)) reasons += "high_entropy_query_value"
+            }
+            val decodedUrl = runCatching {
+                URLDecoder.decode(url, Charsets.UTF_8.name())
+            }.getOrDefault(url)
+            if (labeledSecret.containsMatchIn(decodedUrl) || jwt.containsMatchIn(decodedUrl) || knownKeyPrefix.containsMatchIn(decodedUrl)) {
+                reasons += "sensitive_url_value"
+            }
+            if (email.containsMatchIn(decodedUrl)) reasons += "email"
+            if (localPath.containsMatchIn(decodedUrl)) reasons += "local_path"
+        }
+        listOf(title, memo, *tags.toTypedArray(), *metadata.toTypedArray()).forEach { value ->
+            if (value.isNullOrBlank()) return@forEach
+            if (labeledSecret.containsMatchIn(value) || jwt.containsMatchIn(value) || knownKeyPrefix.containsMatchIn(value)) {
+                reasons += "sensitive_text"
+            }
+            if (email.containsMatchIn(value)) reasons += "email"
+            if (phone.containsMatchIn(value)) reasons += "phone"
+            if (localPath.containsMatchIn(value)) reasons += "local_path"
+        }
+        return ExternalDataPolicyResult(reasons.isEmpty(), reasons.toList().sorted())
+    }
+
+    fun safeUrl(value: String): String {
+        return if (inspect(value).allowed) value else "[excluded:sensitive_external_data]"
+    }
+
+    fun sanitizeText(value: String?): String? {
+        val input = value?.takeIf { it.isNotBlank() } ?: return null
+        var output = input
+        output = labeledSecret.replace(output, "[redacted:token]")
+        output = jwt.replace(output, "[redacted:token]")
+        output = knownKeyPrefix.replace(output, "[redacted:key]")
+        output = email.replace(output, "[redacted:email]")
+        output = phone.replace(output, "[redacted:phone]")
+        output = localPath.replace(output, "[redacted:local_path]")
+        return output
+    }
+
+    private fun highEntropy(value: String): Boolean {
+        val classes = listOf(
+            value.any(Char::isLowerCase),
+            value.any(Char::isUpperCase),
+            value.any(Char::isDigit),
+            value.any { it in "-_+/=" },
+        ).count { it }
+        return classes >= 3 && value.toSet().size >= 12
+    }
+}
+
 object AiTransparencyPolicy {
     const val SAVED_SNAPSHOT_NOTICE = "保存時点の情報であり、現在の内容とは異なる可能性があります"
 
@@ -242,12 +337,21 @@ object AiTransparencyPolicy {
             if (entry.localProvenanceCount <= 0) add("no_local_provenance")
             if (entry.recordState == RecordState.ARCHIVED) add("archived_default_excluded")
             if (entry.recordState == RecordState.PENDING_DELETE) add("pending_delete_excluded")
+            addAll(
+                ExternalDataPolicy.inspect(
+                    url = entry.normalizedUrl,
+                    title = entry.userTitle ?: entry.fetchedTitle,
+                    memo = entry.memo,
+                    tags = tagNames,
+                ).reasons.map { "external_data_$it" },
+            )
         }.distinct().sorted()
         return AiTransparencySource(
             publicSafeId = publicSafeId,
             localEntryId = entry.id.takeIf { it > 0 },
-            title = entry.userTitle ?: entry.fetchedTitle ?: entry.normalizedHost,
-            normalizedUrl = entry.normalizedUrl,
+            title = ExternalDataPolicy.sanitizeText(entry.userTitle ?: entry.fetchedTitle ?: entry.normalizedHost)
+                ?: entry.normalizedHost,
+            normalizedUrl = ExternalDataPolicy.safeUrl(entry.normalizedUrl),
             tagNames = tagNames,
             sharedTagBoundary = if (containsSharedTag) {
                 AiSharedTagBoundary.CONTAINS_SHARED_TAG

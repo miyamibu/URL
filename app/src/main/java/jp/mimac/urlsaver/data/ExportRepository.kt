@@ -316,11 +316,29 @@ class DefaultExportRepository(
             val tagSummaries = tags.map {
                 ExportTagSummary(
                     id = it.id,
-                    name = it.name,
+                    name = ExternalDataPolicy.sanitizeText(it.name) ?: "[redacted]",
                     scope = it.scope.name,
                 )
             }
             val hasSharedTag = tags.any { it.scope == SharedTagScope.SYNCED }
+            val externalUrlPolicy = ExternalDataPolicy.inspect(url = entry.openUrl)
+            val externalAssetUrlReasons = listOf(entry.thumbnailUrl, entry.badgeImageUrl)
+                .filterNotNull()
+                .flatMap { ExternalDataPolicy.inspect(url = it).reasons }
+                .distinct()
+            val externalTextPolicy = ExternalDataPolicy.inspect(
+                url = null,
+                title = entry.userTitle ?: entry.fetchedTitle,
+                memo = entry.memo,
+                tags = tags.map { it.name },
+                metadata = listOf(collectionName),
+            )
+            val excludedExternalValue = "[excluded:sensitive_external_data]"
+            val safeUrl: (String?) -> String? = { value ->
+                value?.takeIf { it.isNotBlank() }?.let {
+                    ExternalDataPolicy.safeUrl(it)
+                }
+            }
             val aiExclusionReasons = buildList {
                 if (hasSharedTag) add("shared_tag_default_excluded")
                 if (entry.recordState == jp.mimac.urlsaver.domain.RecordState.ARCHIVED) add("archived_default_excluded")
@@ -329,6 +347,8 @@ class DefaultExportRepository(
                 ) {
                     add("pending_delete_excluded")
                 }
+                addAll(externalUrlPolicy.reasons.map { "external_data_$it" })
+                addAll(externalAssetUrlReasons.map { "external_data_$it" })
             }
             val bodySummary = redact(entry.bodySummary)
             val bodyExcerpt = redact(entry.fetchedBody?.let { clipText(it, BODY_EXCERPT_MAX_CHARS) })
@@ -339,15 +359,16 @@ class DefaultExportRepository(
                     bodyExcerpt.redactions +
                     description.redactions +
                     memoExcerpt.redactions
+                    + externalTextPolicy.reasons
                 ).toSortedSet().toList()
             return ExportEntryDocument(
                 id = entry.id,
                 publicSafeId = publicSafeId(entry.id, entry.normalizedUrl),
-                originalUrl = entry.originalUrl,
-                normalizedUrl = entry.normalizedUrl,
-                displayUrl = entry.displayUrl,
-                openUrl = entry.openUrl,
-                providerPermalink = providerPermalink(entry),
+                originalUrl = safeUrl(entry.originalUrl) ?: excludedExternalValue,
+                normalizedUrl = safeUrl(entry.normalizedUrl) ?: excludedExternalValue,
+                displayUrl = safeUrl(entry.displayUrl) ?: excludedExternalValue,
+                openUrl = safeUrl(entry.openUrl) ?: excludedExternalValue,
+                providerPermalink = safeUrl(providerPermalink(entry)) ?: excludedExternalValue,
                 providerCanonicalId = entry.canonicalId,
                 serviceType = entry.serviceType.name,
                 contentContext = entry.contentContext.name,
@@ -355,16 +376,16 @@ class DefaultExportRepository(
                 createdAt = Instant.ofEpochMilli(entry.createdAt).toString(),
                 updatedAt = Instant.ofEpochMilli(entry.updatedAt).toString(),
                 archivedAt = entry.archivedAt?.let { Instant.ofEpochMilli(it).toString() },
-                userTitle = entry.userTitle,
-                fetchedTitle = entry.fetchedTitle,
-                fetchedAuthorName = entry.fetchedAuthorName,
+                userTitle = ExternalDataPolicy.sanitizeText(entry.userTitle),
+                fetchedTitle = ExternalDataPolicy.sanitizeText(entry.fetchedTitle),
+                fetchedAuthorName = ExternalDataPolicy.sanitizeText(entry.fetchedAuthorName),
                 fetchedBodyKind = entry.fetchedBodyKind?.name,
-                bodySummary = bodySummary.value,
-                bodyExcerpt = bodyExcerpt.value,
-                description = description.value,
-                memoExcerpt = memoExcerpt.value,
-                thumbnailUrl = entry.thumbnailUrl,
-                badgeImageUrl = entry.badgeImageUrl,
+                bodySummary = ExternalDataPolicy.sanitizeText(bodySummary.value),
+                bodyExcerpt = ExternalDataPolicy.sanitizeText(bodyExcerpt.value),
+                description = ExternalDataPolicy.sanitizeText(description.value),
+                memoExcerpt = ExternalDataPolicy.sanitizeText(memoExcerpt.value),
+                thumbnailUrl = safeUrl(entry.thumbnailUrl),
+                badgeImageUrl = safeUrl(entry.badgeImageUrl),
                 canonicalId = entry.canonicalId,
                 normalizedHost = entry.normalizedHost,
                 rawSourceHost = entry.rawSourceHost,
@@ -373,9 +394,9 @@ class DefaultExportRepository(
                 metadataFetchedAt = entry.metadataFetchedAt?.let { Instant.ofEpochMilli(it).toString() },
                 metadataSource = metadataSource(entry),
                 savedSnapshotNotice = savedSnapshotNotice(entry),
-                collection = collectionName,
+                collection = ExternalDataPolicy.sanitizeText(collectionName),
                 tags = tagSummaries,
-                effectiveTitle = preferredTitle(entry),
+                effectiveTitle = ExternalDataPolicy.sanitizeText(preferredTitle(entry)) ?: "保存したリンク",
                 sharedTagBoundary = if (hasSharedTag) "contains_shared_tag" else "local_or_untagged",
                 aiEligible = aiExclusionReasons.isEmpty(),
                 aiExclusionReason = aiExclusionReasons,

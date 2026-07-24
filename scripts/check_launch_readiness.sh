@@ -72,10 +72,12 @@ for path in "${required_files[@]}"; do
   require_file "$path"
 done
 
-if grep -q "Final status: REPO_GO" docs/release/repo-go-evidence.md 2>/dev/null; then
-  ok "REPO_GO evidence status recorded"
+if grep -q "^## Current status: REPO_GO" docs/release/repo-go-evidence.md 2>/dev/null; then
+  ok "current REPO_GO evidence status recorded"
+elif grep -q "^## Current status: NO_GO_INTERNAL" docs/release/repo-go-evidence.md 2>/dev/null; then
+  fail "current evidence explicitly remains NO_GO_INTERNAL"
 else
-  fail "repo-go evidence does not record Final status: REPO_GO"
+  fail "current evidence status is missing"
 fi
 
 today="$(date +%F)"
@@ -143,6 +145,10 @@ fi
 
 if [[ -f scripts/check_release_hygiene.sh ]]; then
   bash scripts/check_release_hygiene.sh || fail "release hygiene failed"
+fi
+
+if [[ -f scripts/verify_current_readiness.py ]]; then
+  python3 scripts/verify_current_readiness.py || fail "current readiness artifact drifted"
 fi
 
 if [[ -f scripts/verify_mcp_contract.py ]]; then

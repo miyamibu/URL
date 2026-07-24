@@ -67,17 +67,16 @@ class ChatGptPersonalLinkSyncRepositoryTest {
     }
 
     @Test
-    fun syncCurrentSnapshot_sendsOnlyLocalTagNames() = runBlocking {
+    fun syncCurrentSnapshot_isFailClosedUntilSnapshotProtocolExists() = runBlocking {
         authProvider.updateSession(SharedTagAuthSession(authUserId = "user-a", accessToken = "token-a"))
         val entryId = insertEntry("https://example.com/chatgpt-local-only")
         val localTagId = db.tagDao().insertTag(TagEntity(name = "local-only", createdAt = 1L))
         db.tagDao().insertCrossRef(TagUrlCrossRef(tagId = localTagId, entryId = entryId))
 
-        repository.setEnabled(enabled = true, contentFetchEnabled = false)
+        val result = repository.setEnabled(enabled = true, contentFetchEnabled = false)
 
-        val operation = remote.operations.single()
-        assertEquals(listOf("local-only"), operation.tags)
-        assertFalse(operation.tags.contains("shared-hidden"))
+        assertEquals(jp.mimac.urlsaver.data.ChatGptSyncResult.GateOff, result)
+        assertTrue(remote.operations.isEmpty())
     }
 
     @Test
@@ -110,13 +109,14 @@ class ChatGptPersonalLinkSyncRepositoryTest {
             ),
         )
 
-        repository.setEnabled(enabled = true, contentFetchEnabled = false)
+        val result = repository.setEnabled(enabled = true, contentFetchEnabled = false)
 
+        assertEquals(jp.mimac.urlsaver.data.ChatGptSyncResult.GateOff, result)
         assertTrue(remote.operations.isEmpty())
     }
 
     @Test
-    fun syncCurrentSnapshot_excludesArchivedAndNeverSendsFetchedBody() = runBlocking {
+    fun syncCurrentSnapshot_doesNotSendFetchedBodyWhileGateIsClosed() = runBlocking {
         authProvider.updateSession(SharedTagAuthSession(authUserId = "user-a", accessToken = "token-a"))
         insertEntry(
             normalizedUrl = "https://example.com/chatgpt-archived",
@@ -128,11 +128,10 @@ class ChatGptPersonalLinkSyncRepositoryTest {
             fetchedBody = "private fetched body",
         )
 
-        repository.setEnabled(enabled = true, contentFetchEnabled = true)
+        val result = repository.setEnabled(enabled = true, contentFetchEnabled = true)
 
-        val operation = remote.operations.single()
-        assertEquals("https://example.com/chatgpt-active", operation.url)
-        assertEquals(null, operation.extractedText)
+        assertEquals(jp.mimac.urlsaver.data.ChatGptSyncResult.GateOff, result)
+        assertTrue(remote.operations.isEmpty())
         assertFalse(settingsStore.snapshot().contentFetchEnabled)
     }
 

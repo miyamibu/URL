@@ -135,7 +135,7 @@ class ShareReceiverActivityEntrypointTest {
     }
 
     @Test
-    fun actionView_httpInviteLink_routesToMainWithInviteTokenExtra() {
+    fun actionView_httpInviteLink_isRejected() {
         val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
         val intent = Intent(context, ShareReceiverActivity::class.java).apply {
             action = Intent.ACTION_VIEW
@@ -146,8 +146,8 @@ class ShareReceiverActivityEntrypointTest {
         ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
 
         val started = shadowOf(controller.get()).nextStartedActivity
-        assertEquals("invite-token-http-123", started.getStringExtra(EXTRA_SHARED_TAG_INVITE_TOKEN))
-        assertFalse(started.getBooleanExtra(EXTRA_SHARED_TAG_INVITE_INVALID, false))
+        assertFalse(started.hasExtra(EXTRA_SHARED_TAG_INVITE_TOKEN))
+        assertTrue(started.getBooleanExtra(EXTRA_DEEP_LINK_INVALID, false))
     }
 
     @Test
