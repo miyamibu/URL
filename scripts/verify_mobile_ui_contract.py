@@ -385,9 +385,24 @@ def main() -> int:
         ),
         lambda: require_order(
             "ios/URLSaveriOS/UI/AppChrome.swift",
-            "ForEach(localTags)",
-            "ForEach(serviceFilterOrder",
-            "iPhone local tags must appear in the same top row immediately after the + chip, not be pushed behind service filters",
+            "localTags.map { .localTag($0.id) }",
+            "serviceFilterOrder.map { .service($0) }",
+            "iPhone local tags must be part of the same top-row movable chip model before the default service filters",
+        ),
+        lambda: require(
+            "ios/URLSaveriOS/UI/AppChrome.swift",
+            "TopFilterChipDropDelegate",
+            "iPhone top-row chips must keep long-press drag/drop reorder behavior",
+        ),
+        lambda: require(
+            "ios/URLSaveriOS/UI/AppChrome.swift",
+            "DropProposal(operation: .move)",
+            "iPhone top-row drag must be treated as a move without a copy/add badge",
+        ),
+        lambda: require(
+            "ios/URLSaveriOS/UI/AppChrome.swift",
+            "top_filter_order_v1",
+            "iPhone top-row chip order must be persisted",
         ),
         lambda: require(
             "ios/URLSaveriOS/UI/AppChrome.swift",
