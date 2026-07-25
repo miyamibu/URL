@@ -26,23 +26,40 @@ def require(text: str, pattern: str, label: str) -> None:
 
 
 def current_worktree_digest(base_commit: str) -> str:
-    """Hash changes from the readiness baseline plus untracked files."""
+    """Hash committed baseline changes plus any current worktree changes."""
     digest = hashlib.sha256()
-    diff = subprocess.check_output(
+    committed_diff = subprocess.check_output(
         [
             "git",
             "diff",
             "--no-ext-diff",
             "--binary",
             base_commit,
+            "HEAD",
             "--",
             ".",
             f":(exclude){ARTIFACT_RELATIVE}",
         ],
         cwd=ROOT,
     )
-    digest.update(b"tracked-diff\0")
-    digest.update(diff)
+    digest.update(b"committed-diff\0")
+    digest.update(committed_diff)
+
+    worktree_diff = subprocess.check_output(
+        [
+            "git",
+            "diff",
+            "--no-ext-diff",
+            "--binary",
+            "HEAD",
+            "--",
+            ".",
+            f":(exclude){ARTIFACT_RELATIVE}",
+        ],
+        cwd=ROOT,
+    )
+    digest.update(b"worktree-diff\0")
+    digest.update(worktree_diff)
 
     untracked = subprocess.check_output(
         [
