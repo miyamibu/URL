@@ -108,7 +108,7 @@ jobs:
           grep -R -n -E "snapshot_protocol_required|pg_advisory_xact_lock|bootstrap_first_admin" supabase/migrations supabase/tests
 
   ios:
-    runs-on: macos-latest
+    runs-on: macos-15
 
     steps:
       - name: Checkout
@@ -119,7 +119,10 @@ jobs:
 
       - name: iOS simulator tests
         run: |
-          destination="platform=iOS Simulator,name=iPhone 17"
+          xcrun simctl list devices available
+          device_id="$(xcrun simctl list devices available | awk -F '[()]' '/iPhone/ { print $2; exit }')"
+          test -n "$device_id"
+          destination="platform=iOS Simulator,id=$device_id"
           echo "Using simulator destination: $destination"
           xcodebuild -workspace ios/URLSaveriOS.xcworkspace -scheme URLSaveriOS -destination "$destination" CODE_SIGNING_ALLOWED=NO test
 
