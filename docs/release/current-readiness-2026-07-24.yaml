@@ -2,7 +2,7 @@ generatedAt: "2026-07-25"
 repository: "りんばむ"
 commit: "e7c4163abb338fb9219fc4f91df4ea1d202f7f7b"
 worktree: "committed_intentional_remediation_diff"
-worktreeDiffSha256: "6671f72dbec817afaf737126e8dfc771496f558d90d1223c31a00a4ac798eced"
+worktreeDiffSha256: "438c97502a34bafa99a0e46e90aa2d37d6c478949c4cc2e4d2e9b8c96c7f4413"
 status: "NO_GO_INTERNAL"
 verificationStatus: "NOT_VERIFIED_FOR_RELEASE"
 android:
