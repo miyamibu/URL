@@ -30,6 +30,9 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d # v4
 
+      - name: Verify current readiness before build
+        run: python3 scripts/verify_current_readiness.py
+
       - name: Android tests, lint, and release build
         run: ./gradlew testDebugUnitTest lintDebug lintRelease assembleDebug bundleRelease
 
@@ -38,7 +41,6 @@ jobs:
           python3 scripts/verify_mobile_ui_contract.py
           python3 scripts/verify_mcp_contract.py
           bash scripts/check_release_hygiene.sh
-          python3 scripts/verify_current_readiness.py
 
   resolver:
     runs-on: ubuntu-latest
