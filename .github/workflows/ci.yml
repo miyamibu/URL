@@ -115,8 +115,7 @@ jobs:
 
       - name: iOS simulator tests
         run: |
-          destination="$(xcodebuild -workspace ios/URLSaveriOS.xcworkspace -scheme URLSaveriOS -showdestinations 2>&1 | grep 'platform:iOS Simulator' | grep -v 'Any iOS Simulator Device' | grep -v unavailable | sed -n -E 's/^[[:space:]]*\{[[:space:]]*(.*)[[:space:]]*\}[[:space:]]*$/\1/p' | sed -E 's/([[:alnum:]_]+):[[:space:]]*/\1=/g; s/,[[:space:]]*/,/g; s/[[:space:]]+$//' | head -n 1)"
-          test -n "$destination"
+          destination="platform=iOS Simulator,name=iPhone 17"
           echo "Using simulator destination: $destination"
           xcodebuild -workspace ios/URLSaveriOS.xcworkspace -scheme URLSaveriOS -destination "$destination" CODE_SIGNING_ALLOWED=NO test
 
