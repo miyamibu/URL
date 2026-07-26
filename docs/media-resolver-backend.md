@@ -52,7 +52,8 @@ python3 -m pip install -r requirements-media-resolver.txt
 python3 scripts/media_resolver_backend.py --host 127.0.0.1 --port 8080 --public-base-url http://127.0.0.1:8080
 curl -i http://127.0.0.1:8080/health
 # /resolve and /files require the runtime-only token.
-curl -H 'Authorization: Bearer local-only-token' \
+export MEDIA_RESOLVER_TOKEN='set-at-runtime'
+curl -H "Authorization: Bearer ${MEDIA_RESOLVER_TOKEN}" \
   -H 'Content-Type: application/json' \
   -d '{"url":"https://www.youtube.com/watch?v=example","serviceType":"youtube"}' \
   http://127.0.0.1:8080/resolve

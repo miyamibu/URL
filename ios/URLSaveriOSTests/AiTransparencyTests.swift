@@ -17,19 +17,21 @@ final class AiTransparencyTests: XCTestCase {
     }
 
     func testExternalDataPolicyExcludesSensitiveURLAndRedactsText() {
+        let signature = String(repeating: "fixture", count: 5)
+        let tokenValue = "fixture-token-value"
         let result = ExternalDataPolicy.inspect(
-            url: "https://example.com/download?X-Amz-Signature=abcdef0123456789abcdef0123456789",
-            texts: ["contact@example.com token=sk-12345678901234567890", "/Users/mimac/private.txt"]
+            url: "https://example.com/download?X-Amz-Signature=\(signature)",
+            texts: ["contact@example.com token=\(tokenValue)", "/Users/mimac/private.txt"]
         )
 
         XCTAssertFalse(result.allowed)
         XCTAssertTrue(result.reasons.contains("sensitive_query_key"))
         XCTAssertTrue(result.reasons.contains("email"))
         XCTAssertEqual(
-            ExternalDataPolicy.safeURL("https://example.com/download?token=abcdef0123456789"),
+            ExternalDataPolicy.safeURL("https://example.com/download?token=\(tokenValue)"),
             ExternalDataPolicy.excludedURLMarker
         )
-        XCTAssertTrue(ExternalDataPolicy.sanitizeText("token=sk-12345678901234567890")?.contains("[redacted:token]") == true)
+        XCTAssertTrue(ExternalDataPolicy.sanitizeText("token=\(tokenValue)")?.contains("[redacted:token]") == true)
     }
 
     func testExternalDataPolicyRejectsNonWebAndPathSecretsInURLs() {
