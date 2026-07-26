@@ -17,14 +17,14 @@
 
 ## Current-main / Production Deployment Evidence (2026-07-26)
 
-The following records are confirmed provider-state evidence captured while repository HEAD was `db4f7e79a765fd644156812e5a917d6649a99d17`; they do not prove that every provider artifact was built from that HEAD. The Render health response includes this HEAD SHA. Vercel (`web/admin` and `web/invite-link`), Railway, and Supabase provider status/deployment/function versions were confirmed, but source-revision correspondence was not independently verified from provider responses. These records do not constitute full launch GO.
+The following records are a dated provider-state capture made while the application implementation/recheck HEAD was `392e175347e5fbc97267a32944888e68eff71dd7`; later documentation-only commits may advance repository HEAD without changing the application source. They do not prove that every provider artifact was built from that implementation HEAD. The Render health response reported this implementation HEAD at capture time. Vercel (`web/admin` and `web/invite-link`), Railway, and Supabase provider status/deployment/function versions were confirmed, but source-revision correspondence was not independently verified from provider responses. These records do not constitute full launch GO.
 
 | Surface | Confirmed evidence |
 |---|---|
-| Repository | HEAD `db4f7e79a765fd644156812e5a917d6649a99d17`. |
+| Repository | Application implementation/recheck HEAD `392e175347e5fbc97267a32944888e68eff71dd7`; later documentation-only commits may advance repository HEAD. |
 | Vercel `web/admin` | Project `rinbamu-admin`; deployment `dpl_7acr2EjhiMLphJU4SKuPWh8toSsP` is `READY`; alias `https://rinbamu-admin.vercel.app`. Source-revision correspondence to the repository HEAD was not independently verified from the provider response. |
 | Railway | Project/service `rinbam-youtube-resolver`; deployment `27192cdc-dd42-42ac-a44a-c937e115cc81` is `SUCCESS`; `https://rinbam-youtube-resolver-production.up.railway.app/health` returned HTTP 200. Source-revision correspondence to the repository HEAD was not independently verified from the provider response. |
-| Render | `https://rinbam-media-resolver.onrender.com/health` returned HTTP 200; reported version is `db4f7e79a765fd644156812e5a917d6649a99d17`. |
+| Render | `https://rinbam-media-resolver.onrender.com/health` returned HTTP 200; reported version is `392e175347e5fbc97267a32944888e68eff71dd7`. |
 | Supabase | Project `xocumgxbylmpoobfqows`; functions `contact-support` v17, `contact-support-resend-webhook` v3, and `verify-store-purchase` v15; migration list is local=remote through `20260716140000`; `supabase db lint --linked` PASS. Source-revision correspondence to the repository HEAD was not independently verified from the provider response. |
 | Vercel `web/invite-link` | Existing deployment `dpl_GeSsSnoG2tUyNfkuAtgaHqtQrmBd` remains prior provider-state evidence; source-revision correspondence to the repository HEAD was not independently verified from the provider response. |
 
