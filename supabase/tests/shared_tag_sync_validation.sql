@@ -1,39 +1,12 @@
 \set ON_ERROR_STOP on
 
-create schema if not exists auth;
+create schema if not exists extensions;
+create extension if not exists pgtap with schema extensions;
+select extensions.plan(1);
 
-create table if not exists auth.users (
-    id uuid primary key
-);
-
-do $$
-begin
-    if not exists (select 1 from pg_roles where rolname = 'anon') then
-        create role anon;
-    end if;
-    if not exists (select 1 from pg_roles where rolname = 'authenticated') then
-        create role authenticated;
-    end if;
-end
-$$;
-
-create or replace function auth.uid()
-returns uuid
-language sql
-stable
-as $$
-    select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
-$$;
-
-grant usage on schema auth to anon, authenticated;
-grant execute on function auth.uid() to anon, authenticated;
-
-\i supabase/migrations/20260420120000_shared_tag_sync.sql
-\i supabase/migrations/20260422120000_shared_tag_invites.sql
-\i supabase/migrations/20260423150000_account_deletion.sql
-\i supabase/migrations/20260501090000_shared_tag_owner_transfer.sql
-\i supabase/migrations/20260501120000_entitlement_grants.sql
-\i supabase/migrations/20260624130000_shared_tag_groups.sql
+-- Supabase local test databases provide auth.users, auth.uid(), anon, and
+-- authenticated as platform-owned objects. Do not recreate or replace them:
+-- the test runner role intentionally cannot modify the auth schema.
 
 insert into auth.users (id)
 values
@@ -182,6 +155,7 @@ declare
     group_invite_payload jsonb;
     group_invite_accept jsonb;
     group_pull jsonb;
+    editor_delete_result jsonb;
 begin
     insert into auth.users (id)
     values (owner_id), (editor_id), (viewer_id)
@@ -262,24 +236,19 @@ begin
 
     perform set_config('request.jwt.claim.sub', editor_id::text, true);
 
-    begin
-        perform public.apply_shared_tag_ops(
-            jsonb_build_array(
-                jsonb_build_object(
-                    'op_id', '30000000-0000-0000-0000-000000000004',
-                    'client_id', '40000000-0000-0000-0000-000000000002',
-                    'type', 'delete_tag',
-                    'tag_id', tag_uuid
-                )
+    editor_delete_result := public.apply_shared_tag_ops(
+        jsonb_build_array(
+            jsonb_build_object(
+                'op_id', '30000000-0000-0000-0000-000000000004',
+                'client_id', '40000000-0000-0000-0000-000000000002',
+                'type', 'delete_tag',
+                'tag_id', tag_uuid
             )
-        );
+        )
+    );
+    if editor_delete_result -> 'results' -> 0 ->> 'status' <> 'forbidden' then
         raise exception 'editor unexpectedly deleted tag';
-    exception
-        when others then
-            if position('forbidden' in sqlerrm) = 0 then
-                raise;
-            end if;
-    end;
+    end if;
 
     perform set_config('request.jwt.claim.sub', owner_id::text, true);
     invite_payload := public.create_shared_tag_invite(tag_uuid, 'editor');
@@ -338,6 +307,10 @@ begin
 
     group_payload := public.create_shared_tag_group('Group Pack');
     group_uuid := (group_payload ->> 'group_id')::uuid;
+    update public.shared_tag_members
+    set status = 'active'
+    where tag_id = group_tag_uuid
+      and user_id = editor_id;
     perform public.add_shared_tag_to_group(group_uuid, group_tag_uuid);
 
     if (
@@ -454,3 +427,6 @@ begin
     end if;
 end
 $$;
+
+select extensions.pass('shared tag sync validation');
+select * from extensions.finish();

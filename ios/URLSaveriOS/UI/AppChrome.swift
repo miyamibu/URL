@@ -1147,8 +1147,54 @@ private struct RemoteURLImage<Content: View, Placeholder: View>: View {
     }
 }
 
+private enum TopFilterItem: Hashable {
+    case localTag(Int64)
+    case service(ServiceType)
+
+    var token: String {
+        switch self {
+        case .localTag(let id): return "local:\(id)"
+        case .service(let service): return "service:\(service.rawValue)"
+        }
+    }
+
+    var localTagID: Int64? {
+        if case .localTag(let id) = self {
+            return id
+        }
+        return nil
+    }
+}
+
+private func mergeTopFilterItems(
+    baseItems: [TopFilterItem],
+    storedTokens: [String]
+) -> [TopFilterItem] {
+    guard !storedTokens.isEmpty else { return baseItems }
+
+    let baseByToken = Dictionary(uniqueKeysWithValues: baseItems.map { ($0.token, $0) })
+    var orderedItems = storedTokens.compactMap { baseByToken[$0] }
+
+    baseItems.forEach { item in
+        guard !orderedItems.contains(item) else { return }
+        if case .localTag = item {
+            let insertIndex = orderedItems.firstIndex { current in
+                if case .localTag = current {
+                    return false
+                }
+                return true
+            } ?? orderedItems.endIndex
+            orderedItems.insert(item, at: insertIndex)
+        } else {
+            orderedItems.append(item)
+        }
+    }
+    return orderedItems
+}
+
 struct ServiceFilterRow: View {
-    @State private var draggingLocalTagID: Int64?
+    @AppStorage("top_filter_order_v1") private var topFilterOrderRaw = ""
+    @State private var draggingFilterToken: String?
 
     @Binding var selectedService: ServiceType
     @Binding var selectedLocalTagID: Int64?
@@ -1190,87 +1236,131 @@ struct ServiceFilterRow: View {
                     )
                 }
 
-                ForEach(localTags) { tag in
+                ForEach(orderedItems, id: \.token) { item in
+                    let localTag = item.localTagID.flatMap { id in
+                        localTags.first { tag in tag.id == id }
+                    }
                     FilterChipButton(
-                        label: tag.name,
-                        selected: selectedLocalTagID == tag.id
+                        label: label(for: item, localTag: localTag),
+                        selected: isSelected(item)
                     ) {
-                        selectedService = .all
-                        selectedLocalTagID = tag.id
-                        onSelectLocalTag(tag.id)
+                        select(item)
                     }
                     .simultaneousGesture(
                         TapGesture(count: 2).onEnded {
-                            onRenameLocalTag(tag)
+                            if let localTag {
+                                onRenameLocalTag(localTag)
+                            }
                         }
                     )
+                    .accessibilityHint("長押ししてドラッグすると並び替えできます")
                     .onDrag {
-                        draggingLocalTagID = tag.id
-                        return NSItemProvider(object: String(tag.id) as NSString)
+                        draggingFilterToken = item.token
+                        return NSItemProvider(object: item.token as NSString)
                     }
                     .onDrop(
                         of: [UTType.text],
-                        delegate: LocalTagChipDropDelegate(
-                            targetTag: tag,
-                            localTags: localTags,
-                            draggingLocalTagID: $draggingLocalTagID,
-                            onReorderLocalTags: onReorderLocalTags
+                        delegate: TopFilterChipDropDelegate(
+                            targetItem: item,
+                            items: orderedItems,
+                            draggingFilterToken: $draggingFilterToken,
+                            onReorder: handleReorder
                         )
                     )
-                }
-
-                ForEach(serviceFilterOrder, id: \.self) { service in
-                    FilterChipButton(
-                        label: chipLabel(for: service),
-                        selected: selectedLocalTagID == nil && selectedService == service
-                    ) {
-                        selectedLocalTagID = nil
-                        onSelectLocalTag(nil)
-                        selectedService = service
-                    }
                 }
             }
             .padding(.horizontal, 14)
         }
     }
 
-    private func chipLabel(for service: ServiceType) -> String {
-        switch service {
-        case .all: return "すべて"
-        case .youtube: return "YOUTUBE"
-        case .x: return "X"
-        case .instagram: return "INSTAGRAM"
-        case .web: return "WEB"
-        case .tiktok: return "TIKTOK"
+    private var baseItems: [TopFilterItem] {
+        localTags.map { .localTag($0.id) } + serviceFilterOrder.map { .service($0) }
+    }
+
+    private var orderedItems: [TopFilterItem] {
+        let storedTokens = topFilterOrderRaw
+            .split(separator: ",")
+            .map(String.init)
+        return mergeTopFilterItems(baseItems: baseItems, storedTokens: storedTokens)
+    }
+
+    private func label(for item: TopFilterItem, localTag: LocalTagSummary?) -> String {
+        switch item {
+        case .localTag:
+            return localTag?.name ?? "タグ"
+        case .service(let service):
+            switch service {
+            case .all: return "すべて"
+            case .youtube: return "YOUTUBE"
+            case .x: return "X"
+            case .instagram: return "INSTAGRAM"
+            case .web: return "WEB"
+            case .tiktok: return "TIKTOK"
+            }
+        }
+    }
+
+    private func isSelected(_ item: TopFilterItem) -> Bool {
+        switch item {
+        case .localTag(let id):
+            return selectedLocalTagID == id
+        case .service(let service):
+            return selectedLocalTagID == nil && selectedService == service
+        }
+    }
+
+    private func select(_ item: TopFilterItem) {
+        switch item {
+        case .localTag(let id):
+            selectedService = .all
+            selectedLocalTagID = id
+            onSelectLocalTag(id)
+        case .service(let service):
+            selectedLocalTagID = nil
+            onSelectLocalTag(nil)
+            selectedService = service
+        }
+    }
+
+    private func handleReorder(_ items: [TopFilterItem]) {
+        topFilterOrderRaw = items.map(\.token).joined(separator: ",")
+
+        let localTagIDs = items.compactMap(\.localTagID)
+        if localTagIDs != localTags.map(\.id) {
+            onReorderLocalTags(localTagIDs)
         }
     }
 }
 
-private struct LocalTagChipDropDelegate: DropDelegate {
-    let targetTag: LocalTagSummary
-    let localTags: [LocalTagSummary]
-    @Binding var draggingLocalTagID: Int64?
-    let onReorderLocalTags: ([Int64]) -> Void
+private struct TopFilterChipDropDelegate: DropDelegate {
+    let targetItem: TopFilterItem
+    let items: [TopFilterItem]
+    @Binding var draggingFilterToken: String?
+    let onReorder: ([TopFilterItem]) -> Void
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
 
     func dropEntered(info: DropInfo) {
-        guard let draggingLocalTagID,
-              draggingLocalTagID != targetTag.id else {
+        guard let draggingFilterToken,
+              draggingFilterToken != targetItem.token else {
             return
         }
-        var orderedIDs = localTags.map(\.id)
-        guard let fromIndex = orderedIDs.firstIndex(of: draggingLocalTagID),
-              let toIndex = orderedIDs.firstIndex(of: targetTag.id) else {
+        var orderedItems = items
+        guard let fromIndex = orderedItems.firstIndex(where: { $0.token == draggingFilterToken }),
+              let toIndex = orderedItems.firstIndex(of: targetItem) else {
             return
         }
-        orderedIDs.move(
+        orderedItems.move(
             fromOffsets: IndexSet(integer: fromIndex),
             toOffset: toIndex > fromIndex ? toIndex + 1 : toIndex
         )
-        onReorderLocalTags(orderedIDs)
+        onReorder(orderedItems)
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        draggingLocalTagID = nil
+        draggingFilterToken = nil
         return true
     }
 

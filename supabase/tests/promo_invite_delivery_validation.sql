@@ -52,7 +52,8 @@ insert into public.promo_invite_codes (
     expires_at,
     delivery_status,
     sent_at,
-    delivery_provider
+    delivery_provider,
+    created_at
 )
 values
     (
@@ -63,7 +64,8 @@ values
         now() + interval '7 days',
         'sent',
         now(),
-        'resend'
+        'resend',
+        now()
     ),
     (
         '61000000-0000-0000-0000-000000000002',
@@ -73,7 +75,8 @@ values
         now() + interval '7 days',
         'pending',
         null,
-        null
+        null,
+        now()
     ),
     (
         '61000000-0000-0000-0000-000000000003',
@@ -83,7 +86,8 @@ values
         now() + interval '7 days',
         'sent',
         now(),
-        'resend'
+        'resend',
+        now()
     ),
     (
         '61000000-0000-0000-0000-000000000004',
@@ -93,7 +97,8 @@ values
         now() + interval '7 days',
         'revoked',
         now(),
-        'resend'
+        'resend',
+        now()
     ),
     (
         '61000000-0000-0000-0000-000000000005',
@@ -103,7 +108,8 @@ values
         now() - interval '1 day',
         'sent',
         now() - interval '8 days',
-        'resend'
+        'resend',
+        now() - interval '9 days'
     )
 on conflict (code_hash) do nothing;
 

@@ -1,7 +1,7 @@
 # Store Listing Draft
 
 ## Goal
-App Store / Google Play へ次回提出する文言を、現在の source baseline（Android `1.0.15 (versionCode=17)` / iOS `1.0.15 (build=17)`）と、実際に選択した release mode に一致させる。
+App Store / Google Play へ次回提出する文言を、現在の source baseline（Android `1.0.15 (versionCode=18)` / iOS `1.0.16 (build=18)`）と、実際に選択した release mode に一致させる。
 
 ## Current readiness
 
@@ -21,13 +21,15 @@ external-provider, store, and physical-device evidence.
 - Account deletion URL: required for this cloud-enabled release. Use the deployed public deletion route that matches `web/invite-link/account-deletion/index.html`.
 
 ## Current Release Branch Decision
-Current source baseline is Android `1.0.15 (versionCode=17)` and iOS `1.0.15 (build=17)`, but store/live submission state was not reverified in this document. Do not reuse historical submission states as current proof.
+Current source baseline is Android `1.0.15 (versionCode=18)` and iOS `1.0.16 (build=18)`, but store/live submission state was not reverified in this document. Do not reuse historical submission states as current proof.
 
 - Android release mode depends on `release.shared.tag.cloud.enabled` and release Supabase values from local/env configuration.
 - iOS defaults to tracked local-only xcconfig; cloud-sharing Archive/TestFlight must pass ignored `ios/Config/URLSaverSecrets.xcconfig` explicitly.
 - Ads, external analytics, and third-party crash reporting remain disabled. Google Play Billing / StoreKit subscriptions are enabled for paid plans.
 - Store forms must disclose account sign-in, shared-tag cloud sync/collaboration, invite sync, and contact support processing only when those features are enabled in the submitted binary.
 - Current repo readiness is `NO_GO_INTERNAL / NOT_VERIFIED`; store/live submission remains a separate external gate that must be reverified for the submitted binary.
+- The current platform definitions must be reviewed before classifying a user-initiated OS share as developer collection/sharing.
+- Manual ChatGPT handoff implementation, pre-transfer confirmation, Privacy/App Review local wording, and automated validation are local evidence only. Final release remains `NO_GO_INTERNAL` because signed upload artifacts, current device E2E, and external store/live gates are incomplete.
 
 ## Short Description
 SNSやメッセージで見つけたURLを保存し、あとで一覧・詳細・アーカイブから開き直せます。
@@ -44,6 +46,7 @@ SNSやメッセージで見つけたURLを保存し、あとで一覧・詳細�
 - 削除猶予とUndo
 - ページタイトル、説明、サムネイルなどのmetadata取得
 - JSON / ZIP形式のエクスポート
+- 自作タグから対象と伏せ字後の内容を確認し、ChatGPT向けZIPを作ってOS共有（質問入力・自動送信・OpenAI API/OAuth連携なし）
 - サインインして共有タグをクラウド同期
 - 招待リンクで共有タグに参加
 - アプリ内問い合わせ送信
@@ -58,8 +61,8 @@ URL, bookmark, share, later, archive, save, link, productivity
 2. Manual add: URL input sheet.
 3. Detail: saved URL, title, memo, metadata.
 4. Archive: archived links and restore flow.
-5. Export: JSON / ZIP export options.
-6. Privacy info: local storage, metadata fetch, cloud sync, and contact support explanation.
+5. Export: JSON / ZIP options and manual `ChatGPTに聞く` preview/confirmation.
+6. Privacy info: local storage, metadata fetch, cloud sync, contact support, and user-directed external sharing explanation.
 
 ## Review Notes Draft
 - The app saves URLs provided by the user through share actions or manual input.
@@ -67,6 +70,9 @@ URL, bookmark, share, later, archive, save, link, productivity
 - When the user signs in and uses shared tags, shared-tag URLs and shared-tag metadata are synced through Supabase for collaboration.
 - The app may request web pages and public oEmbed endpoints to fetch page metadata.
 - The contact-support form sends the user's contact email, name, and inquiry body to the configured support endpoint for email delivery.
+- `ChatGPTに聞く` lets the user select local tags, review the eligible URLs and redacted fields, create a ZIP on device, and open the OS share surface. It has no question field, automatic input/send, OpenAI API/OAuth/login, MCP, or provider connection; the user chooses the recipient and sends the file.
+- Known email/phone/token-like/Supabase/JWT/local-path patterns are masked, but unknown secret formats may remain. The app warns the user and requires confirmation after preview. Chapter 13's 34 items are examples of what the receiving ChatGPT conversation can do, not 34 app-executed features.
+- If the user is signed in to shared-tag cloud, the app refreshes existing shared-tag state before creating the ZIP so shared content stays excluded; the ZIP and question text are not sent to Supabase. Starting direct share or choosing an OS-share recipient gives that recipient temporary file access, and Rinbam does not observe the recipient app's final send.
 - Paid plans can be purchased through Google Play Billing / StoreKit. Store purchase identifiers are used to grant app entitlements.
 - No ads, external analytics, or third-party crash reporting are enabled in this release.
 
@@ -79,10 +85,10 @@ URL, bookmark, share, later, archive, save, link, productivity
 | Full description / description | Use `Full Description` above. | Use `Full Description` above, shortened if App Store field limits require it. | DONE |
 | Category | Productivity | Productivity | DONE |
 | Support email | `miyamibu@privaterelay.appleid.com` | `miyamibu@privaterelay.appleid.com` | DONE |
-| Privacy policy URL | `https://miyamibu.xyz/privacy/` | `https://miyamibu.xyz/privacy/` | DONE_PUBLIC_VERIFIED: `./scripts/verify_public_web_release.sh` passed on 2026-06-29 and confirmed billing-enabled privacy wording. |
+| Privacy policy URL | `https://miyamibu.xyz/privacy/` | `https://miyamibu.xyz/privacy/` | LOCAL_SOURCE_UPDATED_DEPLOY_NOT_RUN: 2026-06-29 live proof covers older billing wording only; deploy approval and current live handoff-disclosure recheck remain. |
 | Marketing URL | optional | optional | NOT_APPLICABLE |
 | Review contact | Use developer account owner contact in console | Use App Store Connect review contact | NEEDS_USER_ACTION |
-| Review notes | Use `Review Notes Draft` above. Provide a test account if store review requires cloud-sharing sign-in. | Use `Review Notes Draft` above. Provide a test account if store review requires cloud-sharing sign-in. | NEEDS_USER_ACTION |
+| Review notes | Use `Review Notes Draft` above. Provide a test account if store review requires cloud-sharing sign-in. | Use `Review Notes Draft` above. Provide a test account if store review requires cloud-sharing sign-in. | DRAFT_UPDATED / NEEDS_CURRENT_BINARY_RECHECK |
 | Keywords | URL, bookmark, share, later, archive, save, link, productivity | URL, bookmark, share, later, archive, save, link | DONE |
 | Copyright | Developer legal name required from account | Developer legal name required from account | NEEDS_USER_ACTION |
 
@@ -95,5 +101,6 @@ URL, bookmark, share, later, archive, save, link, productivity
 
 ## Done When
 - Final screenshots match the submitted build.
-- App Store / Google Play wording matches the actually submitted Android `1.0.15 (versionCode=17)` / iOS `1.0.15 (build=17)` or later binary.
+- App Store / Google Play wording matches the actually submitted Android `1.0.15 (versionCode=18)` / iOS `1.0.16 (build=18)` or later binary.
 - Privacy and Data safety answers match the submitted binary.
+- The live Privacy Policy and App Review notes explain manual user-directed sharing, redaction limits, and no API/OAuth/automatic send; current store-form answers and rationale are owner-reviewed for the exact binary.

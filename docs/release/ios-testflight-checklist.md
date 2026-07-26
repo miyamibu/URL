@@ -66,17 +66,18 @@ Codex does not upload to App Store Connect. Manual owner steps:
 
 - Confirm Privacy Nutrition Labels match `docs/release/privacy-policy-and-store-disclosure-checklist.md`.
 - Confirm no undisclosed SDK or data category was added.
-- Confirm AI/MCP disclosures mention selected saved URLs only and local-only Receipt/Draft storage.
+- Confirm disclosures distinguish manual local ZIP + OS share from MCP/provider processing, explain known-pattern masking and unknown-secret confirmation, and mention local-only Receipt/Draft storage.
 
 ## Feature Flag Default Off
 
-- Expected: normal TestFlight UI does not expose unapproved AI entry.
-- Stop if AI transparency UI is public without explicit release approval.
+- Expected: AI Transparency/Debug and unconfigured provider sync are not actionable. The separately documented manual `ChatGPTに聞く` export entry may remain visible.
+- Stop if AI transparency/provider UI is public without approval or manual handoff bypasses preview/confirmation.
 
 ## AI-safe Export
 
 - Inspect export payload for `publicSafeId`, `aiEligible`, redaction/excerpt fields, and `savedSnapshotNotice`.
-- Stop if raw `fetchedBody`, prompt, token, refresh token, attachment, or raw DB id appears.
+- Confirm known sensitive patterns are masked in every output field, preview equals ZIP, and unknown-secret warning/explicit confirmation is enforced.
+- Stop if raw `fetchedBody`, app-owned credential, raw DB id, a known pattern, or an unconfirmed share appears.
 
 ## Rollback / Expire Build
 
@@ -94,4 +95,4 @@ Manual App Store Connect action:
 - Wrong bundle/team/signing.
 - Privacy manifest/App Privacy mismatch.
 - Raw body/prompt/token exposure.
-- Normal UI exposes AI while flag off.
+- Debug/provider UI is exposed while its flag/config is off, or manual handoff bypasses its safety contract.

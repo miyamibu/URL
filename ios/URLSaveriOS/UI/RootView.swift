@@ -30,6 +30,7 @@ struct RootView: View {
     @State private var isShowingSharedTagCreateSheet = false
     @State private var isShowingSharedTagGroupCreateSheet = false
     @State private var isShowingExportSheet = false
+    @State private var isShowingChatGptSheet = false
     @State private var isShowingShareSheet = false
     @State private var isShowingPrivacyInfoSheet = false
     @State private var shareItems: [Any] = []
@@ -217,6 +218,7 @@ struct RootView: View {
                             BottomHomeActionBar(
                                 onOpenGroups: { model.selectedTab = .groups },
                                 onOpenExport: { isShowingExportSheet = true },
+                                onOpenChatGpt: { isShowingChatGptSheet = true },
                                 onAddURL: { isShowingManualSheet = true },
                                 onOpenTags: { isShowingLocalTagManagementSheet = true },
                                 onOpenArchive: { model.selectedTab = .archive },
@@ -353,6 +355,12 @@ struct RootView: View {
             }
             .sheet(isPresented: $isShowingExportSheet) {
                 ExportSheet(model: model)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+                    .presentationCornerRadius(32)
+            }
+            .sheet(isPresented: $isShowingChatGptSheet) {
+                ChatGptExportSheet(model: model)
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
                     .presentationCornerRadius(32)
@@ -756,7 +764,7 @@ private struct MainScreen: View {
                         }
                     }
                     .padding(.top, 10)
-                    .padding(.bottom, 24)
+                    .padding(.bottom, 80)
                     .frame(width: proxy.size.width)
                 }
             }
@@ -855,6 +863,7 @@ private struct MainTopMenu: View {
 private struct BottomHomeActionBar: View {
     let onOpenGroups: () -> Void
     let onOpenExport: () -> Void
+    let onOpenChatGpt: () -> Void
     let onAddURL: () -> Void
     let onOpenTags: () -> Void
     let onOpenArchive: () -> Void
@@ -887,6 +896,26 @@ private struct BottomHomeActionBar: View {
             }
             .padding(.top, 2)
             .accessibilityLabel("URLを追加")
+
+            Button(action: onOpenChatGpt) {
+                HStack(spacing: 8) {
+                    Image(systemName: "bubble.left.and.text.bubble.right")
+                        .font(.system(size: 17, weight: .bold))
+                    Text("ChatGPT")
+                        .font(.system(size: 14, weight: .heavy, design: .rounded))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+                }
+                .foregroundStyle(AppPalette.textPrimary)
+                .padding(.horizontal, 16)
+                .frame(minHeight: 48)
+                .background(AppPalette.primary, in: Capsule())
+                .shadow(color: Color.black.opacity(0.12), radius: 6, y: 2)
+            }
+            .buttonStyle(.plain)
+            .offset(x: -14, y: -52)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .accessibilityLabel("ChatGPT")
         }
         .frame(height: 104 + bottomSafeAreaInset)
         .frame(maxWidth: .infinity)

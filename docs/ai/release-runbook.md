@@ -6,6 +6,8 @@ AI-safe Export / MCP / ChatGPT-facing codeを、repo内検証と外部公開ゲ�
 ## Context
 このrunbookは local source readiness 用。store submission、deploy、OpenAI submission はユーザー承認が必要。
 
+`ChatGPTに聞く` の手動ファイル共有は、端末内の選択/preview/ZIP生成とOS共有までであり、read-only MCP、ChatGPT個人リンク同期、production AI provider/API/OAuthとは別経路。2026-07-18の追加差分は実装・自動テストGO。iPhoneはChatGPT用ZIPを通常トーク画面へ添付し質問欄空欄・未送信まで確認済み。Android実機、署名済み配布物、公開/store状態は別ゲート。
+
 ## Steps
 1. Confirm dirty tree and unrelated changes:
    - `git status --short`
@@ -13,6 +15,7 @@ AI-safe Export / MCP / ChatGPT-facing codeを、repo内検証と外部公開ゲ�
 2. Run local AI/export checks:
    - `./gradlew testDebugUnitTest --tests jp.mimac.urlsaver.ExportRepositoryTest --tests jp.mimac.urlsaver.AiTransparencyPolicyTest --tests jp.mimac.urlsaver.AiTransparencyRepositoryTest --tests jp.mimac.urlsaver.LinkDeathInsuranceContractTest`
    - iOS `build-for-testing` and `test-without-building` on a dedicated simulator when possible.
+   - Manual handoff tests must cover eligible-only preview/ZIP, all-field known-pattern redaction, preview/archive parity, unknown-secret warning/explicit confirmation, and no question/API/OAuth path.
 3. Run web/MCP checks:
    - `cd web/admin && npm run typecheck`
    - `python3 scripts/verify_mcp_contract.py`
@@ -24,9 +27,10 @@ AI-safe Export / MCP / ChatGPT-facing codeを、repo内検証と外部公開ゲ�
 
 ## Constraints
 - Do not commit, push, deploy, submit to stores, submit to OpenAI, or enter production secrets without explicit owner approval.
-- Do not use old `1.0.11` store status as proof for the current source baseline (`1.0.14`, Android `versionCode=17`, iOS `build=15`).
+- Do not use old `1.0.11` store status as proof for the current source baseline (Android `1.0.15`, `versionCode=18`; iOS `1.0.16`, `build=18`).
 - Keep local build/test proof separate from physical-device, public URL, store, and OpenAI review proof.
 - Keep production deploy, OAuth registration, OpenAI submission, store submission, production secret input, and store/live recheck as Manual steps.
+- Do not require MCP/provider deployment for manual handoff. Do require public Privacy/App Review text and current store-form review before submitting a binary that exposes the handoff.
 - Login with ChatGPT remains Docs only / adoption review.
 
 ## Done when

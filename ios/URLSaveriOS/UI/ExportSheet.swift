@@ -11,6 +11,27 @@ func exportTodayDateInput(now: Date = Date(), calendar: Calendar = .current) -> 
     return formatter.string(from: now)
 }
 
+func cleanupStaleChatGptTemporaryDirectories(
+    in temporaryDirectory: URL = FileManager.default.temporaryDirectory,
+    now: Date = Date(),
+    maximumAge: TimeInterval = 7 * 24 * 60 * 60
+) {
+    let cutoff = now.addingTimeInterval(-maximumAge)
+    let resourceKeys: Set<URLResourceKey> = [.contentModificationDateKey, .isDirectoryKey]
+    guard let candidates = try? FileManager.default.contentsOfDirectory(
+        at: temporaryDirectory,
+        includingPropertiesForKeys: Array(resourceKeys),
+        options: [.skipsHiddenFiles]
+    ) else { return }
+    for candidate in candidates where candidate.lastPathComponent.hasPrefix("rinbam-chatgpt-task-") {
+        guard let values = try? candidate.resourceValues(forKeys: resourceKeys),
+              values.isDirectory == true,
+              let modifiedAt = values.contentModificationDate,
+              modifiedAt < cutoff else { continue }
+        try? FileManager.default.removeItem(at: candidate)
+    }
+}
+
 struct ExportSheet: View {
     @Environment(\.dismiss) private var dismiss
 
@@ -25,15 +46,43 @@ struct ExportSheet: View {
     @State private var dateToInput = ""
     @State private var selectedFormat: URLExportOutputFormat = .zip
     @State private var selectedDestination: ExportDestination = .shareSheet
-    @State private var isExporting = false
+    @State private var isStandardExporting = false
+    @State private var isPreparingChatGpt = false
     @State private var errorMessage: String?
     @State private var successMessage: String?
     @State private var shareItems: [Any] = []
     @State private var isShowingShareSheet = false
+    @State private var isSharingPreparedChatGptFile = false
     @State private var isShowingFileExporter = false
     @State private var fileExportDocument: ExportFileDocument?
     @State private var fileExportType: UTType = .zip
     @State private var fileExportDefaultName = "urlsaver-export"
+    @State private var exportMode: ExportMode = .standard
+    @State private var selectedChatGptLocalTagIDs: Set<Int64> = []
+    @State private var chatGptPreview: ChatGptExportPreview?
+    @State private var chatGptPreviewError: String?
+    @State private var isLoadingChatGptPreview = false
+    @State private var chatGptPreviewRequestID = UUID()
+    @State private var chatGptGenerationID = UUID()
+    @State private var chatGptPreviewTask: Task<Void, Never>?
+    @State private var chatGptPreparationTask: Task<Void, Never>?
+    @State private var chatGptFileCleanupTask: Task<Void, Never>?
+    @State private var hasConfirmedChatGptPreview = false
+    @State private var preparedChatGptFileURL: URL?
+    @State private var preparedChatGptEntryCount: Int?
+    @State private var preparedChatGptSnapshotToken: String?
+    @State private var preparedChatGptSelectedTagIDs: Set<Int64> = []
+    @State private var preparedChatGptGenerationID: UUID?
+
+    init(model: URLSaverAppModel) {
+        self.model = model
+        _exportMode = State(initialValue: .standard)
+    }
+
+    fileprivate init(model: URLSaverAppModel, mode: ExportMode) {
+        self.model = model
+        _exportMode = State(initialValue: mode)
+    }
 
     private var tagOptions: [URLExportTagOption] {
         URLExportArchiveBuilder.buildAvailableTags(
@@ -65,85 +114,105 @@ struct ExportSheet: View {
         return items.filter { seen.insert($0).inserted }
     }
 
+    private var chatGptLocalTags: [LocalTagSummary] {
+        model.localTags.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
     var body: some View {
         ScreenContainer {
             VStack(spacing: 0) {
                 exportHeader
 
-                ScrollView(showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 14) {
-                        sectionLabel("選択中")
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                ForEach(selectedItems) { item in
-                                    selectedChip(item)
+                if exportMode == .standard {
+                    ScrollView(showsIndicators: false) {
+                        VStack(alignment: .leading, spacing: 14) {
+                            sectionLabel("選択中")
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    ForEach(selectedItems) { item in
+                                        selectedChip(item)
+                                    }
                                 }
+                                .padding(.trailing, 16)
                             }
-                            .padding(.trailing, 16)
-                        }
 
-                        sectionLabel("クイック選択")
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 9) {
-                                presetTile(label: "すべて", icon: "archivebox", selected: scope == .all && serviceType == .all) {
-                                    scope = .all
-                                    serviceType = .all
-                                    selectedTagIDs.removeAll()
-                                }
-                                presetTile(label: "共有タグだけ", icon: "person.2", selected: scope == .sharedTagsOnly) {
-                                    scope = .sharedTagsOnly
-                                    selectedTagIDs.removeAll()
-                                }
-                                presetTile(label: "今日", icon: "calendar", selected: false) {
-                                    let today = exportTodayDateInput()
-                                    dateFromInput = today
-                                    dateToInput = today
-                                }
-                                ForEach(servicePresetOrder, id: \.self) { item in
-                                    presetTile(label: item.displayName, icon: "tag", selected: serviceType == item) {
+                            sectionLabel("クイック選択")
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 9) {
+                                    presetTile(label: "すべて", icon: "archivebox", selected: scope == .all && serviceType == .all) {
                                         scope = .all
-                                        serviceType = item
+                                        serviceType = .all
                                         selectedTagIDs.removeAll()
+                                    }
+                                    presetTile(label: "共有タグだけ", icon: "person.2", selected: scope == .sharedTagsOnly) {
+                                        scope = .sharedTagsOnly
+                                        selectedTagIDs.removeAll()
+                                    }
+                                    presetTile(label: "今日", icon: "calendar", selected: false) {
+                                        let today = exportTodayDateInput()
+                                        dateFromInput = today
+                                        dateToInput = today
+                                    }
+                                    ForEach(servicePresetOrder, id: \.self) { item in
+                                        presetTile(label: item.displayName, icon: "tag", selected: serviceType == item) {
+                                            scope = .all
+                                            serviceType = item
+                                            selectedTagIDs.removeAll()
+                                        }
+                                    }
+                                }
+                                .padding(.trailing, 16)
+                            }
+
+                            sectionLabel("タグを選択")
+                            if tagOptions.isEmpty {
+                                Text("選択できるタグがありません")
+                                    .font(.system(size: 15, weight: .medium))
+                                    .foregroundStyle(AppPalette.textSecondary)
+                            } else {
+                                TagFlowLayout(horizontalSpacing: 8, verticalSpacing: 8) {
+                                    ForEach(tagOptions) { tag in
+                                        tagCell(tag)
                                     }
                                 }
                             }
-                            .padding(.trailing, 16)
-                        }
 
-                        sectionLabel("タグを選択")
-                        if tagOptions.isEmpty {
-                            Text("選択できるタグがありません")
-                                .font(.system(size: 15, weight: .medium))
-                                .foregroundStyle(AppPalette.textSecondary)
-                        } else {
-                            TagFlowLayout(horizontalSpacing: 8, verticalSpacing: 8) {
-                                ForEach(tagOptions) { tag in
-                                    tagCell(tag)
-                                }
+                            if let errorMessage {
+                                Text(errorMessage)
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(AppPalette.danger)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                             }
-                        }
+                            if let successMessage {
+                                Text(successMessage)
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(AppPalette.textSecondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
 
-                        if let errorMessage {
-                            Text(errorMessage)
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(AppPalette.danger)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                            exportControlSheet
                         }
-                        if let successMessage {
-                            Text(successMessage)
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(AppPalette.textSecondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-
-                        exportControlSheet
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 30)
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 30)
+                } else {
+                    chatGptExportContent
                 }
             }
         }
-        .sheet(isPresented: $isShowingShareSheet) {
+        .sheet(isPresented: $isShowingShareSheet, onDismiss: {
+            let shouldDeleteChatGptFile = isSharingPreparedChatGptFile
+            shareItems = []
+            isSharingPreparedChatGptFile = false
+            if shouldDeleteChatGptFile {
+                // ChatGPT may finish importing the file after the system share
+                // sheet has dismissed. Keep the temporary ZIP alive briefly so
+                // the recipient cannot race the cleanup and open an empty chat.
+                scheduleChatGptTemporaryFileCleanup()
+            } else {
+                invalidatePreparedChatGptFile(force: true)
+            }
+        }) {
             ActivityShareSheet(items: shareItems)
         }
         .fileExporter(
@@ -160,6 +229,238 @@ struct ExportSheet: View {
             }
             fileExportDocument = nil
         }
+        .onDisappear {
+            if !isShowingFileExporter && !isShowingShareSheet {
+                chatGptPreviewTask?.cancel()
+                chatGptPreparationTask?.cancel()
+                if chatGptFileCleanupTask == nil {
+                    invalidatePreparedChatGptFile(force: true)
+                }
+            }
+        }
+    }
+
+    private var exportModeSelector: some View {
+        HStack(spacing: 8) {
+            ForEach(ExportMode.allCases) { mode in
+                let selected = exportMode == mode
+                Button {
+                    selectExportMode(mode)
+                } label: {
+                    HStack(spacing: 7) {
+                        Image(systemName: mode.icon)
+                            .font(.system(size: 15, weight: .semibold))
+                        Text(mode.label)
+                            .font(.system(size: 14, weight: .heavy, design: .rounded))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
+                    .foregroundStyle(selected ? AppPalette.primaryStrong : AppPalette.textSecondary)
+                    .frame(maxWidth: .infinity, minHeight: 46)
+                    .background(
+                        selected ? AppPalette.primary.opacity(0.18) : AppPalette.surfaceSoft,
+                        in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(selected ? AppPalette.primaryStrong : AppPalette.outlineSoft, lineWidth: selected ? 1.5 : 1)
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(isStandardExporting || isPreparingChatGpt)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 12)
+    }
+
+    private var chatGptExportContent: some View {
+        ScrollView(showsIndicators: false) {
+            LazyVStack(alignment: .leading, spacing: 16) {
+                sectionLabel("自作タグを選んで送る")
+
+                if chatGptLocalTags.isEmpty {
+                    Text("URLが付いた自作タグがありません")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(AppPalette.textSecondary)
+                } else {
+                    TagFlowLayout(horizontalSpacing: 8, verticalSpacing: 8) {
+                        ForEach(chatGptLocalTags) { tag in
+                            chatGptTagCell(tag)
+                        }
+                    }
+                }
+
+                if isLoadingChatGptPreview {
+                    HStack(spacing: 10) {
+                        ProgressView().tint(AppPalette.primaryStrong)
+                        Text("対象を確認しています")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(AppPalette.textSecondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if selectedChatGptLocalTagIDs.isEmpty {
+                    Text("自作タグを1つ以上選んでください")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(AppPalette.textSecondary)
+                }
+
+                if let preview = chatGptPreview {
+                    HStack(spacing: 8) {
+                        previewCountBadge(label: "対象", count: preview.eligibleCount, highlighted: true)
+                        if preview.excludedCount > 0 {
+                            previewCountBadge(label: "除外", count: preview.excludedCount, highlighted: false)
+                        }
+                    }
+                    if preview.eligibleItems.isEmpty {
+                        Text("送れる保存リンクがありません")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(AppPalette.danger)
+                    }
+                }
+
+                if let chatGptPreviewError {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(chatGptPreviewError)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(AppPalette.danger)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button {
+                            refreshChatGptPreview()
+                        } label: {
+                            Label("もう一度確認", systemImage: "arrow.clockwise")
+                                .font(.system(size: 14, weight: .heavy, design: .rounded))
+                                .foregroundStyle(AppPalette.textPrimary)
+                                .padding(.horizontal, 14)
+                                .frame(minHeight: 44)
+                                .background(AppPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .stroke(AppPalette.outlineSoft, lineWidth: 1)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isLoadingChatGptPreview)
+                    }
+                }
+
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(AppPalette.danger)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                AppActionButton(
+                    tone: .primary,
+                    enabled: canPrepareAndShareChatGptFile
+                ) {
+                    prepareAndShareChatGptFile()
+                } label: {
+                    if isPreparingChatGpt {
+                        HStack(spacing: 8) {
+                            ProgressView().tint(AppPalette.textPrimary)
+                            Text("準備しています")
+                        }
+                    } else if let count = chatGptPreview?.eligibleCount, count > 0 {
+                        Text("\(count)件をChatGPTに送る")
+                    } else {
+                        Text("ChatGPTに送る")
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 30)
+        }
+    }
+
+    private var canPrepareAndShareChatGptFile: Bool {
+        !isPreparingChatGpt &&
+            !isStandardExporting &&
+            !isLoadingChatGptPreview &&
+            chatGptPreviewError == nil &&
+            chatGptPreview?.eligibleItems.isEmpty == false
+    }
+
+    private var canSendToChatGpt: Bool {
+        preparedChatGptFileURL.map { FileManager.default.fileExists(atPath: $0.path) } == true &&
+            preparedChatGptSnapshotToken == chatGptPreview?.snapshotToken &&
+            preparedChatGptSelectedTagIDs == selectedChatGptLocalTagIDs &&
+            preparedChatGptGenerationID == chatGptGenerationID &&
+            hasConfirmedChatGptPreview &&
+            !isPreparingChatGpt &&
+            !isStandardExporting
+    }
+
+    private var canPrepareChatGptFile: Bool {
+        !isPreparingChatGpt &&
+            !isStandardExporting &&
+            !isLoadingChatGptPreview &&
+            chatGptPreviewError == nil &&
+            hasConfirmedChatGptPreview &&
+            chatGptPreview?.eligibleItems.isEmpty == false
+    }
+
+    private func fixedChatGptContentCard(title: String, icon: String, items: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(title, systemImage: icon)
+                .font(.system(size: 15, weight: .heavy, design: .rounded))
+                .foregroundStyle(AppPalette.textPrimary)
+            ForEach(items, id: \.self) { item in
+                Text("・\(item)")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(AppPalette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(AppPalette.outlineSoft, lineWidth: 1)
+        )
+    }
+
+    private func previewCountBadge(label: String, count: Int, highlighted: Bool) -> some View {
+        Text("\(label) \(count)件")
+            .font(.system(size: 15, weight: .heavy, design: .rounded))
+            .foregroundStyle(highlighted ? AppPalette.primaryStrong : AppPalette.textSecondary)
+            .padding(.horizontal, 12)
+            .frame(minHeight: 38)
+            .background(
+                highlighted ? AppPalette.primary.opacity(0.16) : AppPalette.surfaceSoft,
+                in: Capsule()
+            )
+    }
+
+    private func chatGptPreviewItem(_ item: ChatGptExportPreviewItem) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(item.title)
+                .font(.system(size: 15, weight: .heavy, design: .rounded))
+                .foregroundStyle(AppPalette.textPrimary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(item.localTagNames.isEmpty ? "自作タグなし" : "自作タグ：\(item.localTagNames.joined(separator: "、"))")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(AppPalette.textSecondary)
+            Text("ZIPに入る伏せ字後のJSON内容")
+                .font(.system(size: 12, weight: .heavy, design: .rounded))
+                .foregroundStyle(AppPalette.textSecondary)
+            Text(item.archiveEntryJSON)
+                .font(.system(.caption, design: .monospaced, weight: .regular))
+                .foregroundStyle(AppPalette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
+        .padding(12)
+        .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(AppPalette.outlineSoft, lineWidth: 1)
+        )
     }
 
     private var exportControlSheet: some View {
@@ -178,10 +479,10 @@ struct ExportSheet: View {
                 }
             }
 
-            AppActionButton(tone: .primary, enabled: !isExporting) {
+            AppActionButton(tone: .primary, enabled: !isStandardExporting && !isPreparingChatGpt) {
                 exportArchive()
             } label: {
-                if isExporting {
+                if isStandardExporting {
                     ProgressView().tint(AppPalette.textPrimary)
                 } else {
                     Text("書き出す")
@@ -210,7 +511,7 @@ struct ExportSheet: View {
             .buttonStyle(.plain)
             .accessibilityLabel("閉じる")
 
-            Text("エクスポート")
+            Text(exportMode == .chatGpt ? "ChatGPT" : "エクスポート")
                 .font(.system(size: 27, weight: .heavy, design: .rounded))
                 .foregroundStyle(AppPalette.textPrimary)
                 .lineLimit(1)
@@ -218,14 +519,6 @@ struct ExportSheet: View {
                 .layoutPriority(2)
 
             Spacer(minLength: 6)
-
-            Text("ChatGPT、\nCodex、Claudeにも\n共有できるよ！")
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .foregroundStyle(AppPalette.textSecondary.opacity(0.72))
-                .multilineTextAlignment(.trailing)
-                .lineSpacing(1)
-                .fixedSize(horizontal: false, vertical: true)
-                .layoutPriority(1)
         }
         .padding(.leading, 12)
         .padding(.trailing, 16)
@@ -326,6 +619,44 @@ struct ExportSheet: View {
             )
         }
         .buttonStyle(.plain)
+    }
+
+    private func chatGptTagCell(_ tag: LocalTagSummary) -> some View {
+        let selected = selectedChatGptLocalTagIDs.contains(tag.id)
+        return Button {
+            if selected {
+                selectedChatGptLocalTagIDs.remove(tag.id)
+            } else {
+                selectedChatGptLocalTagIDs.insert(tag.id)
+            }
+            refreshChatGptPreview()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: selected ? "checkmark" : "tag")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(selected ? AppPalette.primaryStrong : AppPalette.textSecondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(tag.name)
+                        .font(.system(size: 15, weight: .heavy, design: .rounded))
+                        .foregroundStyle(AppPalette.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    Text("\(tag.activeURLCount)件")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(AppPalette.textSecondary)
+                }
+            }
+            .padding(.horizontal, 12)
+            .frame(minHeight: 52)
+            .background(selected ? AppPalette.primary.opacity(0.14) : AppPalette.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(selected ? AppPalette.primaryStrong : AppPalette.outlineSoft, lineWidth: selected ? 1.5 : 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(tag.name)、\(tag.activeURLCount)件")
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private func formatButton(_ item: URLExportOutputFormat) -> some View {
@@ -442,6 +773,208 @@ struct ExportSheet: View {
         }
     }
 
+    private func selectExportMode(_ mode: ExportMode) {
+        guard exportMode != mode else { return }
+        exportMode = mode
+        errorMessage = nil
+        successMessage = nil
+        if mode == .chatGpt, chatGptPreview == nil, preparedChatGptFileURL == nil {
+            refreshChatGptPreview()
+        }
+    }
+
+    private func refreshChatGptPreview() {
+        chatGptPreviewTask?.cancel()
+        chatGptPreparationTask?.cancel()
+        let selectedTagIDs = selectedChatGptLocalTagIDs
+        let requestID = UUID()
+        let generationID = UUID()
+        chatGptPreviewRequestID = requestID
+        chatGptGenerationID = generationID
+        hasConfirmedChatGptPreview = false
+        invalidatePreparedChatGptFile()
+        chatGptPreview = nil
+        chatGptPreviewError = nil
+        errorMessage = nil
+        isPreparingChatGpt = false
+        guard !selectedTagIDs.isEmpty else {
+            isLoadingChatGptPreview = false
+            return
+        }
+        isLoadingChatGptPreview = true
+        let task = Task { @MainActor in
+            do {
+                let preview = try await model.chatGptExportPreview(selectedLocalTagIDs: selectedTagIDs)
+                try Task.checkCancellation()
+                guard requestID == chatGptPreviewRequestID,
+                      generationID == chatGptGenerationID,
+                      selectedTagIDs == selectedChatGptLocalTagIDs else { return }
+                chatGptPreview = preview
+            } catch is CancellationError {
+                return
+            } catch {
+                guard requestID == chatGptPreviewRequestID,
+                      generationID == chatGptGenerationID,
+                      selectedTagIDs == selectedChatGptLocalTagIDs else { return }
+                chatGptPreviewError = (error as? LocalizedError)?.errorDescription ?? "対象を確認できませんでした。もう一度お試しください。"
+            }
+            guard requestID == chatGptPreviewRequestID,
+                  generationID == chatGptGenerationID,
+                  selectedTagIDs == selectedChatGptLocalTagIDs else { return }
+            isLoadingChatGptPreview = false
+            chatGptPreviewTask = nil
+        }
+        chatGptPreviewTask = task
+    }
+
+    private func prepareAndShareChatGptFile() {
+        guard chatGptPreview?.eligibleItems.isEmpty == false else {
+            chatGptPreviewError = "ChatGPTに送れる保存リンクがありません。"
+            return
+        }
+        hasConfirmedChatGptPreview = true
+        prepareChatGptFile(shareWhenReady: true)
+    }
+
+    private func prepareChatGptFile(shareWhenReady: Bool = false) {
+        errorMessage = nil
+        successMessage = nil
+        guard hasConfirmedChatGptPreview,
+              let preview = chatGptPreview,
+              !preview.eligibleItems.isEmpty else {
+            chatGptPreviewError = "ChatGPTに送れる保存リンクがありません。タグを選び、対象を確認してからもう一度お試しください。"
+            return
+        }
+
+        chatGptPreparationTask?.cancel()
+        let selectedTagIDs = selectedChatGptLocalTagIDs
+        let expectedSnapshotToken = preview.snapshotToken
+        let expectedEntryCount = preview.eligibleCount
+        let generationID = chatGptGenerationID
+        invalidatePreparedChatGptFile()
+        isPreparingChatGpt = true
+        let task = Task { @MainActor in
+            var generatedFileURL: URL?
+            do {
+                let archive = try await model.prepareChatGptExportArchive(
+                    selectedLocalTagIDs: selectedTagIDs,
+                    expectedSnapshotToken: expectedSnapshotToken
+                )
+                try Task.checkCancellation()
+                guard archive.entryCount == expectedEntryCount else {
+                    throw URLExportError.invalidRequest("対象の保存リンクが更新されました。内容を確認して、もう一度お試しください。")
+                }
+                let fileURL = try await Task.detached(priority: .utility) {
+                    cleanupStaleChatGptTemporaryDirectories()
+                    let directoryURL = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("rinbam-chatgpt-task-\(generationID.uuidString)", isDirectory: true)
+                    do {
+                        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+                        let fileURL = directoryURL.appendingPathComponent(archive.fileName)
+                        try archive.bytes.write(to: fileURL, options: [.atomic])
+                        return fileURL
+                    } catch {
+                        try? FileManager.default.removeItem(at: directoryURL)
+                        throw error
+                    }
+                }.value
+                generatedFileURL = fileURL
+                try Task.checkCancellation()
+                guard selectedTagIDs == selectedChatGptLocalTagIDs,
+                      generationID == chatGptGenerationID,
+                      chatGptPreview?.snapshotToken == expectedSnapshotToken,
+                      hasConfirmedChatGptPreview else {
+                    removeChatGptTemporaryFile(at: fileURL)
+                    generatedFileURL = nil
+                    throw URLExportError.invalidRequest("選択または対象の内容が変わりました。内容を確認して、もう一度お試しください。")
+                }
+                preparedChatGptFileURL = fileURL
+                preparedChatGptEntryCount = archive.entryCount
+                preparedChatGptSnapshotToken = expectedSnapshotToken
+                preparedChatGptSelectedTagIDs = selectedTagIDs
+                preparedChatGptGenerationID = generationID
+                generatedFileURL = nil
+                successMessage = "\(archive.entryCount)件のZIPを作成しました"
+                if shareWhenReady {
+                    sharePreparedChatGptFile()
+                }
+            } catch is CancellationError {
+                if let generatedFileURL {
+                    removeChatGptTemporaryFile(at: generatedFileURL)
+                }
+            } catch {
+                if let generatedFileURL {
+                    removeChatGptTemporaryFile(at: generatedFileURL)
+                }
+                guard generationID == chatGptGenerationID else { return }
+                let message = (error as? LocalizedError)?.errorDescription ?? "ChatGPT用ZIPを作成できませんでした。もう一度お試しください。"
+                isPreparingChatGpt = false
+                refreshChatGptPreview()
+                errorMessage = message
+            }
+            if generationID == chatGptGenerationID {
+                isPreparingChatGpt = false
+                chatGptPreparationTask = nil
+            }
+        }
+        chatGptPreparationTask = task
+    }
+
+    private func sharePreparedChatGptFile() {
+        guard let preparedChatGptFileURL,
+              FileManager.default.fileExists(atPath: preparedChatGptFileURL.path),
+              preparedChatGptSnapshotToken == chatGptPreview?.snapshotToken,
+              preparedChatGptSelectedTagIDs == selectedChatGptLocalTagIDs,
+              preparedChatGptGenerationID == chatGptGenerationID,
+              hasConfirmedChatGptPreview else {
+            errorMessage = "先にChatGPT用ファイルを作成してください。"
+            return
+        }
+        errorMessage = nil
+        shareItems = [preparedChatGptFileURL]
+        isSharingPreparedChatGptFile = true
+        isShowingShareSheet = true
+    }
+
+    private func invalidatePreparedChatGptFile(force: Bool = false) {
+        guard force || !isShowingShareSheet else { return }
+        chatGptFileCleanupTask?.cancel()
+        chatGptFileCleanupTask = nil
+        if let preparedChatGptFileURL {
+            removeChatGptTemporaryFile(at: preparedChatGptFileURL)
+        }
+        preparedChatGptFileURL = nil
+        preparedChatGptEntryCount = nil
+        preparedChatGptSnapshotToken = nil
+        preparedChatGptSelectedTagIDs = []
+        preparedChatGptGenerationID = nil
+        successMessage = nil
+    }
+
+    private func scheduleChatGptTemporaryFileCleanup() {
+        chatGptFileCleanupTask?.cancel()
+        guard let preparedChatGptFileURL else { return }
+        chatGptFileCleanupTask = Task { @MainActor in
+            do {
+                try await Task.sleep(nanoseconds: 60_000_000_000)
+            } catch {
+                return
+            }
+            guard self.preparedChatGptFileURL == preparedChatGptFileURL else { return }
+            self.chatGptFileCleanupTask = nil
+            self.invalidatePreparedChatGptFile(force: true)
+        }
+    }
+
+    private func removeChatGptTemporaryFile(at fileURL: URL) {
+        let directoryURL = fileURL.deletingLastPathComponent()
+        if directoryURL.lastPathComponent.hasPrefix("rinbam-chatgpt-task-") {
+            try? FileManager.default.removeItem(at: directoryURL)
+        } else if FileManager.default.fileExists(atPath: fileURL.path) {
+            try? FileManager.default.removeItem(at: fileURL)
+        }
+    }
+
     private func exportArchive() {
         errorMessage = nil
         successMessage = nil
@@ -456,7 +989,7 @@ struct ExportSheet: View {
                 dateTo: try parseDate(dateToInput),
                 outputFormat: selectedFormat
             )
-            isExporting = true
+            isStandardExporting = true
             Task {
                 do {
                     let archive = try await model.prepareExportArchive(request: request)
@@ -465,6 +998,7 @@ struct ExportSheet: View {
                     switch selectedDestination {
                     case .shareSheet:
                         shareItems = [fileURL]
+                        isSharingPreparedChatGptFile = false
                         isShowingShareSheet = true
                     case .file:
                         fileExportDocument = ExportFileDocument(data: archive.bytes)
@@ -472,14 +1006,14 @@ struct ExportSheet: View {
                         fileExportDefaultName = archive.fileName
                         isShowingFileExporter = true
                     }
-                    isExporting = false
+                    isStandardExporting = false
                 } catch {
-                    isExporting = false
+                    isStandardExporting = false
                     errorMessage = (error as? LocalizedError)?.errorDescription ?? "エクスポートできませんでした。"
                 }
             }
         } catch {
-            isExporting = false
+            isStandardExporting = false
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "エクスポートできませんでした。"
         }
     }
@@ -498,11 +1032,40 @@ struct ExportSheet: View {
     }
 }
 
+struct ChatGptExportSheet: View {
+    @ObservedObject var model: URLSaverAppModel
+
+    var body: some View {
+        ExportSheet(model: model, mode: .chatGpt)
+    }
+}
+
 private extension URLExportOutputFormat {
     var icon: String {
         switch self {
         case .zip: return "archivebox"
         case .json: return "doc.text"
+        }
+    }
+}
+
+fileprivate enum ExportMode: String, CaseIterable, Identifiable {
+    case standard
+    case chatGpt
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .standard: return "通常の書き出し"
+        case .chatGpt: return "ChatGPT"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .standard: return "square.and.arrow.up"
+        case .chatGpt: return "bubble.left.and.text.bubble.right"
         }
     }
 }

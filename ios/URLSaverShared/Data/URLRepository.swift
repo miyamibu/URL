@@ -1,6 +1,12 @@
 import Foundation
 import SQLite3
 
+struct ChatGptExportLocalSnapshot: Sendable {
+    let entries: [URLRecord]
+    let localTags: [LocalTagSummary]
+    let localTagAssignments: [Int64: Set<Int64>]
+}
+
 final class URLRepository: @unchecked Sendable {
     let database: SQLiteDatabase
 
@@ -42,6 +48,16 @@ final class URLRepository: @unchecked Sendable {
         try fetchEntries(
             whereClause: "(local_provenance_count > 0 OR shared_reference_count > 0) ORDER BY created_at DESC"
         )
+    }
+
+    func loadChatGptExportLocalSnapshot() throws -> ChatGptExportLocalSnapshot {
+        try database.transaction {
+            ChatGptExportLocalSnapshot(
+                entries: try loadChatGptPersonalLinkSnapshot(),
+                localTags: try loadLocalTags(),
+                localTagAssignments: try loadLocalTagAssignments()
+            )
+        }
     }
 
     func loadLocalTags() throws -> [LocalTagSummary] {

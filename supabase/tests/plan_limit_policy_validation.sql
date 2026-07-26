@@ -1,40 +1,13 @@
 \set ON_ERROR_STOP on
 
-create schema if not exists auth;
 create schema if not exists extensions;
 create extension if not exists pgcrypto with schema extensions;
+create extension if not exists pgtap with schema extensions;
+select extensions.plan(1);
 
-create table if not exists auth.users (
-    id uuid primary key
-);
-
-do $$
-begin
-    if not exists (select 1 from pg_roles where rolname = 'anon') then
-        create role anon;
-    end if;
-    if not exists (select 1 from pg_roles where rolname = 'authenticated') then
-        create role authenticated;
-    end if;
-end
-$$;
-
-create or replace function auth.uid()
-returns uuid
-language sql
-stable
-as $$
-    select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
-$$;
-
-grant usage on schema auth to anon, authenticated;
-grant execute on function auth.uid() to anon, authenticated;
-
-\i supabase/migrations/20260420120000_shared_tag_sync.sql
-\i supabase/migrations/20260422120000_shared_tag_invites.sql
-\i supabase/migrations/20260501120000_entitlement_grants.sql
-\i supabase/migrations/20260624130000_shared_tag_groups.sql
-\i supabase/migrations/20260627103000_plan_limit_policy.sql
+-- Supabase local test databases provide auth.users, auth.uid(), anon, and
+-- authenticated as platform-owned objects. Do not recreate or replace them:
+-- the test runner role intentionally cannot modify the auth schema.
 
 do $$
 declare
@@ -254,3 +227,6 @@ begin
     end;
 end
 $$;
+
+select extensions.pass('plan limit policy validation');
+select * from extensions.finish();

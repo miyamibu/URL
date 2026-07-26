@@ -149,6 +149,29 @@ struct ChatGptPersonalLinkSettings: Equatable {
     var lastErrorMessage: String?
 }
 
+enum ChatGptExportPreparationGate {
+    static func requireSuccessfulSync(_ succeeded: Bool) throws {
+        guard succeeded else {
+            throw URLExportError.invalidRequest("共有タグの同期に失敗したため、ChatGPT用ZIPを作成しませんでした。通信状態を確認して、もう一度お試しください。")
+        }
+    }
+
+    static func loadSharedTagsByEntryID(
+        entries: [URLRecord],
+        bulkLookup: ([URLRecord]) throws -> [Int64: [SharedTagSummary]]
+    ) throws -> [Int64: [SharedTagSummary]] {
+        do {
+            let result = try bulkLookup(entries)
+            guard Set(result.keys) == Set(entries.map(\.id)) else {
+                throw URLExportError.invalidRequest("共有タグの状態を確認できませんでした。")
+            }
+            return result
+        } catch {
+            throw URLExportError.invalidRequest("共有タグの状態を確認できなかったため、ChatGPT用ZIPを作成しませんでした。もう一度お試しください。")
+        }
+    }
+}
+
 struct SavedAppMediaFile: Identifiable, Equatable, Sendable {
     let id: String
     let fileURL: URL
@@ -472,6 +495,12 @@ final class URLSaverAppModel: ObservableObject {
         await reload()
     }
 
+    func refreshAfterReturningToForeground() async {
+        await bootstrapIfNeeded()
+        await consumeShareHandoffReport()
+        await reload()
+    }
+
     func prepareManualSave(input: String, localTagIDs: Set<Int64> = []) async -> ManualSaveOutcome {
         switch ManualTagImportPreparation.prepare(input: input) {
         case .ready(let preview):
@@ -768,6 +797,8 @@ final class URLSaverAppModel: ObservableObject {
 
     func handleIncomingURL(_ url: URL) async {
         switch IncomingURLRoute(url: url) {
+        case .refresh:
+            await refreshAfterReturningToForeground()
         case .authCallback:
             await handleSharedTagAuthCallback(url)
         case .invite(let token):
@@ -1277,6 +1308,71 @@ final class URLSaverAppModel: ObservableObject {
             localTagAssignments: localTagAssignments,
             sharedTagsByEntryID: sharedTagsByEntryID,
             appVersion: appVersion
+        )
+    }
+
+    func chatGptExportPreview(selectedLocalTagIDs: Set<Int64>) async throws -> ChatGptExportPreview {
+        let services = services
+        let operation = Task.detached(priority: .userInitiated) {
+            try Task.checkCancellation()
+            let snapshot = try services.repository.loadChatGptExportLocalSnapshot()
+            let candidateEntries = snapshot.entries.filter { entry in
+                !(snapshot.localTagAssignments[entry.id] ?? []).isDisjoint(with: selectedLocalTagIDs)
+            }
+            let sharedTagsByEntryID = try ChatGptExportPreparationGate.loadSharedTagsByEntryID(
+                entries: candidateEntries,
+                bulkLookup: services.sharedTagCloud.loadVisibleTagsByEntryID(entries:)
+            )
+            try Task.checkCancellation()
+            return try URLExportArchiveBuilder.buildChatGptExportPreview(
+                selectedLocalTagIDs: selectedLocalTagIDs,
+                entries: snapshot.entries,
+                localTags: snapshot.localTags,
+                localTagAssignments: snapshot.localTagAssignments,
+                sharedTagsByEntryID: sharedTagsByEntryID
+            )
+        }
+        return try await withTaskCancellationHandler(
+            operation: { try await operation.value },
+            onCancel: { operation.cancel() }
+        )
+    }
+
+    func prepareChatGptExportArchive(
+        selectedLocalTagIDs: Set<Int64>,
+        expectedSnapshotToken: String
+    ) async throws -> PreparedExportArchive {
+        try Task.checkCancellation()
+        let syncSucceeded = await syncSharedTagCloud(showFailureNotification: false)
+        try Task.checkCancellation()
+        try ChatGptExportPreparationGate.requireSuccessfulSync(syncSucceeded)
+
+        let services = services
+        let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "iOS"
+        let operation = Task.detached(priority: .userInitiated) {
+            try Task.checkCancellation()
+            let snapshot = try services.repository.loadChatGptExportLocalSnapshot()
+            let candidateEntries = snapshot.entries.filter { entry in
+                !(snapshot.localTagAssignments[entry.id] ?? []).isDisjoint(with: selectedLocalTagIDs)
+            }
+            let sharedTagsByEntryID = try ChatGptExportPreparationGate.loadSharedTagsByEntryID(
+                entries: candidateEntries,
+                bulkLookup: services.sharedTagCloud.loadVisibleTagsByEntryID(entries:)
+            )
+            try Task.checkCancellation()
+            return try URLExportArchiveBuilder.prepareChatGptExport(
+                selectedLocalTagIDs: selectedLocalTagIDs,
+                expectedSnapshotToken: expectedSnapshotToken,
+                entries: snapshot.entries,
+                localTags: snapshot.localTags,
+                localTagAssignments: snapshot.localTagAssignments,
+                sharedTagsByEntryID: sharedTagsByEntryID,
+                appVersion: appVersion
+            )
+        }
+        return try await withTaskCancellationHandler(
+            operation: { try await operation.value },
+            onCancel: { operation.cancel() }
         )
     }
 
@@ -2262,6 +2358,7 @@ func rinbamMediaFileNamePrecedes(_ lhs: String, _ rhs: String) -> Bool {
 }
 
 enum IncomingURLRoute {
+    case refresh
     case authCallback
     case invite(String)
     case promo(String)
@@ -2296,6 +2393,8 @@ enum IncomingURLRoute {
         }
 
         switch host {
+        case "refresh":
+            self = .refresh
         case "auth" where url.path == "/callback":
             self = .authCallback
         case "invite"

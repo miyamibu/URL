@@ -2,6 +2,32 @@ import Foundation
 import XCTest
 
 final class SharedTagCloudLiveSyncTests: XCTestCase {
+    func testSavedSessionAndUnavailableConfigFailsClosedWithoutNetwork() async throws {
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        let repository = try URLRepository(databaseURL: directoryURL.appendingPathComponent("urlsaver.sqlite"))
+        let store = try SharedTagStore(database: repository.database)
+        let sessionStore = SharedTagAuthSessionStore(storage: InMemorySharedTagAuthSecureStorage())
+        try sessionStore.save(
+            SharedTagAuthSession(
+                authUserID: "fail-closed-user",
+                accessToken: "access-token",
+                refreshToken: nil,
+                userEmail: "fail-closed@example.com"
+            )
+        )
+        let service = SharedTagCloudService(
+            config: SharedTagCloudConfig(enabled: false, supabaseURL: "", anonKey: ""),
+            sessionStore: sessionStore,
+            store: store,
+            repository: repository
+        )
+
+        let syncSucceeded = await service.syncCurrentSession()
+        XCTAssertFalse(syncSucceeded)
+    }
+
     func testOwnerCanSyncAndroidMigratedSharedTagFromLiveCloud() async throws {
         let env = try LiveSharedTagTestEnvironment.requireConfigured()
         let anonKey = try env.requireAnonKey()

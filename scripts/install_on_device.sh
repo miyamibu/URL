@@ -126,14 +126,15 @@ if [[ -n "$PACKAGE_PATH_BEFORE" ]]; then
   BACKUP_DIR="$PROJECT_ROOT/artifacts/device-backups/android"
   BACKUP_STAMP="$(date +%Y%m%d-%H%M%S)"
   BACKUP_PATH="$BACKUP_DIR/${BACKUP_STAMP}-${SERIAL}-${APP_ID}.tgz"
+  BACKUP_PARTIAL_PATH="${BACKUP_PATH}.partial"
   mkdir -p "$BACKUP_DIR"
   echo "[info] Backing up app databases/shared preferences before install..."
   set +e
-  "$ADB_BIN" -s "$SERIAL" exec-out run-as "$APP_ID" sh -c "cd /data/data/$APP_ID && tar -czf - databases shared_prefs 2>/dev/null" > "$BACKUP_PATH"
+  "$ADB_BIN" -s "$SERIAL" exec-out run-as "$APP_ID" sh -c "cd /data/data/$APP_ID && tar -czf - databases shared_prefs 2>/dev/null" > "$BACKUP_PARTIAL_PATH"
   BACKUP_CODE=$?
   set -e
-  if [[ $BACKUP_CODE -ne 0 || ! -s "$BACKUP_PATH" ]]; then
-    rm -f "$BACKUP_PATH"
+  if [[ $BACKUP_CODE -ne 0 || ! -s "$BACKUP_PARTIAL_PATH" ]] || ! tar -tzf "$BACKUP_PARTIAL_PATH" >/dev/null 2>&1; then
+    rm -f "$BACKUP_PARTIAL_PATH"
     cat <<EOF
 [error] Could not back up existing app data from $SERIAL.
 Refusing to install because preserving local URL data is more important than
@@ -141,6 +142,7 @@ continuing blindly.
 EOF
     exit 1
   fi
+  mv "$BACKUP_PARTIAL_PATH" "$BACKUP_PATH"
   echo "[info] Backup saved: $BACKUP_PATH"
 fi
 

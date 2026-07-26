@@ -66,6 +66,7 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ChecklistRtl
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
@@ -788,6 +789,8 @@ private fun MainScreen(
     var selectedSharedTagGroupId by rememberSaveable { mutableStateOf<Long?>(null) }
     var showExportSheet by rememberSaveable { mutableStateOf(false) }
     val exportSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var showChatGptSheet by rememberSaveable { mutableStateOf(false) }
+    val chatGptSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showProfileSheet by rememberSaveable { mutableStateOf(false) }
     val profileSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showMainMenu by rememberSaveable { mutableStateOf(false) }
@@ -1494,6 +1497,19 @@ private fun MainScreen(
         }
     }
 
+    if (showChatGptSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showChatGptSheet = false },
+            sheetState = chatGptSheetState,
+            dragHandle = { ExportSheetDragHandle() },
+        ) {
+            ChatGptExportScreen(
+                viewModel = exportVm,
+                onBack = { showChatGptSheet = false },
+            )
+        }
+    }
+
     if (showProfileSheet) {
         ModalBottomSheet(
             onDismissRequest = { showProfileSheet = false },
@@ -1643,7 +1659,7 @@ private fun MainScreen(
             Box(
                 modifier = Modifier
                     .padding(paddingValues)
-                .then(if (showMainBottomBar) Modifier.padding(bottom = 104.dp) else Modifier)
+                .then(if (showMainBottomBar) Modifier.padding(bottom = 156.dp) else Modifier)
                     .fillMaxSize()
                     .background(MaterialTheme.colorScheme.background),
                 contentAlignment = Alignment.TopCenter,
@@ -1823,6 +1839,7 @@ private fun MainScreen(
                     selectedSharedTagGroupId = null
                 },
                 onExport = { showExportSheet = true },
+                onOpenChatGpt = { showChatGptSheet = true },
                 onAdd = { openManualInput() },
                 onTagManage = { showLocalTagManagerSheet = true },
                 onOpenArchive = onOpenArchive,
@@ -6475,6 +6492,7 @@ private fun MainBottomNavBar(
     modifier: Modifier = Modifier,
     onOpenGroups: () -> Unit,
     onExport: () -> Unit,
+    onOpenChatGpt: () -> Unit,
     onAdd: () -> Unit,
     onTagManage: () -> Unit,
     onOpenArchive: () -> Unit,
@@ -6485,7 +6503,7 @@ private fun MainBottomNavBar(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(104.dp + bottomFillHeight),
+            .height(156.dp + bottomFillHeight),
     ) {
         Surface(
             modifier = Modifier
@@ -6539,7 +6557,7 @@ private fun MainBottomNavBar(
         Box(
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .offset(y = 9.dp)
+                .offset(y = 61.dp)
                 .size(76.dp)
                 .background(
                     color = MaterialTheme.colorScheme.primary,
@@ -6557,6 +6575,38 @@ private fun MainBottomNavBar(
                 lineHeight = 48.sp,
                 textAlign = TextAlign.Center,
             )
+        }
+        Surface(
+            onClick = onOpenChatGpt,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 8.dp, end = 14.dp)
+                .heightIn(min = 48.dp)
+                .semantics { contentDescription = "ChatGPT" },
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.primaryContainer,
+            shadowElevation = 3.dp,
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.ChatBubbleOutline,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+                Text(
+                    text = "ChatGPT",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }

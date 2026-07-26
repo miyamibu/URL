@@ -36,6 +36,43 @@ type SendResult = {
   expiresAt: string;
 };
 
+type SupportRequestRow = {
+  id: string;
+  request_id: string;
+  platform: string;
+  app_version: string;
+  build_type: string;
+  is_signed_in: boolean;
+  delivery_status: string;
+  delivery_event_type: string | null;
+  delivery_event_at: string | null;
+  delivery_error: string | null;
+  support_status: "open" | "in_progress" | "resolved" | "closed";
+  assigned_admin_id: string | null;
+  admin_note: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type ModerationReportRow = {
+  id: string;
+  reported_user_id: string | null;
+  category: string;
+  details: string | null;
+  status: "open" | "reviewing" | "actioned" | "rejected" | "closed";
+  created_at: string;
+  updated_at: string;
+};
+
+type AuditLogRow = {
+  id: string;
+  admin_user_id: string;
+  target_user_id: string | null;
+  action: string;
+  reason: string | null;
+  created_at: string;
+};
+
 function formatDate(value?: string | null): string {
   if (!value) return "-";
   return new Intl.DateTimeFormat("ja-JP", {
@@ -116,6 +153,9 @@ export default function AdminPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [sendResult, setSendResult] = useState<SendResult | null>(null);
+  const [supportRequests, setSupportRequests] = useState<SupportRequestRow[]>([]);
+  const [reports, setReports] = useState<ModerationReportRow[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLogRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
   const authHeaders = useMemo<Record<string, string>>(
@@ -161,6 +201,57 @@ export default function AdminPage() {
       return;
     }
     setCodes(body.codes ?? []);
+  }
+
+  async function fetchOperations() {
+    if (!session) return;
+    const [supportResponse, moderationResponse, auditResponse] = await Promise.all([
+      fetch("/api/admin/support", { headers: authHeaders }),
+      fetch("/api/admin/moderation", { headers: authHeaders }),
+      fetch("/api/admin/audit", { headers: authHeaders }),
+    ]);
+    const [supportBody, moderationBody, auditBody] = await Promise.all([
+      supportResponse.json(),
+      moderationResponse.json(),
+      auditResponse.json(),
+    ]);
+    if (supportResponse.ok) setSupportRequests(supportBody.requests ?? []);
+    if (moderationResponse.ok) setReports(moderationBody.reports ?? []);
+    if (auditResponse.ok) setAuditLogs(auditBody.logs ?? []);
+    const failed = [supportResponse, moderationResponse, auditResponse].find((response) => !response.ok);
+    if (failed) setError("管理運用データの一部を取得できませんでした");
+  }
+
+  async function updateSupport(requestId: string, supportStatus: SupportRequestRow["support_status"]) {
+    if (!session) return;
+    const response = await fetch("/api/admin/support", {
+      method: "PATCH",
+      headers: { ...authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ id: requestId, supportStatus }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setError(body.error ?? "サポート状態を更新できませんでした");
+      return;
+    }
+    setMessage("サポート状態を更新しました");
+    await fetchOperations();
+  }
+
+  async function moderateReport(reportId: string, action: string) {
+    if (!session) return;
+    const response = await fetch("/api/admin/moderation", {
+      method: "PATCH",
+      headers: { ...authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ reportId, action }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setError(body.error ?? "モデレーションに失敗しました");
+      return;
+    }
+    setMessage("通報状態を更新しました");
+    await fetchOperations();
   }
 
   async function searchUsers(value: string) {
@@ -228,6 +319,7 @@ export default function AdminPage() {
   useEffect(() => {
     if (session) {
       fetchCodes();
+      fetchOperations();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
@@ -382,6 +474,90 @@ export default function AdminPage() {
                   <td colSpan={8} className="empty">優待コードはまだありません。</td>
                 </tr>
               )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="grid operationsGrid">
+        <section className="panel">
+          <div className="listHeader">
+            <div>
+              <h2>サポートキュー</h2>
+              <p className="muted">問い合わせ受付と配送状態を確認し、対応状態を記録します。</p>
+            </div>
+            <button className="secondary" onClick={fetchOperations}>再読み込み</button>
+          </div>
+          <div className="tableWrap">
+            <table>
+              <thead><tr><th>受付</th><th>アプリ</th><th>配送</th><th>対応状態</th><th>作成</th></tr></thead>
+              <tbody>
+                {supportRequests.map((row) => (
+                  <tr key={row.id}>
+                    <td><strong>{row.request_id}</strong><br /><small>{row.platform} / {row.build_type}</small></td>
+                    <td>{row.app_version}<br /><small>{row.is_signed_in ? "ログイン済み" : "未ログイン"}</small></td>
+                    <td>{deliveryEventText(row.delivery_event_type ?? row.delivery_status)}<br /><small>{row.delivery_error ?? "-"}</small></td>
+                    <td>
+                      <select value={row.support_status} onChange={(event) => updateSupport(row.id, event.target.value as SupportRequestRow["support_status"])}>
+                        <option value="open">未対応</option>
+                        <option value="in_progress">対応中</option>
+                        <option value="resolved">解決</option>
+                        <option value="closed">終了</option>
+                      </select>
+                    </td>
+                    <td>{formatDate(row.created_at)}</td>
+                  </tr>
+                ))}
+                {supportRequests.length === 0 && <tr><td colSpan={5} className="empty">問い合わせはありません。</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="panel">
+          <div className="listHeader">
+            <div>
+              <h2>通報・モデレーション</h2>
+              <p className="muted">共有コンテンツの通報を確認し、対応履歴を残します。</p>
+            </div>
+            <button className="secondary" onClick={fetchOperations}>再読み込み</button>
+          </div>
+          <div className="operationList">
+            {reports.map((report) => (
+              <article className="operationItem" key={report.id}>
+                <div><strong>{report.category}</strong><span className="muted"> / {formatDate(report.created_at)}</span></div>
+                <p>{report.details || "詳細なし"}</p>
+                <div className="operationActions">
+                  <span className="chip">{report.status}</span>
+                  <button className="small secondary" onClick={() => moderateReport(report.id, "review")}>確認中</button>
+                  <button className="small danger" onClick={() => moderateReport(report.id, "reject")}>却下</button>
+                  <button className="small" onClick={() => moderateReport(report.id, "close")}>終了</button>
+                </div>
+              </article>
+            ))}
+            {reports.length === 0 && <p className="empty">未処理の通報はありません。</p>}
+          </div>
+        </section>
+      </section>
+
+      <section className="panel">
+        <div className="listHeader">
+          <div>
+            <h2>管理監査ログ</h2>
+            <p className="muted">優待コード、サポート、モデレーションの操作履歴です。</p>
+          </div>
+          <button className="secondary" onClick={fetchOperations}>再読み込み</button>
+        </div>
+        <div className="tableWrap">
+          <table>
+            <thead><tr><th>操作</th><th>管理者ID</th><th>対象ユーザーID</th><th>理由</th><th>日時</th></tr></thead>
+            <tbody>
+              {auditLogs.map((log) => (
+                <tr key={log.id}>
+                  <td>{log.action}</td><td><code>{log.admin_user_id}</code></td><td><code>{log.target_user_id ?? "-"}</code></td><td>{log.reason ?? "-"}</td><td>{formatDate(log.created_at)}</td>
+                </tr>
+              ))}
+              {auditLogs.length === 0 && <tr><td colSpan={5} className="empty">監査ログはありません。</td></tr>}
             </tbody>
           </table>
         </div>

@@ -4,6 +4,7 @@ import SwiftUI
 struct URLSaveriOSApp: App {
     @StateObject private var model = URLSaverAppModel(services: .shared)
     @AppStorage("appThemeMode") private var themeModeRaw = AppThemeMode.system.rawValue
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         AppBackgroundScheduler.register(services: .shared)
@@ -22,6 +23,12 @@ struct URLSaveriOSApp: App {
                     .onOpenURL { url in
                         Task {
                             await model.handleIncomingURL(url)
+                        }
+                    }
+                    .onChange(of: scenePhase) { _, newPhase in
+                        guard newPhase == .active else { return }
+                        Task {
+                            await model.refreshAfterReturningToForeground()
                         }
                     }
             }

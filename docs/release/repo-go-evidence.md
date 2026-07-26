@@ -34,44 +34,48 @@ also not current evidence.
 
 ## Historical status: REPO_GO (superseded)
 
-The following rows record historical repo-local evidence refreshed on
-2026-07-23. They are retained for traceability and are not current launch
-approval. Their version, device, database, and external-state claims must not be
-used as evidence for the 2026-07-24 remediation candidate.
+The following rows are retained as historical evidence from the integrated
+main-side release work. They are not current launch approval and must not
+override the current `NO_GO_INTERNAL / NOT_VERIFIED` status above.
+
+## Historical main-side evidence
 
 ## Verified Areas
 
 | Area | Result | Evidence |
 |---|---|---|
-| Android | PASS_WITH_EXTERNAL_SIGNING_WAIT | `testDebugUnitTest`, `lintDebug`, and `bundleRelease` passed; canonical `jp.miyamibu.urlalbum`, `versionCode=17`, `versionName=1.0.15` produced `app/build/outputs/bundle/release/app-release.aab`, but the fresh AAB is unsigned and still needs the external upload-key signing step. The configured HTTPS media resolver makes release `ALLOW_LOCAL_MEDIA_DOWNLOADS=true`; AI transparency and ChatGPT sync remain false. |
-| iOS | PASS_WITH_UPLOAD_AUTH_GATE | `xcodebuild ... test` previously passed: 121 tests, 3 live Supabase tests skipped, 0 failures. The new local/shared ChatGPT boundary regression suite also passes: `SharedTagStoreTests` 4/4. The current source was rebuilt into a signed build15 archive and installed on the physical iPhone. App Store export succeeded with Apple Distribution signing, `get-task-allow=false`, and `manageAppVersionAndBuildNumber=false`; the final IPA is `/tmp/URLSaveriOS-export-20260715-final/りんばむ.ipa`. `altool` upload remains outside this task because App Store Connect credentials were not supplied. |
-| Supabase migration/replay | REMOTE_APPLIED_WITH_VALIDATION_PASS | Local and linked databases include all 39 migrations through `20260715120000_fix_promo_delivery_lint_warning.sql`; local `supabase db lint --local --fail-on warning` and the compatibility pgTAP test both pass (5/5). The linked project accepted the new migration, `supabase db lint --linked --fail-on warning` reports no schema errors, and the same five compatibility assertions are all `ok: true` through `supabase db query --linked` using the native IPv6 resolver. The stock `supabase test db --linked` wrapper still fails after its initial IPv6 connection because its containerized psql re-resolves the hostname and receives no usable address; this is a CLI/DNS transport limitation, not a failing database assertion. |
-| Physical iPhone UI | PASS_WITH_CURRENT_APPIUM_E2E | Appium/XCUITest + RemoteXPC verified current build15 (`1.0.14`) of bundle `com.mibu.codebridge.ios` on physical UDID `00008101-00066D96340A001E`. The session opened an existing card's detail, opened and closed the 7-page media sheet, returned home, opened the manual URL form, saved a URL, and observed the normalized `example.com` card on home. Evidence: `artifacts/ui-review/2026-07-15/iphone-appium-e2e/`; prior navigation evidence remains under `artifacts/ui-review/2026-07-13/ios-appium/`. |
-| Physical Android latest candidate | BLOCKED | The canonical Pixel 9a was last observed on Play-managed `versionCode=16`; the v17 candidate is not Play-signature compatible for a data-preserving direct install. ADB is currently not connected, and Play Internal update plus post-update UI/data proof remain pending until the upload-key reset activates at `2026-07-17 07:29:38 UTC`. |
+| Android | BUILD_TEST_PASS / UNSIGNED_AAB / DEVICE_CHATGPT_COMPOSER_VERIFIED | Canonical `jp.miyamibu.urlalbum`, `versionCode=18`, `versionName=1.0.15`. Unit tests, lint, Debug build, Release APK/AAB build pass. `jarsigner -verify -strict` reports the current `app-release.aab` is unsigned, so it is not upload proof. Pixel 9a direct-share proof is recorded under `artifacts/device-verification/2026-07-18-android-ch13/`. |
+| iOS | CURRENT_SOURCE_CHATGPT_COMPOSER_PASS / DISTRIBUTION_BLOCKED | Current source `com.mibu.codebridge.ios`, `1.0.15` build `17`, was operated on iPhone 12 UDID `00008101-00066D96340A001E` with Appium/WDA through tag selection, 3-item preview, confirmation, ZIP creation, iOS share-sheet `ChatGPT` selection, and visible ZIP attachment in ChatGPT bundle `com.openai.chat`. The question field was empty and no send action was performed. No Apple Distribution identity is installed. Evidence: `artifacts/device-verification/2026-07-19-ios-ch13/`. |
+| Supabase migration/replay | REMOTE_APPLIED_WITH_VALIDATION_PASS | Local and linked databases include 42 migrations through `20260716140000_restore_account_reassignment.sql`; the additive fixes `20260716130000_fix_promo_invite_updated_at.sql` and `20260716140000_restore_account_reassignment.sql` are applied remotely. Local and linked `supabase db lint --fail-on warning` report no schema errors, and a clean local `supabase test db --local supabase/tests` run passes all 4 files / 8 tests. Linked pgTAP remains `NOT VERIFIED` because the CLI cannot resolve `db.xocumgxbylmpoobfqows.supabase.co`; the fixture-writing suite was not forced against production. |
+| Physical iPhone UI | VERIFIED_TO_CHATGPT_COMPOSER_FOR_BUILD16 | Canonical build16 was overwrite-installed on UDID `00008101-00066D96340A001E` with app data retained. Appium/WDA verified tag selection, preview, confirmation, ChatGPT-specific ZIP `rinbam-chatgpt-…zip`, iOS SharingUIService ChatGPT selection, normal ChatGPT composer attachment, empty question field, and unsent state. Final ChatGPT send was intentionally not performed. |
+| Physical Android latest candidate | VERIFIED_FOR_DEBUG_VERSIONCODE18 / PRIOR_DATA_BACKUP_INVALID | Canonical Pixel 9a `55211JEBF16639` had an incompatible Play-signed install. The first backup attempt was invalid (`run-as: package ... not debuggable`); no recoverable backup exists. After explicit approval, the Play install was removed, Debug `versionCode=18` was installed/launched, and the ChatGPT composer handoff was verified. The install script now validates the tar archive before proceeding. |
 | Release flag contract | PASS | Android release derives local media saving from a configured HTTPS resolver, keeps AI transparency off, keeps ChatGPT personal-link operation off, and keeps shared-tag cloud mode explicit. iOS shared-tag and AI flags remain separately controlled by xcconfig/Info.plist. |
+| Media resolver health | PASS_WITH_EXTERNAL_BACKEND | `https://rinbam-media-resolver.onrender.com/health` returned HTTP 200 on 2026-07-16; the current release BuildConfig contains the same HTTPS host and `ALLOW_LOCAL_MEDIA_DOWNLOADS=true`. Resolver local contract tests passed 24/24. |
 | MCP contract | PASS | `python3 scripts/verify_mcp_contract.py` passed. |
-| Web/admin | PASS | `cd web/admin && npm run typecheck` passed. |
+| Web/admin | PASS | `cd web/admin && npm run typecheck && npm run lint && npm run build` passed; protected support/moderation/audit endpoints return 401 without bearer auth. |
+| Admin operations | PASS_WITH_LIVE_ADMIN_AUTH | `admin_audit_logs` wiring, support queue/status/assignment, and moderation review APIs/UI are implemented. Linked migration `20260716100000_admin_ops_workflows.sql` applied; linked lint passed. Live admin actions still require an authorized owner/moderator account. |
 | Mobile UI contract | PASS | `python3 scripts/verify_mobile_ui_contract.py` passed. |
-| AI-safe Export | PASS | Android/iOS export tests cover `schema.json`, `README_FOR_AI.md`, `redaction_report.json`, `publicSafeId`, `aiEligible`, excerpts, and saved snapshot notice. |
+| AI-safe Export baseline | PASS_CURRENT_WORKING_TREE / DEVICE_PARTIAL | Android/iOS tests cover `schema.json`, `README_FOR_AI.md`, `redaction_report.json`, `publicSafeId`, `aiEligible`, excerpts, saved snapshot notice, the manual ChatGPT handoff, all-field known-pattern redaction, unknown-secret warning/confirmation, and preview/archive parity. Device boundary is recorded above. |
 | AI Preview / Receipt / Draft / Diff | PASS | Android Room and iOS SQLite persist local-only receipts/drafts/diff proposals; feature flag default off; mock provider deterministic; apply requires explicit confirmation. |
 | Link death insurance | PASS | Export/MCP include saved-time metadata, `metadataSource`, excerpt/summary, and `savedSnapshotNotice`; raw `fetchedBody` is not default output. |
-| Release hygiene | PASS | `bash scripts/check_release_hygiene.sh` passed. |
+| Release hygiene | PASS_CURRENT_RECHECK | `bash scripts/check_release_hygiene.sh` passed for the current code/docs; `git diff --check` also passed. |
 | Clean review archive | PASS | `bash scripts/create_clean_review_archive.sh` creates the archive under the OS temp directory, not repo root. Forbidden-file grep returned OK. |
 | Secret scan | PASS_WITH_EXPECTED_TEXT_HITS | Search hits were docs, example names, redaction patterns, Supabase role names in migrations, and local config references. No production secret values were found. |
-| 2026-07-16 local release recheck | PASS_WITH_EXTERNAL_GATES | Android unit/lint/bundle, Web typecheck/lint/build, mobile UI contract, MCP contract, release hygiene, public Web checks, and the iOS shared-tag boundary regression test passed. `check_launch_readiness.sh` intentionally requires the reviewed `main` branch and current evidence date; branch integration remains a Git operation, not a store submission. Android v17 physical update and iOS TestFlight/full live E2E remain external/manual gates. |
-| 2026-07-23 current release candidate recheck | PASS_WITH_EXTERNAL_GATES | Android `testDebugUnitTest lintDebug bundleRelease` passed for `1.0.15 (17)`; fresh AAB signing remains blocked on the upload-key password. iOS Release generic build and iPhone 17 Simulator tests exited 0 for `1.0.15 (17)`; distribution archive creation stopped because Apple Distribution identity/provisioning is unavailable. Play Console and App Store Connect are logged in, but upload/submission of this candidate is not yet proven. |
+| 2026-07-16 local release recheck | HISTORICAL_PASS_WITH_EXTERNAL_GATES | Android unit/lint/bundle, Web typecheck/lint/build, mobile UI contract, MCP contract, release hygiene, public Web checks, and the iOS shared-tag boundary regression test passed for the earlier baseline. It does not cover the 2026-07-17 manual handoff changes. |
+| 2026-07-19 manual handoff recheck | IMPLEMENTATION_TEST_GO / ANDROID_COMPOSER_VERIFIED / IOS_COMPOSER_VERIFIED | iOS ExportArchiveBuilderTests (26) pass; current-source Apple Development device build/install pass. Pixel 9a reaches the normal ChatGPT composer with the ZIP attached, empty question field, and no send. iPhone 12 reaches the same state via Appium/WDA after selecting `ChatGPT` from the iOS share sheet. The iOS temporary ZIP is retained for 60 seconds after share-sheet dismissal to avoid an asynchronous recipient-import race. |
+| 2026-07-23 main integration recheck | PASS_WITH_EXTERNAL_GATES | The hamburger-menu source is merged into `main`. Mobile UI contract, release hygiene, Android `testDebugUnitTest lintDebug bundleRelease` for canonical `versionCode=18` / `versionName=1.0.15`, iOS generic Release build, and iPhone 17 Simulator tests exited 0. Android AAB remains unsigned; iOS build17 distribution archive/upload and both store submissions remain unverified. |
 
-## Manual Steps Remaining After REPO_GO
+## Manual Steps Remaining After Internal Revalidation
 
 | Manual step | Why it remains manual |
 |---|---|
-| Production deploy | External publication action. |
+| Production deploy | Privacy static site deployment is complete and verified; any future production service deployment remains external. |
 | Production MCP/OAuth registration | Requires owner-controlled provider console and secret entry. |
 | OpenAI Apps Developer Mode connection and submission | Requires owner ChatGPT/OpenAI account and deployed HTTPS MCP endpoint. |
-| App Store / Play Console upload or submission | Android re-upload is time-gated until the Play reset activation time; iOS upload needs App Store Connect JWT or app-specific password. |
+| App Store / Play Console upload or submission | App Store Connect iOS version `1.0.15` is present in `配信準備完了` with an existing build, but the integrated source build still needs distribution signing/upload. Android upload still needs the upload-key signing step; iOS upload needs a distribution certificate/profile and upload authentication. |
 | Production secrets | Must be entered outside repo and chat. |
 | Store/live verification | External state changes over time and must be verified at release time. |
-| Signed iOS archive/upload | Distribution-signed IPA is ready; only App Store Connect upload authentication remains. |
+| Signed iOS archive/upload | A build16 development archive exists, but distribution archive/export and App Store Connect upload authentication remain to be completed for this release. |
 
 ## REPO_GO vs LAUNCH_READY_REPO
 

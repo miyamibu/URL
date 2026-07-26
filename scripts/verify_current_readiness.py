@@ -148,17 +148,17 @@ def main() -> None:
     xcodeproj = (ROOT / "ios/URLSaveriOS.xcodeproj/project.pbxproj").read_text(encoding="utf-8")
     require(artifact, r'^  applicationId:\s*"jp\.miyamibu\.urlalbum"$', "Android applicationId")
     require(artifact, r'^  versionName:\s*"1\.0\.15"$', "Android versionName")
-    require(artifact, r'^  build:\s*17$', "Android versionCode/build")
+    require(artifact, r'^  build:\s*18$', "Android versionCode/build")
     if 'applicationId = "jp.miyamibu.urlalbum"' not in gradle:
         fail("Android applicationId drifted from the canonical identity")
-    if 'versionName = "1.0.15"' not in gradle or "versionCode = 17" not in gradle:
+    if 'versionName = "1.0.15"' not in gradle or "versionCode = 18" not in gradle:
         fail("Android version drifted from the readiness artifact")
     require(artifact, r'^  bundleId:\s*"com\.mibu\.codebridge\.ios"$', "iOS bundleId")
-    require(artifact, r'^  version:\s*"1\.0\.15"$', "iOS version")
-    require(artifact, r'^  build:\s*17$', "iOS build")
+    require(artifact, r'^  version:\s*"1\.0\.16"$', "iOS version")
+    require(artifact, r'^  build:\s*18$', "iOS build")
     if "PRODUCT_BUNDLE_IDENTIFIER = com.mibu.codebridge.ios;" not in xcodeproj:
         fail("iOS bundle ID is not the canonical identity")
-    if "<string>1.0.15</string>" not in plist or "<string>17</string>" not in plist:
+    if "<string>1.0.16</string>" not in plist or "<string>18</string>" not in plist:
         fail("iOS version/build drifted from the readiness artifact")
 
     require(artifact, r"personalDataEnabled:\s*false", "MCP personal-data gate")

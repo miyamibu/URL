@@ -2,13 +2,13 @@ generatedAt: "2026-07-25"
 repository: "りんばむ"
 commit: "e7c4163abb338fb9219fc4f91df4ea1d202f7f7b"
 worktree: "committed_intentional_remediation_diff"
-worktreeDiffSha256: "6a8aca90c5e344fdd049e801ebf053a3280b75df66c307e8c203069ee7c22aff"
+worktreeDiffSha256: "a06a274a2e0c835aae1f5f824f810ee7029496b81dd53a32a53fb4dfd9b63145"
 status: "NO_GO_INTERNAL"
 verificationStatus: "NOT_VERIFIED_FOR_RELEASE"
 android:
   applicationId: "jp.miyamibu.urlalbum"
   versionName: "1.0.15"
-  build: 17
+  build: 18
   tests:
     unit: "passed_317_failed_0"
     lint: "passed"
@@ -16,8 +16,8 @@ android:
     releaseBundle: "passed_unsigned_local_artifact"
 ios:
   bundleId: "com.mibu.codebridge.ios"
-  version: "1.0.15"
-  build: 17
+  version: "1.0.16"
+  build: 18
   tests:
     simulator: "executed_132_passed_129_skipped_3_failed_0"
     physicalUI: "not_verified"

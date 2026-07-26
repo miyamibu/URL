@@ -243,6 +243,21 @@ interface TagDao {
 
     @Query(
         """
+        SELECT DISTINCT e.*
+        FROM url_entries AS e
+        INNER JOIN tag_url_cross_refs AS r ON r.entryId = e.id
+        INNER JOIN tags AS t ON t.id = r.tagId
+        WHERE r.tagId IN (:tagIds)
+          AND r.deletedAt IS NULL
+          AND t.deletedAt IS NULL
+          AND t.scope = 'LOCAL_ONLY'
+        ORDER BY e.createdAt DESC, e.normalizedUrl ASC
+        """
+    )
+    suspend fun getEntriesForAnyLocalTags(tagIds: List<Long>): List<UrlEntryEntity>
+
+    @Query(
+        """
         SELECT
             t.id AS id,
             t.name AS name,
@@ -321,6 +336,32 @@ interface TagDao {
         """
     )
     suspend fun getLocalOnlyTagsForEntry(entryId: Long): List<SharedTagRecord>
+
+    @Query(
+        """
+        SELECT r.*
+        FROM tag_url_cross_refs AS r
+        INNER JOIN tags AS t ON t.id = r.tagId
+        WHERE r.entryId IN (:entryIds)
+          AND r.deletedAt IS NULL
+          AND t.deletedAt IS NULL
+          AND t.scope = 'LOCAL_ONLY'
+        ORDER BY r.entryId ASC, r.tagId ASC
+        """
+    )
+    suspend fun getActiveLocalCrossRefsForEntries(entryIds: List<Long>): List<TagUrlCrossRef>
+
+    @Query(
+        """
+        SELECT DISTINCT entryId
+        FROM tag_url_cross_refs
+        WHERE entryId IN (:entryIds)
+          AND scope = 'SYNCED'
+          AND deletedAt IS NULL
+        ORDER BY entryId ASC
+        """
+    )
+    suspend fun getEntryIdsWithActiveSyncedRefs(entryIds: List<Long>): List<Long>
 
     @Query(
         """

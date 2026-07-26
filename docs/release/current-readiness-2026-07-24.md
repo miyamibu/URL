@@ -10,8 +10,8 @@ production, physical-device, Supabase-applied, or OpenAI approval.
 
 ## Local scope
 
-- Android canonical identity: `jp.miyamibu.urlalbum`, `1.0.15 (17)`.
-- iOS canonical identity: `com.mibu.codebridge.ios`, `1.0.15 (17)`.
+- Android canonical identity: `jp.miyamibu.urlalbum`, `1.0.15 (18)`.
+- iOS canonical identity: `com.mibu.codebridge.ios`, `1.0.16 (18)`.
 - Personal-link snapshot sync is fail-closed and disabled on Android/iOS.
 - MCP personal data requires both explicit flags and remains disabled.
 - Android release local media downloads are disabled; the iOS backend resolver is also compile-time disabled in Release builds.
