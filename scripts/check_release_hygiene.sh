@@ -98,10 +98,18 @@ grep -q 'tools:node="remove"' app/src/release/AndroidManifest.xml \
   && pass "release manifest removes debug/ad-only declarations" \
   || fail "release manifest removal rules are missing"
 
-grep -q 'CFBundleShortVersionString' ios/URLSaveriOS/Info.plist \
-  && grep -q '<string>1.0.15</string>' ios/URLSaveriOS/Info.plist \
-  && pass "iOS version baseline is present" \
-  || fail "iOS version baseline check failed"
+ios_app_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' ios/URLSaveriOS/Info.plist 2>/dev/null || true)"
+ios_share_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' ios/URLSaverShareExtension/Info.plist 2>/dev/null || true)"
+ios_app_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' ios/URLSaveriOS/Info.plist 2>/dev/null || true)"
+ios_share_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' ios/URLSaverShareExtension/Info.plist 2>/dev/null || true)"
+if [[ -n "$ios_app_version" \
+  && "$ios_app_version" == "$ios_share_version" \
+  && -n "$ios_app_build" \
+  && "$ios_app_build" == "$ios_share_build" ]]; then
+  pass "iOS app and share extension version/build match: ${ios_app_version} (${ios_app_build})"
+else
+  fail "iOS app and share extension version/build do not match"
+fi
 
 [[ -f docs/release/release-ops-readiness-2026-07-09.md ]] \
   && pass "current release readiness tracker exists" \

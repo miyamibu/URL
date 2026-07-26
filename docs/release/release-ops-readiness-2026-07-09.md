@@ -1,19 +1,19 @@
 # Release / Ops Readiness Baseline 2026-07-09
 
 ## Goal
-Track the current `1.0.15` repo readiness without mixing it with the historical `1.0.11` store submission log.
+Track the current Android `1.0.15` / iOS `1.0.16` repo readiness without mixing it with the historical `1.0.11` store submission log.
 
 ## Current Status
-`NO_GO_INTERNAL` for the release as a whole. The 2026-07-18 manual ChatGPT handoff implementation, all-field known-pattern redaction, unknown-secret confirmation, Privacy/Store/App Review local text, automated tests, and iPhone-to-ChatGPT-composer E2E are GO on the current uncommitted working tree. Android physical E2E is not verified, Android AAB is unsigned, and iOS distribution signing/upload remains blocked. The earlier `REPO_GO` applies only to the 2026-07-10/16 baseline.
+`NO_GO_INTERNAL` for the release as a whole. The 2026-07-18 manual ChatGPT handoff implementation, all-field known-pattern redaction, unknown-secret confirmation, Privacy/Store/App Review local text, and automated tests remain covered by the current source. The iPhone-to-ChatGPT-composer E2E is historical evidence, not current-source proof. Android physical E2E is not verified, Android AAB is unsigned, and iOS distribution signing/upload remains blocked. The earlier `REPO_GO` applies only to the 2026-07-10/16 baseline.
 
 This is a repo-local readiness classification only. Production deploy, production MCP/OAuth registration, OpenAI submission, App Store / Play Console submission, production secret input, and store/live recheck are Manual steps and are not repo-internal blockers.
 
-The older table below remains a broad ops baseline and historical risk ledger. Do not use its store/live/public-url rows as current proof for Android `1.0.15 (18)` / iOS `1.0.15 (16)`. The 2026-07-17 feature proof applies to the current uncommitted working tree and is not `LAUNCH_GO` proof.
+The older table below remains a broad ops baseline and historical risk ledger. Do not use its store/live/public-url rows as current proof for Android `1.0.15 (18)` / iOS `1.0.16 (18)`. The 2026-07-17 feature proof applies to the earlier working tree and is not `LAUNCH_GO` proof.
 
 ## Source Snapshot
 - Android: `jp.miyamibu.urlalbum`, `versionName = "1.0.15"`, `versionCode = 18`.
-- iOS: `com.mibu.codebridge.ios`, `CFBundleShortVersionString = 1.0.15`, `CFBundleVersion = 16`.
-- Current release evidence was rechecked on 2026-07-16 against Android versionCode 18 / iOS build 16. The manual-handoff implementation/build/test/device-partial evidence was rechecked separately on 2026-07-17. Store submission remains an external console step.
+- iOS: `com.mibu.codebridge.ios`, `CFBundleShortVersionString = 1.0.16`, `CFBundleVersion = 18`.
+- Current release evidence was rechecked on 2026-07-26 against Android versionCode 18 / iOS build 18. The local implementation/build/test checks passed; current-source physical-device operation and store submission remain separate external gates.
 - Readiness must be run from the reviewed `main` branch after the release candidate is integrated; a feature branch is not a launch baseline.
 - iOS default config: tracked `ios/Config/URLSaverSecrets.local-only.xcconfig`; cloud-sharing builds must pass ignored `ios/Config/URLSaverSecrets.xcconfig` explicitly.
 
