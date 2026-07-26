@@ -77,7 +77,7 @@ URL, bookmark, share, later, archive, save, link, productivity
 | Full description / description | Use `Full Description` above. | Use `Full Description` above, shortened if App Store field limits require it. | DONE |
 | Category | Productivity | Productivity | DONE |
 | Support email | `miyamibu@privaterelay.appleid.com` | `miyamibu@privaterelay.appleid.com` | DONE |
-| Privacy policy URL | `https://miyamibu.xyz/privacy/` | `https://miyamibu.xyz/privacy/` | LOCAL_SOURCE_UPDATED_DEPLOY_NOT_RUN: 2026-06-29 live proof covers older billing wording only; deploy approval and current live handoff-disclosure recheck remain. |
+| Privacy policy URL | `https://miyamibu.xyz/privacy/` | `https://miyamibu.xyz/privacy/` | PUBLIC_VERIFIED: Vercel deployment `dpl_GeSsSnoG2tUyNfkuAtgaHqtQrmBd`; `./scripts/verify_public_web_release.sh` passed on 2026-07-26. |
 | Marketing URL | optional | optional | NOT_APPLICABLE |
 | Review contact | Use developer account owner contact in console | Use App Store Connect review contact | NEEDS_USER_ACTION |
 | Review notes | Use `Review Notes Draft` above. Provide a test account if store review requires cloud-sharing sign-in. | Use `Review Notes Draft` above. Provide a test account if store review requires cloud-sharing sign-in. | DRAFT_UPDATED / NEEDS_CURRENT_BINARY_RECHECK |

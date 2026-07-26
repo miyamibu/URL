@@ -11,7 +11,7 @@ Current proof boundary:
 - Android/iOS manual-handoff implementation and automated tests prove local-tag selection, eligible-only preview/ZIP, preview/archive parity, zero-result rejection, filename/manifest contracts, known-pattern redaction, unknown-secret warning/confirmation, and no question/API/OAuth path.
 - The existing physical iPhone and Android handoff records below are historical evidence for earlier source snapshots; Appium/WDA and Android physical operation were not re-run for the current `main` snapshot in this pass.
 - Android Release build succeeds but the generated AAB is unsigned. The current-source iOS physical-device build/operation was not reverified; a prior Apple Development-signed device build exists, while Distribution signing/upload remains blocked.
-- Privacy Policy source was deployed to Vercel production deployment `dpl_5YKkCQxcAAmjQ4NxqFHaojuDw2Re`; `scripts/verify_public_web_release.sh` passed against `https://miyamibu.xyz` after deployment.
+- `web/invite-link` was deployed to Vercel production deployment `dpl_GeSsSnoG2tUyNfkuAtgaHqtQrmBd` on 2026-07-26 and aliased to `https://miyamibu.xyz`; `scripts/verify_public_web_release.sh` passed after deployment.
 
 ## Verified Areas
 
@@ -43,7 +43,7 @@ Current proof boundary:
 
 | Manual step | Why it remains manual |
 |---|---|
-| Production deploy | The linked Vercel static-site project can be deployed with the authenticated CLI; the current source was not yet published from this recheck. Production service deployment remains external. |
+| Production deploy | Vercel static-site deployment `dpl_GeSsSnoG2tUyNfkuAtgaHqtQrmBd` is READY and aliased to `https://miyamibu.xyz`; post-deploy public Web verification passed. Production service deployment remains external. |
 | Production MCP/OAuth registration | Requires owner-controlled provider console and secret entry. |
 | OpenAI Apps Developer Mode connection and submission | Requires owner ChatGPT/OpenAI account and deployed HTTPS MCP endpoint. |
 | App Store / Play Console upload or submission | The historical App Store Connect iOS version `1.0.15` row is not current proof. Current iOS source `1.0.16 (18)` still needs distribution signing/upload; Android upload still needs the upload-key signing step. |
