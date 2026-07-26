@@ -14,6 +14,60 @@ Define production secret names and flag handling without committing real values.
 | OAuth client secret, if used | OAuth provider / hosting secret manager | MCP/OpenAI connector auth. | Never commit real value. |
 | Provider API key, if future AI provider is enabled | Provider secret manager | AI provider calls. | Not needed for current mock/default-off release. |
 
+`SUPABASE_URL` is an endpoint identifier rather than a credential. It remains
+in the required runtime-values table for operational completeness and is
+classified as non-secret below.
+
+## Supabase Edge Functions: Non-secret Verification Settings
+
+The following values are runtime configuration used to verify that the deployed
+purchase-verification function is pointed at the intended app and store
+environment. They are not credentials and must be checked without recording
+secret values or printing the full runtime environment.
+
+| Setting name | Classification | Required value or validation rule | Function contract |
+|---|---|---|---|
+| `SUPABASE_URL` | Non-secret endpoint setting | Production Supabase project URL only. | `verify-store-purchase` and `contact-support-resend-webhook` read it as the REST/Auth endpoint. |
+| `APP_STORE_ENVIRONMENT` | Non-secret verification setting | Exactly `Sandbox` or `Production`. | `verify-store-purchase`; the value selects the Apple verification environment. |
+| `APP_STORE_APPLE_ID` | Non-secret verification setting | Required only when `APP_STORE_ENVIRONMENT=Production`; must be a positive integer App Store ID. It is not required for `Sandbox`. | `verify-store-purchase`; production-only Apple verifier input. |
+| `APP_STORE_BUNDLE_ID` | Non-secret verification setting | Exactly `com.mibu.codebridge.ios`. | `verify-store-purchase`; any other bundle ID fails closed. |
+| `GOOGLE_PLAY_PACKAGE_NAME` | Non-secret verification setting | Exactly `jp.miyamibu.urlalbum`. | `verify-store-purchase`; used as the Google Play application package name. |
+| `CONTACT_TO_EMAIL` | Non-secret operational setting | Approved support recipient address. | `contact-support`; routing value for Resend delivery. |
+| `CONTACT_FROM_EMAIL` | Non-secret operational setting | Approved sender address for the configured Resend domain. | `contact-support`; sender value for Resend delivery. |
+
+Validation checklist for these settings:
+
+- Confirm the names and exact non-secret values in the provider configuration,
+  without copying secrets into this repository, logs, screenshots, or chat.
+- For Apple Sandbox, keep `APP_STORE_ENVIRONMENT=Sandbox` and do not require an
+  `APP_STORE_APPLE_ID`; for Production, set `APP_STORE_ENVIRONMENT=Production`
+  and verify that `APP_STORE_APPLE_ID` is a positive integer.
+- Confirm `APP_STORE_BUNDLE_ID` and `GOOGLE_PLAY_PACKAGE_NAME` exactly match
+  the canonical IDs above before enabling live purchase verification.
+- Treat a successful function deploy or a local `deno check` as configuration
+  and code checks only; they do not prove a real Apple Sandbox, App Store, or
+  Google Play purchase flow.
+
+## Supabase Edge Functions: Secret Settings
+
+The current Edge Functions read the following secret values. Store them only in
+the external Supabase/hosting secret store or the provider's protected
+environment configuration; never commit, display, or echo the values.
+
+| Secret name | Used by | Handling |
+|---|---|---|
+| `SUPABASE_SERVICE_ROLE_KEY` | `verify-store-purchase`, `contact-support-resend-webhook` | Secret store only; never put in Android/iOS builds, client responses, logs, repo files, or chat. |
+| `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` | `verify-store-purchase` | Secret store only; contains the Google service account private key and must not be pasted into docs or shell history. |
+| `SUPABASE_DB_URL` | `contact-support` | Secret store only; database URLs commonly contain credentials. |
+| `RESEND_API_KEY` | `contact-support` and web/admin delivery lookup | Secret store only; never expose to clients or logs. |
+| `RESEND_WEBHOOK_SECRET` | `contact-support-resend-webhook` and web/admin webhook route | Secret store only; use the matching Resend signing secret and rotate if exposed. |
+| `CONTACT_RATE_LIMIT_SALT` | `contact-support` (optional code path) | Treat as a secret salt and keep it in the external secret store; do not log or commit it. |
+
+`SUPABASE_SERVICE_ROLE_KEY` and `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` are
+particularly sensitive: their names may appear in deployment documentation, but
+their values must exist only in an external secret store. A name-only presence
+check is acceptable; a value dump, masked or otherwise, is not.
+
 ## Never Commit Real Values
 
 - Do not create `.env.production` in this repo.

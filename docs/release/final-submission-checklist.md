@@ -6,24 +6,40 @@
 ## Goal
 この文書の下部に残る `1.0.11` の表は、2026-06-27/28 の Google Play / App Store 提出時点の履歴ログとして扱う。現在の repo source は Android `1.0.15 (versionCode=18)` / iOS `1.0.16 (build=18)` であり、この履歴ログだけでは次回提出可否を判断しない。
 
-## Current Source Snapshot (2026-07-23 Store Candidate)
+## Current Source Snapshot (2026-07-26 current-main)
 - Android source: `versionName = "1.0.15"`, `versionCode = 18`, package `jp.miyamibu.urlalbum`.
 - iOS source: `CFBundleShortVersionString = 1.0.16`, `CFBundleVersion = 18`, bundle `com.mibu.codebridge.ios`.
 - Current release/ops readiness tracker: `docs/release/release-ops-readiness-2026-07-09.md`.
-- Current source gate remains `NO_GO_INTERNAL` for final submission. The 2026-07-18 manual ChatGPT handoff implementation, docs, tests, Release builds, pre-transfer confirmation, and disclosure source review are historical/local evidence; the physical-iPhone-to-ChatGPT-composer proof is not current-source proof. The hamburger-menu source change is integrated into `main`; Android physical E2E is not verified; Android AAB is unsigned; iOS distribution signing, store/public/OpenAI publication, and live recheck are not complete.
+- Current source gate remains `NO_GO_INTERNAL` for final submission. The 2026-07-18 manual ChatGPT handoff implementation, docs, tests, Release builds, pre-transfer confirmation, and disclosure source review are historical/local evidence; the physical-iPhone-to-ChatGPT-composer proof is not current-source proof. The hamburger-menu source change is integrated into `main`; Android physical E2E is not verified; Android AAB is unsigned; listed production deployment evidence is recorded below, while iOS distribution signing, store console state, sandbox purchase, OpenAI submission, production secrets, and full launch GO remain external/unverified.
 - AI-safe export, manual ChatGPT handoff, and MCP source contracts are tracked separately under `docs/ai/`. Manual handoff is local ZIP + OS share with no question/API/OAuth; those local docs do not mean production MCP deployment, production OAuth registration, OpenAI submission, store submission, production secret entry, or store/live recheck is complete.
 - The `1.0.11` store submission, public URL, screenshot, signing, and console rows below are not current proof for Android `1.0.15 (18)` / iOS `1.0.16 (18)`.
 - Rows below that say `DONE` are historical `1.0.11` evidence unless the row explicitly names the 2026-07-10 repo gate. Do not use them as `LAUNCH_GO` evidence for the current source snapshot without re-running the manual launch checklist.
 
+## Current-main / Production Deployment Evidence (2026-07-26)
+
+The following records are confirmed provider-state evidence captured while repository HEAD was `db4f7e79a765fd644156812e5a917d6649a99d17`; they do not prove that every provider artifact was built from that HEAD. The Render health response includes this HEAD SHA. Vercel (`web/admin` and `web/invite-link`), Railway, and Supabase provider status/deployment/function versions were confirmed, but source-revision correspondence was not independently verified from provider responses. These records do not constitute full launch GO.
+
+| Surface | Confirmed evidence |
+|---|---|
+| Repository | HEAD `db4f7e79a765fd644156812e5a917d6649a99d17`. |
+| Vercel `web/admin` | Project `rinbamu-admin`; deployment `dpl_7acr2EjhiMLphJU4SKuPWh8toSsP` is `READY`; alias `https://rinbamu-admin.vercel.app`. Source-revision correspondence to the repository HEAD was not independently verified from the provider response. |
+| Railway | Project/service `rinbam-youtube-resolver`; deployment `27192cdc-dd42-42ac-a44a-c937e115cc81` is `SUCCESS`; `https://rinbam-youtube-resolver-production.up.railway.app/health` returned HTTP 200. Source-revision correspondence to the repository HEAD was not independently verified from the provider response. |
+| Render | `https://rinbam-media-resolver.onrender.com/health` returned HTTP 200; reported version is `db4f7e79a765fd644156812e5a917d6649a99d17`. |
+| Supabase | Project `xocumgxbylmpoobfqows`; functions `contact-support` v16, `contact-support-resend-webhook` v2, and `verify-store-purchase` v14; migration list is local=remote through `20260716140000`; `supabase db lint --linked` PASS. Source-revision correspondence to the repository HEAD was not independently verified from the provider response. |
+| Vercel `web/invite-link` | Existing deployment `dpl_GeSsSnoG2tUyNfkuAtgaHqtQrmBd` remains prior provider-state evidence; source-revision correspondence to the repository HEAD was not independently verified from the provider response. |
+
 ## Manual Steps Not Done By Codex
 | Step | Reason |
 |---|---|
-| production deploy | External publication action. |
+| provider deployment/source revision correspondence | Provider deployment/function state is recorded above, but independent confirmation that Vercel, Railway, Supabase, and `web/invite-link` artifacts correspond to the repository HEAD is still required. |
 | production MCP/OAuth registration | Requires owner-controlled provider console and secrets. |
-| OpenAI submission | Requires deployed endpoint and owner submission. |
-| App Store / Play Console submission | Store-console action. |
+| OpenAI submission | External / unverified; requires owner submission. |
+| Store console state | External / unverified for the current source; App Store / Play Console action remains owner-controlled. |
+| Physical-device final verification | External / unverified for the current source. |
+| Sandbox purchase | External / unverified. |
 | production secret投入 | Secrets must stay outside repo/chat. |
 | store/live再確認 | External state can change and must be checked at release time. |
+| full launch GO | External / unverified; deployment evidence above does not constitute launch approval. |
 
 ## Official Requirements Checked
 - Google Play User Data policy: privacy policy URL is required for all apps, must be public/non-geofenced/non-PDF, and Data safety must match the privacy policy.
