@@ -19,3 +19,12 @@ port = 55424
 
 [analytics]
 port = 55427
+
+[functions.contact-support]
+verify_jwt = false
+
+[functions.contact-support-resend-webhook]
+verify_jwt = false
+
+[functions.contact-support-outbox]
+verify_jwt = false

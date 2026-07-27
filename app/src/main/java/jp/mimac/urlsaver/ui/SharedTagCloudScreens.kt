@@ -72,6 +72,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import java.util.UUID
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import jp.mimac.urlsaver.BuildConfig
@@ -93,7 +94,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private const val CONTACT_SUPPORT_SUCCESS_MESSAGE = "問い合わせを送信完了しました"
+private const val CONTACT_SUPPORT_SUCCESS_MESSAGE = "問い合わせを受け付けました"
 
 internal enum class ChatGptSyncPendingAction {
     ENABLE,
@@ -168,6 +169,8 @@ fun SharedTagCloudAuthScreen(
     var contactEmail by remember { mutableStateOf("") }
     var contactName by remember { mutableStateOf("") }
     var contactBody by remember { mutableStateOf("") }
+    var contactIdempotencyKey by remember { mutableStateOf(UUID.randomUUID().toString()) }
+    var contactAttemptFingerprint by remember { mutableStateOf<String?>(null) }
     var contactError by remember { mutableStateOf<String?>(null) }
     var isSendingContact by remember { mutableStateOf(false) }
     var promoCode by remember { mutableStateOf(initialPromoCode.orEmpty()) }
@@ -219,17 +222,37 @@ fun SharedTagCloudAuthScreen(
         contactEmail = cloudState.signedInEmail.orEmpty().ifBlank { email }
         contactName = profile.trimmedDisplayName
         contactBody = ""
+        contactIdempotencyKey = UUID.randomUUID().toString()
+        contactAttemptFingerprint = null
         contactError = null
         showContactPage = true
     }
 
+    fun contactInputChanged() {
+        if (contactAttemptFingerprint != null) {
+            contactIdempotencyKey = UUID.randomUUID().toString()
+            contactAttemptFingerprint = null
+        }
+        contactError = null
+    }
+
     fun sendContact() {
         if (isSendingContact) return
+        contactAttemptFingerprint = listOf(
+            contactEmail.trim(),
+            contactName.trim(),
+            contactBody.trim(),
+        ).joinToString("\u0000")
         scope.launch {
             isSendingContact = true
             contactError = null
             try {
-                when (val result = viewModel.sendContactSupport(contactEmail, contactName, contactBody)) {
+                when (val result = viewModel.sendContactSupport(
+                    contactEmail,
+                    contactName,
+                    contactBody,
+                    contactIdempotencyKey,
+                )) {
                     ContactSupportUiResult.Success -> {
                         contactBody = ""
                         showContactPage = false
@@ -334,15 +357,15 @@ fun SharedTagCloudAuthScreen(
                         error = contactError,
                         onEmailChange = {
                             contactEmail = it
-                            contactError = null
+                            contactInputChanged()
                         },
                         onNameChange = {
                             contactName = it
-                            contactError = null
+                            contactInputChanged()
                         },
                         onBodyChange = {
                             contactBody = it
-                            contactError = null
+                            contactInputChanged()
                         },
                         isSending = isSendingContact,
                         onSend = ::sendContact,

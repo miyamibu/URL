@@ -917,7 +917,12 @@ final class URLSaverAppModel: ObservableObject {
         profileStatusMessage = message
     }
 
-    func sendContactSupport(email: String, name: String, message: String) async -> ContactSupportSendResult {
+    func sendContactSupport(
+        email: String,
+        name: String,
+        message: String,
+        idempotencyKey: String = UUID().uuidString
+    ) async -> ContactSupportSendResult {
         let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -928,11 +933,12 @@ final class URLSaverAppModel: ObservableObject {
             email: trimmedEmail,
             name: trimmedName,
             message: trimmedMessage,
-            isSignedIn: sharedTagCloudState.isSignedIn
+            isSignedIn: sharedTagCloudState.isSignedIn,
+            idempotencyKey: idempotencyKey
         )
         switch result {
         case .success:
-            profileStatusMessage = "問い合わせを送信完了しました"
+            profileStatusMessage = "問い合わせを受け付けました"
             return .success
         case .failure(let message):
             return .failure(message)

@@ -40,6 +40,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.Base64
+import java.util.UUID
 
 class SharedTagAuthViewModel(
     private val tagRepository: TagRepository,
@@ -271,6 +272,7 @@ class SharedTagAuthViewModel(
         email: String,
         name: String,
         body: String,
+        idempotencyKey: String = UUID.randomUUID().toString(),
     ): ContactSupportUiResult {
         val trimmedEmail = email.trim()
         val trimmedName = name.trim()
@@ -289,6 +291,7 @@ class SharedTagAuthViewModel(
                 buildType = if (BuildConfig.DEBUG) "debug" else "release",
                 isSignedIn = state.isSignedIn,
                 authUserId = authSessionProvider?.session?.value?.authUserId,
+                idempotencyKey = idempotencyKey,
             ),
         )
         return when (result) {

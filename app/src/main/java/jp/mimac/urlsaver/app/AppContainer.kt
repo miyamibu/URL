@@ -233,7 +233,10 @@ class AppContainer(context: Context) {
         )
     }
     val contactSupportClient: ContactSupportClient by lazy {
-        ConfiguredContactSupportClient(BuildConfig.CONTACT_SUPPORT_ENDPOINT_URL)
+        ConfiguredContactSupportClient(
+            endpointUrl = BuildConfig.CONTACT_SUPPORT_ENDPOINT_URL,
+            authSessionProvider = sharedTagAuthSessionProvider,
+        )
     }
     private val workManager: WorkManager by lazy {
         WorkManager.getInstance(appContext)

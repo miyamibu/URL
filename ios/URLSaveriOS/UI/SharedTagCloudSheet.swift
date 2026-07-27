@@ -192,8 +192,13 @@ struct SharedTagCloudSheet: View {
             ContactSupportSheet(
                 initialEmail: model.sharedTagCloudState.signedInEmail ?? email,
                 initialName: model.profile.trimmedDisplayName,
-                onSend: { email, name, message in
-                    await model.sendContactSupport(email: email, name: name, message: message)
+                onSend: { email, name, message, idempotencyKey in
+                    await model.sendContactSupport(
+                        email: email,
+                        name: name,
+                        message: message,
+                        idempotencyKey: idempotencyKey
+                    )
                 }
             )
             .presentationDetents([.large])
@@ -1221,11 +1226,12 @@ private struct ContactSupportSheet: View {
 
     let initialEmail: String
     let initialName: String
-    let onSend: (String, String, String) async -> ContactSupportSendResult
+    let onSend: (String, String, String, String) async -> ContactSupportSendResult
 
     @State private var email: String
     @State private var name: String
     @State private var message = ""
+    @State private var idempotencyKey = UUID().uuidString
     @State private var didAttemptSubmit = false
     @State private var isSending = false
     @State private var sendError: String?
@@ -1233,7 +1239,7 @@ private struct ContactSupportSheet: View {
     init(
         initialEmail: String,
         initialName: String,
-        onSend: @escaping (String, String, String) async -> ContactSupportSendResult
+        onSend: @escaping (String, String, String, String) async -> ContactSupportSendResult
     ) {
         self.initialEmail = initialEmail
         self.initialName = initialName
@@ -1307,10 +1313,11 @@ private struct ContactSupportSheet: View {
                                 return
                             }
                             guard !isSending else { return }
+                            didAttemptSubmit = true
                             isSending = true
                             sendError = nil
                             Task {
-                                let result = await onSend(email, name, message)
+                                let result = await onSend(email, name, message, idempotencyKey)
                                 await MainActor.run {
                                     switch result {
                                     case .success:
@@ -1330,6 +1337,22 @@ private struct ContactSupportSheet: View {
                 .padding(.bottom, 22)
             }
         }
+        .onChange(of: email) { _, _ in
+            rotateIdempotencyKeyAfterEdit()
+        }
+        .onChange(of: name) { _, _ in
+            rotateIdempotencyKeyAfterEdit()
+        }
+        .onChange(of: message) { _, _ in
+            rotateIdempotencyKeyAfterEdit()
+        }
+    }
+
+    private func rotateIdempotencyKeyAfterEdit() {
+        guard didAttemptSubmit else { return }
+        idempotencyKey = UUID().uuidString
+        didAttemptSubmit = false
+        sendError = nil
     }
 
     private var canSubmit: Bool {

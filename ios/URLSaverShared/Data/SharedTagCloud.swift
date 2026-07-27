@@ -108,12 +108,45 @@ struct ContactSupportRequest: Codable, Equatable {
     let platform: String
     let appVersion: String
     let buildType: String
-    let isSignedIn: Bool
-    let authUserId: String?
+    var isSignedIn: Bool = false
+    var authUserId: String? = nil
+    var idempotencyKey: String = UUID().uuidString
+
+    private enum CodingKeys: String, CodingKey {
+        case email
+        case name
+        case message
+        case platform
+        case appVersion
+        case buildType
+        case idempotencyKey
+    }
+
+    init(
+        email: String,
+        name: String,
+        message: String,
+        platform: String,
+        appVersion: String,
+        buildType: String,
+        isSignedIn: Bool = false,
+        authUserId: String? = nil,
+        idempotencyKey: String = UUID().uuidString
+    ) {
+        self.email = email
+        self.name = name
+        self.message = message
+        self.platform = platform
+        self.appVersion = appVersion
+        self.buildType = buildType
+        self.isSignedIn = isSignedIn
+        self.authUserId = authUserId
+        self.idempotencyKey = idempotencyKey
+    }
 }
 
 enum ContactSupportResult: Equatable {
-    case success(String)
+    case success(String?)
     case failure(String)
 }
 
@@ -129,7 +162,7 @@ final class ContactSupportClient: @unchecked Sendable {
         self.session = session
     }
 
-    func send(_ payload: ContactSupportRequest) async -> ContactSupportResult {
+    func send(_ payload: ContactSupportRequest, accessToken: String? = nil) async -> ContactSupportResult {
         guard config.isConfigured,
               let url = URL(string: config.endpointURL) else {
             return .failure("問い合わせ送信先が設定されていません")
@@ -140,15 +173,31 @@ final class ContactSupportClient: @unchecked Sendable {
             request.httpMethod = "POST"
             request.timeoutInterval = 30
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(payload.idempotencyKey, forHTTPHeaderField: "Idempotency-Key")
+            if let accessToken = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines), !accessToken.isEmpty {
+                request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+            }
             request.httpBody = try JSONEncoder().encode(payload)
 
             let (data, response) = try await session.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse else {
                 return .failure("問い合わせを送信できませんでした")
             }
-            if 200..<300 ~= httpResponse.statusCode {
-                let accepted = try? JSONDecoder().decode(ContactSupportAcceptedResponse.self, from: data)
-                return .success(accepted?.requestId ?? "")
+            let parsed = try? JSONDecoder().decode(ContactSupportAcceptedResponse.self, from: data)
+            if httpResponse.statusCode == 202,
+               let accepted = parsed,
+               accepted.status == "accepted",
+               let requestId = accepted.requestId,
+               UUID(uuidString: requestId) != nil {
+                return .success(requestId)
+            }
+            if httpResponse.statusCode == 202 {
+                return .failure("問い合わせを送信できませんでした。時間をおいて再度お試しください。")
+            }
+            if httpResponse.statusCode == 200, parsed?.status == "sent" {
+                // Older deployed handlers returned 200/status=sent. Keep the
+                // client compatible during the one-shot outbox cutover.
+                return .success(parsed?.requestId.flatMap { UUID(uuidString: $0) == nil ? nil : $0 })
             }
             let serverError = (try? JSONDecoder().decode(ContactSupportErrorResponse.self, from: data))?.error
             return .failure(Self.normalizeErrorMessage(statusCode: httpResponse.statusCode, serverError: serverError))
@@ -170,6 +219,9 @@ final class ContactSupportClient: @unchecked Sendable {
         }
         if normalized.caseInsensitiveCompare("message_too_long") == .orderedSame {
             return "問い合わせ内容が長すぎます。短くして再度お試しください。"
+        }
+        if normalized.caseInsensitiveCompare("idempotency_key_reused") == .orderedSame {
+            return "問い合わせフォームを閉じて、もう一度お試しください。"
         }
         if normalized.range(of: "resend", options: .caseInsensitive) != nil {
             return "問い合わせを送信できませんでした。時間をおいて再度お試しください。"
@@ -207,7 +259,13 @@ final class ContactSupportService: @unchecked Sendable {
         self.client = client ?? ContactSupportClient(config: config)
     }
 
-    func send(email: String, name: String, message: String, isSignedIn: Bool) async -> ContactSupportResult {
+    func send(
+        email: String,
+        name: String,
+        message: String,
+        isSignedIn: Bool,
+        idempotencyKey: String = UUID().uuidString
+    ) async -> ContactSupportResult {
         let session = try? sessionStore.load()
         let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
         #if DEBUG

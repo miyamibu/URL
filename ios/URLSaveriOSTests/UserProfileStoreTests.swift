@@ -27,7 +27,7 @@ final class UserProfileStoreTests: XCTestCase {
         ContactSupportURLProtocol.reset()
         ContactSupportURLProtocol.response = (
             202,
-            Data(#"{"requestId":"req-1","status":"accepted"}"#.utf8)
+            Data(#"{"requestId":"11111111-1111-4111-8111-111111111111","status":"accepted"}"#.utf8)
         )
         let client = ContactSupportClient(
             config: ContactSupportConfig(
@@ -39,11 +39,18 @@ final class UserProfileStoreTests: XCTestCase {
 
         let result = await client.send(validContactSupportRequest())
 
-        XCTAssertEqual(result, .success("req-1"))
+        XCTAssertEqual(result, .success("11111111-1111-4111-8111-111111111111"))
         XCTAssertEqual(ContactSupportURLProtocol.lastRequest?.httpMethod, "POST")
+        XCTAssertEqual(
+            ContactSupportURLProtocol.lastRequest?.value(forHTTPHeaderField: "Idempotency-Key"),
+            "22222222-2222-4222-8222-222222222222"
+        )
+        let body = ContactSupportURLProtocol.lastRequest?.httpBody.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        XCTAssertFalse(body.contains("isSignedIn"))
+        XCTAssertFalse(body.contains("authUserId"))
     }
 
-    func testContactSupportClientLegacySuccess() async throws {
+    func testContactSupportClientLegacySuccessIsAcceptedDuringCutover() async throws {
         ContactSupportURLProtocol.reset()
         ContactSupportURLProtocol.response = (
             200,
@@ -59,7 +66,48 @@ final class UserProfileStoreTests: XCTestCase {
 
         let result = await client.send(validContactSupportRequest())
 
-        XCTAssertEqual(result, .success(""))
+        XCTAssertEqual(result, .success(nil))
+    }
+
+    func testContactSupportClientMalformedSuccessIsRejected() async throws {
+        ContactSupportURLProtocol.reset()
+        ContactSupportURLProtocol.response = (
+            200,
+            Data(#"{"status":"ok"}"#.utf8)
+        )
+        let client = ContactSupportClient(
+            config: ContactSupportConfig(
+                bundle: .main,
+                environment: ["URLSAVER_CONTACT_SUPPORT_ENDPOINT_URL": "https://example.com/contact-support"]
+            ),
+            session: ContactSupportURLProtocol.session()
+        )
+
+        let result = await client.send(validContactSupportRequest())
+
+        XCTAssertEqual(result, .failure("問い合わせを送信できませんでした。時間をおいて再度お試しください。"))
+    }
+
+    func testContactSupportClientAddsBearerHeader() async throws {
+        ContactSupportURLProtocol.reset()
+        ContactSupportURLProtocol.response = (
+            202,
+            Data(#"{"requestId":"33333333-3333-4333-8333-333333333333","status":"accepted"}"#.utf8)
+        )
+        let client = ContactSupportClient(
+            config: ContactSupportConfig(
+                bundle: .main,
+                environment: ["URLSAVER_CONTACT_SUPPORT_ENDPOINT_URL": "https://example.com/contact-support"]
+            ),
+            session: ContactSupportURLProtocol.session()
+        )
+
+        _ = await client.send(validContactSupportRequest(), accessToken: "test-access-token")
+
+        XCTAssertEqual(
+            ContactSupportURLProtocol.lastRequest?.value(forHTTPHeaderField: "Authorization"),
+            "Bearer test-access-token"
+        )
     }
 
     func testContactSupportClientFailureMessage() async throws {
@@ -104,7 +152,8 @@ final class UserProfileStoreTests: XCTestCase {
             appVersion: "1.0",
             buildType: "debug",
             isSignedIn: false,
-            authUserId: nil
+            authUserId: nil,
+            idempotencyKey: "22222222-2222-4222-8222-222222222222"
         )
     }
 }

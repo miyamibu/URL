@@ -4,12 +4,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.UUID
 
 interface ContactSupportClient {
     suspend fun send(request: ContactSupportRequest): ContactSupportResult
@@ -23,12 +25,13 @@ data class ContactSupportRequest(
     val platform: String,
     val appVersion: String,
     val buildType: String,
-    val isSignedIn: Boolean,
-    val authUserId: String? = null,
+    @Transient val isSignedIn: Boolean = false,
+    @Transient val authUserId: String? = null,
+    val idempotencyKey: String = UUID.randomUUID().toString(),
 )
 
 sealed interface ContactSupportResult {
-    data class Success(val requestId: String) : ContactSupportResult
+    data class Success(val requestId: String? = null) : ContactSupportResult
     data class Failure(val message: String) : ContactSupportResult
 }
 
@@ -38,6 +41,7 @@ class ConfiguredContactSupportClient(
         ignoreUnknownKeys = true
         encodeDefaults = true
     },
+    private val authSessionProvider: SharedTagAuthSessionProvider? = null,
 ) : ContactSupportClient {
     override suspend fun send(request: ContactSupportRequest): ContactSupportResult = withContext(Dispatchers.IO) {
         val trimmedEndpoint = endpointUrl.trim()
@@ -52,6 +56,11 @@ class ConfiguredContactSupportClient(
                 connectTimeout = CONNECT_TIMEOUT_MS
                 readTimeout = READ_TIMEOUT_MS
                 setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("Idempotency-Key", request.idempotencyKey)
+                authSessionProvider?.session?.value?.accessToken
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { setRequestProperty("Authorization", "Bearer $it") }
             }
             connection.outputStream.use { stream ->
                 stream.write(json.encodeToString(request).toByteArray(Charsets.UTF_8))
@@ -63,9 +72,24 @@ class ConfiguredContactSupportClient(
                 stream?.bufferedReader()?.use { it.readText() }.orEmpty()
             }.getOrDefault("")
 
-            if (responseCode in 200..299) {
-                val parsed = runCatching { json.decodeFromString<ContactSupportAcceptedResponse>(body) }.getOrNull()
-                return@withContext ContactSupportResult.Success(parsed?.requestId.orEmpty())
+            val parsed = runCatching {
+                json.decodeFromString<ContactSupportAcceptedResponse>(body)
+            }.getOrNull()
+            if (responseCode == HttpURLConnection.HTTP_ACCEPTED) {
+                if (parsed?.status == "accepted" && isUuid(parsed.requestId)) {
+                    return@withContext ContactSupportResult.Success(parsed.requestId)
+                }
+                return@withContext ContactSupportResult.Failure(
+                    "問い合わせを送信できませんでした。時間をおいて再度お試しください。",
+                )
+            }
+            if (responseCode == HttpURLConnection.HTTP_OK && parsed?.status == "sent") {
+                // Older deployed handlers returned 200/status=sent. Treat that
+                // response as success so a real delivery is not shown as a
+                // client-side failure during the cutover window.
+                return@withContext ContactSupportResult.Success(
+                    parsed.requestId.takeIf(::isUuid),
+                )
             }
 
             val serverError = runCatching { json.decodeFromString<ContactSupportErrorResponse>(body).error }
@@ -98,6 +122,9 @@ class ConfiguredContactSupportClient(
     private companion object {
         const val CONNECT_TIMEOUT_MS = 15_000
         const val READ_TIMEOUT_MS = 30_000
+        private val UUID_PATTERN = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+        fun isUuid(value: String): Boolean = UUID_PATTERN.matches(value)
 
         fun normalizeErrorMessage(responseCode: Int, serverError: String?): String {
             val normalized = serverError?.trim().orEmpty()
