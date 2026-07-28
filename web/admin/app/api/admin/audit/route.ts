@@ -1,21 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
-import { assertCanModerate, requireAdmin } from "@/lib/auth";
+import { assertCapability, requireAdmin } from "@/lib/auth";
+import { adminApiError } from "@/lib/api-error";
 import { createServiceSupabaseClient } from "@/lib/supabase";
 
 function asErrorResponse(error: unknown): Response {
-  if (error instanceof Response) return error;
-  const message = error instanceof Error ? error.message : "監査ログを取得できませんでした";
-  return NextResponse.json({ error: message }, { status: 500 });
+  return adminApiError(error, "監査ログを取得できませんでした");
 }
 
 export async function GET(request: NextRequest) {
   try {
     const admin = await requireAdmin(request);
-    assertCanModerate(admin);
+    assertCapability(admin, "audit.read");
     const supabase = createServiceSupabaseClient();
     const { data, error } = await supabase
       .from("admin_audit_logs")
-      .select("id,admin_user_id,target_user_id,action,reason,before_value,after_value,created_at")
+      .select("id,admin_user_id,target_user_id,action,reason,before_value,after_value,operation_id,phase,assurance,created_at")
       .order("created_at", { ascending: false })
       .limit(100);
     if (error) throw error;

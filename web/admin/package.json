@@ -5,7 +5,8 @@
     "dev": "next dev",
     "build": "next build",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test lib/*.test.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.53.0",

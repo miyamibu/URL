@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { assertCanSearchUsers, requireAdmin } from "@/lib/auth";
+import { adminApiError } from "@/lib/api-error";
 import { normalizedEmail } from "@/lib/env";
 import { createServiceSupabaseClient } from "@/lib/supabase";
 
 function asErrorResponse(error: unknown): Response {
-  if (error instanceof Response) return error;
-  const message = error instanceof Error ? error.message : "ユーザー検索に失敗しました";
-  return NextResponse.json({ error: message }, { status: 500 });
+  return adminApiError(error, "ユーザー検索に失敗しました");
 }
 
 export async function GET(request: NextRequest) {

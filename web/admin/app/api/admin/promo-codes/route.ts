@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/auth";
+import { assertCapability, requireAdmin } from "@/lib/auth";
+import { adminApiError } from "@/lib/api-error";
 import { createServiceSupabaseClient } from "@/lib/supabase";
 
 function asErrorResponse(error: unknown): Response {
-  if (error instanceof Response) return error;
-  const message = error instanceof Error ? error.message : "管理APIでエラーが発生しました";
-  return NextResponse.json({ error: message }, { status: 500 });
+  return adminApiError(error, "優待コード一覧を取得できませんでした");
 }
 
 function deriveStatus(row: Record<string, unknown>): string {
@@ -17,7 +16,8 @@ function deriveStatus(row: Record<string, unknown>): string {
 
 export async function GET(request: NextRequest) {
   try {
-    await requireAdmin(request);
+    const admin = await requireAdmin(request);
+    assertCapability(admin, "promos.read");
     const supabase = createServiceSupabaseClient();
     const { data, error } = await supabase
       .from("promo_invite_codes")
