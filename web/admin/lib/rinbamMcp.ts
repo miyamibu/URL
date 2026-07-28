@@ -7,9 +7,11 @@ const SUPPORTED_MCP_PROTOCOL_VERSIONS = [RINBAM_MCP_PROTOCOL_VERSION, "2025-06-1
 
 export type RinbamMcpJsonRpcId = string | number | null;
 
+type RinbamMcpJsonRpcRequestId = Exclude<RinbamMcpJsonRpcId, null>;
+
 export type RinbamMcpJsonRpcRequest = {
   jsonrpc: "2.0";
-  id?: RinbamMcpJsonRpcId;
+  id?: RinbamMcpJsonRpcRequestId;
   method: string;
   params?: Record<string, unknown>;
 };
@@ -29,8 +31,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isJsonRpcId(value: unknown): value is RinbamMcpJsonRpcId {
-  return value === null || typeof value === "string" || (typeof value === "number" && Number.isFinite(value));
+function isJsonRpcRequestId(value: unknown): value is RinbamMcpJsonRpcRequestId {
+  return typeof value === "string" || (typeof value === "number" && Number.isFinite(value));
 }
 
 export function isSupportedMcpProtocolVersion(value: string): boolean {
@@ -45,7 +47,7 @@ export function isRinbamMcpJsonRpcRequest(body: unknown): body is RinbamMcpJsonR
   if (!isRecord(body) || body.jsonrpc !== "2.0" || typeof body.method !== "string" || body.method.length === 0) {
     return false;
   }
-  if ("id" in body && !isJsonRpcId(body.id)) return false;
+  if ("id" in body && !isJsonRpcRequestId(body.id)) return false;
   if ("params" in body && body.params !== undefined && !isRecord(body.params)) return false;
   return true;
 }
@@ -102,12 +104,22 @@ const readOnlyAnnotations: ToolAnnotation = {
 };
 
 const SAVED_SNAPSHOT_NOTICE = "保存時点の情報であり、現在の内容とは異なる可能性があります";
-const MCP_RATE_LIMIT_WINDOW_MS = 60_000;
-const MCP_RATE_LIMIT_MAX_REQUESTS = 60;
-const rateLimitBuckets = new Map<string, { windowStart: number; count: number }>();
+export const RINBAM_MCP_REQUIRED_SCOPE = "links:read";
+
+const GENERIC_SUPABASE_AUDIENCES = new Set(["anon", "authenticated", "service_role"]);
+
+function configuredMcpAudience(): string | null {
+  const audience = optionalEnv("URLSAVER_MCP_TOKEN_AUDIENCE")?.trim();
+  if (!audience || GENERIC_SUPABASE_AUDIENCES.has(audience)) return null;
+  return audience;
+}
 
 export function isRinbamMcpEnabled() {
-  return optionalEnv("URLSAVER_MCP_ENABLED") === "true";
+  return (
+    optionalEnv("URLSAVER_MCP_ENABLED") === "true" &&
+    optionalEnv("URLSAVER_MCP_AUTHORIZATION_SERVER_READY") === "true" &&
+    configuredMcpAudience() !== null
+  );
 }
 
 export const rinbamMcpTools: RinbamMcpToolDescriptor[] = [
@@ -120,7 +132,6 @@ export const rinbamMcpTools: RinbamMcpToolDescriptor[] = [
       properties: {
         query: { type: "string" },
         limit: { type: "integer", minimum: 1, maximum: 20 },
-        includeArchived: { type: "boolean", default: false },
         includeSharedTags: { type: "boolean", default: false },
       },
       required: ["query"],
@@ -167,7 +178,7 @@ export const rinbamMcpTools: RinbamMcpToolDescriptor[] = [
       type: "object",
       properties: {
         limit: { type: "integer", minimum: 1, maximum: 20 },
-        includeArchived: { type: "boolean", default: false },
+        includeSharedTags: { type: "boolean", default: false },
       },
       additionalProperties: false,
     },
@@ -208,25 +219,72 @@ export function parseRinbamMcpJsonRpcRequest(body: unknown): RinbamMcpJsonRpcReq
   return body;
 }
 
+const allowedToolArgumentFields: Record<string, readonly string[]> = {
+  search: ["query", "limit", "includeSharedTags"],
+  fetch: ["id"],
+  "rinbam.list_tags": [],
+  "rinbam.get_ai_receipt": ["id"],
+  "rinbam.list_recent_saved_links": ["limit", "includeSharedTags"],
+};
+
+export function validateRinbamMcpToolArguments(toolName: string, args: Record<string, unknown>) {
+  const allowed = allowedToolArgumentFields[toolName];
+  if (!allowed) throw new RinbamMcpToolNotFoundError(toolName);
+  const unknownField = Object.keys(args).find((key) => !allowed.includes(key));
+  if (unknownField) throw new RinbamMcpInputError(`unknown_input_field:${unknownField}`);
+
+  if (toolName === "search" && typeof args.query !== "string") {
+    throw new RinbamMcpInputError("query_must_be_string");
+  }
+  if (typeof args.query === "string" && args.query.length > 500) {
+    throw new RinbamMcpInputError("query_too_long");
+  }
+  if (args.limit !== undefined && (typeof args.limit !== "number" || !Number.isInteger(args.limit) || args.limit < 1 || args.limit > 20)) {
+    throw new RinbamMcpInputError("limit_must_be_integer_1_to_20");
+  }
+  for (const key of ["includeSharedTags"]) {
+    if (args[key] !== undefined && typeof args[key] !== "boolean") {
+      throw new RinbamMcpInputError(`${key}_must_be_boolean`);
+    }
+  }
+  if ((toolName === "fetch" || toolName === "rinbam.get_ai_receipt") && typeof args.id !== "string") {
+    throw new RinbamMcpInputError("id_must_be_string");
+  }
+  if (toolName === "fetch" && typeof args.id === "string" && args.id.length < 16) {
+    throw new RinbamMcpInputError("id_too_short");
+  }
+  if (toolName === "rinbam.get_ai_receipt" && typeof args.id === "string" && args.id.trim().length === 0) {
+    throw new RinbamMcpInputError("id_must_not_be_empty");
+  }
+}
+
 export async function callRinbamMcpTool(
   ctx: RinbamMcpContext,
   toolName: string,
   args: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
+  validateRinbamMcpToolArguments(toolName, args);
+  let payload: Record<string, unknown>;
   switch (toolName) {
     case "search":
-      return searchRinbamLinks(ctx, args);
+      payload = await searchRinbamLinks(ctx, args);
+      break;
     case "fetch":
-      return fetchRinbamLink(ctx, args);
+      payload = await fetchRinbamLink(ctx, args);
+      break;
     case "rinbam.list_tags":
-      return listRinbamTags(ctx);
+      payload = await listRinbamTags(ctx);
+      break;
     case "rinbam.get_ai_receipt":
-      return getAiReceipt(args);
+      payload = await getAiReceipt(args);
+      break;
     case "rinbam.list_recent_saved_links":
-      return listRecentSavedLinks(ctx, args);
+      payload = await listRecentSavedLinks(ctx, args);
+      break;
     default:
       throw new RinbamMcpToolNotFoundError(toolName);
   }
+  return sanitizeRinbamMcpOutput(payload) as Record<string, unknown>;
 }
 
 export async function handleRinbamMcpJsonRpcRequest(
@@ -235,11 +293,7 @@ export async function handleRinbamMcpJsonRpcRequest(
 ): Promise<RinbamMcpJsonRpcResponse | null> {
   const parsed = parseRinbamMcpJsonRpcRequest(request);
   if (!("id" in parsed) || parsed.id === undefined) {
-    if (
-      parsed.method === "notifications/initialized" ||
-      parsed.method === "notifications/cancelled" ||
-      parsed.method === "notifications/progress"
-    ) {
+    if (parsed.method.startsWith("notifications/")) {
       return null;
     }
     throw new RinbamMcpJsonRpcError(-32600, "Requests require an id");
@@ -278,6 +332,9 @@ export async function handleRinbamMcpJsonRpcRequest(
         const payload = await callRinbamMcpTool(ctx, toolName, args ?? {});
         return jsonRpcResult(id, toolCallResult(payload));
       } catch (error) {
+        if (error instanceof RinbamMcpToolNotFoundError) {
+          throw new RinbamMcpJsonRpcError(-32602, "Unknown tool");
+        }
         if (error instanceof RinbamMcpInputError) {
           return jsonRpcResult(id, toolCallResult({ error: error.message }, true));
         }
@@ -293,6 +350,7 @@ export async function handleRinbamMcpJsonRpcRequest(
 
 type PersonalSavedLinkRow = {
   id: string;
+  public_safe_id: string;
   effective_title: string | null;
   open_url: string | null;
   normalized_url: string | null;
@@ -318,7 +376,7 @@ type TagRefRow = { link_id: string; tag_id: string };
 export type RinbamMcpContext = {
   userId: string;
   email: string | null;
-  token: string;
+  supabase: ReturnType<typeof createServiceSupabaseClient>;
 };
 
 export function bearerToken(authorizationHeader: string | null): string | null {
@@ -326,20 +384,88 @@ export function bearerToken(authorizationHeader: string | null): string | null {
   return match?.[1]?.trim() || null;
 }
 
+type RinbamMcpTokenClaims = {
+  iss?: unknown;
+  sub?: unknown;
+  aud?: unknown;
+  exp?: unknown;
+  scope?: unknown;
+  scp?: unknown;
+};
+
+function decodeMcpTokenClaims(token: string): RinbamMcpTokenClaims | null {
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function tokenHasAudience(claim: unknown, expected: string): boolean {
+  if (typeof claim === "string") return claim === expected;
+  return Array.isArray(claim) && claim.some((value) => value === expected);
+}
+
+function issuerMatchesSupabaseProject(value: unknown): boolean {
+  const configured = optionalEnv("NEXT_PUBLIC_SUPABASE_URL");
+  if (typeof value !== "string" || !configured) return false;
+  try {
+    const base = new URL(configured);
+    const issuer = new URL(value);
+    return issuer.origin === base.origin &&
+      issuer.pathname.replace(/\/$/, "") === `${base.pathname.replace(/\/$/, "")}/auth/v1`;
+  } catch {
+    return false;
+  }
+}
+
+function tokenScopes(claims: RinbamMcpTokenClaims): Set<string> {
+  const values: string[] = [];
+  if (typeof claims.scope === "string") values.push(...claims.scope.split(/\s+/));
+  if (typeof claims.scp === "string") values.push(...claims.scp.split(/\s+/));
+  if (Array.isArray(claims.scp)) {
+    values.push(...claims.scp.filter((value): value is string => typeof value === "string"));
+  }
+  return new Set(values.filter(Boolean));
+}
+
 export async function requireRinbamMcpUser(authorizationHeader: string | null): Promise<RinbamMcpContext> {
   const token = bearerToken(authorizationHeader);
   if (!token) {
     throw new RinbamMcpAuthError("auth_required");
   }
-  const supabase = createServiceSupabaseClient();
-  const { data, error } = await supabase.auth.getUser(token);
+  const expectedAudience = configuredMcpAudience();
+  if (!expectedAudience || optionalEnv("URLSAVER_MCP_AUTHORIZATION_SERVER_READY") !== "true") {
+    throw new RinbamMcpAuthError("mcp_authorization_server_not_ready");
+  }
+  const claims = decodeMcpTokenClaims(token);
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (
+    !claims ||
+    !issuerMatchesSupabaseProject(claims.iss) ||
+    !tokenHasAudience(claims.aud, expectedAudience) ||
+    !tokenScopes(claims).has(RINBAM_MCP_REQUIRED_SCOPE) ||
+    typeof claims.exp !== "number" ||
+    !Number.isFinite(claims.exp) ||
+    claims.exp <= nowSeconds - 60
+  ) {
+    throw new RinbamMcpAuthError("invalid_mcp_token_claims");
+  }
+  const serviceSupabase = createServiceSupabaseClient();
+  const { data, error } = await serviceSupabase.auth.getUser(token);
   if (error || !data.user) {
     throw new RinbamMcpAuthError("invalid_token");
+  }
+  if (typeof claims.sub !== "string" || claims.sub !== data.user.id) {
+    throw new RinbamMcpAuthError("mcp_token_subject_mismatch");
   }
   return {
     userId: data.user.id,
     email: data.user.email ?? null,
-    token,
+    supabase: serviceSupabase,
   };
 }
 
@@ -358,22 +484,34 @@ export class RinbamMcpInputError extends Error {
 }
 
 export class RinbamMcpRateLimitError extends Error {
-  constructor(message = "rate_limited") {
+  constructor(message = "rate_limited", public readonly retryAfterSeconds = 1) {
     super(message);
     this.name = "RinbamMcpRateLimitError";
   }
 }
 
-export function checkRinbamMcpRateLimit(ctx: RinbamMcpContext, now = Date.now()) {
-  const bucket = rateLimitBuckets.get(ctx.userId);
-  if (!bucket || now - bucket.windowStart >= MCP_RATE_LIMIT_WINDOW_MS) {
-    rateLimitBuckets.set(ctx.userId, { windowStart: now, count: 1 });
-    return;
+export class RinbamMcpRateLimitUnavailableError extends Error {
+  constructor() {
+    super("rate_limit_unavailable");
+    this.name = "RinbamMcpRateLimitUnavailableError";
   }
-  if (bucket.count >= MCP_RATE_LIMIT_MAX_REQUESTS) {
-    throw new RinbamMcpRateLimitError();
+}
+
+export async function checkRinbamMcpRateLimit(ctx: RinbamMcpContext) {
+  const { data, error } = await ctx.supabase.rpc("consume_rinbam_mcp_rate_limit_for_user", {
+    p_user_id: ctx.userId,
+  });
+  if (error) throw new RinbamMcpRateLimitUnavailableError();
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!isRecord(row) || typeof row.allowed !== "boolean") {
+    throw new RinbamMcpRateLimitUnavailableError();
   }
-  bucket.count += 1;
+  if (!row.allowed) {
+    const retryAfter = typeof row.retry_after_seconds === "number" && Number.isFinite(row.retry_after_seconds)
+      ? Math.max(1, Math.trunc(row.retry_after_seconds))
+      : 1;
+    throw new RinbamMcpRateLimitError("rate_limited", retryAfter);
+  }
 }
 
 export function publicSafeId(userId: string, rawId: string): string {
@@ -386,9 +524,7 @@ export function publicSafeId(userId: string, rawId: string): string {
 }
 
 function clampLimit(value: unknown, fallback = 10): number {
-  const parsed = Number(value ?? fallback);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.min(Math.max(Math.trunc(parsed), 1), 20);
+  return typeof value === "number" && Number.isInteger(value) ? value : fallback;
 }
 
 function safeString(value: unknown): string {
@@ -399,9 +535,25 @@ function safeText(value: string | null | undefined, maxLength = 1200): string {
   const trimmed = (value ?? "")
     .replace(/\u0000/g, "")
     .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted:email]")
-    .replace(/\b(?:refresh_token|access_token|service_role|sb_secret|token)\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{8,}/gi, "[redacted:token]")
+    .replace(/\b(?:bearer\s+)?(?:refresh_token|access_token|service_role|sb_secret|token|secret|password|api[_-]?key)\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{8,}/gi, "[redacted:secret]")
+    .replace(/\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_-]{16,}|xox[baprs]-[A-Za-z0-9-]{16,}|AIza[A-Za-z0-9_-]{20,}|AKIA[A-Z0-9]{16})\b/g, "[redacted:secret]")
+    .replace(/\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, "[redacted:jwt]")
+    .replace(/(?:\/Users\/|\/home\/|[A-Za-z]:\\)[^\s]+/g, "[redacted:path]")
     .trim();
   return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength - 1)}…` : trimmed;
+}
+
+const sensitiveOutputKey = /(?:fetched[_-]?body|raw[_-]?(?:body|prompt)|access[_-]?token|refresh[_-]?token|service[_-]?role|secret|password)/i;
+
+export function sanitizeRinbamMcpOutput(value: unknown): unknown {
+  if (typeof value === "string") return safeText(value);
+  if (Array.isArray(value)) return value.map((item) => sanitizeRinbamMcpOutput(item));
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !sensitiveOutputKey.test(key))
+      .map(([key, item]) => [key, sanitizeRinbamMcpOutput(item)]),
+  );
 }
 
 function rejectSharedTagOptIn(args: Record<string, unknown>) {
@@ -410,82 +562,19 @@ function rejectSharedTagOptIn(args: Record<string, unknown>) {
   }
 }
 
-function searchableText(row: PersonalSavedLinkRow, tags: string[]): string {
-  return [
-    row.effective_title,
-    row.open_url,
-    row.normalized_url,
-    row.normalized_host,
-    row.memo,
-    row.body_summary,
-    row.description,
-    row.fetched_author_name,
-    row.fetched_body_kind,
-    row.service_type,
-    ...tags,
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-}
-
-async function loadRows(ctx: RinbamMcpContext, maxRows = 200) {
-  const supabase = createServiceSupabaseClient();
-  const { data: links, error: linkError } = await supabase
-    .from("personal_saved_links")
-    .select(
-      "id,effective_title,open_url,normalized_url,normalized_host,memo,body_summary,description,fetched_author_name,fetched_body_kind,service_type,record_state,metadata_state,metadata_error,source_created_at,source_updated_at,archived_at,content_fetch_allowed",
-    )
-    .eq("user_id", ctx.userId)
-    .is("deleted_at", null)
-    .is("disabled_at", null)
-    .order("source_updated_at", { ascending: false })
-    .limit(maxRows);
-  if (linkError) throw linkError;
-
-  const linkRows = (links ?? []) as PersonalSavedLinkRow[];
-  const linkIds = linkRows.map((row) => row.id);
-  const { data: tags, error: tagError } = await supabase
-    .from("personal_saved_link_tags")
-    .select("id,name")
-    .eq("user_id", ctx.userId)
-    .is("deleted_at", null);
-  if (tagError) throw tagError;
-
-  const tagRows = (tags ?? []) as TagRow[];
-  const tagNameById = new Map(tagRows.map((tag) => [tag.id, tag.name]));
-  const tagNamesByLinkId = new Map<string, string[]>();
-  if (linkIds.length > 0) {
-    const { data: refs, error: refError } = await supabase
-      .from("personal_saved_link_tag_refs")
-      .select("link_id,tag_id")
-      .eq("user_id", ctx.userId)
-      .in("link_id", linkIds)
-      .is("deleted_at", null);
-    if (refError) throw refError;
-    for (const ref of (refs ?? []) as TagRefRow[]) {
-      const tagName = tagNameById.get(ref.tag_id);
-      if (!tagName) continue;
-      const names = tagNamesByLinkId.get(ref.link_id) ?? [];
-      names.push(tagName);
-      tagNamesByLinkId.set(ref.link_id, names);
-    }
-  }
-
-  return { links: linkRows, tagRows, tagNamesByLinkId };
-}
-
-function toSearchResult(ctx: RinbamMcpContext, row: PersonalSavedLinkRow, tags: string[]) {
+function rpcSearchResult(row: Record<string, unknown>) {
+  const tags = Array.isArray(row.tag_names)
+    ? row.tag_names.filter((tag): tag is string => typeof tag === "string").map((tag) => safeText(tag, 80)).sort()
+    : [];
   return {
-    id: publicSafeId(ctx.userId, row.id),
-    title: row.effective_title || row.normalized_host || "保存したリンク",
-    url: row.open_url || row.normalized_url || "",
-    bodyKind: row.fetched_body_kind,
-    author: row.fetched_author_name,
-    tags: tags.slice().sort(),
-    createdAt: row.source_created_at,
+    id: safeText(row.public_safe_id as string | null, 64),
+    title: safeText((row.title as string | null) || "保存したリンク"),
+    url: safeText((row.url as string | null) || "", 2000),
+    snippet: safeText((row.snippet as string | null) || ""),
+    metadata: sanitizeRinbamMcpOutput(isRecord(row.metadata) ? row.metadata : {}),
+    tags,
     matchReason: "personal_saved_links",
-    aiEligible: row.record_state === "ACTIVE",
+    aiEligible: true,
     sharedTagBoundary: "local_personal_link_sync_only",
     rawBodyReturned: false,
   };
@@ -493,81 +582,95 @@ function toSearchResult(ctx: RinbamMcpContext, row: PersonalSavedLinkRow, tags: 
 
 export async function searchRinbamLinks(ctx: RinbamMcpContext, args: Record<string, unknown>) {
   rejectSharedTagOptIn(args);
-  const query = safeString(args.query).toLowerCase();
-  const limit = clampLimit(args.limit);
-  const includeArchived = args.includeArchived === true;
-  const { links, tagNamesByLinkId } = await loadRows(ctx);
-
-  const results = links
-    .filter((row) => includeArchived || row.record_state !== "ARCHIVED")
-    .filter((row) => {
-      if (!query) return true;
-      return searchableText(row, tagNamesByLinkId.get(row.id) ?? []).includes(query);
-    })
-    .slice(0, limit)
-    .map((row) => toSearchResult(ctx, row, tagNamesByLinkId.get(row.id) ?? []));
-
-  return { results, includeSharedTags: false, rawBodyReturned: false };
+  const { data, error } = await ctx.supabase.rpc("mcp_search_active_personal_saved_links_for_user", {
+    p_user_id: ctx.userId,
+    p_query: safeString(args.query),
+    p_result_limit: clampLimit(args.limit),
+  });
+  if (error) throw error;
+  const rows = Array.isArray(data) ? data.filter(isRecord) : [];
+  return { results: rows.map(rpcSearchResult), includeSharedTags: false, rawBodyReturned: false };
 }
 
 export async function listRecentSavedLinks(ctx: RinbamMcpContext, args: Record<string, unknown>) {
   rejectSharedTagOptIn(args);
-  return searchRinbamLinks(ctx, { query: "", limit: args.limit, includeArchived: args.includeArchived });
+  return searchRinbamLinks(ctx, { query: "", limit: args.limit });
 }
 
 export async function listRinbamTags(ctx: RinbamMcpContext) {
-  const { tagRows } = await loadRows(ctx, 1);
-  return {
-    tags: tagRows
-      .map((tag) => ({ id: publicSafeId(ctx.userId, tag.id), name: tag.name, sharedTagBoundary: "local_only" }))
-      .sort((a, b) => a.name.localeCompare(b.name)),
-    rawBodyReturned: false,
-  };
+  const { data, error } = await ctx.supabase.rpc("mcp_list_active_personal_link_tags_for_user", {
+    p_user_id: ctx.userId,
+  });
+  if (error) throw error;
+  const tags = (Array.isArray(data) ? data : [])
+    .filter(isRecord)
+    .map((tag) => ({
+      id: publicSafeId(ctx.userId, safeString(tag.tag_id)),
+      name: safeText(safeString(tag.name), 80),
+      sharedTagBoundary: "local_only",
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return { tags, rawBodyReturned: false };
 }
 
 export async function fetchRinbamLink(ctx: RinbamMcpContext, args: Record<string, unknown>) {
-  const id = safeString(args.id);
-  const { links, tagNamesByLinkId } = await loadRows(ctx, 500);
-  const row = links.find((candidate) => publicSafeId(ctx.userId, candidate.id) === id);
+  const id = safeText(safeString(args.id), 64);
+  const { data: row, error } = await ctx.supabase
+    .from("personal_saved_links")
+    .select("id,public_safe_id,effective_title,open_url,normalized_url,normalized_host,memo,body_summary,description,fetched_author_name,fetched_body_kind,service_type,record_state,metadata_state,metadata_error,source_created_at,source_updated_at,content_fetch_allowed")
+    .eq("user_id", ctx.userId)
+    .eq("public_safe_id", id)
+    .eq("record_state", "ACTIVE")
+    .neq("record_state", "PENDING_DELETE")
+    .is("deleted_at", null)
+    .is("disabled_at", null)
+    .maybeSingle();
+  if (error) throw error;
   if (!row) return { id, found: false };
-  const tags = tagNamesByLinkId.get(row.id) ?? [];
-  const title = row.effective_title || row.normalized_host || "保存したリンク";
-  const hasSavedMetadata = Boolean(
-    row.source_updated_at ||
-      row.body_summary ||
-      row.description ||
-      row.fetched_author_name ||
-      row.fetched_body_kind,
-  );
+  const link = row as unknown as PersonalSavedLinkRow;
+  const { data: refs, error: refError } = await ctx.supabase
+    .from("personal_saved_link_tag_refs")
+    .select("tag_id")
+    .eq("user_id", ctx.userId)
+    .eq("link_id", link.id)
+    .is("deleted_at", null);
+  if (refError) throw refError;
+  const tagIds = (refs ?? []).map((ref) => (ref as { tag_id: string }).tag_id);
+  const { data: tagRows, error: tagError } = tagIds.length === 0
+    ? { data: [], error: null }
+    : await ctx.supabase.from("personal_saved_link_tags").select("id,name").eq("user_id", ctx.userId).in("id", tagIds).is("deleted_at", null);
+  if (tagError) throw tagError;
+  const tags = (tagRows ?? []).map((tag) => safeText((tag as TagRow).name, 80)).sort();
+  const title = safeText(link.effective_title || link.normalized_host || "保存したリンク");
+  const url = safeText(link.open_url || link.normalized_url || "", 2000);
+  const hasSavedMetadata = Boolean(link.source_updated_at || link.body_summary || link.description || link.fetched_author_name || link.fetched_body_kind);
   const text = [
     `# ${title}`,
-    `URL: ${row.open_url || row.normalized_url || ""}`,
-    `Service: ${row.service_type ?? ""}`,
-    `State: ${row.record_state ?? ""}`,
-    tags.length > 0 ? `Tags: ${tags.slice().sort().join(", ")}` : "Tags: none",
-    row.body_summary ? `Summary: ${safeText(row.body_summary)}` : null,
-    row.description ? `Description: ${safeText(row.description)}` : null,
-    row.memo ? `Memo excerpt: ${safeText(row.memo)}` : null,
+    `URL: ${url}`,
+    `Service: ${safeText(link.service_type)}`,
+    "State: ACTIVE",
+    tags.length > 0 ? `Tags: ${tags.join(", ")}` : "Tags: none",
+    link.body_summary ? `Summary: ${safeText(link.body_summary)}` : null,
+    link.description ? `Description: ${safeText(link.description)}` : null,
+    link.memo ? `Memo excerpt: ${safeText(link.memo)}` : null,
     hasSavedMetadata ? `Saved snapshot notice: ${SAVED_SNAPSHOT_NOTICE}` : null,
-  ]
-    .filter(Boolean)
-    .join("\n");
+  ].filter(Boolean).join("\n");
   return {
     id,
+    found: true,
     title,
     text,
-    url: row.open_url || row.normalized_url || "",
+    url,
     metadata: {
-      recordState: row.record_state,
-      metadataState: row.metadata_state,
-      metadataError: row.metadata_error,
-      bodyKind: row.fetched_body_kind,
-      author: row.fetched_author_name,
-      sourceCreatedAt: row.source_created_at,
-      sourceUpdatedAt: row.source_updated_at,
+      recordState: "ACTIVE",
+      metadataState: link.metadata_state,
+      metadataError: link.metadata_error,
+      bodyKind: link.fetched_body_kind,
+      author: link.fetched_author_name,
+      sourceCreatedAt: link.source_created_at,
+      sourceUpdatedAt: link.source_updated_at,
       savedSnapshotNotice: hasSavedMetadata ? SAVED_SNAPSHOT_NOTICE : null,
-      archivedAt: row.archived_at,
-      contentFetchAllowed: row.content_fetch_allowed === true,
+      contentFetchAllowed: link.content_fetch_allowed === true,
       rawBodyReturned: false,
       sharedTagBoundary: "local_personal_link_sync_only",
     },
