@@ -10,15 +10,15 @@ Use external hosting secret storage only. Do not commit real values.
 | Name | Required | Purpose | Example value |
 |---|---:|---|---|
 | `URLSAVER_MCP_ENABLED` | Yes | MCP kill switch. | `false` by default, `true` only during staging smoke. |
+| `URLSAVER_MCP_AUTHORIZATION_SERVER_READY` | Yes | Evidence-backed auth readiness gate; not an auth-server substitute. | `false` until dedicated token issuance is verified. |
+| `URLSAVER_MCP_TOKEN_AUDIENCE` | Yes when enabled | Dedicated MCP token audience; generic Supabase audiences are rejected. | `https://staging.example.com/api/mcp` |
 | `URLSAVER_MCP_ID_SECRET` | Yes when enabled | HMAC/publicSafeId derivation. | `staging-secret-from-secret-store` |
-| `SUPABASE_URL` | Yes when enabled | Staging Supabase project URL. | `https://example.supabase.co` |
-| `SUPABASE_SERVICE_ROLE_KEY` | Yes when enabled | Server-side auth boundary for MCP route. | Set in host secret manager only. |
-| `URLSAVER_MCP_RATE_LIMIT_WINDOW_MS` | Optional | Future externalized rate window. | `60000` |
-| `URLSAVER_MCP_RATE_LIMIT_MAX_REQUESTS` | Optional | Future externalized rate max. | `60` |
+| `NEXT_PUBLIC_SUPABASE_URL` | Yes when enabled | Staging Supabase project URL. | `https://example.supabase.co` |
+| `SUPABASE_SERVICE_ROLE_KEY` | Yes when enabled | Auth verification and verified-user-bound service RPC/query client. | Staging project key in host secret storage only. |
 
 ## Required Feature Flags
 
-- `URLSAVER_MCP_ENABLED=false` before and after smoke tests unless actively testing.
+- `URLSAVER_MCP_ENABLED=false` and `URLSAVER_MCP_AUTHORIZATION_SERVER_READY=false` before and after smoke tests unless the dedicated staging auth path is actively being verified.
 - Android/iOS AI transparency flags remain default off for normal users.
 - Do not enable write tools; the MCP server is read-only only.
 
@@ -38,8 +38,11 @@ Use external hosting secret storage only. Do not commit real values.
 ## Auth Setup
 
 - The endpoint must reject noauth requests.
-- Bearer token must be from the intended staged user.
-- OAuth/client setup, if used, must map the token to exactly one user boundary.
+- Bearer token must be from the intended staged user, have the configured dedicated audience, and contain the fixed `links:read` scope.
+- The token is used only for Supabase Auth verification; its `sub` must match the verified user. It is never forwarded to PostgREST or data RPCs.
+- After verification, service-role-only RPCs/direct queries receive the server-derived user ID explicitly. A request body cannot select another user.
+- A generic `aud=authenticated` Supabase session token is not an MCP token and must be rejected.
+- This repo does not implement the Authorization Server. Do not set its readiness flag until the staged issuer/token path exists and has independent evidence.
 - Invalid token must return 401.
 
 ## HMAC / publicSafeId Secret Setup
@@ -50,14 +53,14 @@ Use external hosting secret storage only. Do not commit real values.
 
 ## Rate Limit Config
 
-- Current source uses a safe in-process default: 60 requests per 60 seconds per authenticated user.
-- If the host runs multiple instances, add provider-level rate limiting before production.
+- Supabase enforces an atomic distributed service-role-only fixed limit of 60 requests per 60 seconds per authenticated user.
+- The web client supplies no limit values; legacy RPC parameters are ignored server-side and cannot relax the limit.
 - Staging smoke should verify 429 behavior where practical.
 
 ## Kill Switch Config
 
 - Primary kill switch: `URLSAVER_MCP_ENABLED=false`.
-- Secondary kill switch: remove route from deploy or block `/api/mcp` at edge/firewall.
+- Secondary kill switch: set `URLSAVER_MCP_AUTHORIZATION_SERVER_READY=false`, remove the route from deploy, or block `/api/mcp` at edge/firewall.
 - Emergency disable target: endpoint returns 404 `mcp_disabled` or 401 with no personal data.
 
 ## Smoke Test Commands
@@ -76,6 +79,7 @@ Use the hosting provider console or CLI approved for the project:
 ```bash
 # Example only: disable in provider secret/env settings, then redeploy/restart.
 URLSAVER_MCP_ENABLED=false
+URLSAVER_MCP_AUTHORIZATION_SERVER_READY=false
 ```
 
 Do not run production deploy commands from Codex unless the user explicitly asks for that action in the current conversation.
@@ -84,7 +88,7 @@ Do not run production deploy commands from Codex unless the user explicitly asks
 
 - Request path, HTTP status, tool name, coarse latency, user boundary hash or provider user id if already safe.
 - Rate limit decisions.
-- Auth failures by category only: `auth_required`, `invalid_token`.
+- Auth failures by category only: `auth_required`, `invalid_mcp_token_claims`, `invalid_token`, `mcp_token_subject_mismatch`.
 
 ## Logs That Must Not Appear
 
@@ -98,7 +102,7 @@ Do not run production deploy commands from Codex unless the user explicitly asks
 
 ## How To Disable MCP Immediately
 
-1. Set `URLSAVER_MCP_ENABLED=false` in the hosting environment.
+1. Set `URLSAVER_MCP_ENABLED=false` and `URLSAVER_MCP_AUTHORIZATION_SERVER_READY=false` in the hosting environment.
 2. Redeploy or restart the web/admin service.
 3. Confirm `GET /api/mcp` returns 404 `mcp_disabled`.
 4. Confirm no staged connector can fetch user data.

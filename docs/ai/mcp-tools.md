@@ -4,28 +4,35 @@
 ChatGPT/OpenAI Apps向けに、りんばむ保存リンクをread-onlyで検索/取得できるrepo内contractを固定する。
 
 ## Context
-production deploy、OAuth client登録、OpenAI submissionはManual steps。repo defaultではMCP endpointは無効。
+production deploy、専用audienceと`links:read` scopeを発行するAuthorization Server、OAuth client登録、OpenAI submissionは外部ゲート。repo defaultではMCP endpointは無効で、auth設定が不完全な場合もfail-closedする。
 
 ## Tools
 | Tool | Mode | Notes |
 |---|---|---|
-| `search` | read-only | Authenticated user's personal saved links only. `includeSharedTags=true` is rejected. |
+| `search` | read-only | Authenticated user's ACTIVE personal saved links only. `includeSharedTags=true` is rejected. |
 | `fetch` | read-only | Fetch by opaque `publicSafeId`; raw body and live URL refetch are not returned. |
-| `rinbam.list_tags` | read-only | Local personal tags only. |
+| `rinbam.list_tags` | read-only | Local personal tags attached to ACTIVE links only. |
 | `rinbam.get_ai_receipt` | read-only | Metadata-only placeholder; raw prompt/body never returned. |
-| `rinbam.list_recent_saved_links` | read-only | Recent personal saved links; shared tags excluded by default. |
+| `rinbam.list_recent_saved_links` | read-only | Recent ACTIVE personal saved links; shared tags excluded. |
 
 ## Constraints
 - `readOnlyHint: true`, `openWorldHint: false`, `destructiveHint: false`, `idempotentHint: true` are required.
 - Missing/null annotations are validation errors.
-- No write tools, no Supabase insert/update/delete/upsert/rpc.
+- No business-data write tools, no Supabase insert/update/delete/upsert. The only runtime RPCs are service-role-only, verified-user-bound ACTIVE read RPCs and the atomic distributed fixed rate-limit RPC.
+- Archived, disabled, deleted, and `PENDING_DELETE` records are always excluded.
+- Search never loads a fixed latest-200/latest-500 application window; fetch resolves by `(user_id, public_safe_id)`.
 - No live URL refetch and no external network call from tool execution.
 - No raw `fetched_body`.
+- Unknown input fields are rejected and returned payloads are recursively sanitized for raw bodies, tokens, secrets, JWTs, emails, and local paths.
+- JSON-RPC notifications receive no response body.
 - Prompt injection text is treated as text only; it cannot trigger writes or external calls.
-- Rate limit is enforced per authenticated user.
+- Rate limit is a server-owned fixed 60 requests per 60 seconds per authenticated user; the client cannot override it.
+- Incoming Bearer tokens are used for Auth verification only and are never passed to PostgREST/data RPCs.
+- `tools/call` input errors return HTTP 200 with `isError=true`; unknown tool names return JSON-RPC `-32602`; `id=null` is rejected.
 
 ## Validation
 `python3 scripts/verify_mcp_contract.py` and `cd web/admin && npm run typecheck`.
 
 ## Failure handling
 Any write path, noauth personal data, missing annotation, shared tag default inclusion, or raw body output is `NO_GO_INTERNAL`.
+Missing dedicated MCP token issuance/audience/scope verification is `NO_GO_EXTERNAL`; production flags remain disabled.

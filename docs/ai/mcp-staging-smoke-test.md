@@ -4,6 +4,8 @@
 
 - Staging MCP endpoint is deployed over HTTPS.
 - `URLSAVER_MCP_ENABLED=false` is verified before enabling.
+- A staging Authorization Server issues a Supabase-verifiable user token with the dedicated `URLSAVER_MCP_TOKEN_AUDIENCE` and fixed `links:read` scope.
+- `URLSAVER_MCP_AUTHORIZATION_SERVER_READY=true` is set only after that issuer/audience/scope path is independently verified. This flag is not a substitute for implementing the Authorization Server.
 - Staging secrets are set in hosting secret storage, not repo files.
 - A staged user bearer token is available to the human operator.
 - Production URL is not used unless the release owner explicitly approves a production smoke window.
@@ -64,7 +66,15 @@ Request (`tools/call` JSON-RPC):
 
 Expected:
 
-- Request is rejected unless a future explicit shared-tag scope is implemented and approved.
+- HTTP status is 200 because this is a valid MCP `tools/call` exchange.
+- The tool result has `isError=true` and reports `include_shared_tags_requires_explicit_scope`.
+- Shared-tag data is not returned.
+
+## Expected Protocol Rejections
+
+- Unknown tool name: HTTP 400 with JSON-RPC error code `-32602`.
+- JSON-RPC `id=null`: HTTP 400 with JSON-RPC error code `-32600`.
+- Untrusted `Origin`: HTTP 403.
 
 ## Expected No Raw Body
 
@@ -97,16 +107,20 @@ Repeatedly call `search` with the same staged token.
 
 Expected:
 
-- The endpoint returns 429 after the configured limit.
+- The endpoint returns 429 after the server-owned fixed limit of 60 requests in 60 seconds.
+- Supplying legacy RPC arguments cannot increase that limit.
 - The response does not reveal token or internal secret values.
 
 ## Failure Troubleshooting
 
 | Failure | Likely cause | Action |
 |---|---|---|
-| 404 `mcp_disabled` during enabled test | `URLSAVER_MCP_ENABLED` is false or deploy not restarted. | Recheck staging env and restart/deploy. |
+| 404 `mcp_disabled` during enabled test | Enable flag, Authorization Server readiness, or dedicated audience is missing; or deploy was not restarted. | Verify the real staging Authorization Server first, then recheck all three settings and restart/deploy. |
 | 401 `auth_required` | Missing Authorization header. | Set token in shell only. |
-| 401 `invalid_token` | Bad or expired staged token. | Generate a new staged token. |
-| 429 too early | Rate bucket reused or limit too strict. | Wait a minute or adjust staging-only rate config. |
+| 401 `invalid_mcp_token_claims` | Missing/wrong dedicated audience, `links:read` scope, or subject. | Correct the staging token issuer; do not accept a generic Supabase token. |
+| 401 `invalid_token` | Bad, expired, or non-Supabase-verifiable staged token. | Generate a new dedicated staged token. |
+| 429 too early | Fixed per-user bucket was already used. | Wait for the 60-second server-owned window; do not alter the client limit. |
 | raw body/token appears | Internal blocker. | Disable MCP and mark `NO_GO_INTERNAL`. |
 | shared tags included by default | Internal blocker. | Disable MCP and fix contract. |
+
+Production remains `NO_GO_EXTERNAL` until the production Authorization Server, dedicated token issuance, provider registration, and end-to-end token proof exist. Keep `URLSAVER_MCP_ENABLED=false` and `URLSAVER_MCP_AUTHORIZATION_SERVER_READY=false` until then.

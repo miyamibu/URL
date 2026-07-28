@@ -93,15 +93,43 @@ fail_if_sensitive "$search"
 
 shared="$TMP_DIR/shared.json"
 shared_status="$(curl_status shared-tag-rejection POST "$shared" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-11-25' -H "Authorization: Bearer $TOKEN" --data '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"search","arguments":{"query":"tag","limit":1,"includeSharedTags":true}}}')"
-if [[ "$shared_status" != "400" ]]; then
-  echo "FAIL includeSharedTags=true must be rejected without explicit scope"
+if [[ "$shared_status" != "200" ]]; then
+  echo "FAIL tools/call input rejection must use an HTTP 200 MCP tool result"
+  exit 1
+fi
+if ! grep -Eq '"isError"[[:space:]]*:[[:space:]]*true' "$shared"; then
+  echo "FAIL includeSharedTags=true must return an MCP isError result"
   exit 1
 fi
 fail_if_sensitive "$shared"
 
+unknown="$TMP_DIR/unknown.json"
+unknown_status="$(curl_status unknown-tool POST "$unknown" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-11-25' -H "Authorization: Bearer $TOKEN" --data '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"rinbam.unknown","arguments":{}}}')"
+if [[ "$unknown_status" != "400" ]] || ! grep -Eq '"code"[[:space:]]*:[[:space:]]*-32602' "$unknown"; then
+  echo "FAIL unknown tools must return JSON-RPC -32602"
+  exit 1
+fi
+fail_if_sensitive "$unknown"
+
+null_id="$TMP_DIR/null-id.json"
+null_id_status="$(curl_status null-id POST "$null_id" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-11-25' -H "Authorization: Bearer $TOKEN" --data '{"jsonrpc":"2.0","id":null,"method":"ping"}')"
+if [[ "$null_id_status" != "400" ]] || ! grep -Eq '"code"[[:space:]]*:[[:space:]]*-32600' "$null_id"; then
+  echo "FAIL JSON-RPC id=null must be rejected as Invalid Request"
+  exit 1
+fi
+fail_if_sensitive "$null_id"
+
+origin="$TMP_DIR/origin.json"
+origin_status="$(curl_status origin POST "$origin" -H 'Origin: https://untrusted.invalid' -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-11-25' -H "Authorization: Bearer $TOKEN" --data "$initialize_body")"
+if [[ "$origin_status" != "403" ]]; then
+  echo "FAIL an untrusted Origin must return HTTP 403"
+  exit 1
+fi
+fail_if_sensitive "$origin"
+
 receipt="$TMP_DIR/receipt.json"
-receipt_status="$(curl_status ai-receipt POST "$receipt" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-11-25' -H "Authorization: Bearer $TOKEN" --data '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"rinbam.get_ai_receipt","arguments":{"id":"staging-smoke"}}}')"
-if [[ "$receipt_status" != "200" && "$receipt_status" != "404" ]]; then
+receipt_status="$(curl_status ai-receipt POST "$receipt" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-11-25' -H "Authorization: Bearer $TOKEN" --data '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"rinbam.get_ai_receipt","arguments":{"id":"staging-smoke"}}}')"
+if [[ "$receipt_status" != "200" ]]; then
   echo "FAIL AI receipt metadata request returned unexpected status"
   exit 1
 fi
