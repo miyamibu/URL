@@ -28,3 +28,9 @@ verify_jwt = false
 
 [functions.contact-support-outbox]
 verify_jwt = false
+
+[functions.store-notification-receiver]
+verify_jwt = false
+
+[functions.store-entitlement-reconciliation]
+verify_jwt = false
