@@ -58,7 +58,6 @@ environment configuration; never commit, display, or echo the values.
 |---|---|---|
 | `SUPABASE_SERVICE_ROLE_KEY` | `verify-store-purchase`, `contact-support-resend-webhook` | Secret store only; never put in Android/iOS builds, client responses, logs, repo files, or chat. |
 | `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` | `verify-store-purchase` | Secret store only; contains the Google service account private key and must not be pasted into docs or shell history. |
-| `SUPABASE_DB_URL` | `contact-support` | Secret store only; database URLs commonly contain credentials. |
 | `RESEND_API_KEY` | `contact-support` and web/admin delivery lookup | Secret store only; never expose to clients or logs. |
 | `RESEND_WEBHOOK_SECRET` | `contact-support-resend-webhook` and web/admin webhook route | Secret store only; use the matching Resend signing secret and rotate if exposed. |
 | `CONTACT_RATE_LIMIT_SALT` | `contact-support` (optional code path) | Treat as a secret salt and keep it in the external secret store; do not log or commit it. |
