@@ -12,18 +12,19 @@ Supabase Functions の secrets に、公式ダッシュボードから次を登�
 - `CONTACT_SUPPORT_OUTBOX_ENCRYPTION_KEY`：AES-256 用の 32 bytes。64 桁 hex または base64url
 - `RESEND_WEBHOOK_SECRET`：Resend Webhook の signing secret
 
-既存の `CONTACT_RATE_LIMIT_SALT`、`RESEND_API_KEY`、`CONTACT_TO_EMAIL`、`CONTACT_FROM_EMAIL`、`SUPABASE_DB_URL`、`SUPABASE_SERVICE_ROLE_KEY` は値を表示せず、存在だけ確認する。
+既存の `CONTACT_RATE_LIMIT_SALT`、`RESEND_API_KEY`、`CONTACT_TO_EMAIL`、`CONTACT_FROM_EMAIL`、`SUPABASE_SERVICE_ROLE_KEY` は値を表示せず、存在だけ確認する。
 
 ## 一括 cutover
 
-1. `20260726190000_contact_support_idempotent_outbox.sql`、`20260727100000_contact_support_outbox_worker.sql`、`20260727120000_contact_support_outbox_dead_letter.sql`、`20260728100000_contact_support_health_schedule.sql` の順で、問い合わせ関連だけを適用する。
-2. `contact-support-outbox`、`contact-support-resend-webhook`、`contact-support` の順でデプロイする。公開関数は Supabase Gateway JWT を無効化し、worker は worker secret と service role の二重認証、Webhook は Svix 署名を検証する。
+1. `20260726190000_contact_support_idempotent_outbox.sql`、`20260727100000_contact_support_outbox_worker.sql`、`20260727120000_contact_support_outbox_dead_letter.sql`、`20260728100000_contact_support_health_schedule.sql`、`20260728130000_contact_support_worker_auth_schedule.sql` の順で、問い合わせ関連だけを適用する。`20260728100000` まで適用済みの環境では、補正 migration を適用するまで既存 cron に旧 `Authorization` ヘッダーが残る。
+2. `contact-support-outbox`、`contact-support-resend-webhook`、`contact-support` の順でデプロイする。公開関数は Supabase Gateway JWT を無効化し、worker は専用の worker secret で認証し、内部RPCにはFunctionsの予約済みservice roleを使う。Webhook は Svix 署名を検証する。
 3. Resend の Webhook URL を `https://xocumgxbylmpoobfqows.supabase.co/functions/v1/contact-support-resend-webhook` に設定し、`email.sent`、`email.delivered`、`email.delivery_delayed`、`email.bounced`、`email.failed`、`email.suppressed` を有効にする。
-4. Supabase Vault に cron が参照する `SUPABASE_SERVICE_ROLE_KEY` と `CONTACT_SUPPORT_WORKER_SECRET` を登録する。cron は毎分 worker を呼び、毎日 03:17 に dead-letter の 7 日超の本文を消去する。
+4. Supabase Vault に cron が参照する `CONTACT_SUPPORT_WORKER_SECRET` を登録する。`SUPABASE_SERVICE_ROLE_KEY` はFunctionsの予約済みランタイムSecretであり、Vaultとの手動同期対象にしない。cron は毎分 worker を呼び、毎日 03:17 に dead-letter の 7 日超の本文を消去する。
 
 ## Canary の合格条件
 
 - `GET /functions/v1/contact-support` が個人情報なしで `200 {"status":"ok"}` を返す。
+- GitHub Actions の外部 health 監視が成功し、異常時に workflow failure を記録する。メールなどの通知先は GitHub の設定に依存するため、owner が受信設定を確認する。
 - 匿名 `POST` が `202 {"status":"accepted","requestId":"UUID"}` を返す。
 - 同じ `Idempotency-Key` の再送が同じ request ID を返し、メールが二重送信されない。
 - outbox の payload が暗号 envelope であり、送信成功後 `{}` に scrub される。

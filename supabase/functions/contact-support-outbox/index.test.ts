@@ -82,31 +82,33 @@ async function encryptedValidPayload(): Promise<Record<string, unknown>> {
   )).envelope;
 }
 
-Deno.test("worker authorization requires both service-role and worker secrets", () => {
+Deno.test("worker authorization requires the dedicated worker secret", () => {
   const request = new Request("https://worker.example", {
     method: "POST",
-    headers: {
-      authorization: `Bearer ${SERVICE_ROLE_KEY}`,
-      "x-contact-support-worker-secret": WORKER_SECRET,
-    },
+    headers: { "x-contact-support-worker-secret": WORKER_SECRET },
   });
-  if (
-    !authorizeWorker(request, {
-      serviceRoleKey: SERVICE_ROLE_KEY,
-      workerSecret: WORKER_SECRET,
-    })
-  ) throw new Error("valid worker credentials rejected");
+  if (!authorizeWorker(request, { workerSecret: WORKER_SECRET })) {
+    throw new Error("valid worker credentials rejected");
+  }
 
   const missingWorkerSecret = new Request("https://worker.example", {
     method: "POST",
     headers: { authorization: `Bearer ${SERVICE_ROLE_KEY}` },
   });
+  if (authorizeWorker(missingWorkerSecret, { workerSecret: WORKER_SECRET })) {
+    throw new Error("missing worker secret accepted");
+  }
+
+  const mismatchedServiceRole = new Request("https://worker.example", {
+    method: "POST",
+    headers: {
+      authorization: "Bearer stale-service-role-key",
+      "x-contact-support-worker-secret": WORKER_SECRET,
+    },
+  });
   if (
-    authorizeWorker(missingWorkerSecret, {
-      serviceRoleKey: SERVICE_ROLE_KEY,
-      workerSecret: WORKER_SECRET,
-    })
-  ) throw new Error("missing worker secret accepted");
+    !authorizeWorker(mismatchedServiceRole, { workerSecret: WORKER_SECRET })
+  ) throw new Error("worker secret was coupled to service-role rotation");
 });
 
 Deno.test("worker route rejects a body above the hard limit", async () => {
