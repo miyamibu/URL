@@ -84,7 +84,7 @@ alter table public.contact_support_outbox
   add column if not exists payload_scrubbed_at timestamptz;
 
 update public.contact_support_outbox
-set payload_hash = encode(digest(payload::text, 'sha256'), 'hex')
+set payload_hash = encode(extensions.digest(payload::text, 'sha256'), 'hex')
 where payload_hash is null;
 
 alter table public.contact_support_outbox
