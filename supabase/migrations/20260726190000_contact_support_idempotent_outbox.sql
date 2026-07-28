@@ -1,5 +1,7 @@
 begin;
 
+create extension if not exists pgcrypto;
+
 alter table public.contact_support_requests
   add column if not exists source text,
   add column if not exists idempotency_key text;
