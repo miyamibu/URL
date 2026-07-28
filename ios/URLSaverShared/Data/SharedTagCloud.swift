@@ -197,7 +197,13 @@ final class ContactSupportClient: @unchecked Sendable {
             if httpResponse.statusCode == 200, parsed?.status == "sent" {
                 // Older deployed handlers returned 200/status=sent. Keep the
                 // client compatible during the one-shot outbox cutover.
-                return .success(parsed?.requestId.flatMap { UUID(uuidString: $0) == nil ? nil : $0 })
+                return .success(parsed.flatMap { response in
+                    guard let requestId = response.requestId,
+                          UUID(uuidString: requestId) != nil else {
+                        return nil
+                    }
+                    return requestId
+                })
             }
             let serverError = (try? JSONDecoder().decode(ContactSupportErrorResponse.self, from: data))?.error
             return .failure(Self.normalizeErrorMessage(statusCode: httpResponse.statusCode, serverError: serverError))
@@ -289,7 +295,7 @@ final class ContactSupportService: @unchecked Sendable {
 }
 
 private struct ContactSupportAcceptedResponse: Decodable {
-    let requestId: String
+    let requestId: String?
     let status: String?
 }
 
