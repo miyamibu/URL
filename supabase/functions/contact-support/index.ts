@@ -1,4 +1,3 @@
-import postgres from "npm:postgres@3.4.5";
 import {
   encryptContactSupportPayload,
   validateEncryptionSecret,
@@ -100,7 +99,8 @@ export async function handleRequest(request: Request): Promise<Response> {
       return jsonResponse({ error: validationError, requestId }, 400);
     }
 
-    const databaseUrl = requiredEnv("SUPABASE_DB_URL");
+    const supabaseUrl = requiredEnv("SUPABASE_URL").replace(/\/+$/, "");
+    const serviceRoleKey = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
     const authenticatedUserId = await resolveAuthenticatedUser(request);
     const emailHash = await hashClient(normalized.email);
     const authUserIdHash = authenticatedUserId
@@ -108,7 +108,8 @@ export async function handleRequest(request: Request): Promise<Response> {
       : null;
     const ipHash = await hashClient(clientIp(request));
     const queued = await enqueueContactSupportRequest(
-      databaseUrl,
+      supabaseUrl,
+      serviceRoleKey,
       requestId,
       normalized,
       emailHash,
@@ -296,7 +297,8 @@ async function resolveAuthenticatedUser(
 }
 
 async function enqueueContactSupportRequest(
-  databaseUrl: string,
+  supabaseUrl: string,
+  serviceRoleKey: string,
   requestId: string,
   body: NormalizedContactRequest,
   emailHash: string,
@@ -317,45 +319,64 @@ async function enqueueContactSupportRequest(
     payload,
     outboxEncryptionSecret(),
   );
-  const sql = postgres(databaseUrl, { prepare: false });
-
-  try {
-    const rows = await sql`
-      select request_id::text as request_id
-      from public.enqueue_contact_support_request(
-        ${requestId},
-        ${body.source},
-        ${body.idempotencyKey},
-        ${emailHash},
-        ${authUserIdHash},
-        ${ipHash},
-        ${body.platform},
-        ${body.appVersion},
-        ${body.buildType},
-        ${JSON.stringify(encrypted.envelope)}::jsonb,
-        ${encrypted.payloadHash}
-      )
-    `;
-    const queuedRequestId = stringValue(rows[0]?.request_id);
-    if (!UUID_PATTERN.test(queuedRequestId)) {
-      return { ok: false, status: 500, error: "queue_failed" };
-    }
-    return { ok: true, requestId: queuedRequestId };
-  } catch (error) {
-    const message = error instanceof Error ? error.message.toLowerCase() : "";
-    if (message.includes("contact_support_rate_limited_email")) {
-      return { ok: false, status: 429, error: "rate_limited_email" };
-    }
-    if (message.includes("contact_support_rate_limited")) {
-      return { ok: false, status: 429, error: "rate_limited" };
-    }
-    if (message.includes("contact_support_idempotency_key_reused")) {
-      return { ok: false, status: 409, error: "idempotency_key_reused" };
-    }
-    return { ok: false, status: 500, error: "queue_failed" };
-  } finally {
-    await sql.end();
+  const response = await fetch(
+    `${supabaseUrl}/rest/v1/rpc/enqueue_contact_support_request`,
+    {
+      method: "POST",
+      headers: {
+        apikey: serviceRoleKey,
+        authorization: `Bearer ${serviceRoleKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        p_request_id: requestId,
+        p_source: body.source,
+        p_idempotency_key: body.idempotencyKey,
+        p_email_hash: emailHash,
+        p_auth_user_id_hash: authUserIdHash,
+        p_ip_hash: ipHash,
+        p_platform: body.platform,
+        p_app_version: body.appVersion,
+        p_build_type: body.buildType,
+        p_payload: encrypted.envelope,
+        p_payload_hash: encrypted.payloadHash,
+      }),
+    },
+  );
+  const responseBody = await response.text().catch(() => "");
+  if (!response.ok) {
+    return queueErrorFromMessage(responseBody);
   }
+
+  const parsed = tryParseJson(responseBody);
+  const rows = Array.isArray(parsed) ? parsed : [parsed];
+  const queuedRequestId = stringValue(
+    (rows[0] as { request_id?: unknown } | null)?.request_id,
+  );
+  if (!UUID_PATTERN.test(queuedRequestId)) {
+    return { ok: false, status: 500, error: "queue_failed" };
+  }
+  return { ok: true, requestId: queuedRequestId };
+}
+
+function queueErrorFromMessage(body: string): QueueResult {
+  const parsed = tryParseJson(body) as
+    | { code?: unknown; message?: unknown; details?: unknown }
+    | null;
+  const message = [parsed?.code, parsed?.message, parsed?.details, body]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ")
+    .toLowerCase();
+  if (message.includes("contact_support_rate_limited_email")) {
+    return { ok: false, status: 429, error: "rate_limited_email" };
+  }
+  if (message.includes("contact_support_rate_limited")) {
+    return { ok: false, status: 429, error: "rate_limited" };
+  }
+  if (message.includes("contact_support_idempotency_key_reused")) {
+    return { ok: false, status: 409, error: "idempotency_key_reused" };
+  }
+  return { ok: false, status: 500, error: "queue_failed" };
 }
 
 function clientIp(request: Request): string {
@@ -367,6 +388,14 @@ function clientIp(request: Request): string {
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function tryParseJson(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
 }
 
 function textByteLength(value: string): number {
@@ -398,29 +427,38 @@ async function healthResponse(): Promise<Response> {
   try {
     requiredEnv("SUPABASE_URL");
     requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
-    requiredEnv("SUPABASE_DB_URL");
     requiredEnv("CONTACT_SUPPORT_WORKER_SECRET");
     requiredEnv("RESEND_API_KEY");
     requiredEnv("CONTACT_TO_EMAIL");
     requiredEnv("CONTACT_FROM_EMAIL");
     outboxEncryptionSecret();
 
-    const sql = postgres(requiredEnv("SUPABASE_DB_URL"), { prepare: false });
-    try {
-      const rows = await sql`
-        select healthy
-        from public.contact_support_health()
-      ` as Array<{ healthy?: boolean }>;
-      if (rows[0]?.healthy !== true) {
-        return jsonResponse(
-          { status: "degraded", service: "contact-support" },
-          503,
-        );
-      }
-      return jsonResponse({ status: "ok", service: "contact-support" }, 200);
-    } finally {
-      await sql.end();
+    const supabaseUrl = requiredEnv("SUPABASE_URL").replace(/\/+$/, "");
+    const serviceRoleKey = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
+    const response = await fetch(
+      `${supabaseUrl}/rest/v1/rpc/contact_support_health`,
+      {
+        method: "POST",
+        headers: {
+          apikey: serviceRoleKey,
+          authorization: `Bearer ${serviceRoleKey}`,
+          "content-type": "application/json",
+        },
+        body: "{}",
+      },
+    );
+    const body = await response.json().catch(() => null) as unknown;
+    const rows = Array.isArray(body) ? body : [body];
+    if (
+      !response.ok ||
+      (rows[0] as { healthy?: unknown } | null)?.healthy !== true
+    ) {
+      return jsonResponse(
+        { status: "degraded", service: "contact-support" },
+        503,
+      );
     }
+    return jsonResponse({ status: "ok", service: "contact-support" }, 200);
   } catch (error) {
     console.error("contact-support health failure", safeErrorCode(error));
     return jsonResponse(
