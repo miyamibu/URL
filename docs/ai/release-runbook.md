@@ -22,7 +22,6 @@ AI-safe Export / MCP / ChatGPT-facing codeを、repo内検証と外部公開ゲ�
 4. Run release hygiene:
    - `bash scripts/check_release_hygiene.sh`
    - `bash scripts/create_clean_review_archive.sh`
-   - CI/PR repo gate: `bash scripts/check_launch_readiness.sh --level repo`; reviewed-main launch preflight uses `--level launch`.
 5. Re-run mobile UI contract when UI surfaces changed:
    - `python3 scripts/verify_mobile_ui_contract.py`
 
@@ -36,10 +35,11 @@ backoff (30 seconds through 1 hour) and rejects a Resend response that has no
 message ID.
 
 Required function secrets are `SUPABASE_URL`,
-`SUPABASE_SERVICE_ROLE_KEY`, `CONTACT_SUPPORT_WORKER_SECRET`,
+the platform-provided `SUPABASE_SERVICE_ROLE_KEY`, `CONTACT_SUPPORT_WORKER_SECRET`,
 `RESEND_API_KEY`, `CONTACT_TO_EMAIL`, and `CONTACT_FROM_EMAIL`. The scheduler
-must send `Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>` and
-`x-contact-support-worker-secret: <CONTACT_SUPPORT_WORKER_SECRET>` over HTTPS.
+must send `x-contact-support-worker-secret: <CONTACT_SUPPORT_WORKER_SECRET>`
+over HTTPS. The service-role key remains inside the Function for internal RPC
+calls and is not mirrored into Vault or used as scheduler transport auth.
 The request body is optional or `{"limit": 1..50}` and is capped at 8 KiB.
 
 Deployment and scheduler registration remain manual external gates. A local

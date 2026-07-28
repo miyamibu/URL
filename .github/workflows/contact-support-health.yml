@@ -2,7 +2,7 @@ name: Contact support health
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -18,5 +18,14 @@ jobs:
           CONTACT_SUPPORT_HEALTH_URL: https://xocumgxbylmpoobfqows.supabase.co/functions/v1/contact-support
         run: |
           set -euo pipefail
-          response="$(curl --fail-with-body --silent --show-error --max-time 20 --retry 2 --retry-delay 2 "$CONTACT_SUPPORT_HEALTH_URL")"
-          printf '%s\n' "$response" | jq -e '.status == "ok" and .service == "contact-support"' >/dev/null
+          if ! response="$(curl --fail-with-body --silent --show-error --max-time 20 --retry 2 --retry-delay 2 "$CONTACT_SUPPORT_HEALTH_URL")"; then
+            echo "::error::Contact support health request failed."
+            exit 1
+          fi
+
+          if ! printf '%s\n' "$response" | jq -e '.status == "ok" and .service == "contact-support"' >/dev/null; then
+            echo "::error::Contact support health response was not healthy."
+            exit 1
+          fi
+
+          echo "Contact support health check passed."

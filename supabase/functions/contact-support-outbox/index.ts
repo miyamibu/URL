@@ -344,14 +344,15 @@ function requiredEncryptionKey(): string {
 
 export function authorizeWorker(
   request: Request,
-  config: Pick<WorkerConfig, "serviceRoleKey" | "workerSecret">,
+  config: Pick<WorkerConfig, "workerSecret">,
 ): boolean {
-  const authorization = request.headers.get("authorization") ?? "";
-  const bearer = authorization.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? "";
   const workerSecret = request.headers.get("x-contact-support-worker-secret")
     ?.trim() ?? "";
-  return constantTimeEqual(bearer, config.serviceRoleKey) &&
-    constantTimeEqual(workerSecret, config.workerSecret);
+  // The Supabase service-role key is a reserved platform secret and cannot be
+  // mirrored reliably in Vault for scheduler transport auth. It remains
+  // required for internal RPC calls, while this dedicated high-entropy secret
+  // authenticates the scheduler request.
+  return constantTimeEqual(workerSecret, config.workerSecret);
 }
 
 async function claimOutbox(
