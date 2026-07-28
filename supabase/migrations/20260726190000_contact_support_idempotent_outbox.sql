@@ -13,6 +13,8 @@ where source is null
    or btrim(idempotency_key) = '';
 
 alter table public.contact_support_requests
+  alter column source set default 'legacy:direct',
+  alter column idempotency_key set default ('legacy-' || gen_random_uuid()::text),
   alter column source set not null,
   alter column idempotency_key set not null;
 
