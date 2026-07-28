@@ -1,12 +1,14 @@
+create extension if not exists pgcrypto;
+
 alter table public.personal_saved_links
     add column if not exists public_safe_id text;
 
 update public.personal_saved_links
-set public_safe_id = encode(gen_random_bytes(16), 'hex')
+set public_safe_id = encode(extensions.gen_random_bytes(16), 'hex')
 where public_safe_id is null or btrim(public_safe_id) = '';
 
 alter table public.personal_saved_links
-    alter column public_safe_id set default encode(gen_random_bytes(16), 'hex');
+    alter column public_safe_id set default encode(extensions.gen_random_bytes(16), 'hex');
 alter table public.personal_saved_links
     alter column public_safe_id set not null;
 
