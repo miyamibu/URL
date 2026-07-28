@@ -1,0 +1,126 @@
+name: Production feature contracts
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "web/admin/**"
+      - "supabase/functions/store-notification-receiver/**"
+      - "supabase/functions/store-entitlement-reconciliation/**"
+      - "supabase/functions/verify-store-purchase/**"
+      - "supabase/functions/_shared/store-notification-contract.ts"
+      - "supabase/migrations/**"
+      - "supabase/tests/**"
+      - "scripts/verify_mcp_contract.py"
+      - "scripts/test_verify_admin_e2e.py"
+      - "scripts/verify_admin_e2e.py"
+      - "scripts/smoke_mcp_staging.sh"
+      - "docs/ai/mcp-*.md"
+      - "docs/release/*"
+  pull_request:
+    paths:
+      - "web/admin/**"
+      - "supabase/functions/store-notification-receiver/**"
+      - "supabase/functions/store-entitlement-reconciliation/**"
+      - "supabase/functions/verify-store-purchase/**"
+      - "supabase/functions/_shared/store-notification-contract.ts"
+      - "supabase/migrations/**"
+      - "supabase/tests/**"
+      - "scripts/verify_mcp_contract.py"
+      - "scripts/test_verify_admin_e2e.py"
+      - "scripts/verify_admin_e2e.py"
+      - "scripts/smoke_mcp_staging.sh"
+      - "docs/ai/mcp-*.md"
+      - "docs/release/*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-feature-contracts-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web-admin:
+    name: Web Admin typecheck, lint, test, build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web/admin
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/admin/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  store-deno:
+    name: Store Deno contracts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v1
+        with:
+          deno-version: "2.8.1"
+
+      - name: Format check
+        run: >-
+          deno fmt --check
+          supabase/functions/_shared/store-notification-contract.ts
+          supabase/functions/verify-store-purchase/index.ts
+          supabase/functions/store-notification-receiver/index.ts
+          supabase/functions/store-entitlement-reconciliation/index.ts
+
+      - name: Typecheck
+        run: |
+          deno check supabase/functions/verify-store-purchase/index.ts
+          deno check supabase/functions/store-notification-receiver/index.ts
+          deno check supabase/functions/store-entitlement-reconciliation/index.ts
+
+      - name: Unit tests
+        run: |
+          deno test --no-check --allow-env supabase/functions/verify-store-purchase/index.test.ts
+          deno test --no-check --allow-env supabase/functions/store-notification-receiver/index.test.ts
+          deno test --no-check --allow-env supabase/functions/store-entitlement-reconciliation/index.test.ts
+
+  contract-tests:
+    name: MCP and Admin contract tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Verify MCP static contract
+        run: python3 scripts/verify_mcp_contract.py
+
+      - name: Verify Admin E2E runner fail-closed behavior
+        run: python3 -m unittest scripts/test_verify_admin_e2e.py
