@@ -1,6 +1,8 @@
 import SwiftUI
 import UIKit
 
+private let rinbamUsageGuideURL = URL(string: "https://rinbam-usage-guide.miyamibu.chatgpt.site")!
+
 private extension Color {
     init(hex: Int) {
         self.init(UIColor(hex: hex))
@@ -13,6 +15,7 @@ func shouldShowPendingInviteBanner(hasPendingInvite: Bool) -> Bool {
 
 struct RootView: View {
     @ObservedObject var model: URLSaverAppModel
+    @Environment(\.openURL) private var openURL
 
     @State private var isShowingManualSheet = false
     @State private var selectedMainService: ServiceType = .all
@@ -135,7 +138,7 @@ struct RootView: View {
                     selectedMainEntryIDs = []
                     searchQuery = ""
                     isShowingSearchBar = false
-                    isShowingUsageGuide = true
+                    openURL(rinbamUsageGuideURL)
                 },
                 onOpenPrivacyInfo: { isShowingPrivacyInfoSheet = true },
                 onOpenSharedTagCloud: { isShowingSharedTagCloudSheet = true },
@@ -594,11 +597,7 @@ private struct MainScreen: View {
             let trailingButtons = mainTrailingButtons
             ScreenHeader(
                 title: "りんばむ",
-                leadingButton: ScreenHeaderButton(
-                    icon: "line.3.horizontal",
-                    accessibilityLabel: "メニュー",
-                    action: { isShowingMainMenu = true }
-                ),
+                leadingButton: nil,
                 trailingButtons: trailingButtons,
                 onTitleTap: {
                     selectedService = .all
@@ -791,6 +790,11 @@ private struct MainScreen: View {
                         isShowingSearchBar = true
                     }
                 }
+            ),
+            ScreenHeaderButton(
+                icon: "line.3.horizontal",
+                accessibilityLabel: "メニュー",
+                action: { isShowingMainMenu = true }
             )
         ]
     }

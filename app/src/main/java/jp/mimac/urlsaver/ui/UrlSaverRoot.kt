@@ -226,6 +226,8 @@ fun shouldShowSharedTagCloudEntryPoints(
     hasPendingInvite: Boolean = false,
 ): Boolean = true
 
+private const val RINBAM_USAGE_GUIDE_URL = "https://rinbam-usage-guide.miyamibu.chatgpt.site"
+
 @Composable
 fun UrlSaverRoot(
     activityViewModel: MainActivityViewModel,
@@ -1545,7 +1547,26 @@ private fun MainScreen(
                                 modifier = Modifier.clickable { returnToMainHome() },
                             )
                         },
-                        navigationIcon = {
+                        colors = orbitTopAppBarColors(),
+                        windowInsets = compactTopAppBarInsets(),
+                        actions = {
+                            IconButton(onClick = {
+                                if (showUsageGuide) {
+                                    showUsageGuide = false
+                                    searchBarVisible = true
+                                } else if (searchBarVisible) {
+                                    searchQueryLocal = ""
+                                    searchBarVisible = false
+                                } else {
+                                    searchBarVisible = true
+                                }
+                            }) {
+                                Icon(
+                                    Icons.Outlined.Search,
+                                    contentDescription = "検索",
+                                    modifier = Modifier.size(MainTopBarActionIconSize),
+                                )
+                            }
                             Box {
                                 IconButton(onClick = { showMainMenu = true }) {
                                     Icon(
@@ -1617,7 +1638,13 @@ private fun MainScreen(
                                             searchQueryLocal = ""
                                             searchBarVisible = false
                                             mainPane = MainPane.URLS
-                                            showUsageGuide = true
+                                            when (context.tryOpenExternalUrl(RINBAM_USAGE_GUIDE_URL)) {
+                                                OpenUrlResult.Success -> Unit
+                                                OpenUrlResult.NoHandler,
+                                                OpenUrlResult.Failed -> scope.launch {
+                                                    snackbarHostState.showSnackbar("使い方ページを開けませんでした")
+                                                }
+                                            }
                                         },
                                     )
                                     DropdownMenuItem(
@@ -1630,27 +1657,6 @@ private fun MainScreen(
                                 }
                             }
                         },
-                        colors = orbitTopAppBarColors(),
-                        windowInsets = compactTopAppBarInsets(),
-                        actions = {
-                            IconButton(onClick = {
-                                if (showUsageGuide) {
-                                    showUsageGuide = false
-                                    searchBarVisible = true
-                                } else if (searchBarVisible) {
-                                    searchQueryLocal = ""
-                                    searchBarVisible = false
-                                } else {
-                                    searchBarVisible = true
-                                }
-                            }) {
-                                Icon(
-                                    Icons.Outlined.Search,
-                                    contentDescription = "検索",
-                                    modifier = Modifier.size(MainTopBarActionIconSize),
-                                )
-                            }
-                        },
                     )
                 }
             },
@@ -1659,7 +1665,7 @@ private fun MainScreen(
             Box(
                 modifier = Modifier
                     .padding(paddingValues)
-                .then(if (showMainBottomBar) Modifier.padding(bottom = 156.dp) else Modifier)
+                .then(if (showMainBottomBar) Modifier.padding(bottom = 92.dp) else Modifier)
                     .fillMaxSize()
                     .background(MaterialTheme.colorScheme.background),
                 contentAlignment = Alignment.TopCenter,
