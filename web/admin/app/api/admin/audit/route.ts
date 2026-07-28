@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { assertCanModerate, requireAdmin } from "@/lib/auth";
+import { assertCapability, requireAdmin } from "@/lib/auth";
 import { createServiceSupabaseClient } from "@/lib/supabase";
 
 function asErrorResponse(error: unknown): Response {
@@ -11,7 +11,7 @@ function asErrorResponse(error: unknown): Response {
 export async function GET(request: NextRequest) {
   try {
     const admin = await requireAdmin(request);
-    assertCanModerate(admin);
+    assertCapability(admin, "audit.read");
     const supabase = createServiceSupabaseClient();
     const { data, error } = await supabase
       .from("admin_audit_logs")

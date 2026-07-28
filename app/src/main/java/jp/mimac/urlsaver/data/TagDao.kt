@@ -9,8 +9,20 @@ import jp.mimac.urlsaver.domain.SharedTagMemberRecord
 import jp.mimac.urlsaver.domain.SharedTagMemberRole
 import jp.mimac.urlsaver.domain.SharedTagRecord
 import jp.mimac.urlsaver.domain.SharedTagScope
+import jp.mimac.urlsaver.domain.SharedTagSyncStatus
 import jp.mimac.urlsaver.domain.TagWithCount
 import kotlinx.coroutines.flow.Flow
+
+data class VisibleTagForEntryRecord(
+    val entryId: Long,
+    val id: Long,
+    val name: String,
+    val scope: SharedTagScope = SharedTagScope.LOCAL_ONLY,
+    val authUserId: String? = null,
+    val remoteTagId: String? = null,
+    val syncStatus: SharedTagSyncStatus = SharedTagSyncStatus.LOCAL_ONLY,
+    val currentUserRole: SharedTagMemberRole? = null,
+)
 
 @Dao
 interface TagDao {
@@ -249,6 +261,7 @@ interface TagDao {
         INNER JOIN tags AS t ON t.id = r.tagId
         WHERE r.tagId IN (:tagIds)
           AND r.deletedAt IS NULL
+          AND r.scope = 'LOCAL_ONLY'
           AND t.deletedAt IS NULL
           AND t.scope = 'LOCAL_ONLY'
         ORDER BY e.createdAt DESC, e.normalizedUrl ASC
@@ -319,6 +332,39 @@ interface TagDao {
     @Query(
         """
         SELECT
+            r.entryId AS entryId,
+            t.id AS id,
+            t.name AS name,
+            t.scope AS scope,
+            t.authUserId AS authUserId,
+            t.remoteTagId AS remoteTagId,
+            t.syncStatus AS syncStatus,
+            me.role AS currentUserRole
+        FROM tags AS t
+        INNER JOIN tag_url_cross_refs AS r ON r.tagId = t.id
+        LEFT JOIN shared_tag_members AS me
+            ON me.tagId = t.id
+           AND me.authUserId = :authUserId
+           AND me.userId = :authUserId
+           AND me.status = 'ACTIVE'
+        WHERE r.entryId IN (:entryIds)
+          AND r.deletedAt IS NULL
+          AND t.deletedAt IS NULL
+          AND (
+            t.scope = 'LOCAL_ONLY'
+            OR (:authUserId IS NOT NULL AND t.scope = 'SYNCED' AND t.authUserId = :authUserId)
+          )
+        ORDER BY r.entryId ASC, t.name ASC, t.id ASC
+        """
+    )
+    suspend fun getVisibleTagsForEntries(
+        entryIds: List<Long>,
+        authUserId: String?,
+    ): List<VisibleTagForEntryRecord>
+
+    @Query(
+        """
+        SELECT
             t.id AS id,
             t.name AS name,
             t.scope AS scope,
@@ -344,6 +390,7 @@ interface TagDao {
         INNER JOIN tags AS t ON t.id = r.tagId
         WHERE r.entryId IN (:entryIds)
           AND r.deletedAt IS NULL
+          AND r.scope = 'LOCAL_ONLY'
           AND t.deletedAt IS NULL
           AND t.scope = 'LOCAL_ONLY'
         ORDER BY r.entryId ASC, r.tagId ASC
@@ -365,14 +412,37 @@ interface TagDao {
 
     @Query(
         """
-        SELECT COUNT(*)
+        SELECT DISTINCT entryId
         FROM tag_url_cross_refs
-        WHERE entryId = :entryId
+        WHERE authUserId = :authUserId
           AND scope = 'SYNCED'
-          AND deletedAt IS NULL
+        ORDER BY entryId ASC
+        """
+    )
+    suspend fun getSyncedEntryIdsForUser(authUserId: String): List<Long>
+
+    @Query(
+        """
+        SELECT COUNT(*)
+        FROM tag_url_cross_refs AS ref
+        INNER JOIN tags AS tag ON tag.id = ref.tagId
+        WHERE ref.entryId = :entryId
+          AND ref.scope = 'SYNCED'
+          AND ref.deletedAt IS NULL
+          AND tag.scope = 'SYNCED'
+          AND tag.deletedAt IS NULL
         """
     )
     suspend fun countActiveSyncedRefsForEntry(entryId: Long): Int
+
+    @Query(
+        """
+        DELETE FROM tag_url_cross_refs
+        WHERE entryId = :entryId
+          AND scope = 'LOCAL_ONLY'
+        """
+    )
+    suspend fun deleteLocalOnlyCrossRefsForEntry(entryId: Long): Int
 
     @Query(
         """

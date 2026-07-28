@@ -4,6 +4,7 @@ import {
   RinbamMcpJsonRpcError,
   RinbamMcpInputError,
   RinbamMcpRateLimitError,
+  RinbamMcpRateLimitUnavailableError,
   RinbamMcpToolNotFoundError,
   checkRinbamMcpRateLimit,
   handleRinbamMcpJsonRpcRequest,
@@ -22,6 +23,8 @@ import {
   validateRinbamMcpToolDescriptors,
 } from "@/lib/rinbamMcp";
 import { optionalEnv } from "@/lib/env";
+
+const MAX_MCP_BODY_BYTES = 128 * 1024;
 
 function authHeaders(request: NextRequest) {
   const resource = new URL("/api/mcp", request.url).toString();
@@ -63,6 +66,46 @@ class RinbamMcpTransportError extends Error {
     super(message);
     this.name = "RinbamMcpTransportError";
   }
+}
+
+async function readMcpBody(request: NextRequest): Promise<string> {
+  const contentLength = request.headers.get("content-length");
+  if (contentLength) {
+    const declaredLength = Number(contentLength);
+    if (Number.isSafeInteger(declaredLength) && declaredLength > MAX_MCP_BODY_BYTES) {
+      throw new RinbamMcpTransportError(413, "request_body_too_large");
+    }
+  }
+
+  const body = request.body;
+  if (!body) return "";
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      totalBytes += value.byteLength;
+      if (totalBytes > MAX_MCP_BODY_BYTES) {
+        await reader.cancel("request_body_too_large");
+        throw new RinbamMcpTransportError(413, "request_body_too_large");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
 }
 
 function validateOrigin(request: NextRequest) {
@@ -114,13 +157,20 @@ export async function POST(request: NextRequest) {
     }
     validateOrigin(request);
     const ctx = await requireRinbamMcpUser(request.headers.get("authorization"));
-    checkRinbamMcpRateLimit(ctx);
+    await checkRinbamMcpRateLimit(ctx);
     validateTransportHeaders(request);
     validateRinbamMcpToolDescriptors();
 
     let body: unknown;
+    let rawBody: string;
     try {
-      body = await request.json();
+      rawBody = await readMcpBody(request);
+    } catch (error) {
+      if (error instanceof RinbamMcpTransportError) throw error;
+      return jsonRpcError(null, -32700, "Parse error");
+    }
+    try {
+      body = JSON.parse(rawBody);
     } catch {
       return jsonRpcError(null, -32700, "Parse error");
     }
@@ -183,7 +233,10 @@ export async function POST(request: NextRequest) {
       return jsonError(error.message, 400, request);
     }
     if (error instanceof RinbamMcpRateLimitError) {
-      return jsonError(error.message, 429, request);
+      return jsonError(error.message, 429, request, { "Retry-After": String(error.retryAfterSeconds) });
+    }
+    if (error instanceof RinbamMcpRateLimitUnavailableError) {
+      return jsonError(error.message, 503, request, { "Retry-After": "5" });
     }
     return jsonRpcError(null, -32603, "Internal MCP error", 500);
   }

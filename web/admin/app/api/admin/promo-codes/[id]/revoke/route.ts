@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { assertWritable, requireAdmin } from "@/lib/auth";
-import { recordAdminAudit } from "@/lib/audit";
+import { assertHighRisk, assertWritable, requireAdmin } from "@/lib/auth";
+import { requiredAdminReason } from "@/lib/audit";
 import { createServiceSupabaseClient } from "@/lib/supabase";
 
 function asErrorResponse(error: unknown): Response {
@@ -23,16 +23,19 @@ export async function POST(
   try {
     const admin = await requireAdmin(request);
     assertWritable(admin);
+    assertHighRisk(admin);
     const { id } = await context.params;
     const body = await request.json().catch(() => ({}));
-    const reason = String(body.reason ?? "admin_revoked").trim() || "admin_revoked";
+    const reason = requiredAdminReason(body.reason);
     const supabase = createServiceSupabaseClient();
 
-    const { error } = await supabase.rpc("admin_revoke_promo_invite_code", {
+    const { data, error } = await supabase.rpc("admin_revoke_promo_invite_code_audited", {
       p_code_id: id,
       p_admin_id: admin.id,
       p_actor_user_id: admin.userId,
       p_reason: reason,
+      p_operation_id: crypto.randomUUID(),
+      p_assurance: admin.assurance,
       p_event_at: new Date().toISOString(),
     });
     if (error) {
@@ -45,13 +48,7 @@ export async function POST(
       }
       throw error;
     }
-
-    await recordAdminAudit({
-      adminUserId: admin.id,
-      action: "promo_code_revoked",
-      reason,
-      afterValue: { codeId: id, status: "revoked" },
-    });
+    if (!data) throw new Error("優待コード取消結果を確認できませんでした");
 
     return NextResponse.json({ ok: true });
   } catch (error) {

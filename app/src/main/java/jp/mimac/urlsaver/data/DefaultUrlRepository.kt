@@ -26,6 +26,8 @@ class DefaultUrlRepository(
     private val clock: AppClock,
     private val scheduler: MetadataScheduler,
     private val usageSummaryDataSource: UsageSummaryDataSource,
+    private val pendingDeleteMediaCleanup: PendingDeleteMediaCleanup = NoopPendingDeleteMediaCleanup,
+    private val videoAssetDao: VideoAssetDao? = null,
 ) : UrlRepository {
     override fun observeActiveEntries(): Flow<List<UrlEntryEntity>> = flow {
         emitAll(dao.observeActiveEntries())
@@ -330,101 +332,178 @@ class DefaultUrlRepository(
 
     override suspend fun archive(entryId: Long): Boolean {
         val now = clock.nowEpochMillis()
-        val target = dao.findById(entryId) ?: return false
-        if (target.recordState != RecordState.ACTIVE) return false
-        dao.update(
-            target.copy(
-                recordState = RecordState.ARCHIVED,
-                archivedAt = now,
-                pendingDeletionUntil = null,
-                updatedAt = now,
-            ),
-        )
-        return true
+        return database.withTransaction {
+            val target = dao.findById(entryId) ?: return@withTransaction false
+            if (target.recordState != RecordState.ACTIVE) return@withTransaction false
+            dao.update(
+                target.copy(
+                    recordState = RecordState.ARCHIVED,
+                    archivedAt = now,
+                    pendingDeletionUntil = null,
+                    updatedAt = now,
+                ),
+            )
+            true
+        }
     }
 
     override suspend fun unarchive(entryId: Long): Boolean {
         val now = clock.nowEpochMillis()
-        val target = dao.findById(entryId) ?: return false
-        if (target.recordState != RecordState.ARCHIVED) return false
-        dao.update(
-            target.copy(
-                recordState = RecordState.ACTIVE,
-                archivedAt = null,
-                pendingDeletionUntil = null,
-                updatedAt = now,
-            ),
-        )
-        return true
+        return database.withTransaction {
+            val target = dao.findById(entryId) ?: return@withTransaction false
+            if (target.recordState != RecordState.ARCHIVED) return@withTransaction false
+            dao.update(
+                target.copy(
+                    recordState = RecordState.ACTIVE,
+                    archivedAt = null,
+                    pendingDeletionUntil = null,
+                    updatedAt = now,
+                ),
+            )
+            true
+        }
     }
 
     override suspend fun markPendingDelete(entryId: Long, gracePeriodMillis: Long): Long? {
         val now = clock.nowEpochMillis()
-        val target = dao.findById(entryId) ?: return null
-        if (target.recordState != RecordState.ACTIVE && target.recordState != RecordState.ARCHIVED) return null
-        val pendingUntil = now + gracePeriodMillis
-        val archivedAt = when (target.recordState) {
-            RecordState.ARCHIVED -> target.archivedAt ?: now
-            RecordState.ACTIVE -> null
-            RecordState.PENDING_DELETE -> null
+        return database.withTransaction {
+            val target = dao.findById(entryId) ?: return@withTransaction null
+            if (target.recordState != RecordState.ACTIVE && target.recordState != RecordState.ARCHIVED) {
+                return@withTransaction null
+            }
+            val pendingUntil = now + gracePeriodMillis
+            val archivedAt = when (target.recordState) {
+                RecordState.ARCHIVED -> target.archivedAt ?: now
+                RecordState.ACTIVE -> null
+                RecordState.PENDING_DELETE -> null
+            }
+            dao.update(
+                target.copy(
+                    recordState = RecordState.PENDING_DELETE,
+                    pendingDeletionUntil = pendingUntil,
+                    archivedAt = archivedAt,
+                    updatedAt = now,
+                ),
+            )
+            pendingUntil
         }
-        dao.update(
-            target.copy(
-                recordState = RecordState.PENDING_DELETE,
-                pendingDeletionUntil = pendingUntil,
-                archivedAt = archivedAt,
-                updatedAt = now,
-            ),
-        )
-        return pendingUntil
     }
 
-    override suspend fun finalizePendingDelete(entryId: Long) {
-        val now = clock.nowEpochMillis()
-        val target = dao.findById(entryId) ?: return
-        if (target.recordState != RecordState.PENDING_DELETE) return
-        val due = target.pendingDeletionUntil ?: return
-        if (due <= now) {
-            dao.deleteById(entryId)
+    override suspend fun finalizePendingDelete(entryId: Long): PendingDeleteFinalizationResult {
+        val outcome = database.withTransaction {
+            finalizePendingDeleteInTransaction(entryId, clock.nowEpochMillis())
         }
+        val cleanupTarget = outcome.cleanupTarget
+        if (cleanupTarget != null) {
+            runPostCommitMediaCleanup(cleanupTarget)
+        }
+        return outcome.result
     }
 
     override suspend fun cleanupExpiredPendingDeletes() {
-        dao.cleanupExpiredPending(clock.nowEpochMillis())
+        val outcomes = database.withTransaction {
+            val now = clock.nowEpochMillis()
+            dao.findPendingDeleteEntries()
+                .filter { it.pendingDeletionUntil?.let { pendingUntil -> pendingUntil <= now } == true }
+                .map { entry ->
+                    finalizePendingDeleteInTransaction(entry.id, now)
+                }
+        }
+        for (outcome in outcomes) {
+            outcome.cleanupTarget?.let { runPostCommitMediaCleanup(it) }
+        }
     }
 
     override suspend fun restore(entryId: Long): Boolean {
         val now = clock.nowEpochMillis()
-        val target = dao.findById(entryId) ?: return false
-        return when (target.recordState) {
-            RecordState.PENDING_DELETE -> {
-                val restoreAsArchived = target.archivedAt != null
-                dao.update(
-                    target.copy(
-                        recordState = if (restoreAsArchived) RecordState.ARCHIVED else RecordState.ACTIVE,
-                        pendingDeletionUntil = null,
-                        archivedAt = if (restoreAsArchived) target.archivedAt else null,
-                        updatedAt = now,
-                    ),
-                )
-                true
-            }
+        return database.withTransaction {
+            val target = dao.findById(entryId) ?: return@withTransaction false
+            when (target.recordState) {
+                RecordState.PENDING_DELETE -> {
+                    val restoreAsArchived = target.archivedAt != null
+                    dao.update(
+                        target.copy(
+                            recordState = if (restoreAsArchived) RecordState.ARCHIVED else RecordState.ACTIVE,
+                            pendingDeletionUntil = null,
+                            archivedAt = if (restoreAsArchived) target.archivedAt else null,
+                            updatedAt = now,
+                        ),
+                    )
+                    true
+                }
 
-            RecordState.ARCHIVED -> {
-                dao.update(
-                    target.copy(
-                        recordState = RecordState.ACTIVE,
-                        pendingDeletionUntil = null,
-                        archivedAt = null,
-                        updatedAt = now,
-                    ),
-                )
-                true
-            }
+                RecordState.ARCHIVED -> {
+                    dao.update(
+                        target.copy(
+                            recordState = RecordState.ACTIVE,
+                            pendingDeletionUntil = null,
+                            archivedAt = null,
+                            updatedAt = now,
+                        ),
+                    )
+                    true
+                }
 
-            RecordState.ACTIVE -> false
+                RecordState.ACTIVE -> false
+            }
         }
     }
+
+    private suspend fun finalizePendingDeleteInTransaction(
+        entryId: Long,
+        now: Long,
+    ): PendingDeleteFinalizationOutcome {
+        val target = dao.findById(entryId)
+            ?: return PendingDeleteFinalizationOutcome(PendingDeleteFinalizationResult.Stale)
+        val due = target.pendingDeletionUntil
+        if (target.recordState != RecordState.PENDING_DELETE || due == null || due > now) {
+            return PendingDeleteFinalizationOutcome(PendingDeleteFinalizationResult.Stale)
+        }
+
+        val sharedReferenceCount = tagDao.countActiveSyncedRefsForEntry(entryId)
+        if (sharedReferenceCount > 0) {
+            val preserved = dao.preserveSharedPendingDeleteIfDue(entryId, sharedReferenceCount, now) == 1
+            if (!preserved) {
+                return PendingDeleteFinalizationOutcome(PendingDeleteFinalizationResult.Stale)
+            }
+            tagDao.deleteLocalOnlyCrossRefsForEntry(entryId)
+            return PendingDeleteFinalizationOutcome(
+                PendingDeleteFinalizationResult.PreservedShared(sharedReferenceCount),
+            )
+        }
+
+        val downloadAssetIds = try {
+            videoAssetDao?.loadAssetsForEntries(listOf(entryId)).orEmpty().map { it.id }
+        } catch (_: Throwable) {
+            emptyList()
+        }
+        return if (dao.deleteIfPendingDeleteDue(entryId, now) == 1) {
+            PendingDeleteFinalizationOutcome(
+                result = PendingDeleteFinalizationResult.Deleted,
+                cleanupTarget = PendingDeleteCleanupTarget(entryId, downloadAssetIds),
+            )
+        } else {
+            PendingDeleteFinalizationOutcome(PendingDeleteFinalizationResult.Stale)
+        }
+    }
+
+    private suspend fun runPostCommitMediaCleanup(target: PendingDeleteCleanupTarget) {
+        try {
+            pendingDeleteMediaCleanup.cleanup(target.entryId, target.downloadAssetIds)
+        } catch (error: Throwable) {
+            Log.e(TAG, "Pending-delete media cleanup failed for entryId=${target.entryId}", error)
+        }
+    }
+
+    private data class PendingDeleteCleanupTarget(
+        val entryId: Long,
+        val downloadAssetIds: List<Long>,
+    )
+
+    private data class PendingDeleteFinalizationOutcome(
+        val result: PendingDeleteFinalizationResult,
+        val cleanupTarget: PendingDeleteCleanupTarget? = null,
+    )
 
     override suspend fun saveUserTitle(entryId: Long, rawTitle: String): SaveTitleResult {
         val entry = dao.findById(entryId) ?: return SaveTitleResult(success = false)

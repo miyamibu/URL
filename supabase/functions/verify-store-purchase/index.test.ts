@@ -1,5 +1,6 @@
 import { APPLE_ROOT_CERTIFICATES } from "./apple-root-certificates.ts";
 import {
+  completePurchaseVerification,
   constantTimeStringEqual,
   expectedPlanForProduct,
   handleRequest,
@@ -33,6 +34,78 @@ Deno.test("purchase policy helpers reject unknown products and bind strings", as
   assert(await constantTimeStringEqual("user-a", "user-a"), "equal binding");
   assert(!(await constantTimeStringEqual("user-a", "user-b")), "mismatched binding");
   assert(!(await constantTimeStringEqual("", "user-a")), "missing binding");
+});
+
+Deno.test("verified purchase completion uses one RPC write boundary", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string; body: string }> = [];
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      method: init?.method ?? "GET",
+      body: typeof init?.body === "string" ? init.body : "",
+    });
+    return new Response(
+      JSON.stringify([{
+        verification_id: "verification-id",
+        grant_id: "grant-id",
+      }]),
+      { status: 200 },
+    );
+  };
+
+  try {
+    const request = normalizeRequest({
+      storePlatform: "app_store",
+      storeProductId: "urlsaver.standard.monthly",
+      purchaseToken: "signed-transaction-payload",
+    });
+    const result = await completePurchaseVerification(
+      "https://purchase-security-test.invalid",
+      "test-service-role",
+      "00000000-0000-0000-0000-000000000001",
+      request,
+      {
+        plan: "standard",
+        billingPeriod: "monthly",
+        storePlatform: "app_store",
+        storeProductId: "urlsaver.standard.monthly",
+        storeTransactionId: "transaction-id",
+        originalTransactionId: "original-transaction-id",
+        subscriptionKey: "app_store:original-transaction-id",
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+    );
+
+    assertEquals(result.verificationId, "verification-id", "verification id");
+    assertEquals(result.grantId, "grant-id", "grant id");
+    assertEquals(calls.length, 1, "completion request count");
+    assert(
+      calls[0].url.endsWith(
+        "/rest/v1/rpc/complete_store_purchase_verification",
+      ),
+      "completion uses RPC",
+    );
+    assertEquals(calls[0].method, "POST", "completion method");
+    const body = JSON.parse(calls[0].body);
+    assertEquals(
+      body.p_store_transaction_id,
+      "transaction-id",
+      "provider transaction id",
+    );
+    assertEquals(
+      body.p_subscription_key,
+      "app_store:original-transaction-id",
+      "subscription key",
+    );
+    assertEquals(
+      typeof body.p_purchase_token_hash,
+      "string",
+      "token is hashed before RPC",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 Deno.test("malformed App Store JWS fails closed without granting", async () => {

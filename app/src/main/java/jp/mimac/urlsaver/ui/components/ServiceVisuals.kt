@@ -18,8 +18,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
-import coil.compose.SubcomposeAsyncImage
-import coil.compose.SubcomposeAsyncImageContent
 import jp.mimac.urlsaver.R
 import jp.mimac.urlsaver.domain.ServiceType
 import jp.mimac.urlsaver.ui.theme.OrbitTokens
@@ -91,7 +89,7 @@ fun ServiceBadge(
         return
     }
 
-    SubcomposeAsyncImage(
+    SafeRemoteURLImage(
         model = badgeImageUrl,
         contentDescription = null,
         contentScale = ContentScale.Crop,
@@ -99,14 +97,8 @@ fun ServiceBadge(
             .size(size)
             .clip(CircleShape)
             .background(OrbitTokens.panelStrong, CircleShape),
-        loading = {
+        fallback = {
             ServiceIcon(serviceType, modifier = Modifier.size(size))
-        },
-        error = {
-            ServiceIcon(serviceType, modifier = Modifier.size(size))
-        },
-        success = {
-            SubcomposeAsyncImageContent()
         },
     )
 }

@@ -12,7 +12,6 @@ import jp.mimac.urlsaver.ui.MAX_CHATGPT_ARCHIVE_BYTES
 import jp.mimac.urlsaver.ui.buildChatGptDirectShareIntent
 import jp.mimac.urlsaver.ui.cacheExportArchive
 import jp.mimac.urlsaver.ui.cachedExportFileNamesToPrune
-import jp.mimac.urlsaver.ui.isChatGptOneTapShareEnabled
 import jp.mimac.urlsaver.ui.isChatGptZipCreationEnabled
 import jp.mimac.urlsaver.ui.shouldFallbackToChatGptChooser
 import jp.mimac.urlsaver.ui.shouldShowSharedTagExportPreset
@@ -111,42 +110,6 @@ class ExportScreenTest {
     }
 
     @Test
-    fun isChatGptOneTapShareEnabled_requiresSelectionAndReadyTarget() {
-        assertFalse(
-            isChatGptOneTapShareEnabled(
-                selectedTagCount = 0,
-                targetCount = 1,
-                isPreviewLoading = false,
-                isPreparingArchive = false,
-            ),
-        )
-        assertFalse(
-            isChatGptOneTapShareEnabled(
-                selectedTagCount = 1,
-                targetCount = 0,
-                isPreviewLoading = false,
-                isPreparingArchive = false,
-            ),
-        )
-        assertFalse(
-            isChatGptOneTapShareEnabled(
-                selectedTagCount = 1,
-                targetCount = 1,
-                isPreviewLoading = true,
-                isPreparingArchive = false,
-            ),
-        )
-        assertTrue(
-            isChatGptOneTapShareEnabled(
-                selectedTagCount = 2,
-                targetCount = 3,
-                isPreviewLoading = false,
-                isPreparingArchive = false,
-            ),
-        )
-    }
-
-    @Test
     fun shouldFallbackToChatGptChooser_onlySkipsChooserAfterDirectStart() {
         assertFalse(shouldFallbackToChatGptChooser(ChatGptDirectShareOutcome.STARTED))
         assertTrue(shouldFallbackToChatGptChooser(ChatGptDirectShareOutcome.ACTIVITY_NOT_FOUND))
@@ -193,6 +156,43 @@ class ExportScreenTest {
 
         assertEquals(byteArrayOf(9, 8, 7).toList(), copied.toList())
         assertTrue(targetFile.absolutePath.contains("/cache/exports/"))
+        assertFalse(targetFile.parentFile?.list()?.any { name -> name.endsWith(".part") } == true)
+    }
+
+    @Test
+    fun writeCachedExportArchive_streamsFileBackedArchive_andCleansSource() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val sourceFile = File.createTempFile("rinbam-export-source-", ".zip")
+        sourceFile.writeBytes(byteArrayOf(4, 5, 6, 7))
+        val archive = PreparedExportArchive(
+            fileName = "rinbam-file-backed-test.zip",
+            backingFile = sourceFile,
+            entryCount = 1,
+            mimeType = "application/zip",
+        )
+
+        val targetFile = writeCachedExportArchive(context, archive)
+
+        assertEquals(byteArrayOf(4, 5, 6, 7).toList(), targetFile.readBytes().toList())
+        assertFalse(sourceFile.exists())
+        targetFile.parentFile?.deleteRecursively()
+        Unit
+    }
+
+    @Test
+    fun productionExportTransfers_areFileBackedAndNeverReadArchiveBytes() {
+        val repositorySource = File(
+            "src/main/java/jp/mimac/urlsaver/data/ExportRepository.kt",
+        ).readText()
+        val screenSource = File(
+            "src/main/java/jp/mimac/urlsaver/ui/ExportScreen.kt",
+        ).readText()
+
+        assertTrue(repositorySource.contains("private suspend fun buildZipExportFile"))
+        assertFalse(repositorySource.contains("readTemporaryArchiveBytes"))
+        assertFalse(screenSource.contains("archive.bytes"))
+        assertTrue(screenSource.contains("archive.copyTo(output)"))
+        assertTrue(screenSource.contains("archive.copyTo(it)"))
     }
 
     @Test

@@ -15,6 +15,7 @@ import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_SKIPPED
 import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_TAG_ID
 import jp.mimac.urlsaver.data.EXTRA_TAG_IMPORT_TAG_NAME
 import jp.mimac.urlsaver.data.MetadataUpdate
+import jp.mimac.urlsaver.data.PendingDeleteFinalizationResult
 import jp.mimac.urlsaver.data.UrlEntryEntity
 import jp.mimac.urlsaver.data.UrlRepository
 import jp.mimac.urlsaver.domain.MainNavigationEvent
@@ -241,7 +242,8 @@ class MainActivityViewModelSecondaryIntentTest {
         override suspend fun archive(entryId: Long): Boolean = false
         override suspend fun unarchive(entryId: Long): Boolean = false
         override suspend fun markPendingDelete(entryId: Long, gracePeriodMillis: Long): Long? = null
-        override suspend fun finalizePendingDelete(entryId: Long) = Unit
+        override suspend fun finalizePendingDelete(entryId: Long): PendingDeleteFinalizationResult =
+            PendingDeleteFinalizationResult.Stale
         override suspend fun cleanupExpiredPendingDeletes() = Unit
         override suspend fun restore(entryId: Long): Boolean = false
         override suspend fun saveUserTitle(entryId: Long, rawTitle: String) =

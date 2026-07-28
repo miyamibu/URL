@@ -26,7 +26,7 @@ interface UrlRepository : MainListRepository {
     suspend fun saveFromIntent(intent: Intent): SaveResult
 
     suspend fun unarchive(entryId: Long): Boolean
-    suspend fun finalizePendingDelete(entryId: Long)
+    suspend fun finalizePendingDelete(entryId: Long): PendingDeleteFinalizationResult
     suspend fun cleanupExpiredPendingDeletes()
     suspend fun restore(entryId: Long): Boolean
 
@@ -41,6 +41,24 @@ interface UrlRepository : MainListRepository {
     suspend fun backfillYouTubeAuthorNames(limit: Int = 50): Int = 0
 
     suspend fun loadEntry(entryId: Long): UrlEntryEntity?
+}
+
+interface PendingDeleteMediaCleanup {
+    suspend fun cleanup(entryId: Long, downloadAssetIds: List<Long>)
+}
+
+object NoopPendingDeleteMediaCleanup : PendingDeleteMediaCleanup {
+    override suspend fun cleanup(entryId: Long, downloadAssetIds: List<Long>) = Unit
+}
+
+sealed interface PendingDeleteFinalizationResult {
+    data object Deleted : PendingDeleteFinalizationResult
+
+    data class PreservedShared(
+        val sharedReferenceCount: Int,
+    ) : PendingDeleteFinalizationResult
+
+    data object Stale : PendingDeleteFinalizationResult
 }
 
 data class SaveTitleResult(

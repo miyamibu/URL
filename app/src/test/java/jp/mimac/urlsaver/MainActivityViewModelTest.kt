@@ -12,6 +12,7 @@ import jp.mimac.urlsaver.data.EXTRA_SHARE_ENTRY_ID
 import jp.mimac.urlsaver.data.EXTRA_MAIN_INTENT_EVENT_TOKEN
 import jp.mimac.urlsaver.data.EXTRA_SHARE_SAVE_RESULT
 import jp.mimac.urlsaver.data.MetadataUpdate
+import jp.mimac.urlsaver.data.PendingDeleteFinalizationResult
 import jp.mimac.urlsaver.data.SHARE_DEGRADATION_TRUNCATED_TO_FIRST_URL
 import jp.mimac.urlsaver.data.SHARE_DEGRADATION_TRUNCATED_TO_MAX_URLS
 import jp.mimac.urlsaver.data.UrlEntryEntity
@@ -232,7 +233,8 @@ class MainActivityViewModelTest {
         override suspend fun archive(entryId: Long): Boolean = false
         override suspend fun unarchive(entryId: Long): Boolean = false
         override suspend fun markPendingDelete(entryId: Long, gracePeriodMillis: Long): Long? = null
-        override suspend fun finalizePendingDelete(entryId: Long) = Unit
+        override suspend fun finalizePendingDelete(entryId: Long): PendingDeleteFinalizationResult =
+            PendingDeleteFinalizationResult.Stale
         override suspend fun cleanupExpiredPendingDeletes() = Unit
         override suspend fun restore(entryId: Long): Boolean = false
 

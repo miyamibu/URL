@@ -93,7 +93,7 @@ struct RootView: View {
                 selectedEntryIDs: selectedMainEntryIDs,
                 onEnterSelectionMode: {
                     isMainSelectionModeActive = true
-                    selectedMainEntryIDs = Set(mainDisplayedEntries.map(\.id))
+                    selectedMainEntryIDs = []
                 },
                 onStartSelection: { entryID in
                     isMainSelectionModeActive = true
@@ -214,7 +214,7 @@ struct RootView: View {
                         showsPendingInviteBanner: showsPendingInviteBanner
                     )
                     .overlay(alignment: .bottom) {
-                        if model.selectedTab == .main && selectedMainEntryIDs.isEmpty && !isShowingUsageGuide && !isShowingSearchBar && searchQuery.isEmpty {
+                        if model.selectedTab == .main && !isMainSelectionModeActive && selectedMainEntryIDs.isEmpty && !isShowingUsageGuide && !isShowingSearchBar && searchQuery.isEmpty {
                             BottomHomeActionBar(
                                 onOpenGroups: { model.selectedTab = .groups },
                                 onOpenExport: { isShowingExportSheet = true },
@@ -224,7 +224,6 @@ struct RootView: View {
                                 onOpenArchive: { model.selectedTab = .archive },
                                 bottomSafeAreaInset: proxy.safeAreaInsets.bottom
                             )
-                            .offset(y: proxy.safeAreaInsets.bottom + 4)
                         }
                     }
                     .navigationDestination(for: Int64.self) { entryID in
@@ -281,8 +280,8 @@ struct RootView: View {
             }
             .sheet(isPresented: $isShowingManualSheet) {
                 ManualInputSheet(model: model)
-                    .presentationDetents([.height(640)])
-                    .presentationDragIndicator(.hidden)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
                     .presentationCornerRadius(32)
             }
             .sheet(isPresented: $isShowingSharedTagCloudSheet) {
@@ -716,7 +715,7 @@ private struct MainScreen: View {
                             .frame(width: cardWidth)
                         }
                         if totalEntries.isEmpty {
-                            Color.clear.frame(height: 560)
+                            Color.clear.frame(minHeight: max(proxy.size.height - 120, 240))
                         } else if entries.isEmpty {
                             AppPanel {
                                 Text("この条件に一致するURLはありません")
@@ -747,6 +746,7 @@ private struct MainScreen: View {
                                     .buttonStyle(.plain)
                                     .accessibilityLabel("\(preferredDisplayTitle(for: entry))")
                                     .accessibilityValue(selectedEntryIDs.contains(entry.id) ? "選択中" : "未選択")
+                                    .accessibilityAddTraits(selectedEntryIDs.contains(entry.id) ? .isSelected : [])
                                 } else {
                                     SwipeableEntryCard(
                                         entry: entry,
@@ -1050,7 +1050,7 @@ private struct UsageGuideView: View {
                 }
 
                 UsageGuideSectionHeader("便利な操作")
-                UsageGuideRow(marker: "4", markerColor: Color(hex: 0xF97316), icon: "pencil", iconColor: Color(hex: 0xF97316), iconBackground: Color(hex: 0xFFF2DF), title: "自作タグ名を変更", body: "自作タグをダブルタップすると、名前を変更できます。", layout: .stacked) {
+                UsageGuideRow(marker: "4", markerColor: Color(hex: 0xF97316), icon: "pencil", iconColor: Color(hex: 0xF97316), iconBackground: Color(hex: 0xFFF2DF), title: "自作タグ名を変更", body: "タグ管理では長押し、VoiceOverのアクション、またはメニューから名前を変更できます。", layout: .stacked) {
                     GuideRenameTagPreview()
                 }
                 UsageGuideRow(marker: "5", markerColor: Color(hex: 0xF97316), icon: "rectangle.and.hand.point.up.left", iconColor: Color(hex: 0xF97316), iconBackground: Color(hex: 0xFFF2DF), title: "カードをスライド", body: "カードを横にスライドすると、アーカイブや削除ができます。", layout: .stacked) {
@@ -1261,7 +1261,7 @@ private struct GuideSearchPreview: View {
 private struct GuideRenameTagPreview: View {
     var body: some View {
         GuidePreviewSurface {
-            Text("ダブルタップ").font(.system(size: 12, weight: .bold)).foregroundStyle(AppPalette.textPrimary)
+            Text("メニュー / アクション").font(.system(size: 12, weight: .bold)).foregroundStyle(AppPalette.textPrimary)
             HStack(spacing: 5) {
                 MiniChip("旅行", background: Color(hex: 0xE5F6E7), foreground: Color(hex: 0x128A2E))
                 MiniChip("レシピ", background: Color(hex: 0xEAF2FF), foreground: AppPalette.primaryStrong)
@@ -1569,23 +1569,23 @@ private struct EntrySelectionBar: View {
     let onCancel: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
-            Text("\(selectedCount)件")
-                .font(.system(size: 15, weight: .heavy, design: .rounded))
-                .foregroundStyle(AppPalette.textSecondary)
-                .lineLimit(1)
-                .layoutPriority(1)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                Text("\(selectedCount)件")
+                    .font(.body.weight(.heavy))
+                    .foregroundStyle(AppPalette.textSecondary)
+                    .lineLimit(1)
+                    .accessibilityLabel("選択中 \(selectedCount)件")
 
-            Spacer(minLength: 0)
-
-            selectAllButton
-            selectionIconButton("タグ", systemImage: "tag", enabled: selectedCount > 0, action: onTag)
-            selectionIconButton("アーカイブ", systemImage: "archivebox", enabled: selectedCount > 0, action: onArchive)
-            selectionIconButton("削除", systemImage: "trash", role: .destructive, enabled: selectedCount > 0, action: onDelete)
-            selectionIconButton("キャンセル", systemImage: "xmark", action: onCancel)
+                selectAllButton
+                selectionIconButton("タグ", systemImage: "tag", enabled: selectedCount > 0, action: onTag)
+                selectionIconButton("アーカイブ", systemImage: "archivebox", enabled: selectedCount > 0, action: onArchive)
+                selectionIconButton("削除", systemImage: "trash", role: .destructive, enabled: selectedCount > 0, action: onDelete)
+                selectionIconButton("キャンセル", systemImage: "xmark", action: onCancel)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
         .background(AppPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -1600,7 +1600,7 @@ private struct EntrySelectionBar: View {
                 .font(.system(size: 14, weight: .bold))
                 .lineLimit(1)
                 .padding(.horizontal, 10)
-                .frame(height: 36)
+                .frame(minHeight: 44)
                 .background(AppPalette.panelStrong, in: Capsule())
                 .foregroundStyle(Color.white.opacity(0.95))
         }
@@ -1619,7 +1619,7 @@ private struct EntrySelectionBar: View {
         Button(role: role, action: action) {
             Image(systemName: systemImage)
                 .font(.system(size: 17, weight: .heavy))
-                .frame(width: 38, height: 36)
+                .frame(width: 44, height: 44)
                 .background(AppPalette.panelStrong, in: Capsule())
                 .foregroundStyle(enabled ? (role == .destructive ? AppPalette.warning : Color.white.opacity(0.95)) : Color.white.opacity(0.35))
         }
@@ -3228,14 +3228,14 @@ private struct LocalTagManagementPill: View {
         HStack(spacing: 6) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(tag.name)
-                    .font(.system(size: 21, weight: .heavy, design: .rounded))
+                    .font(.headline.weight(.heavy))
                     .foregroundStyle(AppPalette.textPrimary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: 126, alignment: .leading)
 
                 Text("\(tag.activeURLCount)件")
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .font(.caption.weight(.bold))
                     .foregroundStyle(AppPalette.textSecondary)
                     .lineLimit(1)
             }
@@ -3245,7 +3245,7 @@ private struct LocalTagManagementPill: View {
             } label: {
                 Image(systemName: "trash")
                     .font(.system(size: 18, weight: .heavy))
-                    .frame(width: 34, height: 34)
+                    .frame(width: 44, height: 44)
             }
             .buttonStyle(.plain)
             .foregroundStyle(AppPalette.danger)
@@ -3260,9 +3260,17 @@ private struct LocalTagManagementPill: View {
                 .stroke(AppPalette.outline, lineWidth: 1.5)
         )
         .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .onTapGesture(count: 2) {
-            onRename(tag)
+        .contextMenu {
+            Button("名前を変更", systemImage: "pencil") {
+                onRename(tag)
+            }
         }
+        .accessibilityActions {
+            Button("名前を変更", systemImage: "pencil") {
+                onRename(tag)
+            }
+        }
+        .accessibilityHint("メニューまたはVoiceOverのアクションから名前を変更できます")
         .fixedSize(horizontal: true, vertical: false)
     }
 }
@@ -3280,139 +3288,125 @@ private struct ManualInputSheet: View {
     @State private var isShowingCreateTagAlert = false
     @State private var newTagName = ""
 
+    private var saveButton: some View {
+        AppActionButton(
+            tone: .primary,
+            enabled: !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isSaving
+        ) {
+            saveManualInput()
+        } label: {
+            if isSaving {
+                ProgressView().tint(AppPalette.textPrimary)
+            } else {
+                Text("保存")
+            }
+        }
+    }
+
     var body: some View {
         ScreenContainer {
-            VStack(alignment: .leading, spacing: 16) {
-                Capsule()
-                    .fill(AppPalette.outlineSoft)
-                    .frame(width: 72, height: 8)
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 10)
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 16) {
+                    Capsule()
+                        .fill(AppPalette.outlineSoft)
+                        .frame(width: 72, height: 8)
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 10)
 
-                Text("URL / テキスト")
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundStyle(inputError == nil && inputErrorMessage == nil ? AppPalette.textSecondary : AppPalette.danger)
-                    .padding(.top, 8)
+                    Text("URL / テキスト")
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(inputError == nil && inputErrorMessage == nil ? AppPalette.textSecondary : AppPalette.danger)
+                        .padding(.top, 8)
 
-                VStack(alignment: .leading, spacing: 10) {
-                    TextField("", text: $input, prompt: Text("https://example.com または残したいメモ").foregroundStyle(AppPalette.textMuted))
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(AppPalette.textPrimary)
-                        .tint(AppPalette.primaryStrong)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .keyboardType(.default)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 20)
-                        .background(AppPalette.background, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .stroke(inputError == nil && inputErrorMessage == nil ? AppPalette.outlineSoft : AppPalette.danger, lineWidth: 2)
-                        )
+                    VStack(alignment: .leading, spacing: 10) {
+                        TextField("", text: $input, prompt: Text("https://example.com または残したいメモ").foregroundStyle(AppPalette.textMuted))
+                            .font(.body.weight(.medium))
+                            .foregroundStyle(AppPalette.textPrimary)
+                            .tint(AppPalette.primaryStrong)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .keyboardType(.default)
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 20)
+                            .background(AppPalette.background, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .stroke(inputError == nil && inputErrorMessage == nil ? AppPalette.outlineSoft : AppPalette.danger, lineWidth: 2)
+                            )
 
-                    if let inputErrorMessage {
-                        Text(inputErrorMessage)
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundStyle(AppPalette.danger)
-                    } else if let inputError {
-                        Text(message(for: inputError))
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundStyle(AppPalette.danger)
+                        if let inputErrorMessage {
+                            Text(inputErrorMessage)
+                                .font(.body.weight(.medium))
+                                .foregroundStyle(AppPalette.danger)
+                        } else if let inputError {
+                            Text(message(for: inputError))
+                                .font(.body.weight(.medium))
+                                .foregroundStyle(AppPalette.danger)
+                        }
                     }
-                }
 
-                Button("クリップボードを貼り付け") {
-                    input = UIPasteboard.general.string ?? input
-                    inputError = nil
-                    inputErrorMessage = nil
-                }
-                .font(.system(size: 19, weight: .heavy))
-                .foregroundStyle(AppPalette.primaryStrong)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
+                    Button("クリップボードを貼り付け") {
+                        input = UIPasteboard.general.string ?? input
+                        inputError = nil
+                        inputErrorMessage = nil
+                    }
+                    .font(.body.weight(.heavy))
+                    .foregroundStyle(AppPalette.primaryStrong)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
 
-                Text("タグ")
-                    .font(.system(size: 18, weight: .heavy))
-                    .foregroundStyle(AppPalette.textPrimary)
-                    .padding(.top, 8)
+                    Text("タグ")
+                        .font(.headline.weight(.heavy))
+                        .foregroundStyle(AppPalette.textPrimary)
+                        .padding(.top, 8)
 
-                if model.localTags.isEmpty {
-                    Text("タグがまだありません。必要なら作成してください")
-                        .font(.system(size: 17, weight: .medium))
-                        .foregroundStyle(AppPalette.textSecondary)
-                } else {
-                    ScrollView(showsIndicators: false) {
-                        LocalTagManagementFlowLayout(horizontalSpacing: 8, verticalSpacing: 8) {
-                            ForEach(model.localTags) { tag in
-                                FilterChipButton(
-                                    label: tag.name,
-                                    selected: selectedLocalTagIDs.contains(tag.id)
-                                ) {
-                                    if selectedLocalTagIDs.contains(tag.id) {
-                                        selectedLocalTagIDs.remove(tag.id)
-                                    } else {
-                                        selectedLocalTagIDs.insert(tag.id)
+                    if model.localTags.isEmpty {
+                        Text("タグがまだありません。必要なら作成してください")
+                            .font(.body.weight(.medium))
+                            .foregroundStyle(AppPalette.textSecondary)
+                    } else {
+                        ScrollView(showsIndicators: false) {
+                            LocalTagManagementFlowLayout(horizontalSpacing: 8, verticalSpacing: 8) {
+                                ForEach(model.localTags) { tag in
+                                    FilterChipButton(
+                                        label: tag.name,
+                                        selected: selectedLocalTagIDs.contains(tag.id)
+                                    ) {
+                                        if selectedLocalTagIDs.contains(tag.id) {
+                                            selectedLocalTagIDs.remove(tag.id)
+                                        } else {
+                                            selectedLocalTagIDs.insert(tag.id)
+                                        }
                                     }
                                 }
                             }
+                            .padding(.vertical, 2)
                         }
-                        .padding(.vertical, 2)
+                        .frame(maxHeight: 180, alignment: .top)
                     }
-                    .frame(maxHeight: 180, alignment: .top)
-                }
 
-                Button("+") {
-                    isShowingCreateTagAlert = true
-                }
-                    .font(.system(size: 21, weight: .heavy))
+                    Button("+") {
+                        isShowingCreateTagAlert = true
+                    }
+                    .font(.title2.weight(.heavy))
                     .foregroundStyle(AppPalette.primaryStrong)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-
-                Spacer(minLength: 8)
-
-                AppActionButton(
-                    tone: .primary,
-                    enabled: !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isSaving
-                ) {
-                    Task {
-                        isSaving = true
-                        let outcome = await model.prepareManualSave(input: input, localTagIDs: selectedLocalTagIDs)
-                        isSaving = false
-                        switch outcome {
-                        case .inputError(let error):
-                            inputError = error
-                            inputErrorMessage = nil
-                        case .tagImportError(let message):
-                            inputError = nil
-                            inputErrorMessage = message
-                        case .tagImportConfirmation(let preview):
-                            inputError = nil
-                            inputErrorMessage = nil
-                            pendingTagImport = preview
-                        case .saved(let saveResult):
-                            dismiss()
-                            Task {
-                                try? await Task.sleep(nanoseconds: 350_000_000)
-                                await model.finishPreparedManualSave(saveResult)
-                            }
-                        case .completed:
-                            dismiss()
-                        }
-                    }
-                } label: {
-                    if isSaving {
-                        ProgressView().tint(AppPalette.textPrimary)
-                    } else {
-                        Text("保存")
-                    }
+                    .frame(minHeight: 44)
+                    .accessibilityLabel("自作タグを追加")
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
+                .onChange(of: input) { _, _ in
+                    inputError = nil
+                    inputErrorMessage = nil
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 22)
-            .onChange(of: input) { _, _ in
-                inputError = nil
-                inputErrorMessage = nil
+            .scrollDismissesKeyboard(.interactively)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                saveButton
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(AppPalette.background)
             }
         }
         .alert("タグを作成", isPresented: $isShowingCreateTagAlert) {
@@ -3441,6 +3435,34 @@ private struct ManualInputSheet: View {
             .presentationDetents([.medium])
             .presentationDragIndicator(.visible)
             .presentationCornerRadius(32)
+        }
+    }
+
+    private func saveManualInput() {
+        Task {
+            isSaving = true
+            let outcome = await model.prepareManualSave(input: input, localTagIDs: selectedLocalTagIDs)
+            isSaving = false
+            switch outcome {
+            case .inputError(let error):
+                inputError = error
+                inputErrorMessage = nil
+            case .tagImportError(let message):
+                inputError = nil
+                inputErrorMessage = message
+            case .tagImportConfirmation(let preview):
+                inputError = nil
+                inputErrorMessage = nil
+                pendingTagImport = preview
+            case .saved(let saveResult):
+                dismiss()
+                Task {
+                    try? await Task.sleep(nanoseconds: 350_000_000)
+                    await model.finishPreparedManualSave(saveResult)
+                }
+            case .completed:
+                dismiss()
+            }
         }
     }
 

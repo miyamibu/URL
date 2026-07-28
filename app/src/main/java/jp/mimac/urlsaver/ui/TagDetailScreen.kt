@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -74,6 +73,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -142,7 +144,7 @@ fun TagDetailScreen(
             topBar = {
                 TopAppBar(
                     title = { Text("共有タグ") },
-                    windowInsets = TopAppBarDefaults.windowInsets.only(WindowInsetsSides.Horizontal),
+                    windowInsets = TopAppBarDefaults.windowInsets,
                     navigationIcon = {
                         IconButton(onClick = onBack) {
                             Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "戻る")
@@ -277,7 +279,7 @@ fun TagDetailScreen(
         topBar = {
             TopAppBar(
                 title = {},
-                windowInsets = TopAppBarDefaults.windowInsets.only(WindowInsetsSides.Horizontal),
+                windowInsets = TopAppBarDefaults.windowInsets,
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "戻る")
@@ -785,7 +787,7 @@ fun TagDetailScreen(
     }
 }
 
-private val SharedTagHeaderButtonSize = 46.dp
+private val SharedTagHeaderButtonSize = 48.dp
 private val SharedTagHeaderIconSize = 30.dp
 
 @Composable
@@ -1083,6 +1085,18 @@ private fun SwipeableTagEntry(
 
     SwipeToDismissBox(
         state = dismissState,
+        modifier = Modifier.semantics {
+            customActions = if (canRemove) {
+                listOf(
+                    CustomAccessibilityAction("外す") {
+                        onRemove()
+                        true
+                    },
+                )
+            } else {
+                emptyList()
+            }
+        },
         enableDismissFromStartToEnd = canRemove,
         enableDismissFromEndToStart = canRemove,
         backgroundContent = {

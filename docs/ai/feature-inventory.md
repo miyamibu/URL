@@ -9,14 +9,15 @@
 ## Inventory
 | Area | Status | Evidence | Remaining gate |
 |---|---|---|---|
-| AI-safe Export ZIP / JSON（通常エクスポートbaseline） | IMPLEMENTED_LOCAL_BASELINE | Android `ExportRepository.kt`, iOS `ExportArchiveBuilder.swift` が `schema.json`, `README_FOR_AI.md`, `redaction_report.json`, `publicSafeId`, `aiEligible`, excerpt/redaction, `savedSnapshotNotice` を出力する。 | 手動共有の自動契約検証は次行でGO。実機E2Eと公開証跡は別管理 |
+| 通常Export ZIP / JSON（Backup/review） | IMPLEMENTED_LOCAL_BASELINE | Android `ExportRepository.kt`, iOS `ExportArchiveBuilder.swift` が標準スキーマ `standard-export-v1` / `STANDARD_BACKUP` と既存のmanifest・ID互換を出力する。通常ExportはAI-safeとは呼ばず、ChatGPT Handoffとは別経路。 | restore/review互換の標準artifact。AI共有には使わない |
+| ChatGPT Handoff AI-safe ZIP | IMPLEMENTED_LOCAL_BASELINE | Android/iOSが `ai-safe-v1` / `CHATGPT_HANDOFF`、ACTIVE+local provenance、共有参照/allocation除外、local ID除去、preview/archive同一redaction、未知secret警告と明示確認を適用する。 | Android実機E2E、iOS実機の現行再確認、公開証跡は別管理 |
 | ChatGPT手動ファイル共有 | IMPLEMENTED_LOCAL / AUTOMATED_TEST_GO / IPHONE_DEVICE_VERIFIED_TO_COMPOSER | エクスポート画面で自作タグを選び、全対象/出力内容を確認し、専用ZIPを生成してOS共有へ渡す。アプリは質問入力・自動入力/送信・OpenAI API/OAuth・MCP/provider接続を行わない。Android/iOS自動テストはPASS。物理iPhoneで専用ZIP作成、共有先ChatGPT選択、通常トーク画面への添付、空の質問欄、未送信状態まで確認。 | Android実機は `NOT_VERIFIED`。commit/push、public deploy、store提出も未実施 |
 | Raw fetched body exclusion | IMPLEMENTED_LOCAL | Export documentから `fetchedBody` を除外し、`bodyExcerpt` と `bodySummary` に限定。 | future opt-in body export requires new approval |
 | Shared tag AI boundary | IMPLEMENTED_LOCAL | 共有タグ付きentryは `aiEligible=false` / `shared_tag_default_excluded`。Android/iOSのChatGPT sync operationは、eligibleなローカルURLについてもローカルタグ名だけを送る。 | MCP/Store/Supabase live は未検証の外部ゲート |
 | ChatGPT personal-link sync card | IMPLEMENTED_LOCAL | Android/iOS の共有タグプロフィール画面にカードを表示。外部接続未設定時は「現在は利用できません」と表示し、操作不可とする。 | MCP/Store/Supabase live は未検証の外部ゲート |
 | Preview / Receipt / Draft / Diff | IMPLEMENTED_LOCAL | Android RoomとiOS SQLiteにReceipt/Draft/Diffをローカル保存。Androidの `DEBUG && AI_TRANSPARENCY_ENABLED`、iOSの `DEBUG`/Info.plist flag に限定された Debug-only UI で、通常のRelease UIには出ない。Mock providerでdeterministic draft生成。Diff applyは明示confirm時のみ許可フィールドを更新。 | production AI provider wiring is future opt-in |
 | Read-only MCP descriptors | IMPLEMENTED_LOCAL | `web/admin/lib/rinbamMcp.ts` が `search`, `fetch`, `rinbam.list_tags`, `rinbam.get_ai_receipt`, `rinbam.list_recent_saved_links` を定義。annotationsはread-only固定。 | deployed URL / OpenAI review are Manual steps |
-| MCP data access | IMPLEMENTED_LOCAL | `URLSAVER_MCP_ENABLED=true` が無い限りendpointはdefault disabled。Bearer tokenを `auth.getUser` し、全queryで `user_id` を固定。rate limitあり。raw `fetched_body` は返さない。 | production OAuth/client registration is Manual step |
+| MCP data access | IMPLEMENTED_LOCAL | `URLSAVER_MCP_ENABLED=true` が無い限りendpointはdefault disabled。Bearer tokenを `auth.getUser` し、全query/RPCで `user_id` を固定。DB RPCでACTIVE+deleted/disabled/PENDING_DELETE除外、public-safe-id equality lookup、分散rate limit、unknown field拒否、recursive output sanitizer、notification無応答を適用し、raw `fetched_body` は返さない。 | Supabase migration実行、production OAuth/client registration、deployed URLはManual/外部ゲート |
 | Link death insurance | IMPLEMENTED_LOCAL | 保存時点のtitle/author/body kind/summary/excerpt/thumbnail/metadata source/fetched timeをExport/MCPに出し、保存時点情報の注意文を出す。 | Wayback/headless/browser external resolver remains out of repo default |
 | OpenAI submission | MANUAL_STEP | 公式提出・review・production installは未実施。 | owner approval, deployed production endpoint, privacy/security review |
 

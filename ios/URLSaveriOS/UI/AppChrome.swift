@@ -1,6 +1,8 @@
+import Foundation
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
+import Darwin
 
 enum LaunchAdVisibility {
     // Trial launch switch. Set this back to true when banner ads should return.
@@ -647,6 +649,15 @@ struct SwipeableEntryCard: View {
         .frame(width: cardWidth)
         .clipped()
         .animation(.interactiveSpring(response: 0.26, dampingFraction: 0.88), value: dragOffset)
+        .accessibilityHint("横にスワイプして操作できます")
+        .accessibilityActions {
+            Button("アーカイブ", systemImage: "archivebox") {
+                onArchive()
+            }
+            Button("削除", systemImage: "trash", role: .destructive) {
+                onDelete()
+            }
+        }
     }
 
     private func handleSwipeEnd(offset: CGFloat, velocity: CGFloat) {
@@ -722,6 +733,15 @@ struct SwipeableArchivedEntryCard: View {
         .frame(width: cardWidth)
         .clipped()
         .animation(.interactiveSpring(response: 0.26, dampingFraction: 0.88), value: dragOffset)
+        .accessibilityHint("横にスワイプして操作できます")
+        .accessibilityActions {
+            Button("戻す", systemImage: "arrow.uturn.backward.circle") {
+                onRestore()
+            }
+            Button("削除", systemImage: "trash", role: .destructive) {
+                onDelete()
+            }
+        }
     }
 
     private func handleSwipeEnd(offset: CGFloat, velocity: CGFloat) {
@@ -1088,7 +1108,168 @@ struct ServiceBadgeView: View {
     }
 }
 
-private struct RemoteURLImage<Content: View, Placeholder: View>: View {
+enum RinbamMediaNetworkBoundaryError: Error {
+    case blockedURL
+    case redirectLimit
+    case invalidResponse
+    case contentType
+    case sizeLimit
+    case magicMismatch
+}
+
+enum RinbamMediaNetworkBoundary {
+    static let maxRedirects = 5
+    static let maxImageBytes = 8 * 1024 * 1024
+    static let maxMediaBytes: Int64 = 256 * 1024 * 1024
+    static let maxEntryMediaBytes: Int64 = 512 * 1024 * 1024
+    static let minFreeBytes: Int64 = 32 * 1024 * 1024
+
+    static func validate(_ url: URL) throws {
+        guard url.scheme?.lowercased() == "https",
+              let host = url.host,
+              !host.isEmpty,
+              url.user == nil,
+              url.password == nil,
+              !isBlockedHostLiteral(host) else {
+            throw RinbamMediaNetworkBoundaryError.blockedURL
+        }
+        let addresses = resolvedAddresses(for: host)
+        guard !addresses.isEmpty, addresses.allSatisfy({ !isBlockedIPAddress($0) }) else {
+            throw RinbamMediaNetworkBoundaryError.blockedURL
+        }
+    }
+
+    static func isAllowed(_ url: URL) -> Bool {
+        (try? validate(url)) != nil
+    }
+
+    static func makeSession() -> (URLSession, RedirectDelegate) {
+        let delegate = RedirectDelegate()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.waitsForConnectivity = false
+        return (URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil), delegate)
+    }
+
+    static func validateImageResponse(_ response: HTTPURLResponse, data: Data) throws {
+        guard (200..<300).contains(response.statusCode) else {
+            throw RinbamMediaNetworkBoundaryError.invalidResponse
+        }
+        let contentType = response.value(forHTTPHeaderField: "Content-Type")?
+            .split(separator: ";", maxSplits: 1, omittingEmptySubsequences: true)
+            .first
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        guard let contentType,
+              ["image/gif", "image/heic", "image/heif", "image/jpeg", "image/png", "image/webp", "image/avif"].contains(contentType) else {
+            throw RinbamMediaNetworkBoundaryError.contentType
+        }
+        guard data.count <= maxImageBytes else { throw RinbamMediaNetworkBoundaryError.sizeLimit }
+        guard hasImageMagic(data) else { throw RinbamMediaNetworkBoundaryError.magicMismatch }
+    }
+
+    static func hasImageMagic(_ data: Data) -> Bool {
+        let bytes = [UInt8](data.prefix(32))
+        if bytes.count >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF { return true }
+        if bytes.count >= 8 && bytes.prefix(8).elementsEqual([137, 80, 78, 71, 13, 10, 26, 10]) { return true }
+        if bytes.count >= 6 && (String(decoding: bytes.prefix(6), as: UTF8.self) == "GIF87a" || String(decoding: bytes.prefix(6), as: UTF8.self) == "GIF89a") { return true }
+        if bytes.count >= 12 && String(decoding: bytes.prefix(4), as: UTF8.self) == "RIFF" && String(decoding: bytes[8..<12], as: UTF8.self) == "WEBP" { return true }
+        if bytes.count >= 12 && String(decoding: bytes[4..<8], as: UTF8.self) == "ftyp" {
+            return ["heic", "heix", "hevc", "hevx", "mif1", "msf1", "avif", "avis"].contains(String(decoding: bytes[8..<12], as: UTF8.self).lowercased())
+        }
+        return false
+    }
+
+    static func validateMediaResponse(_ response: HTTPURLResponse, contentTypeFor mediaType: String, expectedMimeType: String?, prefix: Data, byteCount: Int64) throws {
+        guard (200..<300).contains(response.statusCode) else { throw RinbamMediaNetworkBoundaryError.invalidResponse }
+        let actual = response.value(forHTTPHeaderField: "Content-Type")?
+            .split(separator: ";", maxSplits: 1, omittingEmptySubsequences: true)
+            .first
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        let imageMimes = ["image/gif", "image/heic", "image/heif", "image/jpeg", "image/png", "image/webp", "image/avif"]
+        let videoMimes = ["video/mp4", "video/quicktime", "video/webm"]
+        guard let actual, (mediaType == "IMAGE" ? imageMimes : videoMimes).contains(actual) else {
+            throw RinbamMediaNetworkBoundaryError.contentType
+        }
+        if let expectedMimeType,
+           expectedMimeType.lowercased() != actual,
+           !(expectedMimeType.lowercased() == "image/heif" && actual == "image/heic") {
+            throw RinbamMediaNetworkBoundaryError.contentType
+        }
+        guard byteCount > 0, byteCount <= maxMediaBytes else { throw RinbamMediaNetworkBoundaryError.sizeLimit }
+        guard hasMediaMagic(prefix, mediaType: mediaType) else { throw RinbamMediaNetworkBoundaryError.magicMismatch }
+    }
+
+    static func hasMediaMagic(_ data: Data, mediaType: String) -> Bool {
+        let bytes = [UInt8](data.prefix(32))
+        if bytes.count >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF { return mediaType == "IMAGE" }
+        if bytes.count >= 8 && bytes.prefix(8).elementsEqual([137, 80, 78, 71, 13, 10, 26, 10]) { return mediaType == "IMAGE" }
+        if bytes.count >= 6 && (String(decoding: bytes.prefix(6), as: UTF8.self) == "GIF87a" || String(decoding: bytes.prefix(6), as: UTF8.self) == "GIF89a") { return mediaType == "IMAGE" }
+        if bytes.count >= 12 && String(decoding: bytes.prefix(4), as: UTF8.self) == "RIFF" && String(decoding: bytes[8..<12], as: UTF8.self) == "WEBP" { return mediaType == "IMAGE" }
+        if bytes.count >= 12 && String(decoding: bytes[4..<8], as: UTF8.self) == "ftyp" {
+            let brand = String(decoding: bytes[8..<12], as: UTF8.self).lowercased()
+            if ["heic", "heix", "hevc", "hevx", "mif1", "msf1", "avif", "avis"].contains(brand) { return mediaType == "IMAGE" }
+            return mediaType == "VIDEO"
+        }
+        if bytes.count >= 4 && bytes.prefix(4).elementsEqual([0x1A, 0x45, 0xDF, 0xA3]) { return mediaType == "VIDEO" }
+        return false
+    }
+
+    static func isBlockedHostLiteral(_ host: String) -> Bool {
+        let normalized = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]")).lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        return normalized == "localhost" || normalized.hasSuffix(".localhost") || normalized.hasSuffix(".local") ||
+            normalized == "metadata" || normalized == "metadata.google.internal" || normalized == "instance-data.ec2.internal" ||
+            normalized == "169.254.169.254" || normalized == "100.100.100.200" || normalized == "fd00:ec2::254"
+    }
+
+    static func isBlockedIPAddress(_ value: String) -> Bool {
+        let normalized = value.lowercased()
+        let octets = normalized.split(separator: ".").compactMap { Int($0) }
+        if octets.count == 4, octets.allSatisfy({ (0...255).contains($0) }) {
+            let first = octets[0]
+            let second = octets[1]
+            return first == 0 || first == 10 || first == 127 || (first == 100 && (64...127).contains(second)) ||
+                (first == 169 && second == 254) || (first == 172 && (16...31).contains(second)) ||
+                (first == 192 && second == 168) || (first == 192 && second == 0) ||
+                (first == 198 && (18...19).contains(second)) || (224...255).contains(first)
+        }
+        return normalized == "::" || normalized == "::1" || normalized.hasPrefix("fc") || normalized.hasPrefix("fd") ||
+            normalized.hasPrefix("fe80:") || normalized.contains("169.254.")
+    }
+
+    private static func resolvedAddresses(for host: String) -> [String] {
+        var hints = addrinfo()
+        hints.ai_family = AF_UNSPEC
+        hints.ai_socktype = SOCK_STREAM
+        hints.ai_protocol = IPPROTO_TCP
+        var result: UnsafeMutablePointer<addrinfo>?
+        let status = host.withCString { getaddrinfo($0, nil, &hints, &result) }
+        guard status == 0, let result else { return [] }
+        defer { freeaddrinfo(result) }
+        var addresses: [String] = []
+        var current: UnsafeMutablePointer<addrinfo>? = result
+        while let info = current {
+            var numeric = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            let nameStatus = getnameinfo(info.pointee.ai_addr, info.pointee.ai_addrlen, &numeric, socklen_t(numeric.count), nil, 0, NI_NUMERICHOST)
+            if nameStatus == 0 { addresses.append(String(cString: numeric)) }
+            current = info.pointee.ai_next
+        }
+        return addresses
+    }
+
+    final class RedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+        private var redirectCount = 0
+
+        func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+            guard redirectCount < maxRedirects, let url = request.url, isAllowed(url) else {
+                completionHandler(nil)
+                return
+            }
+            redirectCount += 1
+            completionHandler(request)
+        }
+    }
+}
+
+struct RemoteURLImage<Content: View, Placeholder: View>: View {
     let url: URL
     @ViewBuilder let content: (Image) -> Content
     @ViewBuilder let placeholder: () -> Placeholder
@@ -1117,6 +1298,10 @@ private struct RemoteURLImage<Content: View, Placeholder: View>: View {
             }
         }
         guard failedURL != url else { return }
+        guard RinbamMediaNetworkBoundary.isAllowed(url) else {
+            await MainActor.run { failedURL = url }
+            return
+        }
 
         var request = URLRequest(url: url)
         request.timeoutInterval = 20
@@ -1125,18 +1310,26 @@ private struct RemoteURLImage<Content: View, Placeholder: View>: View {
         request.setValue("https://www.tiktok.com/", forHTTPHeaderField: "Referer")
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse,
-                  (200...299).contains(httpResponse.statusCode),
-                  let loadedImage = UIImage(data: data) else {
-                await MainActor.run { failedURL = url }
-                return
+            let (session, _) = RinbamMediaNetworkBoundary.makeSession()
+            defer { session.invalidateAndCancel() }
+            let (bytes, response) = try await session.bytes(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else { throw RinbamMediaNetworkBoundaryError.invalidResponse }
+            var data = Data()
+            data.reserveCapacity(min(RinbamMediaNetworkBoundary.maxImageBytes, 128 * 1024))
+            for try await byte in bytes {
+                try Task.checkCancellation()
+                data.append(byte)
+                if data.count > RinbamMediaNetworkBoundary.maxImageBytes { throw RinbamMediaNetworkBoundaryError.sizeLimit }
             }
+            try RinbamMediaNetworkBoundary.validateImageResponse(httpResponse, data: data)
+            guard let loadedImage = UIImage(data: data) else { throw RinbamMediaNetworkBoundaryError.magicMismatch }
             await MainActor.run {
                 image = loadedImage
                 loadedURL = url
                 failedURL = nil
             }
+        } catch is CancellationError {
+            return
         } catch {
             await MainActor.run { failedURL = url }
         }
@@ -1232,6 +1425,7 @@ struct ServiceFilterRow: View {
                     FilterChipButton(
                         label: "+",
                         selected: false,
+                        accessibilityLabel: "自作タグを追加",
                         action: createAction
                     )
                 }
@@ -1242,18 +1436,30 @@ struct ServiceFilterRow: View {
                     }
                     FilterChipButton(
                         label: label(for: item, localTag: localTag),
-                        selected: isSelected(item)
+                        selected: isSelected(item),
+                        accessibilityLabel: localTag.map { "自作タグ \($0.name)" }
                     ) {
                         select(item)
                     }
-                    .simultaneousGesture(
-                        TapGesture(count: 2).onEnded {
-                            if let localTag {
+                    .contextMenu {
+                        if let localTag {
+                            Button("名前を変更", systemImage: "pencil") {
                                 onRenameLocalTag(localTag)
                             }
                         }
+                    }
+                    .accessibilityActions {
+                        if let localTag {
+                            Button("名前を変更", systemImage: "pencil") {
+                                onRenameLocalTag(localTag)
+                            }
+                        }
+                    }
+                    .accessibilityHint(
+                        localTag == nil
+                            ? "長押ししてドラッグすると並び替えできます"
+                            : "メニューまたはVoiceOverのアクションから名前を変更できます。長押ししてドラッグすると並び替えできます"
                     )
-                    .accessibilityHint("長押ししてドラッグすると並び替えできます")
                     .onDrag {
                         draggingFilterToken = item.token
                         return NSItemProvider(object: item.token as NSString)
@@ -1378,38 +1584,42 @@ let serviceFilterOrder: [ServiceType] = [
 struct FilterChipButton: View {
     let label: String
     let selected: Bool
+    let accessibilityLabel: String?
     let action: (() -> Void)?
+
+    init(
+        label: String,
+        selected: Bool,
+        accessibilityLabel: String? = nil,
+        action: (() -> Void)?
+    ) {
+        self.label = label
+        self.selected = selected
+        self.accessibilityLabel = accessibilityLabel
+        self.action = action
+    }
 
     var body: some View {
         Button {
             action?()
         } label: {
-            if label == "+" {
-                Text(label)
-                    .font(.system(size: 14, weight: .heavy, design: .rounded))
-                    .foregroundStyle(.clear)
-                    .padding(.horizontal, 26)
-                    .padding(.vertical, 11)
-                    .frame(minWidth: 54)
-                    .background(selected ? AppPalette.primarySurface : AppPalette.panelStrong, in: Capsule())
-                    .overlay {
-                        Text(label)
-                            .font(.system(size: 22, weight: .heavy, design: .rounded))
-                            .foregroundStyle(selected ? AppPalette.primaryStrong : Color.white.opacity(0.78))
-                    }
-            } else {
-                Text(label)
-                    .font(.system(size: 14, weight: .heavy, design: .rounded))
-                    .foregroundStyle(selected ? AppPalette.primaryStrong : Color.white.opacity(0.78))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 11)
-                    .frame(maxWidth: 190)
-                    .background(selected ? AppPalette.primarySurface : AppPalette.panelStrong, in: Capsule())
-            }
+            Text(label)
+                .font(label == "+" ? .title2.weight(.heavy) : .footnote.weight(.heavy))
+                .foregroundStyle(selected ? Color.white : Color.white.opacity(0.78))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .padding(.horizontal, label == "+" ? 16 : 18)
+                .frame(
+                    minWidth: label == "+" ? 54 : nil,
+                    maxWidth: label == "+" ? nil : 190,
+                    minHeight: 44
+                )
+                .background(selected ? AppPalette.primarySurface : AppPalette.panelStrong, in: Capsule())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel ?? (label == "+" ? "追加" : label))
+        .accessibilityValue(selected ? "選択中" : "未選択")
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 
@@ -1431,6 +1641,7 @@ struct SharedTagSection: View {
                     FilterChipButton(
                         label: "+",
                         selected: false,
+                        accessibilityLabel: "共有タグを追加",
                         action: onCreateTag
                     )
 

@@ -60,11 +60,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -92,9 +94,13 @@ import jp.mimac.urlsaver.data.ExportOutputFormat
 import jp.mimac.urlsaver.domain.ServiceType
 import jp.mimac.urlsaver.domain.SharedTagScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
 import java.time.LocalDate
 import java.util.UUID
 
@@ -121,35 +127,45 @@ fun ExportScreen(
     var selectedFormat by remember { mutableStateOf(ExportOutputFormat.ZIP) }
     var selectedDestination by remember { mutableStateOf(ExportDestination.SHARE_SHEET) }
     var pendingFileArchive by remember { mutableStateOf<PreparedExportArchive?>(null) }
+    val latestPendingFileArchive by rememberUpdatedState(pendingFileArchive)
+    DisposableEffect(Unit) {
+        onDispose { latestPendingFileArchive?.cleanup() }
+    }
     val zipDocumentLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/zip"),
     ) { uri: Uri? ->
         val archive = pendingFileArchive
         pendingFileArchive = null
-        if (uri == null || archive == null) return@rememberLauncherForActivityResult
-        runCatching {
-            context.contentResolver.openOutputStream(uri)?.use { output ->
-                output.write(archive.bytes)
-            } ?: error("ファイルを開けませんでした")
-        }.fold(
-            onSuccess = { successMessage = "${archive.fileName} を保存しました" },
-            onFailure = { throwable -> error = throwable.message ?: "ファイルに保存できませんでした" },
-        )
+        if (uri == null || archive == null) {
+            archive?.cleanup()
+            return@rememberLauncherForActivityResult
+        }
+        scope.launch {
+            runCatching {
+                writeArchiveToUri(context, uri, archive)
+            }.fold(
+                onSuccess = { successMessage = "${archive.fileName} を保存しました" },
+                onFailure = { throwable -> error = throwable.message ?: "ファイルに保存できませんでした" },
+            )
+        }
     }
     val jsonDocumentLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json"),
     ) { uri: Uri? ->
         val archive = pendingFileArchive
         pendingFileArchive = null
-        if (uri == null || archive == null) return@rememberLauncherForActivityResult
-        runCatching {
-            context.contentResolver.openOutputStream(uri)?.use { output ->
-                output.write(archive.bytes)
-            } ?: error("ファイルを開けませんでした")
-        }.fold(
-            onSuccess = { successMessage = "${archive.fileName} を保存しました" },
-            onFailure = { throwable -> error = throwable.message ?: "ファイルに保存できませんでした" },
-        )
+        if (uri == null || archive == null) {
+            archive?.cleanup()
+            return@rememberLauncherForActivityResult
+        }
+        scope.launch {
+            runCatching {
+                writeArchiveToUri(context, uri, archive)
+            }.fold(
+                onSuccess = { successMessage = "${archive.fileName} を保存しました" },
+                onFailure = { throwable -> error = throwable.message ?: "ファイルに保存できませんでした" },
+            )
+        }
     }
     val selectedItems = remember(uiState, availableTags) {
         buildSelectedExportItems(uiState.scope, uiState.selectedTagIds, availableTags, uiState.serviceType)
@@ -326,6 +342,12 @@ fun ChatGptExportScreen(
     val context = LocalContext.current
     var shareRequested by remember { mutableStateOf(false) }
     var shareError by remember { mutableStateOf<String?>(null) }
+    var shareSuccessMessage by remember { mutableStateOf<String?>(null) }
+    val latestPreparedArchive by rememberUpdatedState(uiState.preparedArchive)
+
+    DisposableEffect(Unit) {
+        onDispose { latestPreparedArchive?.cleanup() }
+    }
 
     LaunchedEffect(Unit) {
         pruneCachedExportArchives(context)
@@ -339,6 +361,9 @@ fun ChatGptExportScreen(
         }.onFailure { throwable ->
             shareError = throwable.message
                 ?: "共有画面を開けませんでした。もう一度お試しください。"
+        }.onSuccess {
+            shareError = null
+            shareSuccessMessage = "ChatGPT用ZIPを共有しました"
         }
     }
     LaunchedEffect(uiState.archiveError, shareRequested) {
@@ -346,15 +371,6 @@ fun ChatGptExportScreen(
             shareRequested = false
         }
     }
-
-    val preview = uiState.preview
-    val targetCount = preview?.entries?.size ?: 0
-    val canSend = isChatGptOneTapShareEnabled(
-        selectedTagCount = uiState.selectedTagIds.size,
-        targetCount = targetCount,
-        isPreviewLoading = uiState.isPreviewLoading,
-        isPreparingArchive = uiState.isArchivePreparing,
-    )
 
     Scaffold(
         topBar = {
@@ -387,135 +403,36 @@ fun ChatGptExportScreen(
                 .widthIn(max = 560.dp)
                 .verticalScroll(rememberScrollState())
                 .padding(start = 18.dp, top = 4.dp, end = 18.dp, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Text(
-                text = "自作タグを選んで送る",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-            )
-
-            if (availableTags.isEmpty()) {
-                Text(
-                    text = "URLが付いた自作タグがありません",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else {
-                ExportTagGrid(
-                    tags = availableTags,
-                    selectedTagIds = uiState.selectedTagIds,
-                    onToggle = { tag ->
-                        shareError = null
-                        viewModel.toggleChatGptTagSelection(tag.id)
-                    },
-                )
-            }
-
-            ChatGptCompactStatus(
+            ChatGptExportContent(
+                availableTags = availableTags,
                 uiState = uiState,
-                onRetry = viewModel::retryChatGptPreview,
-            )
-
-            val visibleError = shareError ?: uiState.archiveError
-            if (visibleError != null) {
-                Text(
-                    text = visibleError,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
-
-            Button(
-                onClick = {
+                preparedArchive = uiState.preparedArchive,
+                isPreparingArchive = uiState.isArchivePreparing,
+                error = shareError ?: uiState.archiveError,
+                successMessage = shareSuccessMessage ?: uiState.archiveSuccessMessage,
+                onToggleTag = { tagId ->
                     shareError = null
-                    shareRequested = true
-                    viewModel.setChatGptContentConfirmed(true)
+                    shareSuccessMessage = null
+                    viewModel.toggleChatGptTagSelection(tagId)
+                },
+                onRetryPreview = {
+                    shareError = null
+                    shareSuccessMessage = null
+                    viewModel.retryChatGptPreview()
+                },
+                onContentConfirmedChange = viewModel::setChatGptContentConfirmed,
+                onPrepareArchive = {
+                    shareError = null
+                    shareSuccessMessage = null
                     viewModel.prepareChatGptExport()
                 },
-                enabled = canSend && !shareRequested,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
-            ) {
-                if (uiState.isArchivePreparing || shareRequested) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        strokeWidth = 2.dp,
-                    )
-                    Text(
-                        text = "準備しています",
-                        modifier = Modifier.padding(start = 10.dp),
-                    )
-                } else {
-                    Icon(
-                        imageVector = Icons.Outlined.IosShare,
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp),
-                    )
-                    Text(
-                        text = if (targetCount > 0) {
-                            "${targetCount}件をChatGPTに送る"
-                        } else {
-                            "ChatGPTに送る"
-                        },
-                        modifier = Modifier.padding(start = 8.dp),
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ChatGptCompactStatus(
-    uiState: ChatGptExportUiState,
-    onRetry: () -> Unit,
-) {
-    when {
-        uiState.selectedTagIds.isEmpty() -> {
-            Text(
-                text = "自作タグを1つ以上選んでください",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        uiState.isPreviewLoading -> {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                Text("対象を確認しています")
-            }
-        }
-        uiState.previewError != null -> {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = uiState.previewError,
-                    color = MaterialTheme.colorScheme.error,
-                )
-                OutlinedButton(onClick = onRetry) {
-                    Text("もう一度確認")
-                }
-            }
-        }
-        uiState.preview?.entries?.isEmpty() == true -> {
-            Text(
-                text = "送れる保存リンクがありません",
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
-        uiState.preview != null -> {
-            val preview = uiState.preview
-            Text(
-                text = buildString {
-                    append("対象 ${preview.entries.size}件")
-                    if (preview.excludedCount > 0) {
-                        append("・除外 ${preview.excludedCount}件")
-                    }
+                onSendToChatGpt = {
+                    shareError = null
+                    shareSuccessMessage = null
+                    shareRequested = true
                 },
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
@@ -534,18 +451,6 @@ internal fun isChatGptZipCreationEnabled(
     return selectedTagCount > 0 &&
         targetCount > 0 &&
         isContentConfirmed &&
-        !isPreviewLoading &&
-        !isPreparingArchive
-}
-
-internal fun isChatGptOneTapShareEnabled(
-    selectedTagCount: Int,
-    targetCount: Int,
-    isPreviewLoading: Boolean,
-    isPreparingArchive: Boolean,
-): Boolean {
-    return selectedTagCount > 0 &&
-        targetCount > 0 &&
         !isPreviewLoading &&
         !isPreparingArchive
 }
@@ -1418,28 +1323,73 @@ internal suspend fun cacheExportArchive(
 ): Uri {
     val appContext = context.applicationContext
     val targetFile = writeCachedExportArchive(appContext, archive)
-    return FileProvider.getUriForFile(
-        appContext,
-        "${appContext.packageName}.fileprovider",
-        targetFile,
-    )
+    return try {
+        FileProvider.getUriForFile(
+            appContext,
+            "${appContext.packageName}.fileprovider",
+            targetFile,
+        )
+    } catch (throwable: Throwable) {
+        targetFile.parentFile?.deleteRecursively()
+        throw throwable
+    }
 }
 
 internal suspend fun writeCachedExportArchive(
     context: Context,
     archive: PreparedExportArchive,
 ): File {
-    require(!archive.fileName.startsWith("rinbam-chatgpt-") || archive.bytes.size <= MAX_CHATGPT_ARCHIVE_BYTES) {
-        "ChatGPT用ZIPが大きすぎます（上限 ${MAX_CHATGPT_ARCHIVE_BYTES / BYTES_PER_MIB} MiB）。タグを分けてお試しください。"
-    }
     return withContext(Dispatchers.IO) {
-        val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
-        pruneCachedExportArchives(exportDir)
-        val safeArchiveName = File(archive.fileName).name
-        val shareDirectory = File(exportDir, UUID.randomUUID().toString()).apply { mkdirs() }
-        val targetFile = File(shareDirectory, safeArchiveName)
-        targetFile.writeBytes(archive.bytes)
-        targetFile
+        var shareDirectory: File? = null
+        var temporaryFile: File? = null
+        try {
+            require(!archive.fileName.startsWith("rinbam-chatgpt-") || archive.byteSize <= MAX_CHATGPT_ARCHIVE_BYTES) {
+                "ChatGPT用ZIPが大きすぎます（上限 ${MAX_CHATGPT_ARCHIVE_BYTES / BYTES_PER_MIB} MiB）。タグを分けてお試しください。"
+            }
+            val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
+            pruneCachedExportArchives(exportDir)
+            val safeArchiveName = File(archive.fileName).name
+            require(safeArchiveName.isNotBlank()) { "ファイル名が空です" }
+            val targetDirectory = File(exportDir, UUID.randomUUID().toString()).apply { mkdirs() }
+            shareDirectory = targetDirectory
+            val targetFile = File(targetDirectory, safeArchiveName)
+            temporaryFile = File(targetDirectory, ".$safeArchiveName.part")
+            val requiredBytes = archive.byteSize + EXPORT_WRITE_SAFETY_MARGIN_BYTES
+            if (exportDir.usableSpace > 0L && exportDir.usableSpace < requiredBytes) {
+                throw IOException("エクスポートに必要な空き容量がありません")
+            }
+            FileOutputStream(temporaryFile).use { output ->
+                archive.copyTo(output)
+                output.fd.sync()
+            }
+            currentCoroutineContext().ensureActive()
+            check(temporaryFile.renameTo(targetFile)) {
+                "エクスポートファイルを確定できませんでした"
+            }
+            archive.cleanup()
+            targetFile
+        } catch (throwable: Throwable) {
+            temporaryFile?.delete()
+            shareDirectory?.deleteRecursively()
+            archive.cleanup()
+            throw throwable
+        }
+    }
+}
+
+private suspend fun writeArchiveToUri(
+    context: Context,
+    uri: Uri,
+    archive: PreparedExportArchive,
+) {
+    try {
+        withContext(Dispatchers.IO) {
+            val output = context.contentResolver.openOutputStream(uri)
+                ?: throw IOException("ファイルを開けませんでした")
+            output.use { archive.copyTo(it) }
+        }
+    } finally {
+        archive.cleanup()
     }
 }
 
@@ -1513,6 +1463,7 @@ private const val CACHED_EXPORT_MAX_FILES = 64
 private const val CACHED_EXPORT_MAX_AGE_MILLIS = 7L * 24L * 60L * 60L * 1_000L
 internal const val BYTES_PER_MIB = 1024 * 1024
 internal const val MAX_CHATGPT_ARCHIVE_BYTES = 25 * BYTES_PER_MIB
+private const val EXPORT_WRITE_SAFETY_MARGIN_BYTES = 64L * 1024L
 
 private val ExportOutputFormat.label: String
     get() = when (this) {

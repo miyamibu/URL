@@ -117,7 +117,7 @@ final class ServiceFilterTests: XCTestCase {
         )
 
         XCTAssertEqual(archive.entryCount, 1)
-        XCTAssertGreaterThan(archive.bytes.count, 0)
+        XCTAssertGreaterThan(try archive.loadData().count, 0)
     }
 
     func testZipExportUsesZipFileNameAndMimeType() throws {
@@ -142,7 +142,7 @@ final class ServiceFilterTests: XCTestCase {
 
         XCTAssertTrue(archive.fileName.hasSuffix(".zip"))
         XCTAssertEqual(archive.mimeType, "application/zip")
-        XCTAssertEqual(Array(archive.bytes.prefix(2)), [0x50, 0x4b]) // ZIP local file header prefix (PK)
+        XCTAssertEqual(Array(try archive.loadData().prefix(2)), [0x50, 0x4b]) // ZIP local file header prefix (PK)
     }
 
     func testJSONExportProducesManifestAndEntries() throws {
@@ -168,7 +168,7 @@ final class ServiceFilterTests: XCTestCase {
         XCTAssertTrue(archive.fileName.hasSuffix(".json"))
         XCTAssertEqual(archive.mimeType, "application/json")
 
-        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: archive.bytes) as? [String: Any])
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: archive.loadData()) as? [String: Any])
         let manifest = try XCTUnwrap(json["manifest"] as? [String: Any])
         XCTAssertEqual(manifest["entryCount"] as? Int, 1)
         let entries = try XCTUnwrap(json["entries"] as? [[String: Any]])

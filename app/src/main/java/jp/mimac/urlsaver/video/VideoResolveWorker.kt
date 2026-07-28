@@ -3,7 +3,10 @@ package jp.mimac.urlsaver.video
 import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
+import androidx.work.BackoffPolicy
+import androidx.work.Constraints
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.NetworkType
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
@@ -11,6 +14,8 @@ import jp.mimac.urlsaver.data.UrlEntryDao
 import jp.mimac.urlsaver.data.VideoAssetDao
 import jp.mimac.urlsaver.data.VideoAssetEntity
 import jp.mimac.urlsaver.util.AppClock
+import java.util.concurrent.CancellationException
+import java.util.concurrent.TimeUnit
 
 class VideoResolveWorker(
     appContext: Context,
@@ -24,7 +29,14 @@ class VideoResolveWorker(
         val entryId = inputData.getLong(KEY_ENTRY_ID, 0L)
         if (entryId <= 0L) return Result.failure()
         val entry = urlEntryDao.findById(entryId) ?: return Result.success()
-        val resolved = runCatching { resolver.resolve(entry) }.getOrElse { error ->
+        val resolved = try {
+            resolver.resolve(entry)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            if (MediaNetworkPolicy.classifyForRetry(error) && runAttemptCount < MAX_RETRY_ATTEMPTS) {
+                return Result.retry()
+            }
             VideoResolveResult(
                 provider = entry.serviceType.name.lowercase(),
                 assets = emptyList(),
@@ -98,16 +110,26 @@ class VideoResolveWorker(
                 .forEach { asset ->
                     val request = OneTimeWorkRequestBuilder<VideoDownloadWorker>()
                         .setInputData(workDataOf(VideoDownloadWorker.KEY_VIDEO_ASSET_ID to asset.id))
+                        .setConstraints(videoWorkConstraints())
+                        .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, VIDEO_BACKOFF_SECONDS, TimeUnit.SECONDS)
                         .build()
                     WorkManager.getInstance(applicationContext)
-                        .enqueueUniqueWork("video-download:${asset.id}", ExistingWorkPolicy.REPLACE, request)
+                        .enqueueUniqueWork(VideoDownloadWorker.uniqueWorkName(asset.id), ExistingWorkPolicy.REPLACE, request)
                 }
         }
-        return Result.success()
+        return if (resolved.resolveStatus == "FAILED") Result.failure() else Result.success()
     }
+
+    private fun videoWorkConstraints(): Constraints = Constraints.Builder()
+        .setRequiredNetworkType(NetworkType.CONNECTED)
+        .setRequiresStorageNotLow(true)
+        .build()
 
     companion object {
         const val KEY_ENTRY_ID = "entryId"
         const val KEY_AUTO_DOWNLOAD = "autoDownload"
+        fun uniqueWorkName(entryId: Long): String = "video-resolve:$entryId"
+        private const val MAX_RETRY_ATTEMPTS = 3
+        private const val VIDEO_BACKOFF_SECONDS = 10L
     }
 }

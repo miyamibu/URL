@@ -36,4 +36,21 @@ object AppMediaStore {
         val canonicalFile = runCatching { file.canonicalFile }.getOrNull() ?: return null
         return canonicalFile.takeIf { it.path.startsWith(root.path + File.separator) && it.isFile }
     }
+
+    fun deleteFilesForEntry(context: Context, entryId: Long) {
+        if (entryId <= 0L) return
+        val root = runCatching { File(context.filesDir, ROOT_DIRECTORY).canonicalFile }.getOrNull() ?: return
+        val directory = runCatching { fileFor(context, entryId, ".probe").parentFile?.canonicalFile }.getOrNull() ?: return
+        if (directory.parentFile != root) return
+
+        directory.listFiles().orEmpty().forEach { file ->
+            val canonicalFile = runCatching { file.canonicalFile }.getOrNull() ?: return@forEach
+            if (canonicalFile.parentFile == directory && file.isFile) {
+                runCatching { file.delete() }
+            }
+        }
+        if (directory.listFiles().isNullOrEmpty()) {
+            runCatching { directory.delete() }
+        }
+    }
 }

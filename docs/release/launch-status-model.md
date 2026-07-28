@@ -3,6 +3,14 @@
 ## Goal
 Separate repo-local readiness from external staging, internal testing, public launch, and stop conditions.
 
+## Readiness script levels
+
+`scripts/check_launch_readiness.sh` has explicit levels so a green CI run does not become an external launch claim:
+
+- `--level repo` is the PR/CI repo contract. It runs static docs, MCP/UI, tracker, release-hygiene, secret, and archive-contract checks without requiring a clean worktree or `main`/`origin/main` alignment. Its success label is `REPO_VALIDATION_PASS`.
+- `--level internal` adds a clean worktree, current `REPO_GO` evidence, and internal Android/TestFlight checklist presence. Its success label is `INTERNAL_TEST_REPO_READY`; it is not `INTERNAL_TEST_GO` because device, store, and manual QA evidence remain external/manual.
+- `--level launch` adds reviewed `main`/`origin/main` alignment and current `REPO_GO` evidence. Its success label is `LAUNCH_READY_REPO`; it is not `LAUNCH_GO` because staging, store, OpenAI, privacy approval, and owner approval remain external/manual.
+
 ## Status Definitions
 
 | Status | Definition | Required evidence | Who performs it | What Codex may do | What Codex must not do | Exit criteria | Stop conditions |

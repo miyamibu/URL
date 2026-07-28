@@ -4,7 +4,18 @@ Final status: REPO_GO
 
 ## Current working-tree status: REPO_GO (external release gates remain separate)
 
-The historical evidence below is retained. The current source baseline is Android `versionName=1.0.15` / `versionCode=18` and iOS `CFBundleShortVersionString=1.0.16` / `CFBundleVersion=18`. The local implementation and automated checks listed below were re-run on 2026-07-26; current-source physical-device operation, distribution signing, store upload/submission, OpenAI submission, production secret entry, and store-console review remain separate external/manual gates.
+The historical evidence below is retained. The current source baseline is Android `versionName=1.0.15` / `versionCode=18` and iOS `CFBundleShortVersionString=1.0.16` / `CFBundleVersion=18`. The 2026-07-28 working-tree batch was reviewed and passed the repository contract checks, Android unit/lint/debug/release builds, iOS unsigned Release build, Web admin typecheck/lint/build, and Supabase Edge Function type/tests listed below. The iOS Simulator test runner was not verified because the selected simulator rejected launch with `Busy`; this is recorded as `NOT_VERIFIED`, not as a test pass. Current-source physical-device operation, distribution signing, store upload/submission, OpenAI submission, production secret entry, and store-console review remain separate external/manual gates.
+
+## 2026-07-28 Current working-tree recheck
+
+| Surface | Result | Evidence |
+|---|---|---|
+| Repository contracts | PASS | `bash scripts/check_release_hygiene.sh`, `bash scripts/check_secret_hygiene.sh`, `python3 scripts/verify_mcp_contract.py`, `python3 scripts/verify_mobile_ui_contract.py`, canonical story tracker, Chapter 13 fixture parity, Python verifier tests, shell syntax, ShellCheck, and `git diff --check` passed. |
+| Android | LOCAL_VALIDATION_PASS | `./gradlew testDebugUnitTest lintDebug assembleDebug assembleRelease bundleRelease` succeeded. Canonical application ID and release version checks passed. |
+| iOS | RELEASE_BUILD_PASS / SIMULATOR_TEST_NOT_VERIFIED | `xcodebuild ... -configuration Release -destination 'generic/platform=iOS' ... build` succeeded. Simulator `test` compiled and linked but the test runner launch was rejected by CoreSimulator with `Busy`; no Simulator test result is claimed. |
+| Web admin | PASS | `npm run typecheck`, `npm run lint`, and `npm run build` passed in `web/admin`. |
+| Supabase Edge Functions | PASS | `deno check` passed for purchase verification, store notification receiver, and entitlement reconciliation sources/tests; 28 Deno tests passed. Fresh local migration replay/pgTAP was not run because it is reserved for an isolated CI runner and must not reset a developer database. |
+| External release gates | NOT_VERIFIED / BLOCKED_EXTERNAL | No current physical-device operation, signed distribution artifact, store console submission, OpenAI submission, production secret entry, or current provider source-revision correspondence was established by this local pass. |
 
 Current proof boundary:
 

@@ -7,11 +7,70 @@ struct ChatGptExportLocalSnapshot: Sendable {
     let localTagAssignments: [Int64: Set<Int64>]
 }
 
+protocol URLRepositoryMediaCleanup {
+    func removeFiles(entryID: Int64)
+}
+
+struct FileManagerURLRepositoryMediaCleanup: URLRepositoryMediaCleanup {
+    private let rootURL: URL
+    private let fileManager: FileManager
+
+    init(rootURL: URL, fileManager: FileManager = .default) {
+        self.rootURL = rootURL.standardizedFileURL
+        self.fileManager = fileManager
+    }
+
+    static func applicationSupport() throws -> Self {
+        Self(rootURL: try SharedContainer.rinbamMediaRootURL(create: false))
+    }
+
+    func removeFiles(entryID: Int64) {
+        guard entryID > 0 else { return }
+        let root = rootURL.resolvingSymlinksInPath().standardizedFileURL
+        let directory = rootURL.appendingPathComponent(String(entryID), isDirectory: true)
+        let resolvedDirectory = directory.resolvingSymlinksInPath().standardizedFileURL
+        let rootPrefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
+        guard resolvedDirectory.path.hasPrefix(rootPrefix) else { return }
+
+        guard let files = try? fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: []
+        ) else {
+            return
+        }
+
+        for file in files {
+            let resolvedFile = file.resolvingSymlinksInPath().standardizedFileURL
+            guard resolvedFile.deletingLastPathComponent() == resolvedDirectory else { continue }
+            guard (try? file.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true else { continue }
+            try? fileManager.removeItem(at: file)
+        }
+
+        if let remaining = try? fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: []
+        ), remaining.isEmpty {
+            try? fileManager.removeItem(at: directory)
+        }
+    }
+}
+
 final class URLRepository: @unchecked Sendable {
     let database: SQLiteDatabase
+    private let mediaCleanup: URLRepositoryMediaCleanup
 
-    init(databaseURL: URL = SharedContainer.databaseURL()) throws {
+    init(
+        databaseURL: URL = SharedContainer.databaseURL(),
+        mediaCleanup: URLRepositoryMediaCleanup? = nil
+    ) throws {
         database = try SQLiteDatabase(databaseURL: databaseURL)
+        if let mediaCleanup {
+            self.mediaCleanup = mediaCleanup
+        } else {
+            self.mediaCleanup = try FileManagerURLRepositoryMediaCleanup.applicationSupport()
+        }
         try migrateIfNeeded()
     }
 
@@ -485,68 +544,131 @@ final class URLRepository: @unchecked Sendable {
     }
 
     func finalizePendingDelete(entryID: Int64, now: Date = Date()) throws {
-        guard let entry = try loadEntry(id: entryID),
-              entry.recordState == .pendingDelete,
-              let due = entry.pendingDeletionUntil,
-              due <= now else {
-            return
+        let deleted = try database.transaction {
+            try finalizePendingDeleteInTransaction(entryID: entryID, now: now)
         }
-        if entry.sharedReferenceCount > 0 {
-            try execute(
-                """
-                UPDATE url_entries
-                SET local_provenance_count = 0,
-                    record_state = 'ACTIVE',
-                    pending_deletion_until = NULL,
-                    archived_at = NULL,
-                    updated_at = ?
-                WHERE id = ?;
-                """,
-                binds: [sql(now.timeIntervalSince1970), sql(entryID)]
-            )
-            return
+        if deleted {
+            mediaCleanup.removeFiles(entryID: entryID)
         }
-        try execute("DELETE FROM url_entries WHERE id = ?;", binds: [sql(entryID)])
     }
 
     func cleanupExpiredPendingDeletes(now: Date = Date()) throws {
-        let expiredEntries = try fetchEntries(
-            whereClause: """
-            record_state = 'PENDING_DELETE'
-            AND pending_deletion_until IS NOT NULL
-            AND pending_deletion_until <= \(now.timeIntervalSince1970)
-            ORDER BY pending_deletion_until ASC
-            """
-        )
-        for entry in expiredEntries {
-            try finalizePendingDelete(entryID: entry.id, now: now)
+        let deletedEntryIDs = try database.transaction {
+            let expiredEntries = try fetchEntries(
+                whereClause: """
+                record_state = 'PENDING_DELETE'
+                AND pending_deletion_until IS NOT NULL
+                AND pending_deletion_until <= \(now.timeIntervalSince1970)
+                ORDER BY pending_deletion_until ASC
+                """
+            )
+            return try expiredEntries.compactMap { entry in
+                try finalizePendingDeleteInTransaction(entryID: entry.id, now: now) ? entry.id : nil
+            }
+        }
+        for entryID in deletedEntryIDs {
+            mediaCleanup.removeFiles(entryID: entryID)
         }
     }
 
     func restore(entryID: Int64) throws -> Bool {
+        try database.transaction {
+            guard let entry = try loadEntry(id: entryID),
+                  entry.recordState == .pendingDelete || entry.recordState == .archived else {
+                return false
+            }
+            let now = Date()
+            let restoreToArchived = entry.recordState == .pendingDelete && entry.archivedAt != nil
+            try execute(
+                """
+                UPDATE url_entries
+                SET record_state = ?,
+                    pending_deletion_until = NULL,
+                    archived_at = ?,
+                    updated_at = ?
+                WHERE id = ?
+                  AND record_state = ?;
+                """,
+                binds: [
+                    sql(restoreToArchived ? RecordState.archived.rawValue : RecordState.active.rawValue),
+                    sql(restoreToArchived ? entry.archivedAt?.timeIntervalSince1970 : nil),
+                    sql(now.timeIntervalSince1970),
+                    sql(entryID),
+                    sql(entry.recordState.rawValue)
+                ]
+            )
+            return (try database.fetchInt("SELECT changes();")) == 1
+        }
+    }
+
+    private func finalizePendingDeleteInTransaction(entryID: Int64, now: Date) throws -> Bool {
         guard let entry = try loadEntry(id: entryID),
-              entry.recordState == .pendingDelete || entry.recordState == .archived else {
+              entry.recordState == .pendingDelete,
+              let due = entry.pendingDeletionUntil,
+              due <= now else {
             return false
         }
-        let now = Date()
-        let restoreToArchived = entry.recordState == .pendingDelete && entry.archivedAt != nil
+
+        let liveSharedReferenceCount = try liveSharedReferenceCount(for: entry.normalizedURL)
+        if liveSharedReferenceCount > 0 {
+            try execute(
+                """
+                UPDATE url_entries
+                SET local_provenance_count = 0,
+                    shared_reference_count = ?,
+                    record_state = 'ACTIVE',
+                    pending_deletion_until = NULL,
+                    archived_at = NULL,
+                    updated_at = ?
+                WHERE id = ?
+                  AND record_state = 'PENDING_DELETE'
+                  AND pending_deletion_until IS NOT NULL
+                  AND pending_deletion_until <= ?;
+                """,
+                binds: [
+                    sql(liveSharedReferenceCount),
+                    sql(now.timeIntervalSince1970),
+                    sql(entryID),
+                    sql(now.timeIntervalSince1970)
+                ]
+            )
+            guard (try database.fetchInt("SELECT changes();")) == 1 else {
+                return false
+            }
+            try execute(
+                "DELETE FROM local_tag_entries WHERE entry_id = ?;",
+                binds: [sql(entryID)]
+            )
+            return false
+        }
+
         try execute(
             """
-            UPDATE url_entries
-            SET record_state = ?,
-                pending_deletion_until = NULL,
-                archived_at = ?,
-                updated_at = ?
-            WHERE id = ?;
+            DELETE FROM url_entries
+            WHERE id = ?
+              AND record_state = 'PENDING_DELETE'
+              AND pending_deletion_until IS NOT NULL
+              AND pending_deletion_until <= ?;
             """,
-            binds: [
-                sql(restoreToArchived ? RecordState.archived.rawValue : RecordState.active.rawValue),
-                sql(restoreToArchived ? entry.archivedAt?.timeIntervalSince1970 : nil),
-                sql(now.timeIntervalSince1970),
-                sql(entryID)
-            ]
+            binds: [sql(entryID), sql(now.timeIntervalSince1970)]
         )
-        return true
+        return (try database.fetchInt("SELECT changes();")) == 1
+    }
+
+    private func liveSharedReferenceCount(for normalizedURL: String) throws -> Int {
+        try database.fetchInt(
+            """
+            SELECT COUNT(*)
+            FROM shared_tag_urls AS urls
+            INNER JOIN shared_tags AS tags
+                ON tags.auth_user_id = urls.auth_user_id
+               AND tags.remote_tag_id = urls.tag_remote_id
+            WHERE urls.normalized_url = ?
+              AND urls.deleted_at IS NULL
+              AND tags.deleted_at IS NULL;
+            """,
+            binds: [sql(normalizedURL)]
+        ) ?? 0
     }
 
     func saveUserTitle(entryID: Int64, rawTitle: String) throws -> (success: Bool, oldTitle: String?, tooLong: Bool) {
@@ -1027,6 +1149,25 @@ final class URLRepository: @unchecked Sendable {
             FOREIGN KEY (entry_id) REFERENCES url_entries(id) ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS idx_local_tag_entries_entry ON local_tag_entries(entry_id);
+        CREATE TABLE IF NOT EXISTS shared_tags (
+            auth_user_id TEXT NOT NULL,
+            remote_tag_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            current_user_role TEXT,
+            deleted_at REAL,
+            last_synced_at REAL,
+            PRIMARY KEY (auth_user_id, remote_tag_id)
+        );
+        CREATE TABLE IF NOT EXISTS shared_tag_urls (
+            auth_user_id TEXT NOT NULL,
+            tag_remote_id TEXT NOT NULL,
+            remote_url_id TEXT NOT NULL,
+            normalized_url TEXT NOT NULL,
+            raw_url TEXT NOT NULL,
+            deleted_at REAL,
+            PRIMARY KEY (auth_user_id, tag_remote_id, remote_url_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_shared_tag_urls_lookup ON shared_tag_urls(auth_user_id, normalized_url, deleted_at);
         CREATE TABLE IF NOT EXISTS collections (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,

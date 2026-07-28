@@ -3,8 +3,7 @@ package jp.mimac.urlsaver.video
 import jp.mimac.urlsaver.data.UrlEntryEntity
 import jp.mimac.urlsaver.domain.ServiceType
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
+import java.io.ByteArrayOutputStream
 
 interface VideoResolver {
     suspend fun resolve(entry: UrlEntryEntity): VideoResolveResult
@@ -99,23 +98,44 @@ class BackendVideoResolver(
     }
 
     private fun postJson(url: String, json: String): String {
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            instanceFollowRedirects = true
-            connectTimeout = 20_000
-            readTimeout = 60_000
-            requestMethod = "POST"
-            doOutput = true
-            setRequestProperty("User-Agent", "Rinbam Android")
-            setRequestProperty("Content-Type", "application/json; charset=UTF-8")
-            setRequestProperty("Accept", "application/json")
+        val response = MediaNetworkPolicy.openPostResponse(
+            rawUrl = url,
+            body = json.toByteArray(Charsets.UTF_8),
+            connectTimeoutMillis = 20_000,
+            readTimeoutMillis = 60_000,
+            headers = mapOf(
+                "User-Agent" to "Rinbam Android",
+                "Content-Type" to "application/json; charset=UTF-8",
+                "Accept" to "application/json",
+            ),
+        )
+        return try {
+            response.connection.useLimitedUtf8(MediaNetworkPolicy.MAX_RESOLVER_RESPONSE_BYTES)
+        } finally {
+            response.connection.disconnect()
         }
-        connection.outputStream.use { it.write(json.toByteArray(Charsets.UTF_8)) }
-        val stream = if (connection.responseCode in 200..299) connection.inputStream else connection.errorStream
-        return stream.bufferedReader(Charsets.UTF_8).use { it.readText() }
     }
 
     private fun String.escapeJson(): String = replace("\\", "\\\\").replace("\"", "\\\"")
 
+}
+
+private fun java.net.HttpURLConnection.useLimitedUtf8(maxBytes: Long): String {
+    val output = ByteArrayOutputStream()
+    inputStream.use { input ->
+        val buffer = ByteArray(16 * 1024)
+        var total = 0L
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            if (total > maxBytes - read) {
+                throw MediaNetworkPolicy.InvalidResponseException("MEDIA_RESOLVER_RESPONSE_TOO_LARGE")
+            }
+            output.write(buffer, 0, read)
+            total += read
+        }
+    }
+    return output.toByteArray().toString(Charsets.UTF_8)
 }
 
 private fun String.normalizeMediaUrl(): String {

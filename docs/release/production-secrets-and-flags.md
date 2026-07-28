@@ -31,6 +31,9 @@ secret values or printing the full runtime environment.
 | `APP_STORE_ENVIRONMENT` | Non-secret verification setting | Exactly `Sandbox` or `Production`. | `verify-store-purchase`; the value selects the Apple verification environment. |
 | `APP_STORE_APPLE_ID` | Non-secret verification setting | Required only when `APP_STORE_ENVIRONMENT=Production`; must be a positive integer App Store ID. It is not required for `Sandbox`. | `verify-store-purchase`; production-only Apple verifier input. |
 | `APP_STORE_BUNDLE_ID` | Non-secret verification setting | Exactly `com.mibu.codebridge.ios`. | `verify-store-purchase`; any other bundle ID fails closed. |
+| `APP_STORE_SERVER_API_ISSUER_ID` | Protected runtime setting | App Store Connect API key issuer ID. | `store-entitlement-reconciliation`; used to sign the App Store Server API JWT. |
+| `APP_STORE_SERVER_API_KEY_ID` | Protected runtime setting | App Store Connect API key ID. | `store-entitlement-reconciliation`; sent as the JWT `kid` header. |
+| `APP_STORE_SERVER_API_PRIVATE_KEY` | Secret | ES256 App Store Connect API private key in PKCS#8 PEM form. | `store-entitlement-reconciliation`; never log, persist, or expose to clients. |
 | `GOOGLE_PLAY_PACKAGE_NAME` | Non-secret verification setting | Exactly `jp.miyamibu.urlalbum`. | `verify-store-purchase`; used as the Google Play application package name. |
 | `CONTACT_TO_EMAIL` | Non-secret operational setting | Approved support recipient address. | `contact-support`; routing value for Resend delivery. |
 | `CONTACT_FROM_EMAIL` | Non-secret operational setting | Approved sender address for the configured Resend domain. | `contact-support`; sender value for Resend delivery. |
@@ -42,8 +45,15 @@ Validation checklist for these settings:
 - For Apple Sandbox, keep `APP_STORE_ENVIRONMENT=Sandbox` and do not require an
   `APP_STORE_APPLE_ID`; for Production, set `APP_STORE_ENVIRONMENT=Production`
   and verify that `APP_STORE_APPLE_ID` is a positive integer.
+- The active reconciliation path is stricter: it requires the positive
+  `APP_STORE_APPLE_ID` in both Sandbox and Production so the App Store Server
+  API response `appAppleId` is always checked against the configured app.
 - Confirm `APP_STORE_BUNDLE_ID` and `GOOGLE_PLAY_PACKAGE_NAME` exactly match
   the canonical IDs above before enabling live purchase verification.
+- For Apple current-state reconciliation, configure the issuer ID, key ID, and
+  PKCS#8 ES256 private key in the protected runtime secret store. The code
+  selects the production or sandbox Server API endpoint from
+  `APP_STORE_ENVIRONMENT` and never prints the JWT or private key.
 - Treat a successful function deploy or a local `deno check` as configuration
   and code checks only; they do not prove a real Apple Sandbox, App Store, or
   Google Play purchase flow.

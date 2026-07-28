@@ -7,7 +7,7 @@ Drive the repo from `LAUNCH_READY_REPO` through manual `STAGING_GO`, `INTERNAL_T
 
 - [ ] Check:
   - Owner: Release owner
-  - Command / Console: `git status --short && git diff --check && bash scripts/check_launch_readiness.sh`
+  - Command / Console: `git status --short && git diff --check && bash scripts/check_launch_readiness.sh --level launch`
   - Expected result: Only intentional launch/release diffs; no whitespace errors; readiness script passes.
   - Evidence to save: Terminal log in a local release evidence folder outside git or approved artifacts folder.
   - Stop if: Unexpected source changes, generated root ZIP, `.env.production`, invalid docs reference, or actual secret appears.
@@ -55,7 +55,7 @@ Drive the repo from `LAUNCH_READY_REPO` through manual `STAGING_GO`, `INTERNAL_T
 
 - [ ] Check:
   - Owner: Web/MCP owner
-  - Command / Console: Follow `docs/release/staging-deploy-checklist.md`
+  - Command / Console: Follow `docs/release/staging-deploy-checklist.md`; the CI `supabase-local` job runs migration replay, local lint, and pgTAP only on a fresh GitHub Actions runner.
   - Expected result: Staging HTTPS MCP endpoint exists and is disabled until explicitly enabled.
   - Evidence to save: endpoint URL, env var list without values, deploy ID.
   - Stop if: production secrets are pasted into repo, noauth data is exposed, or endpoint is HTTP.

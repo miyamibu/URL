@@ -3,6 +3,7 @@ package jp.mimac.urlsaver
 import android.content.Intent
 import androidx.compose.material3.SnackbarDuration
 import jp.mimac.urlsaver.data.MetadataUpdate
+import jp.mimac.urlsaver.data.PendingDeleteFinalizationResult
 import jp.mimac.urlsaver.data.UrlEntryEntity
 import jp.mimac.urlsaver.data.UrlRepository
 import jp.mimac.urlsaver.domain.DetailEffect
@@ -206,8 +207,9 @@ class MainActivityViewModelSnackbarUndoTest {
         override suspend fun archive(entryId: Long): Boolean = false
         override suspend fun unarchive(entryId: Long): Boolean = false
         override suspend fun markPendingDelete(entryId: Long, gracePeriodMillis: Long): Long? = null
-        override suspend fun finalizePendingDelete(entryId: Long) {
+        override suspend fun finalizePendingDelete(entryId: Long): PendingDeleteFinalizationResult {
             finalizeDeleteCalls += entryId
+            return PendingDeleteFinalizationResult.Deleted
         }
         override suspend fun cleanupExpiredPendingDeletes() = Unit
         override suspend fun restore(entryId: Long): Boolean = false

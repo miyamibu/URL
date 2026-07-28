@@ -1711,6 +1711,8 @@ final class URLSaverAppModel: ObservableObject {
                 do {
                     let savedFile = try await IOSAppMediaSaver.save(asset: asset, entryID: entryID, index: index)
                     savedFiles.append(savedFile)
+                } catch is CancellationError {
+                    throw CancellationError()
                 } catch {
                     continue
                 }
@@ -1734,6 +1736,8 @@ final class URLSaverAppModel: ObservableObject {
             return true
         } catch let error as IOSMediaResolverError {
             enqueueNotification(AppNotification(message: error.userMessage, actionLabel: nil, action: nil, autoDismissAfter: 4))
+            return false
+        } catch is CancellationError {
             return false
         } catch {
             enqueueNotification(AppNotification(message: "メディアを取得できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 4))
@@ -1960,6 +1964,7 @@ private enum IOSMediaResolverError: Error {
     case message(String)
     case invalidDownloadURL
     case httpStatus(Int)
+    case retryableNetwork
 
     var userMessage: String {
         switch self {
@@ -1971,7 +1976,7 @@ private enum IOSMediaResolverError: Error {
             return "サービス側の認証が必要なため、現在はメディアを取得できません"
         case .message(let value):
             return value
-        case .failed, .invalidDownloadURL, .httpStatus:
+        case .failed, .invalidDownloadURL, .httpStatus, .retryableNetwork:
             return "メディアを取得できませんでした"
         }
     }
@@ -2012,7 +2017,7 @@ private struct IOSBackendMediaResolver {
             options: []
         )
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await dataWithRetry(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw IOSMediaResolverError.httpStatus(-1)
         }
@@ -2020,18 +2025,48 @@ private struct IOSBackendMediaResolver {
             throw Self.error(from: data, fallbackStatus: httpResponse.statusCode)
         }
 
+        guard data.count <= 2 * 1024 * 1024 else { throw IOSMediaResolverError.failed }
         let decoded = try JSONDecoder().decode(IOSMediaResolveResponse.self, from: data)
         guard decoded.ok else {
             throw Self.error(from: decoded)
         }
         return decoded.assets.filter { asset in
             guard let url = URL(string: asset.downloadURL),
-                  let scheme = url.scheme?.lowercased(),
-                  scheme == "https" || scheme == "http" else {
+                  RinbamMediaNetworkBoundary.isAllowed(url) else {
                 return false
             }
             return asset.mediaType == "IMAGE" || asset.mediaType == "VIDEO"
         }
+    }
+
+    private func dataWithRetry(for request: URLRequest) async throws -> (Data, URLResponse) {
+        var lastError: Error?
+        for attempt in 0..<3 {
+            do {
+                let (session, _) = RinbamMediaNetworkBoundary.makeSession()
+                defer { session.invalidateAndCancel() }
+                let (data, response) = try await session.data(for: request)
+                if let httpResponse = response as? HTTPURLResponse,
+                   [408, 429].contains(httpResponse.statusCode) || (500...599).contains(httpResponse.statusCode) {
+                    if attempt < 2 {
+                        try await Task.sleep(for: .milliseconds(250 * Int64(attempt + 1)))
+                        continue
+                    }
+                }
+                return (data, response)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let error as URLError where [.timedOut, .cannotFindHost, .cannotConnectToHost, .networkConnectionLost].contains(error.code) {
+                lastError = IOSMediaResolverError.retryableNetwork
+                if attempt < 2 {
+                    try await Task.sleep(for: .milliseconds(250 * Int64(attempt + 1)))
+                    continue
+                }
+            } catch {
+                throw error
+            }
+        }
+        throw lastError ?? IOSMediaResolverError.failed
     }
 
     private static func backendBaseURL() -> URL? {
@@ -2042,7 +2077,8 @@ private struct IOSBackendMediaResolver {
             .replacingOccurrences(of: "http:/$()/", with: "http://")
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard let normalized, !normalized.isEmpty else { return nil }
-        return URL(string: normalized)
+        guard let url = URL(string: normalized), RinbamMediaNetworkBoundary.isAllowed(url) else { return nil }
+        return url
     }
 
     private static func error(from data: Data, fallbackStatus: Int) -> IOSMediaResolverError {
@@ -2086,8 +2122,7 @@ private struct IOSBackendMediaResolver {
 private enum IOSAppMediaSaver {
     static func save(asset: IOSResolvedMediaAsset, entryID: Int64, index: Int) async throws -> SavedAppMediaFile {
         guard let downloadURL = URL(string: asset.downloadURL),
-              let scheme = downloadURL.scheme?.lowercased(),
-              scheme == "https" || scheme == "http" else {
+              RinbamMediaNetworkBoundary.isAllowed(downloadURL) else {
             throw IOSMediaResolverError.invalidDownloadURL
         }
 
@@ -2101,24 +2136,92 @@ private enum IOSAppMediaSaver {
             }
         }
 
-        let (temporaryURL, response) = try await URLSession.shared.download(for: request)
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200..<300).contains(httpResponse.statusCode) else {
-            try? FileManager.default.removeItem(at: temporaryURL)
-            throw IOSMediaResolverError.httpStatus((response as? HTTPURLResponse)?.statusCode ?? -1)
-        }
-
         let fileName = fileName(for: asset, fallbackIndex: index)
         let destination = try IOSAppMediaStore.fileURL(entryID: entryID, fileName: fileName)
-        try? FileManager.default.removeItem(at: destination)
         try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try FileManager.default.moveItem(at: temporaryURL, to: destination)
+        let temporaryURL = destination
+            .deletingLastPathComponent()
+            .appendingPathComponent(".\(destination.lastPathComponent).\(UUID().uuidString).download", isDirectory: false)
+        var temporaryExists = false
+        defer {
+            if temporaryExists { try? FileManager.default.removeItem(at: temporaryURL) }
+        }
+
+        let (session, _) = RinbamMediaNetworkBoundary.makeSession()
+        defer { session.invalidateAndCancel() }
+        let (bytes, response) = try await session.bytes(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else { throw IOSMediaResolverError.httpStatus(-1) }
+        if [408, 429].contains(httpResponse.statusCode) || (500...599).contains(httpResponse.statusCode) {
+            throw IOSMediaResolverError.retryableNetwork
+        }
+        let expectedLength = response.expectedContentLength > 0 ? response.expectedContentLength : nil
+        if let expectedLength, expectedLength > RinbamMediaNetworkBoundary.maxMediaBytes {
+            throw RinbamMediaNetworkBoundaryError.sizeLimit
+        }
+        let entryBytes = IOSAppMediaStore.entryBytes(entryID: entryID, excluding: destination.lastPathComponent)
+        if !hasEnoughStorage(destination.deletingLastPathComponent(), entryBytes: entryBytes, incomingBytes: expectedLength ?? 0) {
+            throw RinbamMediaNetworkBoundaryError.sizeLimit
+        }
+
+        FileManager.default.createFile(atPath: temporaryURL.path, contents: nil)
+        temporaryExists = true
+        let handle = try FileHandle(forWritingTo: temporaryURL)
+        var buffer = Data()
+        buffer.reserveCapacity(64 * 1024)
+        var prefix = Data()
+        var totalBytes: Int64 = 0
+        do {
+            for try await byte in bytes {
+                try Task.checkCancellation()
+                if totalBytes >= RinbamMediaNetworkBoundary.maxMediaBytes {
+                    throw RinbamMediaNetworkBoundaryError.sizeLimit
+                }
+                totalBytes += 1
+                if prefix.count < 32 { prefix.append(byte) }
+                buffer.append(byte)
+                if buffer.count >= 64 * 1024 {
+                    try handle.write(contentsOf: buffer)
+                    buffer.removeAll(keepingCapacity: true)
+                }
+                if !hasEnoughStorage(destination.deletingLastPathComponent(), entryBytes: entryBytes, incomingBytes: totalBytes) {
+                    throw RinbamMediaNetworkBoundaryError.sizeLimit
+                }
+            }
+            if !buffer.isEmpty { try handle.write(contentsOf: buffer) }
+            try handle.close()
+        } catch is CancellationError {
+            try? handle.close()
+            throw CancellationError()
+        } catch {
+            try? handle.close()
+            throw error
+        }
+
+        try RinbamMediaNetworkBoundary.validateMediaResponse(
+            httpResponse,
+            contentTypeFor: asset.mediaType,
+            expectedMimeType: asset.mimeType,
+            prefix: prefix,
+            byteCount: totalBytes
+        )
+        if FileManager.default.fileExists(atPath: destination.path) {
+            _ = try FileManager.default.replaceItemAt(destination, withItemAt: temporaryURL)
+        } else {
+            try FileManager.default.moveItem(at: temporaryURL, to: destination)
+        }
+        temporaryExists = false
         return SavedAppMediaFile(
             id: destination.path,
             fileURL: destination,
             mediaType: asset.mediaType,
             fileName: fileName
         )
+    }
+
+    private static func hasEnoughStorage(_ directory: URL, entryBytes: Int64, incomingBytes: Int64) -> Bool {
+        guard entryBytes <= RinbamMediaNetworkBoundary.maxEntryMediaBytes - incomingBytes else { return false }
+        let available = (try? directory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage) ?? 0
+        return available >= incomingBytes + RinbamMediaNetworkBoundary.minFreeBytes
     }
 
     private static func sanitizedHeaders(from json: String?) -> [(String, String)] {
@@ -2168,8 +2271,6 @@ private enum IOSAppMediaSaver {
 }
 
 private enum IOSAppMediaStore {
-    private static let rootDirectoryName = "RinbamMedia"
-
     static func savedFiles(entryID: Int64) -> [SavedAppMediaFile] {
         guard let directory = try? directoryURL(entryID: entryID) else { return [] }
         let urls = (try? FileManager.default.contentsOfDirectory(
@@ -2209,21 +2310,25 @@ private enum IOSAppMediaStore {
             .appendingPathComponent(fileName, isDirectory: false)
     }
 
+    static func entryBytes(entryID: Int64, excluding fileName: String? = nil) -> Int64 {
+        guard let directory = try? directoryURL(entryID: entryID),
+              let urls = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.fileSizeKey], options: [.skipsHiddenFiles]) else {
+            return 0
+        }
+        return urls
+            .filter { !$0.hasDirectoryPath && $0.lastPathComponent != fileName }
+            .reduce(Int64(0)) { total, url in
+                total + Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+            }
+    }
+
     private static func directoryURL(entryID: Int64) throws -> URL {
         let root = try rootURL()
         return root.appendingPathComponent(String(entryID), isDirectory: true)
     }
 
     private static func rootURL() throws -> URL {
-        let base = try FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
-        let root = base.appendingPathComponent(rootDirectoryName, isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        return root
+        try SharedContainer.rinbamMediaRootURL()
     }
 
     private static func mediaType(for url: URL) -> String {

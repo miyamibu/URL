@@ -75,23 +75,18 @@ export async function handleRequest(request: Request): Promise<Response> {
       ? await verifyAppStorePurchase(normalized, expected, user.id)
       : await verifyGooglePlayPurchase(normalized, expected, user.id);
 
-    const verificationId = await recordVerification(
+    const committed = await completePurchaseVerification(
       supabaseUrl,
       serviceRoleKey,
       user.id,
       normalized,
       verified,
-      "verified",
-      null,
-      null,
     );
-    const grantId = await upsertGrant(supabaseUrl, serviceRoleKey, user.id, verified);
-    await attachGrant(supabaseUrl, serviceRoleKey, verificationId, grantId);
 
     return jsonResponse({
       status: "verified",
-      verificationId,
-      grantId,
+      verificationId: committed.verificationId,
+      grantId: committed.grantId,
       plan: verified.plan,
       billingPeriod: verified.billingPeriod,
     });
@@ -115,7 +110,11 @@ export async function handleRequest(request: Request): Promise<Response> {
       ? 401
       : safeReason === "invalid_request"
       ? 400
+      : safeReason === "unknown_product"
+      ? 400
       : safeReason === "purchase_already_claimed"
+      ? 409
+      : safeReason === "purchase_state_conflict"
       ? 409
       : 502;
     return jsonResponse({ error: safeReason }, status);
@@ -174,6 +173,50 @@ async function activePlanForProduct(
   if (catalogPlan !== "standard" && catalogPlan !== "pro") return null;
   if (catalogPeriod !== "monthly" && catalogPeriod !== "yearly") return null;
   return { plan: catalogPlan, billingPeriod: catalogPeriod };
+}
+
+export async function completePurchaseVerification(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  userId: string,
+  request: NormalizedStorePurchaseRequest,
+  verified: VerifiedPurchase,
+): Promise<{ verificationId: string; grantId: string }> {
+  const response = await fetch(
+    `${supabaseUrl}/rest/v1/rpc/complete_store_purchase_verification`,
+    {
+      method: "POST",
+      headers: restHeaders(serviceRoleKey),
+      body: JSON.stringify({
+        p_user_id: userId,
+        p_store_platform: verified.storePlatform,
+        p_store_product_id: verified.storeProductId,
+        p_store_transaction_id: verified.storeTransactionId,
+        p_purchase_token_hash: await sha256Hex(request.purchaseToken),
+        p_plan: verified.plan,
+        p_billing_period: verified.billingPeriod,
+        p_original_transaction_id: verified.originalTransactionId,
+        p_subscription_key: verified.subscriptionKey,
+        p_expires_at: verified.expiresAt,
+      }),
+    },
+  );
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    const reason = body.match(
+      /purchase_already_claimed|purchase_state_conflict|invalid_verified_purchase|unknown_product/,
+    )?.[0];
+    throw new Error(reason ?? "purchase_commit_failed");
+  }
+  const rows = await response.json();
+  const row = Array.isArray(rows) ? rows[0] : rows;
+  if (!row?.verification_id || !row?.grant_id) {
+    throw new Error("purchase_commit_failed");
+  }
+  return {
+    verificationId: String(row.verification_id),
+    grantId: String(row.grant_id),
+  };
 }
 
 async function requireUser(supabaseUrl: string, serviceRoleKey: string, authorization: string): Promise<AuthUser> {
@@ -447,111 +490,6 @@ async function findExistingVerification(
   if (!byOriginal.ok) throw new Error(`verification_lookup_failed:${byOriginal.status}`);
   const originalRows = await byOriginal.json();
   return originalRows?.[0] ?? null;
-}
-
-async function upsertGrant(
-  supabaseUrl: string,
-  serviceRoleKey: string,
-  userId: string,
-  verified: VerifiedPurchase,
-): Promise<string> {
-  const existing = await findGrantBySubscription(supabaseUrl, serviceRoleKey, verified);
-  if (existing?.id) {
-    if (existing.user_id !== userId) throw new Error("purchase_already_claimed");
-    await refreshExistingGrant(supabaseUrl, serviceRoleKey, existing.id, verified);
-    return existing.id;
-  }
-
-  const response = await fetch(`${supabaseUrl}/rest/v1/user_entitlement_grants`, {
-    method: "POST",
-    headers: restHeaders(serviceRoleKey, { Prefer: "return=representation" }),
-    body: JSON.stringify({
-      user_id: userId,
-      plan: verified.plan,
-      source: "store_subscription",
-      store_platform: verified.storePlatform,
-      store_transaction_id: verified.storeTransactionId,
-      store_subscription_key: verified.subscriptionKey,
-      starts_at: new Date().toISOString(),
-      expires_at: verified.expiresAt,
-      status: "active",
-    }),
-  });
-  if (!response.ok) {
-    const raced = await findGrantBySubscription(supabaseUrl, serviceRoleKey, verified);
-    if (raced?.id) {
-      if (raced.user_id !== userId) throw new Error("purchase_already_claimed");
-      await refreshExistingGrant(supabaseUrl, serviceRoleKey, raced.id, verified);
-      return raced.id;
-    }
-    throw new Error(`grant_create_failed:${response.status}`);
-  }
-  const rows = await response.json();
-  const id = rows?.[0]?.id;
-  if (!id) throw new Error("grant_create_failed");
-  return id;
-}
-
-async function refreshExistingGrant(
-  supabaseUrl: string,
-  serviceRoleKey: string,
-  grantId: string,
-  verified: VerifiedPurchase,
-): Promise<void> {
-  const response = await fetch(
-    `${supabaseUrl}/rest/v1/user_entitlement_grants?id=eq.${encodeURIComponent(grantId)}`,
-    {
-      method: "PATCH",
-      headers: restHeaders(serviceRoleKey),
-      body: JSON.stringify({
-        plan: verified.plan,
-        store_product_id: verified.storeProductId,
-        store_transaction_id: verified.storeTransactionId,
-        store_subscription_key: verified.subscriptionKey,
-        expires_at: verified.expiresAt,
-        status: "active",
-      }),
-    },
-  );
-  if (!response.ok) throw new Error(`grant_refresh_failed:${response.status}`);
-}
-
-async function findGrantBySubscription(
-  supabaseUrl: string,
-  serviceRoleKey: string,
-  verified: VerifiedPurchase,
-): Promise<{ id: string; user_id: string } | null> {
-  const response = await fetch(
-    `${supabaseUrl}/rest/v1/user_entitlement_grants?select=id,user_id&source=eq.store_subscription&store_platform=eq.${verified.storePlatform}&store_subscription_key=eq.${encodeURIComponent(verified.subscriptionKey)}&limit=1`,
-    { headers: restHeaders(serviceRoleKey) },
-  );
-  if (!response.ok) throw new Error(`grant_lookup_failed:${response.status}`);
-  const rows = await response.json();
-  const row = rows?.[0];
-  if (row?.id && row?.user_id) return { id: row.id, user_id: row.user_id };
-
-  const legacyResponse = await fetch(
-    `${supabaseUrl}/rest/v1/user_entitlement_grants?select=id,user_id&source=eq.store_subscription&store_platform=eq.${verified.storePlatform}&store_transaction_id=eq.${encodeURIComponent(verified.storeTransactionId)}&limit=1`,
-    { headers: restHeaders(serviceRoleKey) },
-  );
-  if (!legacyResponse.ok) throw new Error(`grant_lookup_failed:${legacyResponse.status}`);
-  const legacyRows = await legacyResponse.json();
-  const legacyRow = legacyRows?.[0];
-  return legacyRow?.id && legacyRow?.user_id ? { id: legacyRow.id, user_id: legacyRow.user_id } : null;
-}
-
-async function attachGrant(
-  supabaseUrl: string,
-  serviceRoleKey: string,
-  verificationId: string,
-  grantId: string,
-): Promise<void> {
-  const response = await fetch(`${supabaseUrl}/rest/v1/store_purchase_verifications?id=eq.${verificationId}`, {
-    method: "PATCH",
-    headers: restHeaders(serviceRoleKey),
-    body: JSON.stringify({ grant_id: grantId }),
-  });
-  if (!response.ok) throw new Error(`verification_grant_attach_failed:${await response.text()}`);
 }
 
 function restHeaders(serviceRoleKey: string, extra: Record<string, string> = {}): HeadersInit {

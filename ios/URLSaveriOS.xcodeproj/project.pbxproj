@@ -36,6 +36,7 @@
 		4DCF4A5A8BCA848EC277A782 /* BackgroundTaskRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 645B497487194D80AC840B2E /* BackgroundTaskRunner.swift */; };
 		519256E3747D40A212C64DA3 /* SharedTagSyncExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C3C3DD08D9C35EADCBED4A8 /* SharedTagSyncExecutor.swift */; };
 		534B3E99DF254CD010306AC7 /* SharedTagCloudLiveSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9DA2B12B1A918410987D0DF /* SharedTagCloudLiveSyncTests.swift */; };
+		C5E2B3D4F5061728394A5B6C /* SharedTagOAuthHardeningTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4F1A2C3D4E5F60718293A4B /* SharedTagOAuthHardeningTests.swift */; };
 		55F4A1D7C16BE641DF5C85C7 /* SharedTagSyncExecutorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56ADEB6E1045783B057C3A2A /* SharedTagSyncExecutorTests.swift */; };
 		5706E7C0E081032F8F4AAB15 /* MetadataFetcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C99918033AB5A3412FA4F8CA /* MetadataFetcherTests.swift */; };
 		5BD567019023B41D242F3004 /* AppChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B0357DD93E62AB96438A1F6 /* AppChrome.swift */; };
@@ -174,6 +175,7 @@
 		A5803C067CF8B3FFF3790E63 /* SQLiteDatabase.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SQLiteDatabase.swift; path = Support/SQLiteDatabase.swift; sourceTree = "<group>"; };
 		A77FD807909EAC5DEB6EA24D /* AiTransparencyTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AiTransparencyTests.swift; sourceTree = "<group>"; };
 		A9D35761A3553BB8F28D78C9 /* MetadataStatusTextTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MetadataStatusTextTests.swift; sourceTree = "<group>"; };
+		B4F1A2C3D4E5F60718293A4B /* SharedTagOAuthHardeningTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SharedTagOAuthHardeningTests.swift; sourceTree = "<group>"; };
 		AD33C935B69666C4813D5077 /* SharedTagCloudSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SharedTagCloudSheet.swift; path = UI/SharedTagCloudSheet.swift; sourceTree = "<group>"; };
 		BCF9C773E6DD867ABB7BE3BC /* URLSaverShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = URLSaverShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		C4A8AF7B327399338D219D6A /* SQLiteDatabaseTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SQLiteDatabaseTests.swift; sourceTree = "<group>"; };
@@ -275,6 +277,7 @@
 				ECA1144EE23E40C906867E0E /* ExportArchiveBuilderTests.swift */,
 				C99918033AB5A3412FA4F8CA /* MetadataFetcherTests.swift */,
 				A9D35761A3553BB8F28D78C9 /* MetadataStatusTextTests.swift */,
+				B4F1A2C3D4E5F60718293A4B /* SharedTagOAuthHardeningTests.swift */,
 				32568B23FFA0899E46386521 /* PendingInviteStoreTests.swift */,
 				C4A8AF7B327399338D219D6A /* SQLiteDatabaseTests.swift */,
 				6FFB25BB13E32A034643CF46 /* ServiceFilterTests.swift */,
@@ -526,6 +529,7 @@
 				2818DC8D03F67499ACEA125F /* SQLiteDatabaseTests.swift in Sources */,
 				401BC5BB6E8CBC75EFB7A3A7 /* ServiceFilterTests.swift in Sources */,
 				534B3E99DF254CD010306AC7 /* SharedTagCloudLiveSyncTests.swift in Sources */,
+				C5E2B3D4F5061728394A5B6C /* SharedTagOAuthHardeningTests.swift in Sources */,
 				98A9B9FBE1F7B5D0EABF492E /* SharedTagStoreTests.swift in Sources */,
 				55F4A1D7C16BE641DF5C85C7 /* SharedTagSyncExecutorTests.swift in Sources */,
 				B08BCBFC4EA4D874246AE5CD /* SharedTagVisibilityTests.swift in Sources */,

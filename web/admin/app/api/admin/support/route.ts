@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { assertCanModerate, requireAdmin } from "@/lib/auth";
-import { recordAdminAudit } from "@/lib/audit";
+import { assertCapability, assertHighRisk, requireAdmin } from "@/lib/auth";
+import { requiredAdminReason } from "@/lib/audit";
 import { createServiceSupabaseClient } from "@/lib/supabase";
 
 const STATUSES = new Set(["open", "in_progress", "resolved", "closed"]);
@@ -14,7 +14,7 @@ function asErrorResponse(error: unknown): Response {
 export async function GET(request: NextRequest) {
   try {
     const admin = await requireAdmin(request);
-    assertCanModerate(admin);
+    assertCapability(admin, "support.read");
     const status = request.nextUrl.searchParams.get("status");
     const supabase = createServiceSupabaseClient();
     let query = supabase
@@ -34,10 +34,12 @@ export async function GET(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   try {
     const admin = await requireAdmin(request);
-    assertCanModerate(admin);
+    assertCapability(admin, "support.write");
+    assertHighRisk(admin);
     const body = await request.json().catch(() => ({}));
     const id = String(body.id ?? "").trim();
     const supportStatus = String(body.supportStatus ?? "").trim();
+    const reason = requiredAdminReason(body.reason);
     if (!id || !STATUSES.has(supportStatus)) {
       return NextResponse.json({ error: "サポート状態を確認してください" }, { status: 400 });
     }
@@ -50,21 +52,20 @@ export async function PATCH(request: NextRequest) {
     if (beforeError) throw beforeError;
     if (!before) return NextResponse.json({ error: "問い合わせが見つかりません" }, { status: 404 });
     const adminNote = typeof body.adminNote === "string" ? body.adminNote.trim().slice(0, 2000) || null : before.admin_note;
-    const { data: after, error } = await supabase
-      .from("contact_support_requests")
-      .update({ support_status: supportStatus, assigned_admin_id: admin.id, admin_note: adminNote })
-      .eq("id", id)
-      .select("id,support_status,assigned_admin_id,admin_note,updated_at")
-      .single();
-    if (error) throw error;
-    await recordAdminAudit({
-      adminUserId: admin.id,
-      action: "support_request_status_updated",
-      reason: adminNote,
-      beforeValue: before,
-      afterValue: after,
+    const { data, error } = await supabase.rpc("admin_update_support_request", {
+      p_request_id: id,
+      p_admin_id: admin.id,
+      p_support_status: supportStatus,
+      p_admin_note: adminNote,
+      p_reason: reason,
+      p_operation_id: crypto.randomUUID(),
+      p_assurance: admin.assurance,
     });
-    return NextResponse.json({ request: after });
+    if (error) throw error;
+    if (!data || typeof data !== "object" || !("request" in data)) {
+      throw new Error("サポート更新結果を確認できませんでした");
+    }
+    return NextResponse.json({ request: data.request });
   } catch (error) {
     return asErrorResponse(error);
   }

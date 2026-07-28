@@ -11,10 +11,11 @@ redactionは既知パターンに対するbest-effortの安全策であり、未
 ## Constraints
 - `fetchedBody`全文はExport/MCP/AIへdefaultで出さない。
 - app-owned production secret、credential、access/refresh tokenはExport/preview/README/Receipt/logへ出さない。
-- ChatGPT手動共有ではURL、title、author、tag、collection、`bodySummary`、`bodyExcerpt`、`description`、`memoExcerpt`を含む全出力文字列を既知パターン検出に通す。excerpt系は長さ制限も適用する。
+- ChatGPT手動共有ではURL、title、author、tag、collection、`bodySummary`、`bodyExcerpt`、`description`、`memoExcerpt`を含む全出力文字列を既知パターン検出に通す。excerpt系は長さ制限も適用する。通常ExportはBackup/review用であり、AI-safe redaction profileとは扱わない。
 - email、phone、token-like value、URLエンコードされたtoken区切り、一般的なprovider接頭辞型token（`sk-`、`ghp_`、`xoxb-`、`AIza`、`AKIA`等）、Supabase URL/JWT風文字列、local pathは既知のredaction対象として伏せ字にする。
 - 既知パターン検出を通過しても、未知の秘密、任意形式の認証情報、URL query/fragmentやtitle/tag等に埋め込まれた新形式の秘密が残る可能性を共有前画面に明示する。
 - 手動共有は、対象URLと出力内容をユーザーが確認し、未知の秘密が含まれていないことを明示確認してからZIP生成/OS共有へ進む。
+- 通常ExportはAI向け共有ではないため、通常Exportに未知secret確認があることを根拠にAI-safeとは呼ばない。
 - publicSafeIdはopaque。raw DB idを外部境界に出さない。
 - shared tag由来URLは表示できてもAI対象はdefault `aiEligible=false`。
 - archived/pending deleteもdefault AI対象外。

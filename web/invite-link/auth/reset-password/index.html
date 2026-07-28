@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>URL Saver パスワード再設定</title>
+  <title>りんばむ パスワード再設定</title>
   <style>
     :root {
       color-scheme: light;
@@ -127,7 +127,7 @@
     <section>
       <h1>パスワード再設定</h1>
       <p class="muted">新しいパスワードを入力してください。</p>
-      <p id="status" class="notice">再設定リンクを確認しています...</p>
+      <p id="status" class="notice" role="status" aria-live="polite" aria-atomic="true">再設定リンクを確認しています...</p>
       <form id="form" hidden>
         <label>
           新しいパスワード
@@ -153,6 +153,9 @@
     const confirmPassword = document.getElementById("confirm-password");
     const submit = document.getElementById("submit");
     let recoveryReady = false;
+    let recoveryContextEstablished = false;
+    let initializationComplete = false;
+    let currentState = "PARSE_LINK";
     const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       auth: {
         detectSessionInUrl: true,
@@ -166,43 +169,75 @@
       status.className = "notice " + (type || "");
     }
 
+    function cleanRecoveryURL() {
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
     function enableForm() {
       recoveryReady = true;
+      currentState = "READY";
       form.hidden = false;
       show("リンク確認が完了しました。新しいパスワードを設定できます。", "success");
     }
 
+    function userFacingError(error) {
+      const message = error instanceof Error ? error.message : "";
+      if (/expired|invalid|code|session|token|recovery|link/i.test(message)) {
+        return "再設定リンクの有効期限が切れているか、リンクが正しくありません。もう一度メールを送信してください。";
+      }
+      return "再設定リンクを確認できませんでした。もう一度メールを送信してください。";
+    }
+
     async function initializeRecoverySession() {
-      const code = new URLSearchParams(window.location.search).get("code");
+      currentState = "PARSE_LINK";
+      const queryParams = new URLSearchParams(window.location.search);
+      const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+      const code = queryParams.get("code");
+      const hasRecoveryLink = Boolean(
+        code ||
+        hashParams.get("type") === "recovery" ||
+        hashParams.has("access_token") ||
+        hashParams.has("refresh_token")
+      );
+      if (!hasRecoveryLink) {
+        throw new Error("recovery_link_missing");
+      }
+
+      currentState = "ESTABLISH_RECOVERY_SESSION";
       if (code) {
         const { error } = await client.auth.exchangeCodeForSession(code);
         if (error) throw error;
-        enableForm();
-        return;
+        recoveryContextEstablished = true;
       }
 
       const { data, error } = await client.auth.getSession();
       if (error) throw error;
-      if (!data.session || !recoveryReady) {
-        throw new Error("再設定リンクの有効期限が切れているか、リンクが正しくありません。もう一度メールを送信してください。");
+      currentState = "VERIFY_RECOVERY_CONTEXT";
+      if (!data.session || (!recoveryContextEstablished && !recoveryReady)) {
+        throw new Error("recovery_session_missing");
       }
+      recoveryContextEstablished = true;
+      currentState = "CLEAN_URL";
+      cleanRecoveryURL();
+      enableForm();
+      initializationComplete = true;
     }
 
-    client.auth.onAuthStateChange((event) => {
-      if (event === "PASSWORD_RECOVERY") {
+    client.auth.onAuthStateChange((event, session) => {
+      if (event !== "PASSWORD_RECOVERY" || !session) return;
+      recoveryContextEstablished = true;
+      if (initializationComplete && !recoveryReady) {
+        cleanRecoveryURL();
         enableForm();
       }
     });
 
-    setTimeout(() => {
-      initializeRecoverySession()
-      .catch((error) => {
-        if (!recoveryReady) {
-          form.hidden = true;
-          show(error.message || "再設定リンクを確認できませんでした。もう一度メールを送信してください。", "error");
-        }
-      });
-    }, 500);
+    initializeRecoverySession().catch((error) => {
+      initializationComplete = true;
+      form.hidden = true;
+      currentState = "ERROR";
+      show(userFacingError(error), "error");
+    });
 
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -215,13 +250,15 @@
         return;
       }
 
+      currentState = "SUBMITTING";
       submit.disabled = true;
       show("パスワードを変更しています...", "");
       const { error } = await client.auth.updateUser({ password: password.value });
       submit.disabled = false;
 
       if (error) {
-        show(error.message || "パスワードを変更できませんでした。", "error");
+        currentState = "ERROR";
+        show("パスワードを変更できませんでした。もう一度お試しください。", "error");
         return;
       }
 
@@ -229,6 +266,7 @@
       confirmPassword.value = "";
       form.hidden = true;
       await client.auth.signOut();
+      currentState = "SUCCESS";
       show("パスワードを変更しました。管理画面に戻って、新しいパスワードでサインインしてください。", "success");
     });
   </script>

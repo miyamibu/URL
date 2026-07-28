@@ -71,8 +71,9 @@ SNS やメッセージで見つけた URL を後で見返したい人向けの�
 - MVP で「同じ内容」とみなすのは URL 一覧のみです。`title`、`memo`、metadata、サムネイル取得状況は端末ごとに少し差が出ることがあります。
 - 最新化は WorkManager ベースです。共有タグの変更時に加え、アプリの起動/復帰時にも軽いスロットル付きで同期を enqueue します。リアルタイム push は必須にしていません。
 
-## AI-friendly Export
-- Android / iOS では保存済み URL を AI-friendly ZIP / JSON としてエクスポートできます。
+## Export と ChatGPT handoff
+- 通常の Backup / Knowledge Export は、ユーザー自身の保存・移行用です。AI-safe出力やChatGPTへの自動接続を意味しません。
+- Android / iOS の `ChatGPTに聞く` は、端末内で自作タグと対象URLを選び、redacted previewを確認した後に専用ZIPをOS共有する手動handoffです。質問入力・自動送信・OpenAI API/OAuth/MCP接続は行いません。
 - エクスポート範囲:
   - 全件
   - 単一タグ
@@ -90,8 +91,8 @@ SNS やメッセージで見つけた URL を後で見返したい人向けの�
   - `schema.json`
   - `README_FOR_AI.md`
   - `redaction_report.json`
-- 復元用バックアップよりも、PC / Codex が読みやすい知識スナップショットを優先した形式です。
-- 現在の実装済み形式は ZIP / JSON です。AI-safe 出力では raw `fetchedBody` を出さず、`bodyExcerpt` / `memoExcerpt`、`publicSafeId`、`aiEligible`、`redactionApplied` を含めます。
+- 通常のBackup Exportは、確認画面に含まれるデータ範囲を表示してから生成します。AI向けの安全境界は `docs/ai/ai-safe-export-contract.md` と、ChatGPT handoffの専用経路に従います。
+- ChatGPT handoffでは raw `fetchedBody` を出さず、`bodyExcerpt` / `memoExcerpt`、`publicSafeId`、`aiEligible`、`redactionApplied` を含めます。共有タグ、共有割当、内部ID、ARCHIVED/PENDING_DELETEは対象外です。
 - CSV、メディア保存状態の明示出力、UI統合済みのAI receipt/draft/diff、production MCP/OpenAI提出は `docs/release/release-ops-readiness-2026-07-09.md` の P1 follow-up として扱い、未実装のまま提供済みと書かないでください。
 - AI / MCP の詳細契約は `docs/ai/` を参照してください。
 
@@ -131,21 +132,12 @@ SNS やメッセージで見つけた URL を後で見返したい人向けの�
   - Supabase Auth の Google ログイン画面に表示される `*.supabase.co` 名を変更する場合は、Supabase vanity subdomain を有効化してから `docs/release/supabase-vanity-domain-switch.md` の手順で Android / iOS / Web の URL を同時に切り替える。未有効化の `linbam.supabase.co` を先にアプリへ入れるとログイン、問い合わせ、Edge Functions が壊れる。
 - `connectedDebugAndroidTest` 実行時は接続済み端末または起動済み AVD が必要
 
-## Ads (AdMob / Debug-safe)
-- 実装は Google Mobile Ads SDK（`com.google.android.gms:play-services-ads`）を使用
-- debug ビルドは Google 公式 test ad unit を固定使用（本番 ID 不要）
-  - App ID: `ca-app-pub-3940256099942544~3347511713`
-  - Banner: `ca-app-pub-3940256099942544/9214589741`
-  - Interstitial: `ca-app-pub-3940256099942544/1033173712`
-- 公開向け `release` ビルドは ads を常時無効化する
-  - `ADS_ENABLED=false`
-  - Google Mobile Ads SDK は `compileOnly` + `debugImplementation` に限定し、release APK へ同梱しない
-  - release manifest から AdMob App ID / ad permissions / ad provider 宣言を除去する
-  - 本番広告を再開する場合は、別パスで App ID・privacy・審査要件をそろえてから有効化する
-- internal/debug で広告動作を試す場合だけ test ad unit を使う
-- `MobileAds.initialize()` はアプリ起動時に1回のみ呼び、初期化後に広告ロードする
+## Ads
+- 現行 `main` には Google Mobile Ads SDK（`com.google.android.gms:play-services-ads`）を同梱していません。
+- `AdsManager` と `BannerAdSlot` は現行の商品契約で無効化されており、広告を表示しません。`ADS_TRIAL_LAUNCH_ADS_ENABLED=false` のため、debug/releaseとも広告初期化は行われません。
+- AdMob mediationは将来計画です。再開する場合は、SDK依存、App ID、privacy、審査要件、実成果物検査を別途そろえてから有効化します。
 
-## AdMob Mediation Notes
+## AdMob Mediation Notes (future plan)
 - AdMob 管理画面で行う設定（アプリコード外）
   1. Android アプリに Banner / Interstitial の標準 ad unit を作成する
   2. Banner 用と Interstitial 用で mediation group を分ける
@@ -183,7 +175,9 @@ SNS やメッセージで見つけた URL を後で見返したい人向けの�
 5. `./scripts/install_on_device.sh --serial <adb-serial>` でインストール・起動
 
 ## CI / Instrumentation Policy
-- GitHub Actions CI は `assembleDebug` / `testDebugUnitTest` / `lintDebug` のみ実行する
+- GitHub Actions は Android debug/release、iOS Simulator/release build、Web admin typecheck/lint/build、Supabase local migration/lint/pgTAP、MCP/UI/release hygiene/secret checksを別jobで検証します。外部秘密、store操作、OpenAI操作、production deployは要求しません。
+- Androidの最小contributor gateは `assembleDebug` / `testDebugUnitTest` / `lintDebug` ですが、公開可否を単独で判定するものではありません。
+- readiness script は `bash scripts/check_launch_readiness.sh --level repo`（PR/CIのrepo検証）、`--level internal`（clean tree付きの内部テスト準備）、`--level launch`（reviewed main付きの `LAUNCH_READY_REPO`）を使い分けます。`INTERNAL_TEST_GO` と `LAUNCH_GO` は実機・store・外部サービスを含む手動状態です。
 - `connectedDebugAndroidTest` はローカル手動検証として実行し、結果を記録する
 
 ## Failure Triage
@@ -201,7 +195,11 @@ SNS やメッセージで見つけた URL を後で見返したい人向けの�
 - Phase 1a/1b は `release` の `isMinifyEnabled=false` を維持する
 - 機能整合修正と shrinker/R8 調整を分離するため、minify 有効化は別ハードニングパスで扱う
 
-## Verification Status (2026-04-23)
+## Verification Status
+- 直近の確認済み状態と未検証の外部ゲートは `docs/release/repo-go-evidence.md` を正本とします。`REPO_GO` はリポジトリ内の実装・自動検証を示すだけで、`LAUNCH_GO` やストア／OpenAI／本番公開を意味しません。
+- 過去日付の検証記録は、その時点の証拠として保持します。現行ソースの実機・署名済み成果物・Store Sandbox・OpenAI staging・providerとSHAの対応は、別途 `PASS` が記録されるまで未検証です。
+
+### Historical baseline (2026-04-23)
 - `./gradlew assembleDebug`: success
 - `./gradlew assembleRelease`: success
 - `./gradlew testDebugUnitTest`: success

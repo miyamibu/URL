@@ -282,15 +282,17 @@ final class ContactSupportService: @unchecked Sendable {
                 appVersion: appVersion,
                 buildType: buildType,
                 isSignedIn: isSignedIn,
-                authUserId: session?.authUserID
-            )
+                authUserId: session?.authUserID,
+                idempotencyKey: idempotencyKey
+            ),
+            accessToken: session?.accessToken
         )
     }
 }
 
 private struct ContactSupportAcceptedResponse: Decodable {
-    let requestId: String
-    let status: String?
+    let requestId: String?
+    let status: String
 }
 
 private struct ContactSupportErrorResponse: Decodable {
@@ -413,6 +415,7 @@ struct SharedTagOAuthPendingState: Codable, Equatable, Sendable {
 final class SharedTagOAuthStateStore: @unchecked Sendable {
     private let storage: any SharedTagAuthSecureStorage
     private let nowProvider: @Sendable () -> Date
+    private static let storageLock = NSLock()
 
     init(
         service: String = "jp.mimac.urlsaver.shared-tag-auth",
@@ -437,14 +440,24 @@ final class SharedTagOAuthStateStore: @unchecked Sendable {
         try storage.save(try encoder.encode(pending))
     }
 
-    func consume(provider: String, redirectTo: String) throws -> SharedTagOAuthPendingState {
+    func saveIfAbsent(_ pending: SharedTagOAuthPendingState) throws -> Bool {
+        Self.storageLock.lock()
+        defer { Self.storageLock.unlock() }
+        if let data = try storage.load() {
+            let existing = try decode(data)
+            if existing.expiresAt > nowProvider() {
+                return false
+            }
+        }
+        try save(pending)
+        return true
+    }
+
+    func loadValidated(provider: String, redirectTo: String) throws -> SharedTagOAuthPendingState {
         guard let data = try storage.load() else {
             throw SharedTagCloudError.message("OAuth state is missing.")
         }
-        try storage.clear()
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let pending = try decoder.decode(SharedTagOAuthPendingState.self, from: data)
+        let pending = try decode(data)
         guard pending.provider == provider,
               pending.redirectTo == redirectTo else {
             throw SharedTagCloudError.message("OAuth state is invalid.")
@@ -455,47 +468,83 @@ final class SharedTagOAuthStateStore: @unchecked Sendable {
         return pending
     }
 
+    func consume(provider: String, redirectTo: String) throws -> SharedTagOAuthPendingState {
+        let pending = try loadValidated(provider: provider, redirectTo: redirectTo)
+        return try consume(pending)
+    }
+
+    func consume(_ expected: SharedTagOAuthPendingState) throws -> SharedTagOAuthPendingState {
+        Self.storageLock.lock()
+        defer { Self.storageLock.unlock() }
+        guard let data = try storage.load() else {
+            throw SharedTagCloudError.message("OAuth state is missing.")
+        }
+        let pending = try decode(data)
+        guard pending == expected else {
+            throw SharedTagCloudError.message("OAuth state is invalid.")
+        }
+        guard pending.expiresAt > nowProvider() else {
+            throw SharedTagCloudError.message("OAuth state expired.")
+        }
+        try storage.clear()
+        return pending
+    }
+
+    private func decode(_ data: Data) throws -> SharedTagOAuthPendingState {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        do {
+            return try decoder.decode(SharedTagOAuthPendingState.self, from: data)
+        } catch {
+            throw SharedTagCloudError.message("OAuth state is invalid.")
+        }
+    }
+
     func clear() throws {
         try storage.clear()
     }
 }
 
-private enum SharedTagAuthRemoteResult {
+enum SharedTagAuthRemoteResult {
     case signedIn(SharedTagAuthSession)
     case needsEmailConfirmation
 }
 
-private struct SharedTagAuthRemoteDataSource {
+struct SharedTagAuthRemoteDataSource {
     private let config: SharedTagCloudConfig
     private let oauthStateStore: SharedTagOAuthStateStore
+    private let session: URLSession
     private static let authCallbackURL = "urlsaver://auth/callback"
     private static let oauthStateTTL: TimeInterval = 10 * 60
 
     init(
         config: SharedTagCloudConfig,
-        oauthStateStore: SharedTagOAuthStateStore = SharedTagOAuthStateStore()
+        oauthStateStore: SharedTagOAuthStateStore = SharedTagOAuthStateStore(),
+        session: URLSession = .shared
     ) {
         self.config = config
         self.oauthStateStore = oauthStateStore
+        self.session = session
     }
 
     func oauthURL(provider: String, redirectTo: String) throws -> URL {
         guard config.isConfigured else {
             throw SharedTagCloudError.message("共有タグクラウドの設定がありません")
         }
-        guard Self.isAllowedAuthCallback(URL(string: redirectTo)) else {
+        guard redirectTo == Self.authCallbackURL else {
             throw SharedTagCloudError.message("OAuth redirect URL is invalid.")
         }
-        let codeVerifier = Self.randomURLSafeString(byteCount: 48)
+        let codeVerifier = try Self.randomURLSafeString(byteCount: 48)
         let codeChallenge = Self.pkceCodeChallenge(for: codeVerifier)
-        try oauthStateStore.save(
-            SharedTagOAuthPendingState(
-                provider: provider,
-                codeVerifier: codeVerifier,
-                redirectTo: redirectTo,
-                expiresAt: Date().addingTimeInterval(Self.oauthStateTTL)
-            )
+        let pending = SharedTagOAuthPendingState(
+            provider: provider,
+            codeVerifier: codeVerifier,
+            redirectTo: redirectTo,
+            expiresAt: Date().addingTimeInterval(Self.oauthStateTTL)
         )
+        guard try oauthStateStore.saveIfAbsent(pending) else {
+            throw SharedTagCloudError.message("OAuth sign-in is already in progress.")
+        }
         let query = [
             "provider=\(Self.percentEncodedQueryValue(provider))",
             "redirect_to=\(Self.percentEncodedQueryValue(redirectTo))",
@@ -510,31 +559,35 @@ private struct SharedTagAuthRemoteDataSource {
 
     func signInWithOAuthCallback(url: URL) async throws -> SharedTagAuthRemoteResult {
         guard Self.isAllowedAuthCallback(url) else {
-            try? oauthStateStore.clear()
             throw SharedTagCloudError.message("OAuth callback URL is invalid.")
         }
-        let params = callbackParameters(from: url)
-        if let error = params["error_description"] ?? params["error"], !error.isEmpty {
-            try? oauthStateStore.clear()
-            throw SharedTagCloudError.message(error)
+        let params = try Self.callbackParameters(from: url)
+        for values in params.values where values.count != 1 {
+            throw SharedTagCloudError.message("OAuth callback contains duplicate parameters.")
         }
-        if params["access_token"]?.isEmpty == false || params["refresh_token"]?.isEmpty == false || url.fragment?.isEmpty == false {
-            try? oauthStateStore.clear()
+        let errorDescription = try Self.singleCallbackParameter("error_description", from: params)
+        let error = try Self.singleCallbackParameter("error", from: params)
+        if error != nil || errorDescription != nil {
+            if let errorDescription, !errorDescription.isEmpty {
+                throw SharedTagCloudError.message(errorDescription)
+            }
+            throw SharedTagCloudError.message(error ?? "OAuth callback error is invalid.")
+        }
+        if params["access_token"] != nil || params["refresh_token"] != nil {
             throw SharedTagCloudError.message("OAuth token callback is not accepted.")
         }
-        guard let code = params["code"], !code.isEmpty else {
-            try? oauthStateStore.clear()
+        guard let code = try Self.singleCallbackParameter("code", from: params), !code.isEmpty else {
             throw SharedTagCloudError.message("OAuth code callback is missing.")
         }
-        let pending = try oauthStateStore.consume(
-            provider: params["provider"] ?? "google",
-            redirectTo: Self.authCallbackURL
-        )
+        let provider = try Self.singleCallbackParameter("provider", from: params) ?? "google"
+        let pending = try oauthStateStore.loadValidated(provider: provider, redirectTo: Self.authCallbackURL)
         let response = try await executeAuthRequest(
             path: "/auth/v1/token?grant_type=pkce",
             body: SupabasePKCEAuthRequest(authCode: code, codeVerifier: pending.codeVerifier)
         )
-        return .signedIn(try requireSession(from: response))
+        let session = try requireSession(from: response)
+        _ = try oauthStateStore.consume(pending)
+        return .signedIn(session)
     }
 
     func signUp(email: String, password: String) async throws -> SharedTagAuthRemoteResult {
@@ -616,7 +669,7 @@ private struct SharedTagAuthRemoteDataSource {
         path: String,
         body: T
     ) async throws -> Data {
-        try await SharedTagRemoteRequestExecutor(config: config).execute(
+        try await SharedTagRemoteRequestExecutor(config: config, session: session).execute(
             path: path,
             bearerToken: nil,
             body: body
@@ -636,10 +689,17 @@ private struct SharedTagAuthRemoteDataSource {
     }
 
     static func isAllowedAuthCallback(_ url: URL?) -> Bool {
-        guard let url else { return false }
-        return url.scheme == "urlsaver" &&
-            url.host == "auth" &&
-            url.path == "/callback"
+        guard let url,
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return false
+        }
+        return components.scheme == "urlsaver" &&
+            components.host == "auth" &&
+            components.percentEncodedHost == "auth" &&
+            components.percentEncodedPath == "/callback" &&
+            components.user == nil &&
+            components.password == nil &&
+            components.port == nil
     }
 
     static func pkceCodeChallenge(for verifier: String) -> String {
@@ -647,25 +707,62 @@ private struct SharedTagAuthRemoteDataSource {
         return data.base64URLEncodedString()
     }
 
-    private static func randomURLSafeString(byteCount: Int) -> String {
+    private static func randomURLSafeString(byteCount: Int) throws -> String {
         var bytes = [UInt8](repeating: 0, count: byteCount)
         let status = SecRandomCopyBytes(kSecRandomDefault, byteCount, &bytes)
-        if status == errSecSuccess {
-            return Data(bytes).base64URLEncodedString()
+        guard status == errSecSuccess else {
+            throw SharedTagCloudError.message("OAuth用の安全な乱数を生成できませんでした。")
         }
-        return UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        return Data(bytes).base64URLEncodedString()
     }
 
-    private func callbackParameters(from url: URL) -> [String: String] {
-        let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
-        var params = Dictionary(uniqueKeysWithValues: queryItems.map { ($0.name, $0.value ?? "") })
-        if let fragment = url.fragment,
-           let fragmentComponents = URLComponents(string: "urlsaver://auth/callback?\(fragment)") {
-            for item in fragmentComponents.queryItems ?? [] {
-                params[item.name] = item.value ?? ""
+    static func callbackParameters(from url: URL) throws -> [String: [String]] {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            throw SharedTagCloudError.message("OAuth callback URL is invalid.")
+        }
+        let queryDelimiter = url.absoluteString.firstIndex(of: "?")
+        let fragmentDelimiter = url.absoluteString.firstIndex(of: "#")
+        if queryDelimiter != nil && fragmentDelimiter != nil {
+            throw SharedTagCloudError.message("OAuth callback query and fragment cannot be mixed.")
+        }
+        let query = components.percentEncodedQuery ?? ""
+        let fragment = components.percentEncodedFragment ?? ""
+
+        let items: [URLQueryItem]
+        if !query.isEmpty {
+            guard let queryItems = components.queryItems else {
+                throw SharedTagCloudError.message("OAuth callback query is invalid.")
             }
+            items = queryItems
+        } else if !fragment.isEmpty {
+            guard let fragmentComponents = URLComponents(string: "urlsaver://auth/callback?\(fragment)"),
+                  let fragmentItems = fragmentComponents.queryItems else {
+                throw SharedTagCloudError.message("OAuth callback fragment is invalid.")
+            }
+            items = fragmentItems
+        } else {
+            return [:]
+        }
+
+        var params: [String: [String]] = [:]
+        for item in items {
+            guard !item.name.isEmpty else {
+                throw SharedTagCloudError.message("OAuth callback parameter name is empty.")
+            }
+            params[item.name, default: []].append(item.value ?? "")
         }
         return params
+    }
+
+    private static func singleCallbackParameter(
+        _ name: String,
+        from params: [String: [String]]
+    ) throws -> String? {
+        guard let values = params[name] else { return nil }
+        guard values.count == 1 else {
+            throw SharedTagCloudError.message("OAuth callback parameter \(name) is duplicated.")
+        }
+        return values[0]
     }
 }
 
@@ -925,9 +1022,11 @@ private struct SharedTagSyncRemoteDataSource {
 
 private struct SharedTagRemoteRequestExecutor {
     private let config: SharedTagCloudConfig
+    private let session: URLSession
 
-    init(config: SharedTagCloudConfig) {
+    init(config: SharedTagCloudConfig, session: URLSession = .shared) {
         self.config = config
+        self.session = session
     }
 
     func execute<T: Encodable>(
@@ -953,7 +1052,7 @@ private struct SharedTagRemoteRequestExecutor {
         }
         request.httpBody = try makeSharedTagCloudEncoder().encode(body)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw SharedTagCloudError.message("Supabase response was invalid.")
         }
@@ -1523,7 +1622,8 @@ final class SharedTagStore: @unchecked Sendable {
             )
         }
         let activeURLCountByTagID = Dictionary(
-            uniqueKeysWithValues: activeURLCounts.map { ($0.remoteTagID, $0.count) }
+            activeURLCounts.map { ($0.remoteTagID, $0.count) },
+            uniquingKeysWith: { first, _ in first }
         )
         var rows: [(normalizedURL: String, tag: SharedTagSummary)] = []
         for chunkStart in stride(from: 0, to: orderedURLs.count, by: 500) {
@@ -1638,11 +1738,12 @@ final class SharedTagStore: @unchecked Sendable {
 
             let activeMemberships = snapshot.members.filter { $0.status.lowercased() == "active" }
             let activeRolesByTagID = Dictionary(
-                uniqueKeysWithValues: activeMemberships
+                activeMemberships
                     .filter { $0.userID == authUserID }
                     .compactMap { member in
                         SharedTagMemberRole(rawValue: member.role.lowercased()).map { (member.tagID, $0) }
-                    }
+                    },
+                uniquingKeysWith: { first, _ in first }
             )
             let deletedTagIDs = Set(snapshot.tags.compactMap { $0.deletedAt == nil ? nil : $0.id })
 
@@ -1696,11 +1797,12 @@ final class SharedTagStore: @unchecked Sendable {
             }
 
             let groupRolesByID = Dictionary(
-                uniqueKeysWithValues: snapshot.groupMembers
+                snapshot.groupMembers
                     .filter { $0.userID == authUserID && $0.status.lowercased() == "active" }
                     .compactMap { member in
                         SharedTagMemberRole(rawValue: member.role.lowercased()).map { (member.groupID, $0.rawValue) }
-                    }
+                    },
+                uniquingKeysWith: { first, _ in first }
             )
 
             for group in snapshot.groups {
@@ -1801,11 +1903,6 @@ final class SharedTagStore: @unchecked Sendable {
                 )
             }
 
-            try database.execute(
-                "UPDATE url_entries SET shared_reference_count = 0 WHERE shared_reference_count != 0;",
-                binds: []
-            )
-
             let grouped = Dictionary(grouping: activeURLs, by: \.normalizedURL)
             for (normalizedURL, urls) in grouped {
                 guard let sample = urls.first else { continue }
@@ -1817,6 +1914,7 @@ final class SharedTagStore: @unchecked Sendable {
                 )
             }
 
+            try recalculateSharedReferenceCounts()
             try database.execute(
                 "DELETE FROM url_entries WHERE local_provenance_count = 0 AND shared_reference_count = 0;",
                 binds: []
@@ -1847,9 +1945,44 @@ final class SharedTagStore: @unchecked Sendable {
             try database.execute("DELETE FROM shared_tag_urls;", binds: [])
             try database.execute("DELETE FROM shared_tags;", binds: [])
             try database.execute("DELETE FROM shared_tag_sync_state;", binds: [])
-            try database.execute("UPDATE url_entries SET shared_reference_count = 0 WHERE shared_reference_count != 0;", binds: [])
+            try recalculateSharedReferenceCounts()
             try database.execute("DELETE FROM url_entries WHERE local_provenance_count = 0 AND shared_reference_count = 0;", binds: [])
         }
+    }
+
+    private func recalculateSharedReferenceCounts() throws {
+        try database.execute(
+            """
+            UPDATE url_entries
+            SET shared_reference_count = COALESCE(
+                (
+                    SELECT COUNT(*)
+                    FROM shared_tag_urls AS shared_url
+                    INNER JOIN shared_tags AS shared_tag
+                        ON shared_tag.auth_user_id = shared_url.auth_user_id
+                       AND shared_tag.remote_tag_id = shared_url.tag_remote_id
+                    WHERE shared_url.normalized_url = url_entries.normalized_url
+                      AND shared_url.deleted_at IS NULL
+                      AND shared_tag.deleted_at IS NULL
+                ),
+                0
+            )
+            WHERE shared_reference_count != COALESCE(
+                (
+                    SELECT COUNT(*)
+                    FROM shared_tag_urls AS shared_url
+                    INNER JOIN shared_tags AS shared_tag
+                        ON shared_tag.auth_user_id = shared_url.auth_user_id
+                       AND shared_tag.remote_tag_id = shared_url.tag_remote_id
+                    WHERE shared_url.normalized_url = url_entries.normalized_url
+                      AND shared_url.deleted_at IS NULL
+                      AND shared_tag.deleted_at IS NULL
+                ),
+                0
+            );
+            """,
+            binds: []
+        )
     }
 
     private func ensureEntry(rawURL: String, normalizedURL: String) throws -> Int64 {
@@ -2148,16 +2281,17 @@ final class SharedTagCloudService: @unchecked Sendable {
 
     func loadVisibleTagsByEntryID(entries: [URLRecord]) throws -> [Int64: [SharedTagSummary]] {
         guard let session = try sessionStore.load() else {
-            return Dictionary(uniqueKeysWithValues: entries.map { ($0.id, []) })
+            return Dictionary(entries.map { ($0.id, []) }, uniquingKeysWith: { first, _ in first })
         }
         let tagsByNormalizedURL = try store.loadVisibleTagsByNormalizedURL(
             authUserID: session.authUserID,
             normalizedURLs: Set(entries.map(\.normalizedURL))
         )
         return Dictionary(
-            uniqueKeysWithValues: entries.map { entry in
+            entries.map { entry in
                 (entry.id, tagsByNormalizedURL[entry.normalizedURL] ?? [])
-            }
+            },
+            uniquingKeysWith: { first, _ in first }
         )
     }
 

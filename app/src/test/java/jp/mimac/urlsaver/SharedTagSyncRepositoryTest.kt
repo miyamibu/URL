@@ -45,6 +45,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -171,6 +172,211 @@ class SharedTagSyncRepositoryTest {
         assertEquals(SharedTagSyncStatus.SYNCED, visibleTags.first().syncStatus)
         assertEquals(1, visibleTags.first().urlCount)
         assertTrue(db.sharedTagSyncDao().getPendingOutbox(USER_A).isEmpty())
+    }
+
+    @Test
+    fun snapshotReconcile_recalculatesOnlyAffectedEntriesFromActiveCrossRefs() = runBlocking {
+        authProvider.updateSession(SharedTagAuthSession(USER_A, "token-a"))
+        val oldEntryId = insertEntry("https://example.com/old")
+        val unrelatedEntryId = insertEntry("https://example.com/unrelated")
+        db.urlEntryDao().update(
+            db.urlEntryDao().findById(unrelatedEntryId)!!.copy(sharedReferenceCount = 7),
+        )
+
+        val oldTagId = db.tagDao().insertTag(
+            TagEntity(
+                name = "old-tag",
+                createdAt = 1L,
+                scope = SharedTagScope.SYNCED,
+                authUserId = USER_A,
+                remoteTagId = OLD_REMOTE_TAG_ID,
+                syncStatus = SharedTagSyncStatus.SYNCED,
+            ),
+        )
+        db.tagDao().insertCrossRef(
+            TagUrlCrossRef(
+                tagId = oldTagId,
+                entryId = oldEntryId,
+                createdAt = 1L,
+                scope = SharedTagScope.SYNCED,
+                authUserId = USER_A,
+                remoteUrlId = OLD_REMOTE_URL_ID,
+                rawUrl = "https://example.com/old",
+                normalizedUrl = "https://example.com/old",
+                syncStatus = SharedTagSyncStatus.SYNCED,
+            ),
+        )
+        db.urlEntryDao().update(
+            db.urlEntryDao().findById(oldEntryId)!!.copy(sharedReferenceCount = 1),
+        )
+
+        remote.snapshot = PullSharedTagSnapshotResponse(
+            pulledAt = "2026-04-20T00:00:00Z",
+            normalizationVersion = 1,
+            tags = listOf(
+                RemoteSharedTag(
+                    id = ACTIVE_REMOTE_TAG_ID,
+                    name = "active-tag",
+                    createdBy = USER_A,
+                    createdAt = "2026-04-20T00:00:00Z",
+                    updatedAt = "2026-04-20T00:00:00Z",
+                    version = 1,
+                ),
+                RemoteSharedTag(
+                    id = DELETED_REMOTE_TAG_ID,
+                    name = "deleted-tag",
+                    createdBy = USER_A,
+                    createdAt = "2026-04-20T00:00:00Z",
+                    updatedAt = "2026-04-20T00:00:00Z",
+                    deletedAt = "2026-04-20T00:01:00Z",
+                    version = 1,
+                ),
+            ),
+            members = emptyList(),
+            urls = listOf(
+                RemoteSharedTagUrl(
+                    id = ACTIVE_REMOTE_URL_ID,
+                    tagId = ACTIVE_REMOTE_TAG_ID,
+                    rawUrl = "https://example.com/replacement",
+                    normalizedUrl = "https://example.com/replacement",
+                    normalizationVersion = 1,
+                    addedBy = USER_A,
+                    createdAt = "2026-04-20T00:00:00Z",
+                    updatedAt = "2026-04-20T00:00:00Z",
+                ),
+                RemoteSharedTagUrl(
+                    id = DELETED_REMOTE_URL_ID,
+                    tagId = DELETED_REMOTE_TAG_ID,
+                    rawUrl = "https://example.com/replacement",
+                    normalizedUrl = "https://example.com/replacement",
+                    normalizationVersion = 1,
+                    addedBy = USER_A,
+                    createdAt = "2026-04-20T00:00:00Z",
+                    updatedAt = "2026-04-20T00:01:00Z",
+                    deletedAt = "2026-04-20T00:01:00Z",
+                ),
+            ),
+        )
+
+        assertTrue(coordinator.syncCurrentSession())
+
+        assertEquals(0, db.urlEntryDao().findById(oldEntryId)!!.sharedReferenceCount)
+        assertEquals(7, db.urlEntryDao().findById(unrelatedEntryId)!!.sharedReferenceCount)
+        val replacement = db.urlEntryDao().findByNormalizedUrl("https://example.com/replacement")!!
+        assertEquals(1, replacement.sharedReferenceCount)
+        assertEquals(1, db.tagDao().countActiveSyncedRefsForEntry(replacement.id))
+    }
+
+    @Test
+    fun snapshotReconcile_accountSwitch_preservesEntryWithOtherUsersActiveRefDespiteZeroCache() = runBlocking {
+        val entryId = insertEntry("https://example.com/account-switch")
+        db.urlEntryDao().update(
+            db.urlEntryDao().findById(entryId)!!.copy(
+                localProvenanceCount = 0,
+                sharedReferenceCount = 0,
+            ),
+        )
+        val userBTagId = db.tagDao().insertTag(
+            TagEntity(
+                name = "user-b-tag",
+                createdAt = 1L,
+                scope = SharedTagScope.SYNCED,
+                authUserId = USER_B,
+                remoteTagId = USER_B_REMOTE_TAG_ID,
+                syncStatus = SharedTagSyncStatus.SYNCED,
+            ),
+        )
+        db.tagDao().insertCrossRef(
+            TagUrlCrossRef(
+                tagId = userBTagId,
+                entryId = entryId,
+                createdAt = 1L,
+                scope = SharedTagScope.SYNCED,
+                authUserId = USER_B,
+                remoteUrlId = USER_B_REMOTE_URL_ID,
+                rawUrl = "https://example.com/account-switch",
+                normalizedUrl = "https://example.com/account-switch",
+                syncStatus = SharedTagSyncStatus.SYNCED,
+            ),
+        )
+        authProvider.updateSession(SharedTagAuthSession(USER_A, "token-a"))
+        remote.snapshot = PullSharedTagSnapshotResponse(
+            pulledAt = "2026-04-20T00:00:00Z",
+            normalizationVersion = 1,
+            tags = emptyList(),
+            members = emptyList(),
+            urls = emptyList(),
+        )
+
+        assertTrue(coordinator.syncCurrentSession())
+
+        assertNotNull(db.urlEntryDao().findById(entryId))
+        assertEquals(1, db.tagDao().countActiveSyncedRefsForEntry(entryId))
+        assertEquals(1, db.tagDao().getSyncedCrossRefsForUser(USER_B).size)
+    }
+
+    @Test
+    fun snapshotApplyFailure_rollsBackCrossRefsAndCachedCounts() = runBlocking {
+        authProvider.updateSession(SharedTagAuthSession(USER_A, "token-a"))
+        val entryId = insertEntry("https://example.com/rollback")
+        val oldTagId = db.tagDao().insertTag(
+            TagEntity(
+                name = "rollback-old-tag",
+                createdAt = 1L,
+                scope = SharedTagScope.SYNCED,
+                authUserId = USER_A,
+                remoteTagId = OLD_REMOTE_TAG_ID,
+                syncStatus = SharedTagSyncStatus.SYNCED,
+            ),
+        )
+        db.tagDao().insertCrossRef(
+            TagUrlCrossRef(
+                tagId = oldTagId,
+                entryId = entryId,
+                createdAt = 1L,
+                scope = SharedTagScope.SYNCED,
+                authUserId = USER_A,
+                remoteUrlId = OLD_REMOTE_URL_ID,
+                rawUrl = "https://example.com/rollback",
+                normalizedUrl = "https://example.com/rollback",
+                syncStatus = SharedTagSyncStatus.SYNCED,
+            ),
+        )
+        db.urlEntryDao().update(
+            db.urlEntryDao().findById(entryId)!!.copy(sharedReferenceCount = 1),
+        )
+        remote.snapshot = PullSharedTagSnapshotResponse(
+            pulledAt = "2026-04-20T00:00:00Z",
+            normalizationVersion = 1,
+            tags = listOf(
+                RemoteSharedTag(
+                    id = REPLACEMENT_REMOTE_TAG_ID,
+                    name = "replacement-tag",
+                    createdBy = USER_A,
+                    createdAt = "2026-04-20T00:00:00Z",
+                    updatedAt = "2026-04-20T00:00:00Z",
+                    version = 1,
+                ),
+            ),
+            members = listOf(
+                RemoteSharedTagMember(
+                    tagId = REPLACEMENT_REMOTE_TAG_ID,
+                    userId = USER_A,
+                    role = "invalid-role",
+                    status = "active",
+                    createdAt = "2026-04-20T00:00:00Z",
+                    updatedAt = "2026-04-20T00:00:00Z",
+                ),
+            ),
+            urls = emptyList(),
+        )
+
+        assertFalse(coordinator.syncCurrentSession())
+
+        assertEquals(1, db.urlEntryDao().findById(entryId)!!.sharedReferenceCount)
+        assertNotNull(db.tagDao().findCrossRef(oldTagId, entryId))
+        assertNotNull(db.tagDao().findSyncedTagByRemoteId(USER_A, OLD_REMOTE_TAG_ID))
+        assertNull(db.tagDao().findSyncedTagByRemoteId(USER_A, REPLACEMENT_REMOTE_TAG_ID))
     }
 
     @Test
@@ -494,5 +700,14 @@ class SharedTagSyncRepositoryTest {
     private companion object {
         const val USER_A = "00000000-0000-0000-0000-000000000001"
         const val USER_B = "00000000-0000-0000-0000-000000000002"
+        const val OLD_REMOTE_TAG_ID = "old-remote-tag"
+        const val ACTIVE_REMOTE_TAG_ID = "active-remote-tag"
+        const val DELETED_REMOTE_TAG_ID = "deleted-remote-tag"
+        const val REPLACEMENT_REMOTE_TAG_ID = "replacement-remote-tag"
+        const val OLD_REMOTE_URL_ID = "old-remote-url"
+        const val ACTIVE_REMOTE_URL_ID = "active-remote-url"
+        const val DELETED_REMOTE_URL_ID = "deleted-remote-url"
+        const val USER_B_REMOTE_TAG_ID = "user-b-remote-tag"
+        const val USER_B_REMOTE_URL_ID = "user-b-remote-url"
     }
 }

@@ -28,6 +28,8 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -362,9 +364,6 @@ fun ServiceFilterRow(
                                         if (selectedState) null else item.id,
                                     )
                                 },
-                                onDoubleClick = {
-                                    localTag?.let { tag -> onRenameLocalTag?.invoke(tag) }
-                                },
                             )
                         } else {
                             Modifier.clickable(enabled = !isDragging) {
@@ -390,6 +389,16 @@ fun ServiceFilterRow(
                             "選択中"
                         } else {
                             "未選択"
+                        }
+                        customActions = if (localTag != null && onRenameLocalTag != null) {
+                            listOf(
+                                CustomAccessibilityAction("名前を変更") {
+                                    onRenameLocalTag(localTag)
+                                    true
+                                },
+                            )
+                        } else {
+                            emptyList()
                         }
                     },
             )

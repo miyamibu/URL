@@ -228,4 +228,78 @@ final class SharedTagStoreTests: XCTestCase {
         XCTAssertTrue(sharedEligibility.reasons.contains("local_provenance_required"))
         XCTAssertTrue(sharedEligibility.reasons.contains("shared_tag_allocation"))
     }
+
+    func testApplyingOneAccountSnapshotDoesNotDeleteAnotherCachedAccountSharedRow() throws {
+        try store.applySnapshot(
+            authUserID: "user-2",
+            snapshot: makeSnapshot(
+                tagID: "tag-2",
+                urlID: "url-2",
+                normalizedURL: "https://example.com/other-account"
+            )
+        )
+        try store.applySnapshot(
+            authUserID: "user-1",
+            snapshot: makeSnapshot(
+                tagID: "tag-1",
+                urlID: "url-1",
+                normalizedURL: "https://example.com/current-account"
+            )
+        )
+
+        try store.applySnapshot(
+            authUserID: "user-1",
+            snapshot: PullSharedTagSnapshotResponse(
+                pulledAt: "2026-04-23T11:00:00Z",
+                normalizationVersion: 1,
+                tags: [],
+                members: [],
+                urls: []
+            )
+        )
+
+        let otherAccountEntry = try XCTUnwrap(try repository.loadEntry(id: 1))
+        XCTAssertEqual(otherAccountEntry.normalizedURL, "https://example.com/other-account")
+        XCTAssertEqual(otherAccountEntry.sharedReferenceCount, 1)
+    }
+
+    private func makeSnapshot(
+        tagID: String,
+        urlID: String,
+        normalizedURL: String
+    ) -> PullSharedTagSnapshotResponse {
+        PullSharedTagSnapshotResponse(
+            pulledAt: "2026-04-23T10:00:00Z",
+            normalizationVersion: 1,
+            tags: [
+                RemoteSharedTag(
+                    id: tagID,
+                    name: "共有タグ",
+                    createdAt: "2026-04-23T09:00:00Z",
+                    updatedAt: "2026-04-23T09:30:00Z",
+                    deletedAt: nil
+                )
+            ],
+            members: [
+                RemoteSharedTagMember(
+                    tagID: tagID,
+                    userID: tagID == "tag-1" ? "user-1" : "user-2",
+                    displayName: nil,
+                    role: "owner",
+                    status: "active",
+                    createdAt: "2026-04-23T09:00:00Z",
+                    updatedAt: "2026-04-23T09:30:00Z"
+                )
+            ],
+            urls: [
+                RemoteSharedTagURL(
+                    id: urlID,
+                    tagID: tagID,
+                    rawURL: normalizedURL,
+                    normalizedURL: normalizedURL,
+                    deletedAt: nil
+                )
+            ]
+        )
+    }
 }

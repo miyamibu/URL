@@ -12,6 +12,13 @@ esac
 ARCHIVE_DIR="$(dirname "$ARCHIVE_PATH")"
 mkdir -p "$ARCHIVE_DIR"
 
+case "$ARCHIVE_PATH" in
+  "$ROOT_DIR"/*)
+    printf 'FAIL clean review archive must be written outside the repository: %s\n' "$ARCHIVE_PATH" >&2
+    exit 1
+    ;;
+esac
+
 if [[ -e "$ARCHIVE_PATH" && "${URLSAVER_REPLACE_CLEAN_REVIEW_ARCHIVE:-false}" != "true" ]]; then
   printf 'FAIL %s already exists. Set URLSAVER_REPLACE_CLEAN_REVIEW_ARCHIVE=true to replace this generated archive.\n' "$ARCHIVE_PATH" >&2
   exit 1
@@ -23,45 +30,36 @@ fi
 tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/urlsaver-clean-review.XXXXXX")"
 trap 'rm -rf "$tmpdir"' EXIT
 
-rsync -a --delete \
-  --exclude '.git/' \
-  --exclude '.claude/' \
-  --exclude '.codex/' \
-  --exclude '.idea/' \
-  --exclude '.gradle/' \
-  --exclude 'node_modules/' \
-  --exclude '.next/' \
-  --exclude '.vercel/' \
-  --exclude 'build/' \
-  --exclude 'app/build/' \
-  --exclude 'ios/build/' \
-  --exclude 'ios/build-*/' \
-  --exclude 'ios/**/DerivedData/' \
-  --exclude 'ios/**/Index.noindex/' \
-  --exclude 'ios/**/*.xcarchive' \
-  --exclude 'ios/**/*.ipa' \
-  --exclude 'ios/**/*.dSYM' \
-  --exclude 'ios/**/*.mobileprovision' \
-  --exclude 'local.properties' \
-  --exclude 'local.properties.example' \
-  --exclude 'ios/Config/URLSaverSecrets*' \
-  --exclude 'artifacts/' \
-  --exclude 'artifacts/**/*.db' \
-  --exclude 'artifacts/**/*.sqlite' \
-  --exclude 'artifacts/**/*.sqlite3' \
-  --exclude '*.tgz' \
-  --exclude '*.tar.gz' \
-  --exclude '.DS_Store' \
-  --exclude '__MACOSX/' \
-  ./ "$tmpdir/URLSaver/"
+file_list="$tmpdir/tracked-files.txt"
+safe_file_list="$tmpdir/safe-tracked-files.txt"
+git ls-files >"$file_list"
+while IFS= read -r relative_path; do
+  case "$relative_path" in
+    .git/*|.claude/*|.codex/*|.idea/*|.gradle/*|node_modules/*|*/node_modules/*|.next/*|*/.next/*|.vercel/*|*/.vercel/*)
+      continue
+      ;;
+    build/*|*/build/*|ios/build-*/*|*/DerivedData/*|*/Index.noindex/*|*.xcarchive|*.ipa|*.dSYM/*|*.mobileprovision)
+      continue
+      ;;
+    artifacts/*|*.db|*.sqlite|*.sqlite3|*.tgz|*.tar.gz|*.zip|.DS_Store|*/.DS_Store)
+      continue
+      ;;
+    .env|.env.*|*/.env|*/.env.*|local.properties|*/local.properties|ios/Config/URLSaverSecrets.xcconfig)
+      continue
+      ;;
+  esac
+  printf '%s\n' "$relative_path" >>"$safe_file_list"
+done <"$file_list"
+
+if [[ ! -s "$safe_file_list" ]]; then
+  printf 'FAIL no safe tracked files are available for the clean review archive\n' >&2
+  exit 1
+fi
+
+rsync -a --files-from="$safe_file_list" ./ "$tmpdir/URLSaver/"
 
 (cd "$tmpdir" && zip -qr "$ARCHIVE_PATH" URLSaver)
 
-forbidden='(\.git/|\.claude/|\.codex/|\.idea/|node_modules/|\.next/|\.vercel/|ios/build/|(^|/)local\.properties$|URLSaverSecrets|artifacts/|\.db|\.sqlite|\.tgz|\.ipa|\.dSYM|\.mobileprovision)'
-if unzip -l "$ARCHIVE_PATH" | grep -E "$forbidden" >/dev/null; then
-  printf 'FAIL clean archive contains forbidden paths\n' >&2
-  unzip -l "$ARCHIVE_PATH" | grep -E "$forbidden" >&2 || true
-  exit 1
-fi
+bash "$ROOT_DIR/scripts/verify_clean_review_archive.sh" "$ARCHIVE_PATH"
 
 printf 'OK created %s\n' "$ARCHIVE_PATH"

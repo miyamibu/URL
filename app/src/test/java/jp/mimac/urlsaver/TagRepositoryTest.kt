@@ -16,6 +16,7 @@ import jp.mimac.urlsaver.data.LocalAccountCleanupMarker
 import jp.mimac.urlsaver.data.LocalAccountCleanupStore
 import jp.mimac.urlsaver.data.MetadataUpdate
 import jp.mimac.urlsaver.data.MetadataScheduler
+import jp.mimac.urlsaver.data.PendingDeleteFinalizationResult
 import jp.mimac.urlsaver.data.SaveMemoResult
 import jp.mimac.urlsaver.data.SaveTitleResult
 import jp.mimac.urlsaver.data.SharedTagAuthRemoteDataSource
@@ -887,7 +888,8 @@ class TagRepositoryTest {
         override suspend fun markPendingDelete(entryId: Long, gracePeriodMillis: Long): Long? = null
         override suspend fun saveFromIntent(intent: Intent): SaveResult = SaveResult(ShareSaveResult.SAVE_FAILED)
         override suspend fun unarchive(entryId: Long): Boolean = false
-        override suspend fun finalizePendingDelete(entryId: Long) = Unit
+        override suspend fun finalizePendingDelete(entryId: Long): PendingDeleteFinalizationResult =
+            PendingDeleteFinalizationResult.Stale
         override suspend fun cleanupExpiredPendingDeletes() = Unit
         override suspend fun restore(entryId: Long): Boolean = false
         override suspend fun saveUserTitle(entryId: Long, rawTitle: String): SaveTitleResult = SaveTitleResult(false)

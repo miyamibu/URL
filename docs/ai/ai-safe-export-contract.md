@@ -1,7 +1,7 @@
 # AI-safe Export Contract
 
 ## Goal
-Android / iOS のAI-friendly exportが、AIに渡しやすく、復元バックアップと混同されない形式で出力されることを保証する。
+Android / iOS のChatGPT HandoffだけがAI-safe契約を満たし、通常の復元/レビュー用Backupと混同されないことを保証する。
 
 ## Context
 Exportはユーザー操作で生成されるローカルartifact。現在の実装形式は ZIP と JSON。
@@ -16,6 +16,12 @@ Exportはユーザー操作で生成されるローカルartifact。現在の実
 - `schema.json`
 - `README_FOR_AI.md`
 - `redaction_report.json`
+
+## Standard Backup Boundary
+
+- 通常ExportのZIP/JSONは `standard-export-v1` / `STANDARD_BACKUP` とし、通常のmanifest・local ID互換を維持する。
+- 通常ExportはAI-safeではない。`README_FOR_AI.md` と `redaction_report.json` を含んでいても、ChatGPT HandoffまたはAI-safe exportとは呼ばない。
+- `ai-safe-v1` / `CHATGPT_HANDOFF` は、下記のChatGPT Handoff経路だけで使用する。
 
 ## Entry Fields
 主要フィールド:
@@ -64,9 +70,9 @@ Exportはユーザー操作で生成されるローカルartifact。現在の実
 - ChatGPT手動ファイル共有は、read-only MCP、ChatGPT個人リンク同期、将来のproduction AI provider接続とは別機能。MCP/provider/APIの有効化、認証、deploy、OpenAI審査を手動共有の完了条件にしない。
 
 ## Validation method
-- Android: `ExportRepositoryTest.prepareExport_zipIncludesAiSafeFilesAndExcludesRawFetchedBody`
+- Android: `ExportRepositoryTest.prepareExport_zipSharedTagsOnly_filtersByMemo_andContainsZipArtifacts`
 - Android: `ExportRepositoryTest.prepareExport_sharedTagEntryIsMarkedAiIneligibleByDefault`
-- iOS: `ExportArchiveBuilderTests.testZipOutputIsAiSafeAndDoesNotExportRawFetchedBody`
+- iOS: `ExportArchiveBuilderTests.testStandardZipDoesNotExportRawFetchedBodyButIsNotAiSafe`
 - iOS: `ExportArchiveBuilderTests.testSharedTagEntryIsMarkedAiIneligibleByDefault`
 - Android/iOS: ChatGPT preview and archive tests assert local-tag-only selection, eligible-only ZIP content, excluded counts/reasons, filename, known-pattern redaction across every exported field, preview/archive equality, unknown-secret warning/explicit confirmation, Google Doc第13章の34項目すべて、and no question payload/API/OAuth path.
 

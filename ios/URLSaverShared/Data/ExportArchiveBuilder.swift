@@ -68,9 +68,144 @@ struct URLExportRequest: Equatable, Sendable {
 
 struct PreparedExportArchive: Equatable, Sendable {
     let fileName: String
-    let bytes: Data
+    private let storage: PreparedExportArchiveStorage
     let entryCount: Int
     let mimeType: String
+
+    init(fileName: String, bytes: Data, entryCount: Int, mimeType: String) {
+        self.fileName = fileName
+        self.storage = .inMemory(bytes)
+        self.entryCount = entryCount
+        self.mimeType = mimeType
+    }
+
+    fileprivate init(
+        fileName: String,
+        temporaryFileURL: URL,
+        cleanupDirectoryURL: URL,
+        byteCount: Int,
+        entryCount: Int,
+        mimeType: String
+    ) {
+        self.fileName = fileName
+        self.storage = .temporaryFile(
+            url: temporaryFileURL,
+            cleanupURL: cleanupDirectoryURL,
+            byteCount: byteCount
+        )
+        self.entryCount = entryCount
+        self.mimeType = mimeType
+    }
+
+    var byteCount: Int {
+        storage.byteCount
+    }
+
+    var temporaryFileURL: URL? {
+        storage.fileURL
+    }
+
+    func loadData() throws -> Data {
+        switch storage {
+        case .inMemory(let data):
+            return data
+        case .temporaryFile(let url, _, _):
+            return try Data(contentsOf: url, options: [.mappedIfSafe])
+        }
+    }
+
+    /// Streams this prepared output to a caller-owned destination.
+    func write(to destinationURL: URL, options: Data.WritingOptions = [.atomic]) throws {
+        switch storage {
+        case .inMemory(let data):
+            try data.write(to: destinationURL, options: options)
+        case .temporaryFile(let url, _, _):
+            try PreparedExportArchiveFileTransfer.copy(
+                from: url,
+                to: destinationURL,
+                options: options
+            )
+        }
+    }
+
+    /// The caller owns cleanup after the output has been consumed or handed off.
+    func cleanup() throws {
+        guard case .temporaryFile(_, let cleanupURL, _) = storage else { return }
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: cleanupURL.path) else { return }
+        try fileManager.removeItem(at: cleanupURL)
+    }
+}
+
+fileprivate enum PreparedExportArchiveStorage: Equatable, Sendable {
+    case inMemory(Data)
+    case temporaryFile(url: URL, cleanupURL: URL, byteCount: Int)
+
+    var byteCount: Int {
+        switch self {
+        case .inMemory(let data): return data.count
+        case .temporaryFile(_, _, let byteCount): return byteCount
+        }
+    }
+
+    var fileURL: URL? {
+        switch self {
+        case .inMemory: return nil
+        case .temporaryFile(let url, _, _): return url
+        }
+    }
+}
+
+fileprivate enum PreparedExportArchiveFileTransfer {
+    static func copy(from sourceURL: URL, to destinationURL: URL, options: Data.WritingOptions) throws {
+        let fileManager = FileManager.default
+        let directoryURL = destinationURL.deletingLastPathComponent()
+        try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+
+        if options.contains(.withoutOverwriting), fileManager.fileExists(atPath: destinationURL.path) {
+            throw CocoaError(.fileWriteFileExists, userInfo: [NSFilePathErrorKey: destinationURL.path])
+        }
+
+        let atomic = options.contains(.atomic)
+        let writeURL = atomic
+            ? directoryURL.appendingPathComponent(
+                ".\(destinationURL.lastPathComponent).\(UUID().uuidString).part"
+            )
+            : destinationURL
+
+        if fileManager.fileExists(atPath: writeURL.path) {
+            try fileManager.removeItem(at: writeURL)
+        }
+        guard fileManager.createFile(atPath: writeURL.path, contents: nil) else {
+            throw URLExportError.fileWriteFailed
+        }
+
+        do {
+            let input = try FileHandle(forReadingFrom: sourceURL)
+            let output = try FileHandle(forWritingTo: writeURL)
+            defer {
+                try? input.close()
+                try? output.close()
+            }
+
+            while let chunk = try input.read(upToCount: 64 * 1024), !chunk.isEmpty {
+                try Task.checkCancellation()
+                try output.write(contentsOf: chunk)
+            }
+            try output.synchronize()
+            try output.close()
+
+            if atomic {
+                if fileManager.fileExists(atPath: destinationURL.path) {
+                    try fileManager.removeItem(at: destinationURL)
+                }
+                try fileManager.moveItem(at: writeURL, to: destinationURL)
+            }
+        } catch {
+            try? fileManager.removeItem(at: writeURL)
+            throw error
+        }
+    }
 }
 
 enum ChatGptExportExclusionReason: String, CaseIterable, Equatable, Sendable {
@@ -109,6 +244,11 @@ struct ChatGptExportPreview: Equatable, Sendable {
 }
 
 enum URLExportArchiveBuilder {
+    private enum ExportProfile {
+        case standard
+        case chatGpt
+    }
+
     static func buildAvailableTags(
         localTags: [LocalTagSummary],
         localTagAssignments: [Int64: Set<Int64>],
@@ -173,7 +313,11 @@ enum URLExportArchiveBuilder {
             .map { $0.toDocument() }
 
         let generatedAt = isoString(now)
-        let redactionReport = ExportRedactionReport.from(generatedAt: generatedAt, documents: documents)
+        let redactionReport = ExportRedactionReport.from(
+            generatedAt: generatedAt,
+            documents: documents,
+            profile: "standard-export-v1"
+        )
         let selectedNames = request.selectedTagIDs.compactMap { tagNamesByID[$0] }.sorted()
         let manifest = ExportManifest(
             generatedAt: generatedAt,
@@ -196,14 +340,16 @@ enum URLExportArchiveBuilder {
                 manifest: manifest,
                 documents: documents,
                 redactionReport: redactionReport,
-                now: now
+                now: now,
+                profile: .standard
             )
         case .json:
             return try buildJSONExport(
                 manifest: manifest,
                 documents: documents,
                 redactionReport: redactionReport,
-                now: now
+                now: now,
+                profile: .standard
             )
         }
     }
@@ -258,7 +404,8 @@ enum URLExportArchiveBuilder {
         let redactionReport = ExportRedactionReport.from(
             generatedAt: generatedAt,
             documents: documents,
-            additionalRedactions: selection.manifestRedactions
+            additionalRedactions: selection.manifestRedactions,
+            profile: "ai-safe-v1"
         )
         let manifest = ExportManifest(
             generatedAt: generatedAt,
@@ -281,6 +428,7 @@ enum URLExportArchiveBuilder {
             now: now,
             fileName: buildChatGptArchiveFileName(now),
             readmeForAi: buildChatGptReadmeForAi(manifest: manifest, report: redactionReport),
+            profile: .chatGpt,
             usesPublicSafeEntryFileNames: true
         )
     }
@@ -387,61 +535,227 @@ enum URLExportArchiveBuilder {
         now: Date,
         fileName: String? = nil,
         readmeForAi: String? = nil,
+        profile: ExportProfile,
         usesPublicSafeEntryFileNames: Bool = false
     ) throws -> PreparedExportArchive {
-        var zip = SimpleZipWriter()
-        zip.addFile(path: "manifest.json", data: try prettyEncoder().encode(manifest))
-        zip.addFile(path: "schema.json", data: Data(aiSafeSchemaJSON.utf8))
-        zip.addFile(
-            path: "README_FOR_AI.md",
-            data: Data((readmeForAi ?? buildReadmeForAi(manifest: manifest, report: redactionReport)).utf8)
+        let outputFileName = fileName ?? buildArchiveFileName(now, format: .zip)
+        let maximumBytes = usesPublicSafeEntryFileNames ? chatGptMaxArchiveBytes : nil
+        let fileManager = FileManager.default
+        let cleanupDirectoryURL = fileManager.temporaryDirectory
+            .appendingPathComponent("rinbam-export-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: cleanupDirectoryURL, withIntermediateDirectories: true)
+        var shouldKeepOutput = false
+        defer {
+            if !shouldKeepOutput {
+                try? fileManager.removeItem(at: cleanupDirectoryURL)
+            }
+        }
+
+        try ensureAvailableDiskSpace(in: cleanupDirectoryURL, maximumArchiveBytes: maximumBytes)
+
+        let temporaryURL = cleanupDirectoryURL
+            .appendingPathComponent(".\(outputFileName).part", isDirectory: false)
+        let outputURL = cleanupDirectoryURL.appendingPathComponent(outputFileName, isDirectory: false)
+        guard let outputStream = OutputStream(url: temporaryURL, append: false) else {
+            throw URLExportError.fileWriteFailed
+        }
+        outputStream.open()
+        guard outputStream.streamError == nil else {
+            outputStream.close()
+            throw URLExportError.fileWriteFailed
+        }
+        var outputStreamIsOpen = true
+        defer {
+            if outputStreamIsOpen {
+                outputStream.close()
+            }
+        }
+
+        var zip = SimpleZipWriter(
+            outputStream: outputStream,
+            maximumBytes: maximumBytes
         )
-        zip.addFile(path: "redaction_report.json", data: try prettyEncoder().encode(redactionReport))
+        try Task.checkCancellation()
+        try zip.addFile(path: "manifest.json", data: try prettyEncoder().encode(manifest))
+        let schemaJSON: String
+        switch profile {
+        case .standard:
+            schemaJSON = standardExportSchemaJSON
+        case .chatGpt:
+            schemaJSON = aiSafeSchemaJSON
+        }
+        try zip.addFile(path: "schema.json", data: Data(schemaJSON.utf8))
+        try zip.addFile(
+            path: "README_FOR_AI.md",
+            data: Data(
+                (readmeForAi ?? buildReadmeForAi(
+                    manifest: manifest,
+                    report: redactionReport,
+                    profile: profile
+                )).utf8
+            )
+        )
+        try zip.addFile(path: "redaction_report.json", data: try prettyEncoder().encode(redactionReport))
         let encoder = lineEncoder()
-        let jsonl = try documents.map { document in
-            String(data: try encoder.encode(document), encoding: .utf8) ?? "{}"
-        }.joined(separator: "\n")
-        zip.addFile(path: "entries.jsonl", data: Data(jsonl.utf8))
+        try zip.addStreamedFile(path: "entries.jsonl") { entry in
+            for (index, document) in documents.enumerated() {
+                try Task.checkCancellation()
+                try entry.write(try encoder.encode(document))
+                if index + 1 < documents.count {
+                    try entry.writeNewline()
+                }
+            }
+        }
         for (index, document) in documents.enumerated() {
+            try Task.checkCancellation()
             let fileName = buildEntryFileName(
                 index: index + 1,
                 document: document,
                 usesPublicSafeNameOnly: usesPublicSafeEntryFileNames
             )
-            zip.addFile(path: "entries/\(fileName).md", data: Data(document.toMarkdown().utf8))
+            try zip.addStreamedFile(path: "entries/\(fileName).md") { entry in
+                try entry.writeUTF8(document.toMarkdown())
+            }
         }
 
-        let bytes = zip.finalize()
-        if usesPublicSafeEntryFileNames && bytes.count > chatGptMaxArchiveBytes {
-            throw URLExportError.invalidRequest("ChatGPT用ZIPが大きすぎます（上限25 MiB）。タグを分けてお試しください。")
+        try zip.finalize()
+        outputStream.close()
+        outputStreamIsOpen = false
+        try Task.checkCancellation()
+        try fileManager.moveItem(at: temporaryURL, to: outputURL)
+        let attributes = try fileManager.attributesOfItem(atPath: outputURL.path)
+        guard let byteCount = (attributes[.size] as? NSNumber)?.intValue else {
+            throw URLExportError.fileWriteFailed
         }
+        shouldKeepOutput = true
         return PreparedExportArchive(
-            fileName: fileName ?? buildArchiveFileName(now, format: .zip),
-            bytes: bytes,
+            fileName: outputFileName,
+            temporaryFileURL: outputURL,
+            cleanupDirectoryURL: cleanupDirectoryURL,
+            byteCount: byteCount,
             entryCount: documents.count,
             mimeType: "application/zip"
         )
+    }
+
+    private static let archiveScratchMinimumFreeBytes: Int64 = 1 * 1024 * 1024
+
+    private static func ensureAvailableDiskSpace(
+        in directoryURL: URL,
+        maximumArchiveBytes: Int?
+    ) throws {
+        let resourceValues = try directoryURL.resourceValues(
+            forKeys: [.volumeAvailableCapacityForImportantUsageKey]
+        )
+        guard let availableCapacity = resourceValues.volumeAvailableCapacityForImportantUsage else {
+            throw URLExportError.fileWriteFailed
+        }
+        let archiveBudget = Int64(maximumArchiveBytes ?? 0)
+        let requiredCapacity = max(
+            archiveScratchMinimumFreeBytes,
+            archiveBudget + archiveScratchMinimumFreeBytes
+        )
+        guard availableCapacity >= requiredCapacity else {
+            throw URLExportError.insufficientDiskSpace
+        }
     }
 
     private static func buildJSONExport(
         manifest: ExportManifest,
         documents: [ExportEntryDocument],
         redactionReport: ExportRedactionReport,
-        now: Date
+        now: Date,
+        profile: ExportProfile
     ) throws -> PreparedExportArchive {
-        let payload = ExportJSONDocument(
-            manifest: manifest,
-            entries: documents,
-            readmeForAi: buildReadmeForAi(manifest: manifest, report: redactionReport),
-            redactionReport: redactionReport
+        let fileManager = FileManager.default
+        let cleanupDirectoryURL = fileManager.temporaryDirectory
+            .appendingPathComponent("rinbam-export-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: cleanupDirectoryURL, withIntermediateDirectories: true)
+        var shouldKeepOutput = false
+        defer {
+            if !shouldKeepOutput {
+                try? fileManager.removeItem(at: cleanupDirectoryURL)
+            }
+        }
+
+        try ensureAvailableDiskSpace(in: cleanupDirectoryURL, maximumArchiveBytes: nil)
+        let outputFileName = buildArchiveFileName(now, format: .json)
+        let temporaryURL = cleanupDirectoryURL
+            .appendingPathComponent(".\(outputFileName).part", isDirectory: false)
+        let outputURL = cleanupDirectoryURL.appendingPathComponent(outputFileName, isDirectory: false)
+        guard let outputStream = OutputStream(url: temporaryURL, append: false) else {
+            throw URLExportError.fileWriteFailed
+        }
+        outputStream.open()
+        guard outputStream.streamError == nil else {
+            outputStream.close()
+            throw URLExportError.fileWriteFailed
+        }
+        var outputStreamIsOpen = true
+        defer {
+            if outputStreamIsOpen {
+                outputStream.close()
+            }
+        }
+
+        let encoder = prettyEncoder()
+        try writeUTF8("{\"manifest\":", to: outputStream)
+        try writeJSON(try encoder.encode(manifest), to: outputStream)
+        try writeUTF8(",\"entries\":[", to: outputStream)
+        for (index, document) in documents.enumerated() {
+            try Task.checkCancellation()
+            if index > 0 { try writeUTF8(",", to: outputStream) }
+            try writeJSON(try encoder.encode(document), to: outputStream)
+        }
+        try writeUTF8("],\"readmeForAi\":", to: outputStream)
+        try writeJSON(
+            try encoder.encode(buildReadmeForAi(
+                manifest: manifest,
+                report: redactionReport,
+                profile: profile
+            )),
+            to: outputStream
         )
-        let bytes = try prettyEncoder().encode(payload)
+        try writeUTF8(",\"redactionReport\":", to: outputStream)
+        try writeJSON(try encoder.encode(redactionReport), to: outputStream)
+        try writeUTF8("}", to: outputStream)
+        outputStream.close()
+        outputStreamIsOpen = false
+        try Task.checkCancellation()
+        try fileManager.moveItem(at: temporaryURL, to: outputURL)
+        let attributes = try fileManager.attributesOfItem(atPath: outputURL.path)
+        guard let byteCount = (attributes[.size] as? NSNumber)?.intValue else {
+            throw URLExportError.fileWriteFailed
+        }
+        shouldKeepOutput = true
         return PreparedExportArchive(
-            fileName: buildArchiveFileName(now, format: .json),
-            bytes: bytes,
+            fileName: outputFileName,
+            temporaryFileURL: outputURL,
+            cleanupDirectoryURL: cleanupDirectoryURL,
+            byteCount: byteCount,
             entryCount: documents.count,
             mimeType: "application/json"
         )
+    }
+
+    private static func writeUTF8(_ value: String, to outputStream: OutputStream) throws {
+        try writeJSON(Data(value.utf8), to: outputStream)
+    }
+
+    private static func writeJSON(_ data: Data, to outputStream: OutputStream) throws {
+        try data.withUnsafeBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.bindMemory(to: UInt8.self).baseAddress else { return }
+            var offset = 0
+            while offset < data.count {
+                try Task.checkCancellation()
+                let written = outputStream.write(
+                    baseAddress.advanced(by: offset),
+                    maxLength: data.count - offset
+                )
+                guard written > 0 else { throw URLExportError.fileWriteFailed }
+                offset += written
+            }
+        }
     }
 
     private static let exportFields = [
@@ -611,6 +925,8 @@ enum URLExportArchiveBuilder {
     private static let aiSafeSchemaJSON = """
     {
       "schemaVersion": "ai-safe-v1",
+      "exportKind": "CHATGPT_HANDOFF",
+      "aiSafe": true,
       "fetchedBodyDefault": "excluded",
       "requiredFiles": ["manifest.json", "entries.jsonl", "schema.json", "README_FOR_AI.md", "redaction_report.json"],
       "entryRequiredFields": ["publicSafeId", "originalUrl", "normalizedUrl", "openUrl", "effectiveTitle", "recordState", "aiEligible", "sharedTagBoundary", "redactionApplied"],
@@ -623,20 +939,57 @@ enum URLExportArchiveBuilder {
     }
     """
 
-    private static func buildReadmeForAi(manifest: ExportManifest, report: ExportRedactionReport) -> String {
-        """
-        # りんばむ AI-safe Export
+    private static let standardExportSchemaJSON = """
+    {
+      "schemaVersion": "standard-export-v1",
+      "exportKind": "STANDARD_BACKUP",
+      "aiSafe": false,
+      "fetchedBodyDefault": "excluded",
+      "requiredFiles": ["manifest.json", "entries.jsonl", "schema.json", "README_FOR_AI.md", "redaction_report.json"],
+      "entryRequiredFields": ["id", "publicSafeId", "originalUrl", "normalizedUrl", "openUrl", "effectiveTitle", "recordState", "aiEligible", "sharedTagBoundary", "redactionApplied"],
+      "privacyDefaults": {
+        "restore": "preserve_local_ids_and_export_scope",
+        "sharedTags": "included_when_selected",
+        "pendingDelete": "included_only_when_filter_matches",
+        "archived": "included_only_when_filter_matches",
+        "body": "summary_or_excerpt_only"
+      }
+    }
+    """
+
+    private static func buildReadmeForAi(
+        manifest: ExportManifest,
+        report: ExportRedactionReport,
+        profile: ExportProfile
+    ) -> String {
+        let titleAndPurpose: String
+        switch profile {
+        case .standard:
+            titleAndPurpose = """
+            # りんばむ 通常Export / Backup
+
+            This is the standard export for backup and review. It is not an AI-safe export and must not be treated as ChatGPT Handoff.
+            Local entry IDs, tag IDs, selected filters, and shared-tag metadata may be present for restore/review compatibility.
+            """
+        case .chatGpt:
+            titleAndPurpose = """
+            # りんばむ AI-safe Export
+
+            This archive is the ChatGPT Handoff and is the only export profile that may be treated as AI-safe.
+            """
+        }
+        return """
+        \(titleAndPurpose.trimmingCharacters(in: .whitespacesAndNewlines))
 
         Generated at: \(manifest.generatedAt)
         App version: \(manifest.appVersion)
         Entry count: \(manifest.entryCount)
 
-        This archive is intended for AI-assisted review of user-selected saved links.
-        It is not a restore backup. Full fetched bodies are excluded by default.
+        Full fetched bodies are excluded by default; this does not change the export's safety classification.
 
         ## Files
         - `manifest.json`: export metadata and selected filters.
-        - `entries.jsonl`: one AI-safe JSON document per saved link.
+        - `entries.jsonl`: one JSON document per saved link.
         - `entries/*.md`: readable Markdown summaries.
         - `schema.json`: compact schema contract.
         - `redaction_report.json`: redaction profile and counts.
@@ -652,7 +1005,7 @@ enum URLExportArchiveBuilder {
     }
 
     private static func buildChatGptReadmeForAi(manifest: ExportManifest, report: ExportRedactionReport) -> String {
-        buildReadmeForAi(manifest: manifest, report: report) + """
+        buildReadmeForAi(manifest: manifest, report: report, profile: .chatGpt) + """
 
 
         ## ChatGPTでの使い方
@@ -904,11 +1257,15 @@ enum URLExportArchiveBuilder {
 enum URLExportError: LocalizedError {
     case invalidRequest(String)
     case fileWriteFailed
+    case insufficientDiskSpace
+    case archiveTooLarge
 
     var errorDescription: String? {
         switch self {
         case .invalidRequest(let message): return message
         case .fileWriteFailed: return "エクスポートファイルを作成できませんでした。"
+        case .insufficientDiskSpace: return "エクスポートに必要な空き容量がありません。"
+        case .archiveTooLarge: return "ChatGPT用ZIPが大きすぎます（上限25 MiB）。タグを分けてお試しください。"
         }
     }
 }
@@ -1096,13 +1453,6 @@ private struct ExportManifest: Codable {
     let dateFrom: String?
     let dateTo: String?
     let fields: [String]
-}
-
-private struct ExportJSONDocument: Codable {
-    let manifest: ExportManifest
-    let entries: [ExportEntryDocument]
-    let readmeForAi: String
-    let redactionReport: ExportRedactionReport
 }
 
 private struct ExportTagSummary: Codable {
@@ -1319,7 +1669,8 @@ fileprivate struct ExportRedactionReport: Codable {
     static func from(
         generatedAt: String,
         documents: [ExportEntryDocument],
-        additionalRedactions: [Set<String>] = []
+        additionalRedactions: [Set<String>] = [],
+        profile: String
     ) -> ExportRedactionReport {
         var counts: [String: Int] = [:]
         for redaction in documents.flatMap(\.redactionApplied) {
@@ -1330,7 +1681,7 @@ fileprivate struct ExportRedactionReport: Codable {
         }
         return ExportRedactionReport(
             generatedAt: generatedAt,
-            profile: "ai-safe-v1",
+            profile: profile,
             fetchedBodyExported: false,
             bodyExcerptMaxChars: URLExportArchiveBuilder.bodyExcerptMaxCharacters,
             memoExcerptMaxChars: URLExportArchiveBuilder.memoExcerptMaxCharacters,
@@ -1341,7 +1692,7 @@ fileprivate struct ExportRedactionReport: Codable {
     }
 }
 
-private struct SimpleZipWriter {
+fileprivate struct SimpleZipWriter {
     private struct CentralDirectoryEntry {
         let path: String
         let crc32: UInt32
@@ -1349,73 +1700,238 @@ private struct SimpleZipWriter {
         let localHeaderOffset: UInt32
     }
 
-    private var data = Data()
-    private var entries: [CentralDirectoryEntry] = []
+    fileprivate struct EntryWriter {
+        private let outputStream: OutputStream
+        private let maximumBytes: UInt64?
+        private(set) var offset: UInt64
+        private(set) var size: UInt64 = 0
+        private var crcState = CRC32.initial
 
-    mutating func addFile(path: String, data fileData: Data) {
-        let pathData = Data(path.utf8)
-        let crc = CRC32.checksum(fileData)
-        let size = UInt32(fileData.count)
-        let offset = UInt32(data.count)
+        init(outputStream: OutputStream, maximumBytes: UInt64?, offset: UInt64) {
+            self.outputStream = outputStream
+            self.maximumBytes = maximumBytes
+            self.offset = offset
+        }
 
-        appendUInt32(0x04034b50)
-        appendUInt16(20)
-        appendUInt16(0x0800)
-        appendUInt16(0)
-        appendUInt16(0)
-        appendUInt16(0)
-        appendUInt32(crc)
-        appendUInt32(size)
-        appendUInt32(size)
-        appendUInt16(UInt16(pathData.count))
-        appendUInt16(0)
-        data.append(pathData)
-        data.append(fileData)
+        var crc32: UInt32 {
+            CRC32.finalize(crcState)
+        }
 
-        entries.append(CentralDirectoryEntry(path: path, crc32: crc, size: size, localHeaderOffset: offset))
+        mutating func write(_ data: Data) throws {
+            try writeBytes(data, updateCRC: true)
+        }
+
+        mutating func writeNewline() throws {
+            try write(Data([0x0a]))
+        }
+
+        mutating func writeUTF8(_ string: String) throws {
+            var buffer: [UInt8] = []
+            buffer.reserveCapacity(64 * 1024)
+            for byte in string.utf8 {
+                buffer.append(byte)
+                if buffer.count == 64 * 1024 {
+                    try write(Data(buffer))
+                    buffer.removeAll(keepingCapacity: true)
+                }
+            }
+            if !buffer.isEmpty {
+                try write(Data(buffer))
+            }
+        }
+
+        private mutating func writeBytes(_ data: Data, updateCRC: Bool) throws {
+            guard !data.isEmpty else { return }
+            let count = UInt64(data.count)
+            guard count <= UInt64.max - offset,
+                  offset + count <= UInt64(UInt32.max) else {
+                throw URLExportError.archiveTooLarge
+            }
+            if let maximumBytes, offset + count > maximumBytes {
+                throw URLExportError.archiveTooLarge
+            }
+
+            let stream = outputStream
+            var written = 0
+            try data.withUnsafeBytes { rawBuffer in
+                guard let baseAddress = rawBuffer.bindMemory(to: UInt8.self).baseAddress else { return }
+                while written < rawBuffer.count {
+                    try Task.checkCancellation()
+                    let writeCount = stream.write(
+                        baseAddress.advanced(by: written),
+                        maxLength: rawBuffer.count - written
+                    )
+                    guard writeCount > 0 else { throw URLExportError.fileWriteFailed }
+                    if updateCRC {
+                        for byte in UnsafeBufferPointer(
+                            start: baseAddress.advanced(by: written),
+                            count: writeCount
+                        ) {
+                            crcState = CRC32.update(crcState, byte: byte)
+                        }
+                    }
+                    written += writeCount
+                }
+            }
+            offset += UInt64(written)
+            if updateCRC {
+                size += UInt64(written)
+            }
+        }
     }
 
-    mutating func finalize() -> Data {
-        let centralDirectoryOffset = UInt32(data.count)
+    private let outputStream: OutputStream
+    private let maximumBytes: UInt64?
+    private var offset: UInt64 = 0
+    private var entries: [CentralDirectoryEntry] = []
+    private var isFinalized = false
+
+    init(outputStream: OutputStream, maximumBytes: Int?) {
+        self.outputStream = outputStream
+        self.maximumBytes = maximumBytes.map(UInt64.init)
+    }
+
+    mutating func addFile(path: String, data fileData: Data) throws {
+        try addStreamedFile(path: path) { entry in
+            try entry.write(fileData)
+        }
+    }
+
+    fileprivate mutating func addStreamedFile(
+        path: String,
+        write: (inout EntryWriter) throws -> Void
+    ) throws {
+        guard !isFinalized else { throw URLExportError.fileWriteFailed }
+        guard entries.count < Int(UInt16.max) else { throw URLExportError.archiveTooLarge }
+
+        let pathData = Data(path.utf8)
+        guard pathData.count <= Int(UInt16.max) else { throw URLExportError.archiveTooLarge }
+        guard offset <= UInt64(UInt32.max) else { throw URLExportError.archiveTooLarge }
+        let localHeaderOffset = UInt32(offset)
+
+        var localHeader = Data()
+        appendUInt32(0x04034b50, to: &localHeader)
+        appendUInt16(20, to: &localHeader)
+        appendUInt16(0x0808, to: &localHeader) // UTF-8 + data descriptor follows the payload.
+        appendUInt16(0, to: &localHeader)
+        appendUInt16(0, to: &localHeader)
+        appendUInt16(0, to: &localHeader)
+        appendUInt32(0, to: &localHeader)
+        appendUInt32(0, to: &localHeader)
+        appendUInt32(0, to: &localHeader)
+        appendUInt16(UInt16(pathData.count), to: &localHeader)
+        appendUInt16(0, to: &localHeader)
+        localHeader.append(pathData)
+        try writeBytes(localHeader)
+
+        var entry = EntryWriter(
+            outputStream: outputStream,
+            maximumBytes: maximumBytes,
+            offset: offset
+        )
+        try write(&entry)
+        try Task.checkCancellation()
+        guard entry.size <= UInt64(UInt32.max) else { throw URLExportError.archiveTooLarge }
+        offset = entry.offset
+
+        var descriptor = Data()
+        appendUInt32(0x08074b50, to: &descriptor)
+        appendUInt32(entry.crc32, to: &descriptor)
+        appendUInt32(UInt32(entry.size), to: &descriptor)
+        appendUInt32(UInt32(entry.size), to: &descriptor)
+        try writeBytes(descriptor)
+        entries.append(
+            CentralDirectoryEntry(
+                path: path,
+                crc32: entry.crc32,
+                size: UInt32(entry.size),
+                localHeaderOffset: localHeaderOffset
+            )
+        )
+        offset = entry.offset + UInt64(descriptor.count)
+    }
+
+    mutating func finalize() throws {
+        guard !isFinalized else { throw URLExportError.fileWriteFailed }
+        guard entries.count <= Int(UInt16.max), offset <= UInt64(UInt32.max) else {
+            throw URLExportError.archiveTooLarge
+        }
+        let centralDirectoryOffset = UInt32(offset)
         for entry in entries {
             let pathData = Data(entry.path.utf8)
-            appendUInt32(0x02014b50)
-            appendUInt16(20)
-            appendUInt16(20)
-            appendUInt16(0x0800)
-            appendUInt16(0)
-            appendUInt16(0)
-            appendUInt16(0)
-            appendUInt32(entry.crc32)
-            appendUInt32(entry.size)
-            appendUInt32(entry.size)
-            appendUInt16(UInt16(pathData.count))
-            appendUInt16(0)
-            appendUInt16(0)
-            appendUInt16(0)
-            appendUInt16(0)
-            appendUInt32(0)
-            appendUInt32(entry.localHeaderOffset)
-            data.append(pathData)
+            var centralDirectoryEntry = Data()
+            appendUInt32(0x02014b50, to: &centralDirectoryEntry)
+            appendUInt16(20, to: &centralDirectoryEntry)
+            appendUInt16(20, to: &centralDirectoryEntry)
+            appendUInt16(0x0808, to: &centralDirectoryEntry)
+            appendUInt16(0, to: &centralDirectoryEntry)
+            appendUInt16(0, to: &centralDirectoryEntry)
+            appendUInt16(0, to: &centralDirectoryEntry)
+            appendUInt32(entry.crc32, to: &centralDirectoryEntry)
+            appendUInt32(entry.size, to: &centralDirectoryEntry)
+            appendUInt32(entry.size, to: &centralDirectoryEntry)
+            appendUInt16(UInt16(pathData.count), to: &centralDirectoryEntry)
+            appendUInt16(0, to: &centralDirectoryEntry)
+            appendUInt16(0, to: &centralDirectoryEntry)
+            appendUInt16(0, to: &centralDirectoryEntry)
+            appendUInt16(0, to: &centralDirectoryEntry)
+            appendUInt32(0, to: &centralDirectoryEntry)
+            appendUInt32(entry.localHeaderOffset, to: &centralDirectoryEntry)
+            centralDirectoryEntry.append(pathData)
+            try writeBytes(centralDirectoryEntry)
         }
-        let centralDirectorySize = UInt32(data.count) - centralDirectoryOffset
-        appendUInt32(0x06054b50)
-        appendUInt16(0)
-        appendUInt16(0)
-        appendUInt16(UInt16(entries.count))
-        appendUInt16(UInt16(entries.count))
-        appendUInt32(centralDirectorySize)
-        appendUInt32(centralDirectoryOffset)
-        appendUInt16(0)
-        return data
+
+        let centralDirectorySize = offset - UInt64(centralDirectoryOffset)
+        guard centralDirectorySize <= UInt64(UInt32.max) else {
+            throw URLExportError.archiveTooLarge
+        }
+        var endOfCentralDirectory = Data()
+        appendUInt32(0x06054b50, to: &endOfCentralDirectory)
+        appendUInt16(0, to: &endOfCentralDirectory)
+        appendUInt16(0, to: &endOfCentralDirectory)
+        appendUInt16(UInt16(entries.count), to: &endOfCentralDirectory)
+        appendUInt16(UInt16(entries.count), to: &endOfCentralDirectory)
+        appendUInt32(UInt32(centralDirectorySize), to: &endOfCentralDirectory)
+        appendUInt32(centralDirectoryOffset, to: &endOfCentralDirectory)
+        appendUInt16(0, to: &endOfCentralDirectory)
+        try writeBytes(endOfCentralDirectory)
+        isFinalized = true
     }
 
-    private mutating func appendUInt16(_ value: UInt16) {
+    private mutating func writeBytes(_ data: Data) throws {
+        guard !data.isEmpty else { return }
+        let count = UInt64(data.count)
+        guard count <= UInt64.max - offset,
+              offset + count <= UInt64(UInt32.max) else {
+            throw URLExportError.archiveTooLarge
+        }
+        if let maximumBytes, offset + count > maximumBytes {
+            throw URLExportError.archiveTooLarge
+        }
+
+        let stream = outputStream
+        var written = 0
+        try data.withUnsafeBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.bindMemory(to: UInt8.self).baseAddress else { return }
+            while written < rawBuffer.count {
+                try Task.checkCancellation()
+                let writeCount = stream.write(
+                    baseAddress.advanced(by: written),
+                    maxLength: rawBuffer.count - written
+                )
+                guard writeCount > 0 else { throw URLExportError.fileWriteFailed }
+                written += writeCount
+            }
+        }
+        offset += UInt64(written)
+    }
+
+    private func appendUInt16(_ value: UInt16, to data: inout Data) {
         var littleEndian = value.littleEndian
         withUnsafeBytes(of: &littleEndian) { data.append(contentsOf: $0) }
     }
 
-    private mutating func appendUInt32(_ value: UInt32) {
+    private func appendUInt32(_ value: UInt32, to data: inout Data) {
         var littleEndian = value.littleEndian
         withUnsafeBytes(of: &littleEndian) { data.append(contentsOf: $0) }
     }
@@ -1435,11 +1951,21 @@ private enum CRC32 {
     }
 
     static func checksum(_ data: Data) -> UInt32 {
-        var crc: UInt32 = 0xffffffff
+        var crc = initial
         for byte in data {
-            let index = Int((crc ^ UInt32(byte)) & 0xff)
-            crc = table[index] ^ (crc >> 8)
+            crc = update(crc, byte: byte)
         }
-        return crc ^ 0xffffffff
+        return finalize(crc)
+    }
+
+    static let initial: UInt32 = 0xffffffff
+
+    static func update(_ crc: UInt32, byte: UInt8) -> UInt32 {
+        let index = Int((crc ^ UInt32(byte)) & 0xff)
+        return table[index] ^ (crc >> 8)
+    }
+
+    static func finalize(_ crc: UInt32) -> UInt32 {
+        crc ^ 0xffffffff
     }
 }

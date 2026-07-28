@@ -190,8 +190,8 @@ class SharedTagSyncCoordinator(
             syncDao.deleteGroupMembersForUser(authUserId)
             syncDao.deleteGroupTagsForUser(authUserId)
             syncDao.deleteGroupsForUser(authUserId)
+            val affectedEntryIds = tagDao.getSyncedEntryIdsForUser(authUserId).toMutableSet()
             tagDao.deleteSyncedCrossRefsForUser(authUserId)
-            urlEntryDao.resetSharedReferenceCounts()
 
             if (snapshot.members.isNotEmpty()) {
                 val members = snapshot.members.mapNotNull { member ->
@@ -291,11 +291,10 @@ class SharedTagSyncCoordinator(
                     )
                 }
                 tagDao.upsertCrossRefs(refs)
-                refs.groupingBy { it.entryId }
-                    .eachCount()
-                    .forEach { (entryId, count) ->
-                        urlEntryDao.updateSharedReferenceCount(entryId, count)
-                    }
+                affectedEntryIds += refs.map { it.entryId }
+            }
+            if (affectedEntryIds.isNotEmpty()) {
+                urlEntryDao.recalculateSharedReferenceCounts(affectedEntryIds.toList())
             }
             urlEntryDao.deleteUnreferencedSharedOnlyEntries()
         }

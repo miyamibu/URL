@@ -22,8 +22,29 @@ AI-safe Export / MCP / ChatGPT-facing codeを、repo内検証と外部公開ゲ�
 4. Run release hygiene:
    - `bash scripts/check_release_hygiene.sh`
    - `bash scripts/create_clean_review_archive.sh`
+   - CI/PR repo gate: `bash scripts/check_launch_readiness.sh --level repo`; reviewed-main launch preflight uses `--level launch`.
 5. Re-run mobile UI contract when UI surfaces changed:
    - `python3 scripts/verify_mobile_ui_contract.py`
+
+## Contact-support independent outbox worker
+
+The `supabase/functions/contact-support-outbox/` function is a separately
+scheduled sender. It claims due `pending`/`failed` rows and expired
+`processing` leases through the service-role-only batch RPC, then completes or
+fails each row with its lease token. The database uses bounded exponential
+backoff (30 seconds through 1 hour) and rejects a Resend response that has no
+message ID.
+
+Required function secrets are `SUPABASE_URL`,
+`SUPABASE_SERVICE_ROLE_KEY`, `CONTACT_SUPPORT_WORKER_SECRET`,
+`RESEND_API_KEY`, `CONTACT_TO_EMAIL`, and `CONTACT_FROM_EMAIL`. The scheduler
+must send `Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>` and
+`x-contact-support-worker-secret: <CONTACT_SUPPORT_WORKER_SECRET>` over HTTPS.
+The request body is optional or `{"limit": 1..50}` and is capped at 8 KiB.
+
+Deployment and scheduler registration remain manual external gates. A local
+test or a successful function deployment does not prove Resend production
+delivery, provider-domain verification, or scheduled execution.
 
 ## Constraints
 - Do not commit, push, deploy, submit to stores, submit to OpenAI, or enter production secrets without explicit owner approval.

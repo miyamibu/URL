@@ -697,6 +697,23 @@ final class MetadataFetcherTests: XCTestCase {
     }
 }
 
+final class MediaNetworkBoundaryTests: XCTestCase {
+    func testPrivateLoopbackAndMetadataHostsAreBlocked() {
+        XCTAssertTrue(RinbamMediaNetworkBoundary.isBlockedHostLiteral("localhost"))
+        XCTAssertTrue(RinbamMediaNetworkBoundary.isBlockedHostLiteral("metadata.google.internal"))
+        XCTAssertTrue(RinbamMediaNetworkBoundary.isBlockedIPAddress("127.0.0.1"))
+        XCTAssertTrue(RinbamMediaNetworkBoundary.isBlockedIPAddress("169.254.169.254"))
+        XCTAssertTrue(RinbamMediaNetworkBoundary.isBlockedIPAddress("10.0.0.1"))
+        XCTAssertFalse(RinbamMediaNetworkBoundary.isBlockedIPAddress("8.8.8.8"))
+    }
+
+    func testImageMagicIsRequired() {
+        let png = Data([137, 80, 78, 71, 13, 10, 26, 10])
+        XCTAssertTrue(RinbamMediaNetworkBoundary.hasImageMagic(png))
+        XCTAssertFalse(RinbamMediaNetworkBoundary.hasImageMagic(Data("not-an-image".utf8)))
+    }
+}
+
 private final class MockURLProtocol: URLProtocol, @unchecked Sendable {
     struct Response: Sendable {
         let statusCode: Int

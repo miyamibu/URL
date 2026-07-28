@@ -42,4 +42,18 @@ enum SharedContainer {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory.appendingPathComponent("latest-share-report.json")
     }
+
+    static func rinbamMediaRootURL(create: Bool = true) throws -> URL {
+        let base = try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: create
+        )
+        let root = base.appendingPathComponent("RinbamMedia", isDirectory: true)
+        if create {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        }
+        return root
+    }
 }

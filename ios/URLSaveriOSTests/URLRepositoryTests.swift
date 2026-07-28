@@ -4,6 +4,7 @@ import XCTest
 
 final class URLRepositoryTests: XCTestCase {
     private var databaseURL: URL!
+    private var mediaRootURL: URL!
     private var repository: URLRepository!
 
     override func setUpWithError() throws {
@@ -11,7 +12,11 @@ final class URLRepositoryTests: XCTestCase {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         databaseURL = directory.appendingPathComponent("test.sqlite")
-        repository = try URLRepository(databaseURL: databaseURL)
+        mediaRootURL = directory.appendingPathComponent("RinbamMedia", isDirectory: true)
+        repository = try URLRepository(
+            databaseURL: databaseURL,
+            mediaCleanup: FileManagerURLRepositoryMediaCleanup(rootURL: mediaRootURL)
+        )
     }
 
     override func tearDownWithError() throws {
@@ -522,15 +527,22 @@ final class URLRepositoryTests: XCTestCase {
         XCTAssertEqual(visible.first?.sharedReferenceCount, 1)
     }
 
-    func testCleanupExpiredPendingDeleteKeepsSharedBackedCacheRow() throws {
+    func testCleanupExpiredPendingDeleteKeepsLiveSharedBackedRow() throws {
         let created = try repository.saveFromResolvedURL("https://example.com/keep-shared")
         let entryID = try XCTUnwrap(created.entryID)
-        let database = try SQLiteDatabase(databaseURL: databaseURL)
-
-        try database.execute(
+        let localTag = try XCTUnwrap(try repository.createLocalTag(name: "preserved-local"))
+        XCTAssertTrue(try repository.assignLocalTag(entryID: entryID, tagID: localTag.id))
+        try addLiveSharedReference(entryID: entryID, normalizedURL: "https://example.com/keep-shared")
+        let mediaDirectory = mediaRootURL.appendingPathComponent(String(entryID), isDirectory: true)
+        try FileManager.default.createDirectory(at: mediaDirectory, withIntermediateDirectories: true)
+        let media = mediaDirectory.appendingPathComponent("shared.mp4")
+        let temporary = mediaDirectory.appendingPathComponent(".shared.mp4.download")
+        try Data([1, 2, 3]).write(to: media)
+        try Data([4, 5, 6]).write(to: temporary)
+        try repository.database.execute(
             """
             UPDATE url_entries
-            SET shared_reference_count = 1
+            SET shared_reference_count = 0
             WHERE id = ?;
             """,
             binds: [sql(entryID)]
@@ -545,5 +557,123 @@ final class URLRepositoryTests: XCTestCase {
         XCTAssertEqual(retained.localProvenanceCount, 0)
         XCTAssertEqual(retained.sharedReferenceCount, 1)
         XCTAssertEqual(retained.recordState, .active)
+        XCTAssertEqual(
+            try repository.database.fetchInt(
+                "SELECT COUNT(*) FROM local_tag_entries WHERE entry_id = ?;",
+                binds: [sql(entryID)]
+            ),
+            0
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: media.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: temporary.path))
+    }
+
+    func testStalePendingDeleteLeavesLocalTagEntryAndMedia() throws {
+        let created = try repository.saveFromManualInput("https://example.com/stale-local-tag")
+        let entryID = try XCTUnwrap(created.entryID)
+        let localTag = try XCTUnwrap(try repository.createLocalTag(name: "stale-local"))
+        XCTAssertTrue(try repository.assignLocalTag(entryID: entryID, tagID: localTag.id))
+
+        let directory = mediaRootURL.appendingPathComponent(String(entryID), isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let media = directory.appendingPathComponent("stale.mp4")
+        try Data([1, 2, 3]).write(to: media)
+
+        let pendingUntil = try XCTUnwrap(try repository.markPendingDelete(entryID: entryID, gracePeriod: 60))
+        try repository.finalizePendingDelete(entryID: entryID, now: pendingUntil.addingTimeInterval(-1))
+
+        XCTAssertNotNil(try repository.loadEntry(id: entryID))
+        XCTAssertEqual(
+            try repository.database.fetchInt(
+                "SELECT COUNT(*) FROM local_tag_entries WHERE entry_id = ?;",
+                binds: [sql(entryID)]
+            ),
+            1
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: media.path))
+    }
+
+    func testFinalizePendingDeleteDeletesMediaAndTemporaryFilesAfterDeletedCommit() throws {
+        let created = try repository.saveFromManualInput("https://example.com/delete-media")
+        let entryID = try XCTUnwrap(created.entryID)
+        let directory = mediaRootURL.appendingPathComponent(String(entryID), isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let media = directory.appendingPathComponent("clip.mp4")
+        let temporary = directory.appendingPathComponent(".clip.mp4.download")
+        try Data([1, 2, 3]).write(to: media)
+        try Data([4, 5, 6]).write(to: temporary)
+
+        XCTAssertNotNil(try repository.markPendingDelete(entryID: entryID, gracePeriod: 1))
+        try repository.finalizePendingDelete(entryID: entryID, now: Date(timeIntervalSinceNow: 2))
+
+        XCTAssertNil(try repository.loadEntry(id: entryID))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: media.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: temporary.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
+    }
+
+    func testRestoreDoesNotCleanupMedia() throws {
+        let created = try repository.saveFromManualInput("https://example.com/restore-media")
+        let entryID = try XCTUnwrap(created.entryID)
+        let directory = mediaRootURL.appendingPathComponent(String(entryID), isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let media = directory.appendingPathComponent("clip.jpg")
+        try Data([1, 2, 3]).write(to: media)
+
+        XCTAssertNotNil(try repository.markPendingDelete(entryID: entryID, gracePeriod: 1))
+        XCTAssertTrue(try repository.restore(entryID: entryID))
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: media.path))
+    }
+
+    func testCleanupExpiredPendingDeletesCleansOnlyDeletedEntryMedia() throws {
+        let deleted = try repository.saveFromManualInput("https://example.com/batch-delete-media")
+        let preserved = try repository.saveFromManualInput("https://example.com/batch-preserved-media")
+        let deletedID = try XCTUnwrap(deleted.entryID)
+        let preservedID = try XCTUnwrap(preserved.entryID)
+        try addLiveSharedReference(entryID: preservedID, normalizedURL: "https://example.com/batch-preserved-media")
+
+        let deletedDirectory = mediaRootURL.appendingPathComponent(String(deletedID), isDirectory: true)
+        let preservedDirectory = mediaRootURL.appendingPathComponent(String(preservedID), isDirectory: true)
+        try FileManager.default.createDirectory(at: deletedDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: preservedDirectory, withIntermediateDirectories: true)
+        let deletedMedia = deletedDirectory.appendingPathComponent("deleted.mp4")
+        let preservedMedia = preservedDirectory.appendingPathComponent("preserved.mp4")
+        try Data([1]).write(to: deletedMedia)
+        try Data([2]).write(to: preservedMedia)
+
+        XCTAssertNotNil(try repository.markPendingDelete(entryID: deletedID, gracePeriod: 1))
+        XCTAssertNotNil(try repository.markPendingDelete(entryID: preservedID, gracePeriod: 1))
+        try repository.cleanupExpiredPendingDeletes(now: Date(timeIntervalSinceNow: 2))
+
+        XCTAssertNil(try repository.loadEntry(id: deletedID))
+        XCTAssertNotNil(try repository.loadEntry(id: preservedID))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: deletedMedia.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: preservedMedia.path))
+    }
+
+    private func addLiveSharedReference(entryID: Int64, normalizedURL: String) throws {
+        try repository.database.execute(
+            """
+            INSERT OR IGNORE INTO shared_tags (
+                auth_user_id, remote_tag_id, name, current_user_role, deleted_at, last_synced_at
+            ) VALUES (?, ?, ?, 'owner', NULL, NULL);
+            """,
+            binds: [sql("test-user"), sql("test-tag"), sql("共有タグ")]
+        )
+        try repository.database.execute(
+            """
+            INSERT OR REPLACE INTO shared_tag_urls (
+                auth_user_id, tag_remote_id, remote_url_id, normalized_url, raw_url, deleted_at
+            ) VALUES (?, ?, ?, ?, ?, NULL);
+            """,
+            binds: [
+                sql("test-user"),
+                sql("test-tag"),
+                sql("remote-url-\(entryID)"),
+                sql(normalizedURL),
+                sql(normalizedURL)
+            ]
+        )
     }
 }

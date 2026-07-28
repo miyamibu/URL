@@ -9,10 +9,10 @@ AI-friendly export と read-only MCP で、外部へ出るデータと出さな�
 ## Data Flow
 | Flow | User action | Data sent | Data not sent by default |
 |---|---|---|---|
-| Export ZIP / JSON | Export画面でユーザーが共有/保存 | title, original/normalized/open URL, provider permalink, author, body summary/excerpt, memo excerpt, tags, timestamps, metadata status | full fetched body, raw prompt, app-owned production credentials, shared-tag members。既知のsecret-likeパターンは伏せ字にするが、未知の秘密はユーザー確認が必要 |
+| 通常Export / Backup ZIP・JSON | Export画面でユーザーがバックアップ/レビュー用に保存 | 標準manifest、通常のentry/tag ID、選択条件、保存データ。既存のbody全文除外は維持する | ChatGPT Handoff用のAI-safe契約ではない。通常ExportをAI-safeと呼ばず、AI共有へ使わない |
 | ChatGPT manual handoff ZIP | Export画面で自作タグと対象URL/出力内容を確認し、未知の秘密がないことを明示確認してOS共有を実行 | eligibleなACTIVE/local URLのAI-safe export項目、`publicSafeId`、自作タグ名、保存時刻。既知のemail/phone/token-like/Supabase/JWT/local-pathパターンは伏せ字 | 質問文、ローカルentry/tag ID、full fetched body、raw prompt、app-owned production credentials、shared-tag entries/members、archived/pending-delete entries。未知の秘密は自動検出を保証しない |
-| MCP search | Authenticated MCP request, endpoint explicitly enabled | matching saved-link summaries, tags, publicSafeId, URL, author/body kind metadata | raw fetched_body, raw DB UUID, write operations, live URL refetch |
-| MCP fetch | Authenticated MCP request by publicSafeId, endpoint explicitly enabled | one saved-link summary text, saved snapshot notice, metadata | raw fetched_body, raw prompt, write operations, live URL refetch |
+| MCP search | Authenticated MCP request, endpoint explicitly enabled | ACTIVE-only matching saved-link summaries, local tags, publicSafeId, URL, author/body kind metadata | deleted/disabled/PENDING_DELETE/archived records, raw fetched_body, raw DB UUID, business-data writes, live URL refetch |
+| MCP fetch | Authenticated MCP request by publicSafeId, endpoint explicitly enabled | one ACTIVE saved-link summary text, saved snapshot notice, metadata | deleted/disabled/PENDING_DELETE/archived records, raw fetched_body, raw prompt, business-data writes, live URL refetch |
 | AI receipt | Internal/debug AI preview flow | action kind, destination, sent/blocked publicSafeIds, redaction profile, size buckets | raw prompts, raw bodies, tokens, attachments, exact request/response bytes |
 | AI draft/diff | Internal/debug AI preview flow | user-visible draft body and proposed userTitle/memo diffs | automatic DB mutation; changes apply only after explicit confirmation |
 
@@ -22,6 +22,8 @@ AI-friendly export と read-only MCP で、外部へ出るデータと出さな�
 - Archived and pending-delete entries are AI-ineligible by default unless a future explicit flow opts them in.
 - Production secrets stay in server or ignored config only.
 - MCP is default disabled unless `URLSAVER_MCP_ENABLED=true`.
+- MCP search/list use user-bound DB RPCs instead of an application-side latest-200/latest-500 scan. Fetch uses `(user_id, public_safe_id)` equality lookup. A distributed per-user rate-limit RPC fails closed when unavailable.
+- MCP rejects unknown input fields, sanitizes outputs recursively, and returns no response body for JSON-RPC notifications.
 - Receipt/Draft/Diff are local-only and must be cleared by local data/account deletion flows.
 - AI透明化のentry/previewは Android の `DEBUG && AI_TRANSPARENCY_ENABLED`、iOS の `DEBUG` と Info.plist flag に限定された Debug-only UI で、通常のRelease UIには出さない。
 - MCP/Store/Supabase live は未検証の外部ゲートであり、repo内のローカル実装/検証とは分離する。

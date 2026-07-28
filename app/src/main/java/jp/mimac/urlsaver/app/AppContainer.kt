@@ -51,12 +51,14 @@ import jp.mimac.urlsaver.data.UrlRepository
 import jp.mimac.urlsaver.data.DataStoreUserProfileStore
 import jp.mimac.urlsaver.data.DefaultUsageSummaryDataSource
 import jp.mimac.urlsaver.data.DefaultVideoRepository
+import jp.mimac.urlsaver.data.PendingDeleteMediaCleanup
 import jp.mimac.urlsaver.data.UsageSummaryDataSource
 import jp.mimac.urlsaver.domain.DefaultEntitlementResolver
 import jp.mimac.urlsaver.domain.BuildVariantEntitlementOverrides
 import jp.mimac.urlsaver.util.AppClock
 import jp.mimac.urlsaver.util.SystemAppClock
 import jp.mimac.urlsaver.video.BackendVideoResolver
+import jp.mimac.urlsaver.video.AndroidPendingDeleteMediaCleanup
 import jp.mimac.urlsaver.worker.MetadataFetcher
 import jp.mimac.urlsaver.worker.UrlSaverWorkerFactory
 import kotlinx.coroutines.CoroutineScope
@@ -241,6 +243,9 @@ class AppContainer(context: Context) {
     private val workManager: WorkManager by lazy {
         WorkManager.getInstance(appContext)
     }
+    private val pendingDeleteMediaCleanup: PendingDeleteMediaCleanup by lazy {
+        AndroidPendingDeleteMediaCleanup.create(appContext, workManager)
+    }
     val videoRepository: DefaultVideoRepository by lazy {
         DefaultVideoRepository(
             appContext = appContext,
@@ -272,6 +277,8 @@ class AppContainer(context: Context) {
             clock = clock,
             scheduler = scheduler,
             usageSummaryDataSource = usageSummaryDataSource,
+            pendingDeleteMediaCleanup = pendingDeleteMediaCleanup,
+            videoAssetDao = database.videoAssetDao(),
         )
     }
 

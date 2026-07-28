@@ -15,13 +15,21 @@ pass() {
   printf 'OK %s\n' "$1"
 }
 
-tracked_forbidden_regex='(^|/)(local\.properties|.*\.ipa|.*\.dSYM(/.*)?|.*\.mobileprovision|.*\.xcarchive(/.*)?|.*\.db|.*\.sqlite|.*\.sqlite3|.*\.tgz|.*\.tar\.gz)$|^ios/build/|^app/build/|^build/|^ios/Config/URLSaverSecrets\.xcconfig$'
+tracked_forbidden_regex='(^|/)(local\.properties|\.env($|\.)|.*\.ipa|.*\.dSYM(/.*)?|.*\.mobileprovision|.*\.xcarchive(/.*)?|.*\.db|.*\.sqlite|.*\.sqlite3|.*\.tgz|.*\.tar\.gz)$|^ios/build/|^app/build/|^build/|^ios/Config/URLSaverSecrets\.xcconfig$'
 tracked_forbidden="$(git ls-files | grep -E "$tracked_forbidden_regex" || true)"
 if [[ -n "$tracked_forbidden" ]]; then
   fail "tracked forbidden release artifact or secret-like file:"
   printf '%s\n' "$tracked_forbidden" >&2
 else
   pass "no tracked forbidden release artifacts"
+fi
+
+untracked_forbidden="$(git ls-files --others --exclude-standard | grep -E "$tracked_forbidden_regex" || true)"
+if [[ -n "$untracked_forbidden" ]]; then
+  printf '%s\n' "$untracked_forbidden" >&2
+  fail "untracked non-ignored release artifact or secret-like file"
+else
+  pass "no untracked non-ignored forbidden release artifacts"
 fi
 
 if [[ -f ios/Config/URLSaverSecrets.local-only.xcconfig ]]; then
@@ -42,10 +50,43 @@ if grep -R -E -q '(@AppStorage|UserDefaults)' ios/URLSaverShared ios/URLSaveriOS
   privacy_required_reason_usage_found=true
 fi
 
+plist_is_valid() {
+  local plist_path="$1"
+  if command -v plutil >/dev/null 2>&1; then
+    plutil -lint "$plist_path" >/dev/null 2>&1
+  else
+    python3 - "$plist_path" <<'PY'
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as handle:
+    plistlib.load(handle)
+PY
+  fi
+}
+
+plist_value() {
+  local plist_path="$1"
+  local key="$2"
+  if [[ -x /usr/libexec/PlistBuddy ]]; then
+    /usr/libexec/PlistBuddy -c "Print :$key" "$plist_path" 2>/dev/null || true
+  else
+    python3 - "$plist_path" "$key" <<'PY'
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as handle:
+    value = plistlib.load(handle).get(sys.argv[2])
+if value is not None:
+    print(value)
+PY
+  fi
+}
+
 for privacy_manifest in ios/URLSaveriOS/PrivacyInfo.xcprivacy ios/URLSaverShareExtension/PrivacyInfo.xcprivacy; do
   if [[ ! -f "$privacy_manifest" ]]; then
     fail "NO_GO missing iOS privacy manifest: $privacy_manifest"
-  elif ! plutil -lint "$privacy_manifest" >/dev/null 2>&1; then
+  elif ! plist_is_valid "$privacy_manifest"; then
     fail "NO_GO invalid iOS privacy manifest: $privacy_manifest"
   else
     accessed_api_block="$(grep -A1 -F '<key>NSPrivacyAccessedAPITypes</key>' "$privacy_manifest" || true)"
@@ -80,13 +121,17 @@ else
   fail "NO_GO reset-password route is missing a strict hash-based CSP"
 fi
 
-grep -q 'applicationId = "jp.miyamibu.urlalbum"' app/build.gradle.kts \
-  && pass "canonical Android applicationId is configured" \
-  || fail "canonical Android applicationId is missing"
+if grep -q 'applicationId = "jp.miyamibu.urlalbum"' app/build.gradle.kts; then
+  pass "canonical Android applicationId is configured"
+else
+  fail "canonical Android applicationId is missing"
+fi
 
-grep -q 'buildConfigField("boolean", "ADS_ENABLED", "false")' app/build.gradle.kts \
-  && pass "release ADS_ENABLED=false is configured" \
-  || fail "release ADS_ENABLED=false is missing"
+if grep -q 'buildConfigField("boolean", "ADS_ENABLED", "false")' app/build.gradle.kts; then
+  pass "release ADS_ENABLED=false is configured"
+else
+  fail "release ADS_ENABLED=false is missing"
+fi
 
 if rg -n 'com\.google\.android\.gms\.ads|play-services-ads' app/src/main app/build.gradle.kts >/dev/null 2>&1; then
   fail "NO_GO release source still references Google Mobile Ads"
@@ -94,14 +139,16 @@ else
   pass "release source has no Google Mobile Ads dependency or type reference"
 fi
 
-grep -q 'tools:node="remove"' app/src/release/AndroidManifest.xml \
-  && pass "release manifest removes debug/ad-only declarations" \
-  || fail "release manifest removal rules are missing"
+if grep -q 'tools:node="remove"' app/src/release/AndroidManifest.xml; then
+  pass "release manifest removes debug/ad-only declarations"
+else
+  fail "release manifest removal rules are missing"
+fi
 
-ios_app_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' ios/URLSaveriOS/Info.plist 2>/dev/null || true)"
-ios_share_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' ios/URLSaverShareExtension/Info.plist 2>/dev/null || true)"
-ios_app_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' ios/URLSaveriOS/Info.plist 2>/dev/null || true)"
-ios_share_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' ios/URLSaverShareExtension/Info.plist 2>/dev/null || true)"
+ios_app_version="$(plist_value ios/URLSaveriOS/Info.plist CFBundleShortVersionString)"
+ios_share_version="$(plist_value ios/URLSaverShareExtension/Info.plist CFBundleShortVersionString)"
+ios_app_build="$(plist_value ios/URLSaveriOS/Info.plist CFBundleVersion)"
+ios_share_build="$(plist_value ios/URLSaverShareExtension/Info.plist CFBundleVersion)"
 if [[ -n "$ios_app_version" \
   && "$ios_app_version" == "$ios_share_version" \
   && -n "$ios_app_build" \
@@ -111,9 +158,23 @@ else
   fail "iOS app and share extension version/build do not match"
 fi
 
-[[ -f docs/release/release-ops-readiness-2026-07-09.md ]] \
-  && pass "current release readiness tracker exists" \
-  || fail "current release readiness tracker is missing"
+if [[ -f docs/release/release-ops-readiness-2026-07-09.md ]]; then
+  pass "current release readiness tracker exists"
+else
+  fail "current release readiness tracker is missing"
+fi
+
+if [[ -f scripts/check_secret_hygiene.sh ]]; then
+  bash scripts/check_secret_hygiene.sh || fail "secret hygiene checks failed"
+else
+  fail "secret hygiene verifier is missing"
+fi
+
+if [[ -f scripts/verify_clean_review_archive.sh ]]; then
+  pass "clean review archive verifier exists"
+else
+  fail "clean review archive verifier is missing"
+fi
 
 if [[ "$failures" -gt 0 ]]; then
   printf 'FAIL release hygiene: %s issue(s)\n' "$failures" >&2

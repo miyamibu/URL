@@ -39,10 +39,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.HorizontalPager
@@ -138,10 +140,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -206,6 +211,7 @@ import jp.mimac.urlsaver.ui.components.OrbitPanel
 import jp.mimac.urlsaver.ui.components.OrbitPanelTone
 import jp.mimac.urlsaver.ui.components.OrbitSectionLabel
 import jp.mimac.urlsaver.ui.components.EntryCard
+import jp.mimac.urlsaver.ui.components.SafeRemoteURLImage
 import jp.mimac.urlsaver.ui.components.ServiceBadge
 import jp.mimac.urlsaver.ui.components.ServiceFilterRow
 import jp.mimac.urlsaver.ui.components.TagFilterRow
@@ -395,7 +401,7 @@ private fun orbitTopAppBarColors() = TopAppBarDefaults.topAppBarColors(
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-private fun compactTopAppBarInsets() = TopAppBarDefaults.windowInsets.only(WindowInsetsSides.Horizontal)
+private fun compactTopAppBarInsets() = TopAppBarDefaults.windowInsets
 
 private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
     context: Context,
@@ -796,6 +802,7 @@ private fun MainScreen(
     var showMainMenu by rememberSaveable { mutableStateOf(false) }
     var showLocalTagManagerSheet by rememberSaveable { mutableStateOf(false) }
     var pendingDeleteLocalTag by remember { mutableStateOf<TagWithCount?>(null) }
+    var pendingBatchDeleteCount by rememberSaveable { mutableStateOf<Int?>(null) }
     var selectedEntryIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var previousTopEntryId by remember { mutableStateOf<Long?>(null) }
     var previousVisibleEntryCount by remember { mutableStateOf(0) }
@@ -836,7 +843,7 @@ private fun MainScreen(
     LaunchedEffect(uiState.entries) {
         val visibleIds = uiState.entries.map { it.id }.toSet()
         selectedEntryIds = selectedEntryIds.intersect(visibleIds)
-        if (selectedEntryIds.isEmpty()) {
+        if (selectionModeActive && visibleIds.isEmpty()) {
             selectionModeActive = false
         }
     }
@@ -1194,7 +1201,14 @@ private fun MainScreen(
         }
     }
 
+    fun requestDeleteSelectedEntries() {
+        if (selectedEntryIds.isNotEmpty()) {
+            pendingBatchDeleteCount = selectedEntryIds.size
+        }
+    }
+
     fun deleteSelectedEntries() {
+        pendingBatchDeleteCount = null
         scope.launch {
             val pendingDeletions = viewModel.markPendingDeleteEntries(selectedEntryIds)
             if (pendingDeletions.isNotEmpty()) {
@@ -1242,9 +1256,8 @@ private fun MainScreen(
     }
 
     fun startSelectionFromVisibleEntries() {
-        val visibleEntryIds = displayedUiState.entries.map { it.id }.toSet()
-        selectedEntryIds = visibleEntryIds
-        selectionModeActive = visibleEntryIds.isNotEmpty()
+        selectedEntryIds = emptySet()
+        selectionModeActive = displayedUiState.entries.isNotEmpty()
     }
 
     fun deleteLocalTag(tag: TagWithCount) {
@@ -1366,6 +1379,24 @@ private fun MainScreen(
             },
             dismissButton = {
                 TextButton(onClick = { pendingDeleteLocalTag = null }) {
+                    Text("キャンセル")
+                }
+            },
+        )
+    }
+
+    pendingBatchDeleteCount?.let { count ->
+        AlertDialog(
+            onDismissRequest = { pendingBatchDeleteCount = null },
+            title = { Text("選択したURLを削除しますか？") },
+            text = { Text("${count}件を削除待ちに移動します。5秒以内なら元に戻せます。") },
+            confirmButton = {
+                TextButton(onClick = { deleteSelectedEntries() }) {
+                    Text("削除する")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingBatchDeleteCount = null }) {
                     Text("キャンセル")
                 }
             },
@@ -1819,7 +1850,7 @@ private fun MainScreen(
                                 batchLocalTagSheetVisible = true
                             }
                         },
-                        onDeleteSelectedEntries = { deleteSelectedEntries() },
+                        onDeleteSelectedEntries = { requestDeleteSelectedEntries() },
                         onOpenDetail = onOpenDetail,
                         onArchiveActiveEntry = { entryId -> archiveActiveEntry(entryId) },
                         onPendingDeleteActiveEntry = { entryId -> pendingDeleteActiveEntry(entryId) },
@@ -1831,8 +1862,7 @@ private fun MainScreen(
         if (showMainBottomBar) {
             MainBottomNavBar(
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .offset(y = 4.dp),
+                    .align(Alignment.BottomCenter),
                 onOpenGroups = {
                     showUsageGuide = false
                     mainPane = MainPane.GROUPS
@@ -1869,7 +1899,13 @@ private fun ManualInputSheet(
     if (!visible) return
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .imePadding()
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+        ) {
             OutlinedTextField(
                 value = inputText,
                 onValueChange = onInputChange,
@@ -1941,7 +1977,13 @@ private fun ManualInputSheet(
                                 MaterialTheme.colorScheme.onSurface
                             },
                             border = BorderStroke(1.dp, OrbitTokens.outline),
-                            modifier = Modifier.clickable { onSelectLocalTag(tag.id) },
+                            modifier = Modifier
+                                .heightIn(min = 48.dp)
+                                .clickable { onSelectLocalTag(tag.id) }
+                                .semantics {
+                                    this.selected = selected
+                                    stateDescription = if (selected) "選択中" else "未選択"
+                                },
                         ) {
                             Text(
                                 text = tag.name,
@@ -2050,10 +2092,20 @@ private fun LocalTagManagementSheet(
                             color = MaterialTheme.colorScheme.surfaceVariant,
                             contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                             border = BorderStroke(1.dp, OrbitTokens.outline),
-                            modifier = Modifier.combinedClickable(
-                                onClick = {},
-                                onDoubleClick = { onRequestRename(tag) },
-                            ),
+                            modifier = Modifier
+                                .heightIn(min = 48.dp)
+                                .combinedClickable(
+                                    onClick = {},
+                                    onLongClick = { onRequestRename(tag) },
+                                )
+                                .semantics {
+                                    customActions = listOf(
+                                        CustomAccessibilityAction("名前を変更") {
+                                            onRequestRename(tag)
+                                            true
+                                        },
+                                    )
+                                },
                         ) {
                             Row(
                                 modifier = Modifier.padding(start = 14.dp, top = 8.dp, end = 8.dp, bottom = 8.dp),
@@ -2076,7 +2128,7 @@ private fun LocalTagManagementSheet(
                                 }
                                 IconButton(
                                     onClick = { onRequestDelete(tag) },
-                                    modifier = Modifier.height(40.dp),
+                                    modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
                                 ) {
                                     Icon(
                                         imageVector = Icons.Outlined.Delete,
@@ -2234,7 +2286,7 @@ private fun UsageGuideContent(
                 iconColor = Color(0xFFF97316),
                 iconBackground = Color(0xFFFFF2DF),
                 title = "自作タグ名を変更",
-                body = "自作タグをダブルタップすると、名前を変更できます。",
+                body = "タグ管理では長押し、TalkBackのアクション、またはメニューから名前を変更できます。",
             ) {
                 GuideRenameTagPreview()
             }
@@ -2449,7 +2501,7 @@ private fun GuideSearchPreview() {
 @Composable
 private fun GuideRenameTagPreview() {
     GuidePreviewSurface {
-        Text("ダブルタップ", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+        Text("長押し / アクション", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
         Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
             MiniChip("旅行", Color(0xFFE5F6E7), Color(0xFF128A2E))
             MiniChip("レシピ", Color(0xFFEAF2FF), MaterialTheme.colorScheme.primary)
@@ -3696,6 +3748,7 @@ private fun EntrySelectionBar(
         modifier = Modifier
             .padding(horizontal = 12.dp)
             .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
             .background(
                 color = OrbitTokens.panelSoft,
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(OrbitTokens.radiusChip),
@@ -3715,12 +3768,17 @@ private fun EntrySelectionBar(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .widthIn(min = 32.dp)
+                .semantics {
+                    contentDescription = "選択中 ${selectedCount}件"
+                    stateDescription = "${selectedCount}件選択中"
+                },
         )
 
         Row(
             modifier = Modifier
-                .height(36.dp)
+                .heightIn(min = 48.dp)
                 .background(OrbitTokens.panelStrong, buttonShape)
                 .clickable(enabled = !allSelected, onClick = onSelectAll)
                 .padding(horizontal = 12.dp)
@@ -3840,13 +3898,19 @@ private fun BatchLocalTagAssignmentSheet(
                                     1.dp,
                                     if (selected) MaterialTheme.colorScheme.primary else OrbitTokens.outline,
                                 ),
-                                modifier = Modifier.clickable {
-                                    selectedTagIds = if (selected) {
-                                        selectedTagIds - tag.id
-                                    } else {
-                                        selectedTagIds + tag.id
+                                modifier = Modifier
+                                    .heightIn(min = 48.dp)
+                                    .clickable {
+                                        selectedTagIds = if (selected) {
+                                            selectedTagIds - tag.id
+                                        } else {
+                                            selectedTagIds + tag.id
+                                        }
                                     }
-                                },
+                                    .semantics {
+                                        this.selected = selected
+                                        stateDescription = if (selected) "選択中" else "未選択"
+                                    },
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
@@ -3906,8 +3970,7 @@ private fun SelectionIconButton(
 ) {
     Box(
         modifier = Modifier
-            .width(42.dp)
-            .height(36.dp)
+            .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
             .background(
                 color = OrbitTokens.panelStrong,
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(50),
@@ -3951,7 +4014,20 @@ private fun SwipeableMainEntry(
 
     SwipeToDismissBox(
         state = dismissState,
-        modifier = Modifier.testTag("main_entry_swipe_${entry.id}"),
+        modifier = Modifier
+            .testTag("main_entry_swipe_${entry.id}")
+            .semantics {
+                customActions = listOf(
+                    CustomAccessibilityAction("アーカイブ") {
+                        onSwipeAction(MainSwipeAction.ARCHIVE)
+                        true
+                    },
+                    CustomAccessibilityAction("削除") {
+                        onSwipeAction(MainSwipeAction.PENDING_DELETE)
+                        true
+                    },
+                )
+            },
         enableDismissFromStartToEnd = true,
         enableDismissFromEndToStart = true,
         backgroundContent = {
@@ -4065,7 +4141,20 @@ private fun SwipeableArchiveEntry(
 
     SwipeToDismissBox(
         state = dismissState,
-        modifier = Modifier.testTag("archive_entry_swipe_${entry.id}"),
+        modifier = Modifier
+            .testTag("archive_entry_swipe_${entry.id}")
+            .semantics {
+                customActions = listOf(
+                    CustomAccessibilityAction("戻す") {
+                        onSwipeAction(ArchiveSwipeAction.RESTORE)
+                        true
+                    },
+                    CustomAccessibilityAction("削除") {
+                        onSwipeAction(ArchiveSwipeAction.PENDING_DELETE)
+                        true
+                    },
+                )
+            },
         enableDismissFromStartToEnd = true,
         enableDismissFromEndToStart = true,
         backgroundContent = {
@@ -5155,9 +5244,10 @@ private fun DetailScreen(
                         tone = OrbitPanelTone.STRONG,
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
                     ) {
-                        AsyncImage(
+                        SafeRemoteURLImage(
                             model = current.thumbnailUrl,
                             contentDescription = "サムネイル",
+                            contentScale = ContentScale.Crop,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(220.dp),
@@ -6394,7 +6484,7 @@ private fun DetailTagValuePill(
         if (onRemove != null) {
             IconButton(
                 onClick = onRemove,
-                modifier = Modifier.size(36.dp),
+                modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
             ) {
                 Icon(
                     imageVector = Icons.Outlined.Close,

@@ -62,8 +62,37 @@ interface UrlEntryDao {
     @Query("DELETE FROM url_entries WHERE id = :entryId")
     suspend fun deleteById(entryId: Long)
 
-    @Query("DELETE FROM url_entries WHERE recordState = 'PENDING_DELETE' AND pendingDeletionUntil IS NOT NULL AND pendingDeletionUntil <= :now")
-    suspend fun cleanupExpiredPending(now: Long)
+    @Query(
+        """
+        DELETE FROM url_entries
+        WHERE id = :entryId
+          AND recordState = 'PENDING_DELETE'
+          AND pendingDeletionUntil IS NOT NULL
+          AND pendingDeletionUntil <= :now
+        """,
+    )
+    suspend fun deleteIfPendingDeleteDue(entryId: Long, now: Long): Int
+
+    @Query(
+        """
+        UPDATE url_entries
+        SET localProvenanceCount = 0,
+            sharedReferenceCount = :sharedReferenceCount,
+            recordState = 'ACTIVE',
+            archivedAt = NULL,
+            pendingDeletionUntil = NULL,
+            updatedAt = :now
+        WHERE id = :entryId
+          AND recordState = 'PENDING_DELETE'
+          AND pendingDeletionUntil IS NOT NULL
+          AND pendingDeletionUntil <= :now
+        """,
+    )
+    suspend fun preserveSharedPendingDeleteIfDue(
+        entryId: Long,
+        sharedReferenceCount: Int,
+        now: Long,
+    ): Int
 
     @Query("SELECT * FROM url_entries WHERE recordState = 'PENDING_DELETE' AND pendingDeletionUntil IS NOT NULL")
     suspend fun findPendingDeleteEntries(): List<UrlEntryEntity>
@@ -146,22 +175,38 @@ interface UrlEntryDao {
     @Query(
         """
         UPDATE url_entries
-        SET sharedReferenceCount = 0
-        WHERE sharedReferenceCount != 0
+        SET sharedReferenceCount = (
+            SELECT COUNT(*)
+            FROM tag_url_cross_refs AS ref
+            INNER JOIN tags AS tag ON tag.id = ref.tagId
+            WHERE ref.entryId = url_entries.id
+              AND ref.scope = 'SYNCED'
+              AND ref.deletedAt IS NULL
+              AND tag.scope = 'SYNCED'
+              AND tag.deletedAt IS NULL
+        )
+        WHERE id IN (:entryIds)
         """
     )
-    suspend fun resetSharedReferenceCounts()
+    suspend fun recalculateSharedReferenceCounts(entryIds: List<Long>)
 
     @Query(
         """
-        UPDATE url_entries
-        SET sharedReferenceCount = :count
-        WHERE id = :entryId
-        """
+        DELETE FROM url_entries
+        WHERE localProvenanceCount = 0
+          AND recordState != 'PENDING_DELETE'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM tag_url_cross_refs AS ref
+              INNER JOIN tags AS tag ON tag.id = ref.tagId
+              WHERE ref.entryId = url_entries.id
+                AND ref.scope = 'SYNCED'
+                AND ref.deletedAt IS NULL
+                AND tag.scope = 'SYNCED'
+                AND tag.deletedAt IS NULL
+          )
+        """,
     )
-    suspend fun updateSharedReferenceCount(entryId: Long, count: Int)
-
-    @Query("DELETE FROM url_entries WHERE localProvenanceCount = 0 AND sharedReferenceCount = 0")
     suspend fun deleteUnreferencedSharedOnlyEntries()
 
     @Transaction

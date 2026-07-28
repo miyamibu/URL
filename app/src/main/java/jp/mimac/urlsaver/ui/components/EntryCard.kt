@@ -32,9 +32,11 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
 import jp.mimac.urlsaver.data.UrlEntryEntity
 import jp.mimac.urlsaver.domain.ContentContext
 import jp.mimac.urlsaver.domain.EntryCardDisplayMode
@@ -81,7 +83,11 @@ fun EntryCard(
             .entryCardClickable(
                 onClick = onClick,
                 onLongClick = onLongClick,
-            ),
+            )
+            .semantics {
+                this.selected = selected
+                stateDescription = if (selected) "選択中" else "未選択"
+            },
         shape = RoundedCornerShape(OrbitTokens.radiusPanel),
         color = if (selected) OrbitTokens.panelStrong else MaterialTheme.colorScheme.surface,
         border = BorderStroke(
@@ -98,7 +104,7 @@ fun EntryCard(
                 ),
         ) {
             if (showThumbnail) {
-                AsyncImage(
+                SafeRemoteURLImage(
                     model = entry.thumbnailUrl,
                     contentDescription = "サムネイル",
                     contentScale = ContentScale.Crop,

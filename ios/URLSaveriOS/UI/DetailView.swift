@@ -144,7 +144,7 @@ struct DetailView: View {
                                             Image(systemName: isEditingTitle ? "xmark" : "pencil")
                                                 .font(.system(size: 14, weight: .bold))
                                                 .foregroundStyle(Color.white.opacity(0.85))
-                                                .frame(width: 42, height: 42)
+                                                .frame(width: 44, height: 44)
                                         }
                                     }
 
@@ -573,7 +573,7 @@ private struct DetailThumbnailImage: View {
     }
 
     private var originalThumbnail: some View {
-        AsyncImage(url: url) { image in
+        RemoteURLImage(url: url) { image in
             image.resizable().scaledToFill()
         } placeholder: {
             Rectangle().fill(AppPalette.surfaceSoft)
@@ -583,7 +583,7 @@ private struct DetailThumbnailImage: View {
     }
 
     private var tiktokThumbnail: some View {
-        AsyncImage(url: url) { image in
+        RemoteURLImage(url: url) { image in
             image.resizable().scaledToFit()
         } placeholder: {
             Rectangle().fill(AppPalette.surfaceSoft)
@@ -1213,11 +1213,11 @@ private struct DetailTagEditButton: View {
     var body: some View {
         Button(action: action) {
             Text("編集")
-                .font(.system(size: 15, weight: .heavy, design: .rounded))
+                .font(.subheadline.weight(.heavy))
                 .foregroundStyle(Color.white.opacity(0.95))
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
-                .frame(maxWidth: .infinity, minHeight: 42, maxHeight: 42)
+                .frame(maxWidth: .infinity, minHeight: 44, maxHeight: 44)
                 .background(AppPalette.panelStrong, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .buttonStyle(.plain)
@@ -1234,19 +1234,19 @@ private struct DetailTagValuePill: View {
     var body: some View {
         HStack(spacing: 5) {
             Text(text)
-                .font(.system(size: isEmpty ? 13 : 15, weight: isEmpty ? .medium : .bold))
+                .font(isEmpty ? .footnote.weight(.medium) : .body.weight(.bold))
                 .foregroundStyle(isEmpty ? AppPalette.textSecondary : AppPalette.textPrimary)
                 .lineLimit(2)
                 .minimumScaleFactor(0.78)
                 .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity, minHeight: 42, maxHeight: 42)
+                .frame(maxWidth: .infinity, minHeight: 44, maxHeight: 44)
 
             if let onRemove {
                 Button(action: onRemove) {
                     Image(systemName: "xmark")
                         .font(.system(size: 12, weight: .heavy))
                         .foregroundStyle(AppPalette.textSecondary)
-                        .frame(width: 30, height: 30)
+                        .frame(width: 44, height: 44)
                         .background(AppPalette.background.opacity(0.7), in: Circle())
                 }
                 .buttonStyle(.plain)

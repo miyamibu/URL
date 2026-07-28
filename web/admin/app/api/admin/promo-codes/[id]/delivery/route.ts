@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/auth";
+import { assertCapability, requireAdmin } from "@/lib/auth";
 import { requireEnv } from "@/lib/env";
 import { createServiceSupabaseClient } from "@/lib/supabase";
 
@@ -15,7 +15,8 @@ function asErrorResponse(error: unknown): Response {
 
 export async function GET(request: NextRequest, { params }: Params) {
   try {
-    await requireAdmin(request);
+    const admin = await requireAdmin(request);
+    assertCapability(admin, "billing.manage");
     const { id } = await params;
     const supabase = createServiceSupabaseClient();
     const { data: code, error } = await supabase

@@ -2,6 +2,7 @@ package jp.mimac.urlsaver
 
 import android.content.Intent
 import jp.mimac.urlsaver.data.EntryCardDisplayModeStore
+import jp.mimac.urlsaver.data.PendingDeleteFinalizationResult
 import jp.mimac.urlsaver.data.SaveMemoResult
 import jp.mimac.urlsaver.data.SaveTitleResult
 import jp.mimac.urlsaver.data.UrlEntryEntity
@@ -64,7 +65,8 @@ class ArchiveViewModelTest {
 
         override suspend fun unarchive(entryId: Long): Boolean = false
 
-        override suspend fun finalizePendingDelete(entryId: Long) = Unit
+        override suspend fun finalizePendingDelete(entryId: Long): PendingDeleteFinalizationResult =
+            PendingDeleteFinalizationResult.Stale
 
         override suspend fun cleanupExpiredPendingDeletes() = Unit
 

@@ -8,7 +8,12 @@ import jp.mimac.urlsaver.data.DefaultUrlRepository
 import jp.mimac.urlsaver.data.DefaultUsageSummaryDataSource
 import jp.mimac.urlsaver.data.MetadataScheduler
 import jp.mimac.urlsaver.data.MetadataUpdate
+import jp.mimac.urlsaver.data.PendingDeleteMediaCleanup
+import jp.mimac.urlsaver.data.PendingDeleteFinalizationResult
+import jp.mimac.urlsaver.data.TagEntity
+import jp.mimac.urlsaver.data.TagUrlCrossRef
 import jp.mimac.urlsaver.data.UrlEntryEntity
+import jp.mimac.urlsaver.data.VideoAssetEntity
 import jp.mimac.urlsaver.domain.ContentContext
 import jp.mimac.urlsaver.domain.MetadataError
 import jp.mimac.urlsaver.domain.MetadataBodyKind
@@ -16,11 +21,17 @@ import jp.mimac.urlsaver.domain.MetadataState
 import jp.mimac.urlsaver.domain.RecordState
 import jp.mimac.urlsaver.domain.ServiceType
 import jp.mimac.urlsaver.domain.ShareSaveResult
+import jp.mimac.urlsaver.domain.SharedTagScope
+import jp.mimac.urlsaver.domain.SharedTagSyncStatus
 import jp.mimac.urlsaver.util.AppClock
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -32,6 +43,7 @@ class RepositoryBehaviorTest {
 
     private lateinit var db: AppDatabase
     private lateinit var repository: DefaultUrlRepository
+    private lateinit var mediaCleanup: RecordingPendingDeleteMediaCleanup
     private val scheduler = FakeScheduler()
     private val clock = FakeClock(1_000L)
 
@@ -41,6 +53,7 @@ class RepositoryBehaviorTest {
         db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
             .allowMainThreadQueries()
             .build()
+        mediaCleanup = RecordingPendingDeleteMediaCleanup(db)
 
         repository = DefaultUrlRepository(
             database = db,
@@ -53,6 +66,8 @@ class RepositoryBehaviorTest {
                 tagDao = db.tagDao(),
                 authSessionProvider = FakeAuthSessionProvider(),
             ),
+            pendingDeleteMediaCleanup = mediaCleanup,
+            videoAssetDao = db.videoAssetDao(),
         )
     }
 
@@ -99,6 +114,168 @@ class RepositoryBehaviorTest {
         assertEquals(RecordState.ARCHIVED, restored.recordState)
         assertEquals(archivedAt, restored.archivedAt)
         assertEquals(null, restored.pendingDeletionUntil)
+    }
+
+    @Test
+    fun finalizePendingDelete_localOnlyDue_deletesRow() = runBlocking {
+        val entryId = createEntry("https://example.com/pending-local-only")
+
+        val pendingUntil = repository.markPendingDelete(entryId, gracePeriodMillis = 5_000L)
+        assertEquals(6_000L, pendingUntil)
+        clock.now = 6_000L
+
+        assertEquals(
+            PendingDeleteFinalizationResult.Deleted,
+            repository.finalizePendingDelete(entryId),
+        )
+        assertNull(db.urlEntryDao().findById(entryId))
+        assertEquals(listOf(entryId), mediaCleanup.calls.map { it.entryId })
+        assertEquals(listOf(false), mediaCleanup.entryWasPresentAtCleanup)
+    }
+
+    @Test
+    fun finalizePendingDelete_localAndSharedDue_preservesSharedRowAndReleasesLocalProvenance() = runBlocking {
+        val entryId = createEntry("https://example.com/pending-local-shared")
+        clock.now = 2_000L
+        assertTrue(repository.archive(entryId))
+        addActiveLocalReference(entryId)
+        addActiveSyncedReference(entryId)
+
+        clock.now = 3_000L
+        assertEquals(8_000L, repository.markPendingDelete(entryId))
+        clock.now = 8_000L
+
+        assertEquals(
+            PendingDeleteFinalizationResult.PreservedShared(sharedReferenceCount = 1),
+            repository.finalizePendingDelete(entryId),
+        )
+
+        val preserved = db.urlEntryDao().findById(entryId)!!
+        assertEquals(0, preserved.localProvenanceCount)
+        assertEquals(1, preserved.sharedReferenceCount)
+        assertEquals(RecordState.ACTIVE, preserved.recordState)
+        assertNull(preserved.pendingDeletionUntil)
+        assertNull(preserved.archivedAt)
+        assertTrue(db.tagDao().getActiveLocalCrossRefsForEntries(listOf(entryId)).isEmpty())
+        assertTrue(mediaCleanup.calls.isEmpty())
+    }
+
+    @Test
+    fun finalizePendingDelete_staleDoesNotDeleteLocalCrossRefs() = runBlocking {
+        val entryId = createEntry("https://example.com/pending-stale-local-ref")
+        addActiveLocalReference(entryId)
+        assertEquals(6_000L, repository.markPendingDelete(entryId, gracePeriodMillis = 5_000L))
+
+        clock.now = 1_001L
+        assertEquals(
+            PendingDeleteFinalizationResult.Stale,
+            repository.finalizePendingDelete(entryId),
+        )
+
+        assertEquals(1, db.tagDao().getActiveLocalCrossRefsForEntries(listOf(entryId)).size)
+        assertTrue(mediaCleanup.calls.isEmpty())
+    }
+
+    @Test
+    fun finalizePendingDelete_sharedReferenceAddedDuringGrace_preservesDespiteStaleCache() = runBlocking {
+        val entryId = createEntry("https://example.com/pending-shared-added")
+        assertEquals(6_000L, repository.markPendingDelete(entryId, gracePeriodMillis = 5_000L))
+
+        addActiveSyncedReference(entryId)
+        assertEquals(0, db.urlEntryDao().findById(entryId)!!.sharedReferenceCount)
+        clock.now = 6_000L
+
+        assertEquals(
+            PendingDeleteFinalizationResult.PreservedShared(sharedReferenceCount = 1),
+            repository.finalizePendingDelete(entryId),
+        )
+        val preserved = db.urlEntryDao().findById(entryId)!!
+        assertEquals(0, preserved.localProvenanceCount)
+        assertEquals(RecordState.ACTIVE, preserved.recordState)
+        assertNull(preserved.pendingDeletionUntil)
+        assertTrue(mediaCleanup.calls.isEmpty())
+    }
+
+    @Test
+    fun cleanupExpiredPendingDeletes_restoreBeforeCleanup_keepsRestoredRow() = runBlocking {
+        val entryId = createEntry("https://example.com/pending-restore")
+        assertEquals(6_000L, repository.markPendingDelete(entryId, gracePeriodMillis = 5_000L))
+
+        clock.now = 5_000L
+        assertTrue(repository.restore(entryId))
+        clock.now = 6_000L
+        repository.cleanupExpiredPendingDeletes()
+
+        val restored = db.urlEntryDao().findById(entryId)!!
+        assertEquals(1, restored.localProvenanceCount)
+        assertEquals(RecordState.ACTIVE, restored.recordState)
+        assertNull(restored.pendingDeletionUntil)
+        assertEquals(PendingDeleteFinalizationResult.Stale, repository.finalizePendingDelete(entryId))
+        assertTrue(mediaCleanup.calls.isEmpty())
+    }
+
+    @Test
+    fun cleanupAndRestoreRace_hasOneConsistentWinner() = runBlocking {
+        val entryId = createEntry("https://example.com/pending-race")
+        assertEquals(6_000L, repository.markPendingDelete(entryId, gracePeriodMillis = 5_000L))
+        clock.now = 6_000L
+
+        val cleanup = async(Dispatchers.Default) {
+            repository.cleanupExpiredPendingDeletes()
+        }
+        val restore = async(Dispatchers.Default) {
+            repository.restore(entryId)
+        }
+        val restored = restore.await()
+        cleanup.await()
+
+        val finalRow = db.urlEntryDao().findById(entryId)
+        if (restored) {
+            assertNotNull(finalRow)
+            assertEquals(RecordState.ACTIVE, finalRow!!.recordState)
+            assertNull(finalRow.pendingDeletionUntil)
+        } else {
+            assertNull(finalRow)
+        }
+    }
+
+    @Test
+    fun cleanupExpiredPendingDeletes_rechecksSyncedCrossRefsWhenCacheIsStale() = runBlocking {
+        val entryId = createEntry("https://example.com/pending-sync-race")
+        assertEquals(6_000L, repository.markPendingDelete(entryId, gracePeriodMillis = 5_000L))
+
+        // This is the committed local outcome of a sync refresh; the cache column is intentionally unchanged.
+        addActiveSyncedReference(entryId)
+        clock.now = 6_000L
+        repository.cleanupExpiredPendingDeletes()
+
+        val preserved = db.urlEntryDao().findById(entryId)!!
+        assertEquals(0, preserved.localProvenanceCount)
+        assertEquals(1, preserved.sharedReferenceCount)
+        assertEquals(RecordState.ACTIVE, preserved.recordState)
+        assertNull(preserved.pendingDeletionUntil)
+        assertNull(preserved.archivedAt)
+        assertTrue(mediaCleanup.calls.isEmpty())
+    }
+
+    @Test
+    fun cleanupExpiredPendingDeletes_cleansOnlyDeletedEntriesAfterCommit() = runBlocking {
+        val deletedEntryId = createEntry("https://example.com/pending-cleanup-deleted")
+        val preservedEntryId = createEntry("https://example.com/pending-cleanup-preserved")
+        addActiveSyncedReference(preservedEntryId)
+        val assetId = db.videoAssetDao().insertAsset(videoAssetFor(deletedEntryId))
+
+        assertEquals(6_000L, repository.markPendingDelete(deletedEntryId, gracePeriodMillis = 5_000L))
+        assertEquals(6_000L, repository.markPendingDelete(preservedEntryId, gracePeriodMillis = 5_000L))
+        clock.now = 6_000L
+
+        repository.cleanupExpiredPendingDeletes()
+
+        assertNull(db.urlEntryDao().findById(deletedEntryId))
+        assertNotNull(db.urlEntryDao().findById(preservedEntryId))
+        assertEquals(listOf(deletedEntryId), mediaCleanup.calls.map { it.entryId })
+        assertEquals(listOf(assetId), mediaCleanup.calls.single().downloadAssetIds)
+        assertEquals(listOf(false), mediaCleanup.entryWasPresentAtCleanup)
     }
 
     @Test
@@ -499,6 +676,99 @@ class RepositoryBehaviorTest {
 
         val blocked = repository.saveFromManualInput("https://example.com/limit-over")
         assertEquals(ShareSaveResult.PERSONAL_URL_LIMIT_REACHED, blocked.result)
+    }
+
+    private suspend fun createEntry(normalizedUrl: String): Long {
+        val result = repository.saveFromManualInput(normalizedUrl)
+        assertEquals(ShareSaveResult.CREATED, result.result)
+        return result.entryId!!
+    }
+
+    private suspend fun addActiveSyncedReference(entryId: Long, suffix: String = "primary") {
+        val entry = db.urlEntryDao().findById(entryId)!!
+        val authUserId = "shared-user-$entryId-$suffix"
+        val tagId = db.tagDao().insertTag(
+            TagEntity(
+                name = "shared-tag-$entryId-$suffix",
+                createdAt = clock.now,
+                scope = SharedTagScope.SYNCED,
+                authUserId = authUserId,
+                remoteTagId = "remote-tag-$entryId-$suffix",
+                syncStatus = SharedTagSyncStatus.SYNCED,
+            ),
+        )
+        db.tagDao().insertCrossRef(
+            TagUrlCrossRef(
+                tagId = tagId,
+                entryId = entryId,
+                createdAt = clock.now,
+                scope = SharedTagScope.SYNCED,
+                authUserId = authUserId,
+                remoteUrlId = "remote-url-$entryId-$suffix",
+                normalizedUrl = entry.normalizedUrl,
+                syncStatus = SharedTagSyncStatus.SYNCED,
+            ),
+        )
+    }
+
+    private suspend fun addActiveLocalReference(entryId: Long) {
+        val tagId = db.tagDao().insertTag(
+            TagEntity(
+                name = "local-tag-$entryId",
+                createdAt = clock.now,
+            ),
+        )
+        db.tagDao().insertCrossRef(
+            TagUrlCrossRef(
+                tagId = tagId,
+                entryId = entryId,
+                createdAt = clock.now,
+            ),
+        )
+    }
+
+    private fun videoAssetFor(entryId: Long): VideoAssetEntity {
+        return VideoAssetEntity(
+            entryId = entryId,
+            provider = "test",
+            providerAssetId = "asset-$entryId",
+            sourceUrl = "https://example.com/media/$entryId",
+            canonicalPostUrl = null,
+            authorName = null,
+            title = null,
+            bodyText = null,
+            thumbnailUrl = null,
+            durationMs = null,
+            mediaType = "VIDEO",
+            hasVideo = "YES",
+            resolveStatus = "AVAILABLE",
+            downloadUrl = "https://cdn.example.com/$entryId.mp4",
+            requestHeadersJson = null,
+            mimeType = "video/mp4",
+            qualityLabel = null,
+            width = null,
+            height = null,
+            bitrate = null,
+            sortIndex = 0,
+            isPreferred = true,
+            checkedAt = clock.now,
+            expiresAt = null,
+            errorReason = null,
+        )
+    }
+
+    private class RecordingPendingDeleteMediaCleanup(
+        private val database: AppDatabase,
+    ) : PendingDeleteMediaCleanup {
+        data class Call(val entryId: Long, val downloadAssetIds: List<Long>)
+
+        val calls = mutableListOf<Call>()
+        val entryWasPresentAtCleanup = mutableListOf<Boolean>()
+
+        override suspend fun cleanup(entryId: Long, downloadAssetIds: List<Long>) {
+            calls += Call(entryId, downloadAssetIds)
+            entryWasPresentAtCleanup += database.urlEntryDao().findById(entryId) != null
+        }
     }
 
     private class FakeScheduler : MetadataScheduler {

@@ -1,7 +1,10 @@
 package jp.mimac.urlsaver.data
 
 import android.content.Context
+import androidx.work.BackoffPolicy
+import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
@@ -10,6 +13,7 @@ import jp.mimac.urlsaver.video.AppMediaStore
 import jp.mimac.urlsaver.video.VideoDownloadWorker
 import jp.mimac.urlsaver.video.VideoResolveWorker
 import java.io.File
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.flow.Flow
 
 interface VideoRepository {
@@ -49,16 +53,20 @@ class DefaultVideoRepository(
                     VideoResolveWorker.KEY_AUTO_DOWNLOAD to autoDownload,
                 ),
             )
+            .setConstraints(videoWorkConstraints())
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, VIDEO_BACKOFF_SECONDS, TimeUnit.SECONDS)
             .build()
-        workManager.enqueueUniqueWork("video-resolve:$entryId", ExistingWorkPolicy.REPLACE, request)
+        workManager.enqueueUniqueWork(VideoResolveWorker.uniqueWorkName(entryId), ExistingWorkPolicy.REPLACE, request)
     }
 
     override fun enqueueDownloads(videoAssetIds: List<Long>) {
         videoAssetIds.distinct().forEach { assetId ->
             val request = OneTimeWorkRequestBuilder<VideoDownloadWorker>()
                 .setInputData(workDataOf(VideoDownloadWorker.KEY_VIDEO_ASSET_ID to assetId))
+                .setConstraints(videoWorkConstraints())
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, VIDEO_BACKOFF_SECONDS, TimeUnit.SECONDS)
                 .build()
-            workManager.enqueueUniqueWork("video-download:$assetId", ExistingWorkPolicy.REPLACE, request)
+            workManager.enqueueUniqueWork(VideoDownloadWorker.uniqueWorkName(assetId), ExistingWorkPolicy.REPLACE, request)
         }
     }
 
@@ -169,5 +177,14 @@ class DefaultVideoRepository(
             "webm" -> "video/webm"
             else -> if (mediaType == "IMAGE") "image/jpeg" else "video/mp4"
         }
+    }
+
+    private fun videoWorkConstraints(): Constraints = Constraints.Builder()
+        .setRequiredNetworkType(NetworkType.CONNECTED)
+        .setRequiresStorageNotLow(true)
+        .build()
+
+    private companion object {
+        const val VIDEO_BACKOFF_SECONDS = 10L
     }
 }

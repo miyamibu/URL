@@ -1,7 +1,8 @@
 "use client";
 
 import { createClient, Session, SupabaseClient } from "@supabase/supabase-js";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import Image from "next/image";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type PromoCodeRow = {
   id: string;
@@ -71,6 +72,17 @@ type AuditLogRow = {
   action: string;
   reason: string | null;
   created_at: string;
+};
+
+type MfaEnrollment = {
+  factorId: string;
+  qrCode: string;
+  secret: string;
+};
+
+type MfaChallenge = {
+  factorId: string;
+  challengeId: string;
 };
 
 function formatDate(value?: string | null): string {
@@ -147,6 +159,7 @@ export default function AdminPage() {
   const [password, setPassword] = useState("");
   const [targetEmail, setTargetEmail] = useState("");
   const [note, setNote] = useState("");
+  const [operationReason, setOperationReason] = useState("");
   const [expiresInDays, setExpiresInDays] = useState(7);
   const [codes, setCodes] = useState<PromoCodeRow[]>([]);
   const [users, setUsers] = useState<UserSearchRow[]>([]);
@@ -157,6 +170,16 @@ export default function AdminPage() {
   const [reports, setReports] = useState<ModerationReportRow[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [mfaLevel, setMfaLevel] = useState<"loading" | "aal1" | "aal2" | "unavailable">("loading");
+  const [hasVerifiedTotp, setHasVerifiedTotp] = useState(false);
+  const [mfaEnrollment, setMfaEnrollment] = useState<MfaEnrollment | null>(null);
+  const [mfaEnrollmentCode, setMfaEnrollmentCode] = useState("");
+  const [mfaChallenge, setMfaChallenge] = useState<MfaChallenge | null>(null);
+  const [mfaChallengeCode, setMfaChallengeCode] = useState("");
+  const [mfaBusy, setMfaBusy] = useState(false);
+  const [unverifiedTotpFactorId, setUnverifiedTotpFactorId] = useState<string | null>(null);
+  const [adminRole, setAdminRole] = useState<string | null>(null);
+  const sendInFlightRef = useRef(false);
 
   const authHeaders = useMemo<Record<string, string>>(
     () => {
@@ -189,6 +212,167 @@ export default function AdminPage() {
     if (signInError) {
       setError(signInError.message);
     }
+  }
+
+  async function refreshMfaLevel() {
+    if (!supabase || !session) {
+      setMfaLevel("unavailable");
+      setHasVerifiedTotp(false);
+      return;
+    }
+    const [{ data, error: mfaError }, { data: factors }] = await Promise.all([
+      supabase.auth.mfa.getAuthenticatorAssuranceLevel(),
+      supabase.auth.mfa.listFactors(),
+    ]);
+    setHasVerifiedTotp(Boolean(factors?.totp?.some((factor) => factor.status === "verified")));
+    if (mfaError || !data.currentLevel) {
+      setMfaLevel("unavailable");
+      return;
+    }
+    setMfaLevel(data.currentLevel);
+  }
+
+  async function beginMfaChallenge() {
+    if (!supabase || !session) return;
+    setError("");
+    const { data: factors, error: factorsError } = await supabase.auth.mfa.listFactors();
+    const factor = factors?.totp?.find((candidate) => candidate.status === "verified");
+    if (factorsError || !factor) {
+      await beginMfaEnrollment();
+      return;
+    }
+    const { data: challenge, error: challengeError } = await supabase.auth.mfa.challenge({ factorId: factor.id });
+    if (challengeError || !challenge) {
+      setError("追加認証チャレンジを開始できませんでした");
+      return;
+    }
+    setMfaChallenge({ factorId: factor.id, challengeId: challenge.id });
+    setMfaChallengeCode("");
+    setMessage("認証アプリの6桁コードを入力してください。");
+  }
+
+  async function completeMfaChallenge() {
+    if (!supabase || !session || !mfaChallenge || mfaBusy) return;
+    const code = mfaChallengeCode.replace(/\s/g, "");
+    if (!/^\d{6}$/.test(code)) {
+      setError("認証コードは6桁の数字で入力してください");
+      return;
+    }
+    setMfaBusy(true);
+    setError("");
+    const { error: verifyError } = await supabase.auth.mfa.verify({
+      factorId: mfaChallenge.factorId,
+      challengeId: mfaChallenge.challengeId,
+      code,
+    });
+    if (verifyError) {
+      setError("追加認証コードを確認できませんでした");
+      setMfaBusy(false);
+      return;
+    }
+    const { data: refreshed } = await supabase.auth.refreshSession();
+    if (refreshed.session) setSession(refreshed.session);
+    setMfaChallenge(null);
+    setMfaChallengeCode("");
+    setMessage("追加認証を確認しました。高リスク操作を実行できます。");
+    await refreshMfaLevel();
+    setMfaBusy(false);
+  }
+
+  async function beginMfaEnrollment() {
+    if (!supabase || !session || mfaBusy) return;
+    setMfaBusy(true);
+    setError("");
+    const { data: factors, error: factorsError } = await supabase.auth.mfa.listFactors();
+    if (factorsError) {
+      setError("TOTP登録状態を確認できませんでした");
+      setMfaBusy(false);
+      return;
+    }
+    const unverified = factors?.all?.find((factor) => factor.factor_type === "totp" && factor.status === "unverified");
+    if (unverified) {
+      setUnverifiedTotpFactorId(unverified.id);
+      setError("未確認のTOTP登録が残っています。不要なら破棄して登録をやり直せます。");
+      setMfaBusy(false);
+      return;
+    }
+    const { data, error: enrollError } = await supabase.auth.mfa.enroll({
+      factorType: "totp",
+      issuer: "りんばむ管理画面",
+      friendlyName: "りんばむ管理画面 TOTP",
+    });
+    if (enrollError || !data || data.type !== "totp") {
+      setError("TOTP登録を開始できませんでした");
+      setMfaBusy(false);
+      return;
+    }
+    setMfaEnrollment({ factorId: data.id, qrCode: data.totp.qr_code, secret: data.totp.secret });
+    setMfaEnrollmentCode("");
+    setMessage("QRコードを認証アプリに登録し、表示された6桁コードを入力してください。");
+    setMfaBusy(false);
+  }
+
+  async function discardUnverifiedMfa() {
+    if (!supabase || !unverifiedTotpFactorId || mfaBusy) return;
+    setMfaBusy(true);
+    setError("");
+    const { error: unenrollError } = await supabase.auth.mfa.unenroll({ factorId: unverifiedTotpFactorId });
+    if (unenrollError) {
+      setError("未確認のTOTP登録を破棄できませんでした");
+      setMfaBusy(false);
+      return;
+    }
+    setUnverifiedTotpFactorId(null);
+    setMessage("未確認のTOTP登録を破棄しました。新しい登録を開始できます。");
+    setMfaBusy(false);
+    await beginMfaEnrollment();
+  }
+
+  async function completeMfaEnrollment() {
+    if (!supabase || !session || !mfaEnrollment || mfaBusy) return;
+    const code = mfaEnrollmentCode.replace(/\s/g, "");
+    if (!/^\d{6}$/.test(code)) {
+      setError("認証コードは6桁の数字で入力してください");
+      return;
+    }
+    setMfaBusy(true);
+    setError("");
+    const { data: challenge, error: challengeError } = await supabase.auth.mfa.challenge({ factorId: mfaEnrollment.factorId });
+    if (challengeError || !challenge) {
+      setError("TOTP登録の確認チャレンジを開始できませんでした");
+      setMfaBusy(false);
+      return;
+    }
+    const { error: verifyError } = await supabase.auth.mfa.verify({
+      factorId: mfaEnrollment.factorId,
+      challengeId: challenge.id,
+      code,
+    });
+    if (verifyError) {
+      setError("TOTP登録コードを確認できませんでした");
+      setMfaBusy(false);
+      return;
+    }
+    const { data: refreshed } = await supabase.auth.refreshSession();
+    if (refreshed.session) setSession(refreshed.session);
+    setMfaEnrollment(null);
+    setMfaEnrollmentCode("");
+    setMessage("TOTPを登録し、追加認証を確認しました。");
+    await refreshMfaLevel();
+    setMfaBusy(false);
+  }
+
+  function requiredOperationReason(): string | null {
+    if (mfaLevel !== "aal2") {
+      setError("高リスク操作にはAAL2/TOTPの追加認証が必要です");
+      return null;
+    }
+    const reason = operationReason.trim();
+    if (!reason) {
+      setError("管理操作の理由は必須です");
+      return null;
+    }
+    return reason.slice(0, 1000);
   }
 
   async function fetchCodes() {
@@ -224,10 +408,12 @@ export default function AdminPage() {
 
   async function updateSupport(requestId: string, supportStatus: SupportRequestRow["support_status"]) {
     if (!session) return;
+    const reason = requiredOperationReason();
+    if (!reason) return;
     const response = await fetch("/api/admin/support", {
       method: "PATCH",
       headers: { ...authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify({ id: requestId, supportStatus }),
+      body: JSON.stringify({ id: requestId, supportStatus, reason }),
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -240,10 +426,12 @@ export default function AdminPage() {
 
   async function moderateReport(reportId: string, action: string) {
     if (!session) return;
+    const reason = requiredOperationReason();
+    if (!reason) return;
     const response = await fetch("/api/admin/moderation", {
       method: "PATCH",
       headers: { ...authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify({ reportId, action }),
+      body: JSON.stringify({ reportId, action, reason }),
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -269,19 +457,23 @@ export default function AdminPage() {
 
   async function sendCode(event: FormEvent) {
     event.preventDefault();
-    if (!session || isLoading) return;
+    if (!session || sendInFlightRef.current) return;
+    const reason = requiredOperationReason();
+    if (!reason) return;
+    sendInFlightRef.current = true;
     setIsLoading(true);
     setError("");
     setMessage("");
     setSendResult(null);
     try {
+      const operationId = crypto.randomUUID();
       const response = await fetch("/api/admin/promo-codes/send", {
         method: "POST",
         headers: {
           ...authHeaders,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ targetEmail, note, expiresInDays }),
+        body: JSON.stringify({ targetEmail, note, expiresInDays, reason, operationId }),
       });
       const body = await response.json();
       if (!response.ok) {
@@ -291,21 +483,25 @@ export default function AdminPage() {
       setSendResult(body);
       setMessage("優待コードを送信しました。コードはこの画面を離れると再表示できません。");
       setNote("");
+      setOperationReason("");
       await fetchCodes();
     } finally {
+      sendInFlightRef.current = false;
       setIsLoading(false);
     }
   }
 
   async function revokeCode(id: string) {
     if (!session || !window.confirm("この優待コードを取り消しますか？")) return;
+    const reason = requiredOperationReason();
+    if (!reason) return;
     const response = await fetch(`/api/admin/promo-codes/${id}/revoke`, {
       method: "POST",
       headers: {
         ...authHeaders,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ reason: "admin_revoked" }),
+      body: JSON.stringify({ reason }),
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -316,10 +512,23 @@ export default function AdminPage() {
     await fetchCodes();
   }
 
+  async function fetchAdminIdentity() {
+    if (!session) return;
+    const response = await fetch("/api/admin/me", { headers: authHeaders });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setError(body.error ?? "管理者ロールを取得できませんでした");
+      return;
+    }
+    setAdminRole(typeof body.admin?.role === "string" ? body.admin.role : null);
+  }
+
   useEffect(() => {
     if (session) {
+      fetchAdminIdentity();
       fetchCodes();
       fetchOperations();
+      refreshMfaLevel();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
@@ -353,12 +562,93 @@ export default function AdminPage() {
         <div>
           <p className="eyebrow">URL Saver Admin</p>
           <h1>優待コード管理</h1>
+          <p className="muted" data-testid="admin-role">
+            role: {adminRole ?? "管理者ロールを確認中"}
+          </p>
         </div>
         <button className="secondary" onClick={() => supabase?.auth.signOut()}>サインアウト</button>
       </header>
 
+      <section className="panel stack" data-testid="admin-step-up">
+        <div>
+          <h2>管理者追加認証</h2>
+          <p className="muted" data-testid="admin-step-up-status">
+            {mfaLevel === "aal2" ? "AAL2/TOTP確認済み" : mfaLevel === "aal1" ? "AAL1です。高リスク操作には追加認証が必要です。" : "追加認証状態を確認できません。"}
+          </p>
+        </div>
+        <label>
+          操作理由（高リスク操作共通・必須）
+          <textarea
+            value={operationReason}
+            onChange={(event) => setOperationReason(event.target.value)}
+            rows={2}
+            required
+            data-testid="admin-operation-reason"
+          />
+        </label>
+        {mfaLevel !== "aal2" && !mfaEnrollment && !mfaChallenge && !unverifiedTotpFactorId && (
+          <button className="secondary" onClick={beginMfaChallenge} disabled={mfaBusy}>
+            {hasVerifiedTotp ? "TOTPで追加認証" : "TOTPを登録"}
+          </button>
+        )}
+        {unverifiedTotpFactorId && (
+          <div className="stack">
+            <p className="muted">前回中断した未確認のTOTP登録があります。</p>
+            <button className="secondary" onClick={discardUnverifiedMfa} disabled={mfaBusy}>
+              未確認のTOTP登録を破棄してやり直す
+            </button>
+          </div>
+        )}
+        {mfaChallenge && (
+          <form className="stack" onSubmit={(event) => { event.preventDefault(); void completeMfaChallenge(); }}>
+            <label>
+              認証アプリの6桁コード
+              <input
+                value={mfaChallengeCode}
+                onChange={(event) => setMfaChallengeCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                pattern="[0-9]{6}"
+                maxLength={6}
+                required
+              />
+            </label>
+            <button type="submit" disabled={mfaBusy}>追加認証を確認</button>
+          </form>
+        )}
+        {mfaEnrollment && (
+          <form className="stack" onSubmit={(event) => { event.preventDefault(); void completeMfaEnrollment(); }}>
+            <p className="muted">認証アプリでQRコードを読み取ってください。画像を保存・共有しないでください。</p>
+            <Image src={mfaEnrollment.qrCode} alt="TOTP登録用QRコード" width={220} height={220} unoptimized />
+            <label>
+              QRコードを読めない場合の秘密鍵
+              <input value={mfaEnrollment.secret} readOnly type="password" autoComplete="off" />
+            </label>
+            <label>
+              認証アプリの6桁コード
+              <input
+                value={mfaEnrollmentCode}
+                onChange={(event) => setMfaEnrollmentCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                pattern="[0-9]{6}"
+                maxLength={6}
+                required
+              />
+            </label>
+            <button type="submit" disabled={mfaBusy}>TOTP登録を確認</button>
+          </form>
+        )}
+      </section>
+
       {(message || error) && (
-        <div className={error ? "notice error" : "notice success"}>{error || message}</div>
+        <div
+          className={error ? "notice error" : "notice success"}
+          role={error ? "alert" : "status"}
+          aria-live={error ? "assertive" : "polite"}
+        >
+          {error || message}
+        </div>
       )}
 
       <section className="grid">
@@ -403,7 +693,7 @@ export default function AdminPage() {
             管理メモ
             <textarea value={note} onChange={(event) => setNote(event.target.value)} rows={4} />
           </label>
-          <button type="submit" disabled={isLoading}>{isLoading ? "送信中..." : "優待コードを送る"}</button>
+          <button data-testid="admin-submit" type="submit" disabled={isLoading || mfaLevel !== "aal2"}>{isLoading ? "送信中..." : "優待コードを送る"}</button>
         </form>
 
         <section className="panel stack">

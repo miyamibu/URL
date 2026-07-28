@@ -46,6 +46,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import java.io.ByteArrayInputStream
+import java.io.File
 import java.security.MessageDigest
 import java.time.Instant
 import java.util.zip.ZipInputStream
@@ -55,6 +56,7 @@ class ExportRepositoryTest {
 
     private lateinit var db: AppDatabase
     private lateinit var repository: DefaultExportRepository
+    private lateinit var temporaryDirectory: File
     private val authProvider = FakeAuthSessionProvider()
     private val clock = FakeClock(1_714_000_000_000L)
     private val jsonParser = Json { ignoreUnknownKeys = true }
@@ -62,6 +64,10 @@ class ExportRepositoryTest {
     @Before
     fun setUp() {
         val context = ApplicationProvider.getApplicationContext<Context>()
+        temporaryDirectory = File.createTempFile("rinbam-export-test-", "").apply {
+            delete()
+            mkdirs()
+        }
         db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
             .allowMainThreadQueries()
             .build()
@@ -71,6 +77,23 @@ class ExportRepositoryTest {
     @After
     fun tearDown() {
         db.close()
+        temporaryDirectory.deleteRecursively()
+    }
+
+    @Test
+    fun repositoryInitialization_cleansAbandonedArchiveParts() {
+        val stale = File(temporaryDirectory, "rinbam-export-stale.part").apply {
+            writeText("stale")
+            setLastModified(System.currentTimeMillis() - 2 * 24 * 60 * 60 * 1000L)
+        }
+        val fresh = File(temporaryDirectory, "rinbam-export-fresh.part").apply {
+            writeText("fresh")
+        }
+
+        createRepository()
+
+        assertFalse(stale.exists())
+        assertTrue(fresh.exists())
     }
 
     @Test
@@ -190,6 +213,10 @@ class ExportRepositoryTest {
         assertTrue(payload.files.containsKey("entries.jsonl"))
         assertTrue(payload.markdownFiles.isNotEmpty())
         assertTrue(payload.markdownFiles.values.any { it.contains("Memo Excerpt: keep") })
+        assertTrue(archive.isFileBacked)
+        assertTrue(archive.backingFile?.isFile == true)
+        archive.cleanup()
+        assertTrue(temporaryDirectory.listFiles().orEmpty().isEmpty())
     }
 
     @Test
@@ -216,6 +243,10 @@ class ExportRepositoryTest {
 
         assertEquals("SHARED_TAGS_ONLY", payload.manifest.stringValue("exportScope"))
         assertEquals(1, payload.entries.size)
+        assertTrue(archive.isFileBacked)
+        assertTrue(archive.backingFile?.isFile == true)
+        archive.cleanup()
+        assertTrue(temporaryDirectory.listFiles().orEmpty().isEmpty())
     }
 
     @Test
@@ -305,6 +336,13 @@ class ExportRepositoryTest {
         assertTrue(payload.files.containsKey("README_FOR_AI.md"))
         assertTrue(payload.files.containsKey("redaction_report.json"))
 
+        val schema = parseJsonObject(payload.files.getValue("schema.json"))
+        assertEquals("standard-export-v1", schema.stringValue("schemaVersion"))
+        assertEquals("STANDARD_BACKUP", schema.stringValue("exportKind"))
+        assertFalse(schema.getValue("aiSafe").jsonPrimitive.boolean)
+        assertTrue(payload.files.getValue("README_FOR_AI.md").contains("通常Export / Backup"))
+        assertFalse(payload.files.getValue("README_FOR_AI.md").contains("AI-safe Export"))
+
         val entry = payload.entries.single()
         assertTrue(entry.getValue("aiEligible").jsonPrimitive.boolean)
         assertEquals("Author", entry.stringValue("fetchedAuthorName"))
@@ -327,8 +365,37 @@ class ExportRepositoryTest {
         assertTrue(markdown.contains("token"))
 
         val report = parseJsonObject(payload.files.getValue("redaction_report.json"))
-        assertEquals("ai-safe-v1", report.stringValue("profile"))
+        assertEquals("standard-export-v1", report.stringValue("profile"))
         assertFalse(report.getValue("fetchedBodyExported").jsonPrimitive.boolean)
+    }
+
+    @Test
+    fun zipGeneration_sizeLimitFailure_cleansTemporaryFile() = runBlocking {
+        insertEntry(
+            normalizedUrl = "https://example.com/size-limit",
+            recordState = RecordState.ACTIVE,
+            memo = "memo",
+            serviceType = ServiceType.WEB,
+            createdAt = 400L,
+        )
+
+        val constrainedRepository = createRepository(
+            temporaryDirectory = temporaryDirectory,
+            archiveByteLimitOverride = 512L,
+        )
+        val failure = runCatching {
+            constrainedRepository.prepareExport(
+                ExportRequest(
+                    scope = ExportScope.ALL,
+                    recordStateFilter = ExportRecordStateFilter.BOTH,
+                    outputFormat = ExportOutputFormat.ZIP,
+                ),
+            )
+        }.exceptionOrNull()
+
+        assertTrue(failure is IllegalArgumentException)
+        assertTrue(failure?.message?.contains("通常ExportのZIPが大きすぎます") == true)
+        assertTrue(temporaryDirectory.listFiles().orEmpty().isEmpty())
     }
 
     @Test
@@ -543,6 +610,14 @@ class ExportRepositoryTest {
             payload.entries.map { it.stringValue("normalizedUrl") }.toSet(),
         )
         assertEquals("CHATGPT_SELECTED_LOCAL_TAGS", payload.manifest.stringValue("exportScope"))
+        val schema = parseJsonObject(payload.files.getValue("schema.json"))
+        assertEquals("ai-safe-v1", schema.stringValue("schemaVersion"))
+        assertEquals("CHATGPT_HANDOFF", schema.stringValue("exportKind"))
+        assertTrue(schema.getValue("aiSafe").jsonPrimitive.boolean)
+        assertEquals(
+            "ai-safe-v1",
+            parseJsonObject(payload.files.getValue("redaction_report.json")).stringValue("profile"),
+        )
         assertFalse(payload.manifest.containsKey("selectedTagIds"))
         assertEquals(
             listOf("比較", "調査"),
@@ -1204,6 +1279,8 @@ class ExportRepositoryTest {
 
     private fun createRepository(
         syncBeforeExport: suspend () -> Boolean = { true },
+        temporaryDirectory: File = this.temporaryDirectory,
+        archiveByteLimitOverride: Long? = null,
     ): DefaultExportRepository {
         return DefaultExportRepository(
             urlEntryDao = db.urlEntryDao(),
@@ -1213,6 +1290,8 @@ class ExportRepositoryTest {
             syncBeforeExport = syncBeforeExport,
             clock = clock,
             appVersion = "1.0-test",
+            temporaryDirectory = temporaryDirectory,
+            archiveByteLimitOverride = archiveByteLimitOverride,
         )
     }
 

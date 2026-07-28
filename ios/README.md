@@ -70,11 +70,11 @@ Done when
 - Supabase key は publishable key または legacy anon key のみを使い、`service_role` / `sb_secret` は app binary に入れません。
 - βの招待リンクの正本は `https://miyamibu.xyz/invite/{token}` です。`urlsaver://invite/{token}` は fallback deep link として残します。
 
-## AI-friendly Export
+## AI-friendly Export / ChatGPT Handoff
 
 - iOS の Export は ZIP / JSON を出力します。
 - ZIP には `manifest.json`, `entries.jsonl`, `entries/*.md`, `schema.json`, `README_FOR_AI.md`, `redaction_report.json` を含めます。
-- AI-safe 出力では raw `fetchedBody` を出さず、`bodyExcerpt` / `memoExcerpt`、`publicSafeId`、`aiEligible`、`redactionApplied` を含めます。
+- ChatGPT HandoffのAI-safe出力では raw `fetchedBody` を出さず、`bodyExcerpt` / `memoExcerpt`、`publicSafeId`、`aiEligible`、`redactionApplied` を含めます。通常のZIP/JSON Backupは `standard-export-v1` であり、AI-safeとは呼びません。
 - 共有タグ付きentryはデフォルトで `aiEligible=false` とし、参加者情報は含めません。
 - production MCP/OpenAI提出、UI統合済みAI receipt/draft/diff、メディア保存状態の明示出力は未完了ゲートとして扱います。
 

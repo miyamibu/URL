@@ -1,4 +1,4 @@
-name: Android CI
+name: Repository CI
 
 on:
   push:
@@ -6,10 +6,13 @@ on:
       - "**"
   pull_request:
 
-jobs:
-  verify:
-    runs-on: ubuntu-latest
+permissions:
+  contents: read
 
+jobs:
+  android-debug:
+    name: Android debug
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,11 +27,139 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Assemble debug
-        run: ./gradlew assembleDebug
+      - name: Debug unit tests, lint, and build
+        run: ./gradlew testDebugUnitTest lintDebug assembleDebug
 
-      - name: Unit tests
-        run: ./gradlew testDebugUnitTest
+  android-release:
+    name: Android release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Lint debug
-        run: ./gradlew lintDebug
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Release APK and AAB build
+        run: ./gradlew assembleRelease bundleRelease
+
+  ios-simulator:
+    name: iOS simulator tests
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Simulator tests
+        run: >-
+          xcodebuild
+          -workspace ios/URLSaveriOS.xcodeproj/project.xcworkspace
+          -scheme URLSaveriOS
+          -destination 'platform=iOS Simulator,name=iPhone 17'
+          -derivedDataPath "$RUNNER_TEMP/rinbam-ios-simulator"
+          CODE_SIGNING_ALLOWED=NO
+          test
+
+  ios-release:
+    name: iOS release build
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Release-style simulator-independent build
+        run: >-
+          xcodebuild
+          -workspace ios/URLSaveriOS.xcodeproj/project.xcworkspace
+          -scheme URLSaveriOS
+          -configuration Release
+          -destination 'generic/platform=iOS'
+          -derivedDataPath "$RUNNER_TEMP/rinbam-ios-release"
+          CODE_SIGNING_ALLOWED=NO
+          build
+
+  web-admin:
+    name: Web admin
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web/admin
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install web dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Production build
+        run: npm run build
+
+  supabase-local:
+    name: Supabase local lint and pgTAP
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fresh local migration replay, lint, and pgTAP
+        env:
+          CI: "true"
+        run: bash scripts/verify_supabase_local.sh --ci
+
+  repository-contracts:
+    name: Repository contracts and release hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: YAML and GitHub Actions lint
+        run: |
+          if command -v actionlint >/dev/null 2>&1; then
+            actionlint .github/workflows/ci.yml
+          else
+            go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/ci.yml
+          fi
+
+      - name: Shell syntax and ShellCheck
+        run: |
+          bash -n \
+            scripts/check_launch_readiness.sh \
+            scripts/check_release_hygiene.sh \
+            scripts/check_secret_hygiene.sh \
+            scripts/create_clean_review_archive.sh \
+            scripts/verify_clean_review_archive.sh \
+            scripts/verify_supabase_local.sh
+          shellcheck -S warning \
+            scripts/check_launch_readiness.sh \
+            scripts/check_release_hygiene.sh \
+            scripts/check_secret_hygiene.sh \
+            scripts/create_clean_review_archive.sh \
+            scripts/verify_clean_review_archive.sh \
+            scripts/verify_supabase_local.sh
+
+      - name: Python verifier syntax
+        run: python3 -m compileall -q scripts
+
+      - name: Repository diff and repo-level readiness
+        run: |
+          git diff --check
+          bash scripts/check_launch_readiness.sh --level repo
+
+      - name: Build and inspect safe clean review archive
+        env:
+          URLSAVER_CLEAN_REVIEW_ARCHIVE: ${{ runner.temp }}/URLSaver-clean-review.zip
+        run: bash scripts/create_clean_review_archive.sh
