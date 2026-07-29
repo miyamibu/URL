@@ -113,6 +113,11 @@ begin
         (owner_admin_id, owner_user_id, 'admin-owner-fixture@example.invalid', 'owner', 'active'),
         (readonly_admin_id, readonly_user_id, 'admin-readonly-fixture@example.invalid', 'readonly', 'active');
 
+    perform public.bootstrap_first_admin(
+        owner_user_id,
+        'admin-owner-fixture@example.invalid'
+    );
+
     insert into public.contact_support_requests (
         id, request_id, email_hash, ip_hash, platform, app_version, build_type, is_signed_in,
         source, idempotency_key
