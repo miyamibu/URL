@@ -217,6 +217,14 @@ export function assertCanSearchUsers(admin: AdminContext) {
   assertCapability(admin, "users.search");
 }
 
+export function assertCanReadUsers(admin: AdminContext) {
+  assertCapability(admin, "users.read");
+}
+
+export function assertCanManageUsers(admin: AdminContext) {
+  assertCapability(admin, "users.manage");
+}
+
 export function assertCanModerate(admin: AdminContext) {
   assertCapability(admin, "moderation.manage");
 }

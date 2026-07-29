@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 
 type ServiceSupabase = ReturnType<typeof createServiceSupabaseClient>;
 
-export type AdminOperationName = "support_update" | "moderation_action" | "promo_code_revoke";
+export type AdminOperationName = "support_update" | "moderation_action" | "promo_code_revoke" | "user_manage";
 
 export type ExistingClaimedOperation = {
   operationId: string;

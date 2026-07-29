@@ -42,5 +42,10 @@ test("role capabilities keep read-only access meaningful without write permissio
   const readonly = capabilitiesForRole("readonly");
   assert.deepEqual(readonly, ["promos.read", "support.read", "moderation.read", "audit.read"]);
   assert.equal(readonly?.includes("promos.issue"), false);
+  assert.equal(readonly?.includes("users.read"), false);
+  assert.equal(capabilitiesForRole("owner")?.includes("users.read"), true);
+  assert.equal(capabilitiesForRole("owner")?.includes("users.manage"), true);
+  assert.equal(capabilitiesForRole("billing")?.includes("users.read"), false);
+  assert.equal(capabilitiesForRole("billing")?.includes("users.manage"), false);
   assert.equal(capabilitiesForRole("unknown"), null);
 });

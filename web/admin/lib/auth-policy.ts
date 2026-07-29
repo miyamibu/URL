@@ -8,6 +8,8 @@ export type AdminCapability =
   | "moderation.read"
   | "moderation.manage"
   | "users.search"
+  | "users.read"
+  | "users.manage"
   | "admins.manage"
   | "audit.read";
 
@@ -38,6 +40,8 @@ const ROLE_CAPABILITIES: Record<AdminRole, readonly AdminCapability[]> = {
     "moderation.read",
     "moderation.manage",
     "users.search",
+    "users.read",
+    "users.manage",
     "admins.manage",
     "audit.read",
   ],

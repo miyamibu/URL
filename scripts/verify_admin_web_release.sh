@@ -89,6 +89,7 @@ check_unauthenticated_api "/api/admin/support" "support"
 check_unauthenticated_api "/api/admin/moderation" "moderation"
 check_unauthenticated_api "/api/admin/promo-codes" "promo-codes"
 check_unauthenticated_api "/api/admin/users" "users"
+check_unauthenticated_api "/api/admin/users/00000000-0000-0000-0000-000000000000" "user-detail"
 check_mcp_endpoint
 
 if [[ "$failures" -gt 0 ]]; then

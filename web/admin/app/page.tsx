@@ -29,6 +29,36 @@ type UserSearchRow = {
   lastSignInAt?: string;
 };
 
+type UserDirectoryRow = {
+  id: string;
+  email: string;
+  displayName: string | null;
+  createdAt: string;
+  lastSignInAt: string | null;
+  lastSeenAt: string | null;
+  currentPlan: string;
+  accountStatus: string;
+};
+
+type EntitlementGrantRow = {
+  id: string;
+  plan: string;
+  source: string;
+  storePlatform: string | null;
+  startsAt: string;
+  expiresAt: string | null;
+  status: string;
+  createdAt: string;
+};
+
+type UserDetail = UserDirectoryRow & {
+  emailConfirmedAt: string | null;
+  authProvider: string | null;
+  adminNote: string | null;
+  supportTicketId: string | null;
+  entitlementGrants: EntitlementGrantRow[];
+};
+
 type SendResult = {
   id: string;
   targetEmail: string;
@@ -89,6 +119,8 @@ type AdminCapability =
   | "moderation.read"
   | "moderation.manage"
   | "users.search"
+  | "users.read"
+  | "users.manage"
   | "admins.manage"
   | "audit.read";
 
@@ -170,6 +202,8 @@ function deliveryEventText(event?: string | null): string {
   }
 }
 
+const USER_PAGE_SIZE = 50;
+
 export default function AdminPage() {
   const supabase = useMemo<SupabaseClient | null>(() => {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -186,6 +220,16 @@ export default function AdminPage() {
   const [expiresInDays, setExpiresInDays] = useState(7);
   const [codes, setCodes] = useState<PromoCodeRow[]>([]);
   const [users, setUsers] = useState<UserSearchRow[]>([]);
+  const [directoryUsers, setDirectoryUsers] = useState<UserDirectoryRow[]>([]);
+  const [directoryTotal, setDirectoryTotal] = useState(0);
+  const [directoryOffset, setDirectoryOffset] = useState(0);
+  const [directorySearch, setDirectorySearch] = useState("");
+  const [directoryStatus, setDirectoryStatus] = useState("");
+  const [directoryLoading, setDirectoryLoading] = useState(false);
+  const [selectedUser, setSelectedUser] = useState<UserDetail | null>(null);
+  const [userAdminNote, setUserAdminNote] = useState("");
+  const [grantPlan, setGrantPlan] = useState("standard");
+  const [grantExpiresInDays, setGrantExpiresInDays] = useState(30);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [sendResult, setSendResult] = useState<SendResult | null>(null);
@@ -210,7 +254,7 @@ export default function AdminPage() {
   const pendingAdminOperationsRef = useRef(new Map<string, string>());
 
   const hasCapability = (capability: AdminCapability) => adminCapabilities.includes(capability);
-  const hasHighRiskCapability = hasCapability("promos.issue") || hasCapability("support.write") || hasCapability("moderation.manage");
+  const hasHighRiskCapability = hasCapability("promos.issue") || hasCapability("support.write") || hasCapability("moderation.manage") || hasCapability("users.manage");
   const highRiskReady = mfaLevel === "aal2" && stepUpExpiresAt !== null && stepUpClock <= stepUpExpiresAt;
 
   useEffect(() => {
@@ -559,6 +603,121 @@ export default function AdminPage() {
     }
   }
 
+  async function fetchUserDirectory(
+    capabilities: readonly AdminCapability[] = adminCapabilities,
+    headers: Record<string, string> = authHeaders,
+    offset: number = directoryOffset,
+  ) {
+    if (!session || !capabilities.includes("users.read")) {
+      setDirectoryUsers([]);
+      setDirectoryTotal(0);
+      setSelectedUser(null);
+      return;
+    }
+    setDirectoryLoading(true);
+    setError("");
+    const params = new URLSearchParams({
+      mode: "directory",
+      q: directorySearch.trim(),
+      status: directoryStatus,
+      limit: String(USER_PAGE_SIZE),
+      offset: String(offset),
+    });
+    try {
+      const response = await fetch(`/api/admin/users?${params.toString()}`, { headers });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setError(body.error ?? "ユーザー一覧を取得できませんでした");
+        return;
+      }
+      setDirectoryUsers(body.users ?? []);
+      setDirectoryTotal(Number(body.total ?? 0));
+      setDirectoryOffset(Number(body.offset ?? offset));
+    } finally {
+      setDirectoryLoading(false);
+    }
+  }
+
+  async function submitUserDirectorySearch(event: FormEvent) {
+    event.preventDefault();
+    setSelectedUser(null);
+    await fetchUserDirectory(adminCapabilities, authHeaders, 0);
+  }
+
+  async function fetchUserDetail(userId: string) {
+    setDirectoryLoading(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/admin/users/${encodeURIComponent(userId)}`, { headers: authHeaders });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setError(body.error ?? "ユーザー詳細を取得できませんでした");
+        return;
+      }
+      setSelectedUser(body.user ?? null);
+      setUserAdminNote(typeof body.user?.adminNote === "string" ? body.user.adminNote : "");
+    } finally {
+      setDirectoryLoading(false);
+    }
+  }
+
+  async function manageUser(action: string, payload: Record<string, unknown> = {}) {
+    if (!selectedUser) return;
+    const reason = requiredOperationReason();
+    if (!reason) return;
+    const operationKey = `user:${selectedUser.id}:${action}:${JSON.stringify(payload)}:${reason}`;
+    const operationId = operationIdFor(operationKey);
+    const response = await fetch(`/api/admin/users/${encodeURIComponent(selectedUser.id)}`, {
+      method: "PATCH",
+      headers: { ...authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ action, reason, operationId, ...payload }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (handleStepUpResponse(response, body)) return;
+      if (response.status === 409 && body.error === "duplicate_operation") {
+        completeOperation(operationKey);
+        setMessage("同じユーザー管理操作はすでに処理されています。現在状態を再取得しました。");
+        await fetchUserDetail(selectedUser.id);
+        return;
+      }
+      setError(body.error ?? "ユーザー管理操作に失敗しました");
+      return;
+    }
+    completeOperation(operationKey);
+    setMessage("ユーザー情報を更新しました");
+    await Promise.all([
+      fetchUserDetail(selectedUser.id),
+      fetchUserDirectory(adminCapabilities, authHeaders, directoryOffset),
+      fetchOperations(),
+    ]);
+  }
+
+  function downloadVisibleUsersCsv() {
+    const escapeCsv = (value: string) => `"${value.replaceAll('"', '""')}"`;
+    const rows = [
+      ["メール", "名前", "作成日", "最終利用", "プラン", "状態", "ユーザーID"],
+      ...directoryUsers.map((user) => [
+        user.email,
+        user.displayName ?? "",
+        user.createdAt,
+        user.lastSeenAt ?? user.lastSignInAt ?? "",
+        user.currentPlan,
+        user.accountStatus,
+        user.id,
+      ]),
+    ];
+    const csv = `\uFEFF${rows.map((row) => row.map((value) => escapeCsv(String(value))).join(",")).join("\r\n")}`;
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `rinbam-users-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  }
+
   async function sendCode(event: FormEvent) {
     event.preventDefault();
     if (!session || sendInFlightRef.current) return;
@@ -655,7 +814,11 @@ export default function AdminPage() {
     setAdminCapabilities(capabilities);
     setStepUpExpiresAt(expiresAt);
     setStepUpClock(Math.floor(Date.now() / 1000));
-    await Promise.all([fetchCodes(capabilities, headers), fetchOperations(capabilities, headers)]);
+    await Promise.all([
+      fetchCodes(capabilities, headers),
+      fetchOperations(capabilities, headers),
+      fetchUserDirectory(capabilities, headers, 0),
+    ]);
   }
 
   useEffect(() => {
@@ -789,6 +952,185 @@ export default function AdminPage() {
           {error || message}
         </div>
       )}
+
+      {hasCapability("users.read") && <section className="panel userDirectory" data-testid="user-directory">
+        <div className="listHeader">
+          <div>
+            <h2>ユーザー一覧</h2>
+            <p className="muted">登録ユーザーの基本情報、利用状況、現在プランを所有者権限で確認します。</p>
+          </div>
+          <div className="userCount" aria-live="polite">
+            <strong>{directoryTotal.toLocaleString("ja-JP")}</strong>
+            <span>ユーザー</span>
+          </div>
+        </div>
+
+        {selectedUser ? (
+          <div className="userDetail">
+            <div className="listHeader">
+              <div>
+                <button className="small secondary" onClick={() => setSelectedUser(null)}>← 一覧に戻る</button>
+                <h2>{selectedUser.displayName || "名前未設定"}</h2>
+                <p className="muted">{selectedUser.email}</p>
+              </div>
+              <span className={`chip ${selectedUser.accountStatus}`}>{selectedUser.accountStatus}</span>
+            </div>
+            <dl className="detailGrid">
+              <div><dt>ユーザーID</dt><dd><code>{selectedUser.id}</code></dd></div>
+              <div><dt>認証方式</dt><dd>{selectedUser.authProvider || "-"}</dd></div>
+              <div><dt>登録日</dt><dd>{formatDate(selectedUser.createdAt)}</dd></div>
+              <div><dt>メール確認</dt><dd>{formatDate(selectedUser.emailConfirmedAt)}</dd></div>
+              <div><dt>最終ログイン</dt><dd>{formatDate(selectedUser.lastSignInAt)}</dd></div>
+              <div><dt>最終利用</dt><dd>{formatDate(selectedUser.lastSeenAt)}</dd></div>
+              <div><dt>サポートID</dt><dd>{selectedUser.supportTicketId || "-"}</dd></div>
+              <div><dt>管理メモ</dt><dd>{selectedUser.adminNote || "-"}</dd></div>
+            </dl>
+            {hasCapability("users.manage") && <section className="userManagement">
+              <h3>ユーザー管理</h3>
+              <p className="muted">すべての操作に有効なTOTP追加認証と操作理由が必要です。</p>
+              <div className="managementGrid">
+                <div className="managementCard">
+                  <h4>利用状態</h4>
+                  <div className="operationActions">
+                    <button
+                      className="small secondary"
+                      disabled={!highRiskReady || selectedUser.accountStatus === "active"}
+                      onClick={() => void manageUser("set_status", { accountStatus: "active" })}
+                    >有効化</button>
+                    <button
+                      className="small danger"
+                      disabled={!highRiskReady || selectedUser.accountStatus === "suspended"}
+                      onClick={() => window.confirm("このユーザーを停止しますか？") && void manageUser("set_status", { accountStatus: "suspended" })}
+                    >停止</button>
+                    <button
+                      className="small danger"
+                      disabled={!highRiskReady || selectedUser.accountStatus === "banned"}
+                      onClick={() => window.confirm("このユーザーをBANしますか？") && void manageUser("set_status", { accountStatus: "banned" })}
+                    >BAN</button>
+                  </div>
+                </div>
+                <div className="managementCard">
+                  <h4>管理メモ</h4>
+                  <textarea value={userAdminNote} onChange={(event) => setUserAdminNote(event.target.value)} maxLength={2000} rows={3} />
+                  <button className="small" disabled={!highRiskReady} onClick={() => void manageUser("update_note", { adminNote: userAdminNote })}>メモを保存</button>
+                </div>
+                <div className="managementCard">
+                  <h4>手動権限付与</h4>
+                  <label>
+                    プラン
+                    <select value={grantPlan} onChange={(event) => setGrantPlan(event.target.value)}>
+                      <option value="standard">Standard</option>
+                      <option value="pro">Pro</option>
+                      <option value="promo_pro">Promo Pro</option>
+                      <option value="launch_standard">Launch Standard</option>
+                    </select>
+                  </label>
+                  <label>
+                    有効日数（0で無期限）
+                    <input type="number" min={0} max={3650} value={grantExpiresInDays} onChange={(event) => setGrantExpiresInDays(Number(event.target.value))} />
+                  </label>
+                  <button
+                    className="small"
+                    disabled={!highRiskReady}
+                    onClick={() => window.confirm(`${grantPlan}を付与しますか？`) && void manageUser("grant_entitlement", {
+                      plan: grantPlan,
+                      expiresInDays: grantExpiresInDays,
+                    })}
+                  >権限を付与</button>
+                </div>
+              </div>
+            </section>}
+            <h3>権限・プラン履歴</h3>
+            <div className="tableWrap">
+              <table className="compactTable">
+                <thead><tr><th>プラン</th><th>状態</th><th>付与元</th><th>開始</th><th>期限</th></tr></thead>
+                <tbody>
+                  {selectedUser.entitlementGrants.map((grant) => (
+                    <tr key={grant.id}>
+                      <td>{grant.plan}</td>
+                      <td>
+                        {grant.status}
+                        {hasCapability("users.manage") && grant.status === "active" && (
+                          <button
+                            className="small danger inlineAction"
+                            disabled={!highRiskReady}
+                            onClick={() => window.confirm(`${grant.plan}を取り消しますか？`) && void manageUser("revoke_entitlement", { grantId: grant.id })}
+                          >取消</button>
+                        )}
+                      </td>
+                      <td>{grant.source}{grant.storePlatform ? ` / ${grant.storePlatform}` : ""}</td>
+                      <td>{formatDate(grant.startsAt)}</td>
+                      <td>{formatDate(grant.expiresAt)}</td>
+                    </tr>
+                  ))}
+                  {selectedUser.entitlementGrants.length === 0 && <tr><td colSpan={5} className="empty">権限履歴はありません。</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : (
+          <>
+            <form className="userToolbar" onSubmit={submitUserDirectorySearch}>
+              <label>
+                メール・名前・UUID
+                <input
+                  value={directorySearch}
+                  onChange={(event) => setDirectorySearch(event.target.value)}
+                  placeholder="検索語を入力"
+                  maxLength={200}
+                />
+              </label>
+              <label>
+                状態
+                <select value={directoryStatus} onChange={(event) => setDirectoryStatus(event.target.value)}>
+                  <option value="">すべて</option>
+                  <option value="active">Active</option>
+                  <option value="suspended">Suspended</option>
+                  <option value="banned">Banned</option>
+                </select>
+              </label>
+              <button type="submit" disabled={directoryLoading}>{directoryLoading ? "読み込み中..." : "検索"}</button>
+              <button type="button" className="secondary" onClick={downloadVisibleUsersCsv} disabled={directoryUsers.length === 0}>表示中CSV</button>
+            </form>
+            <div className="tableWrap">
+              <table>
+                <thead><tr><th>メール</th><th>名前</th><th>作成日</th><th>最終利用</th><th>プラン</th><th>状態</th><th></th></tr></thead>
+                <tbody>
+                  {directoryUsers.map((user) => (
+                    <tr key={user.id}>
+                      <td>{user.email || "-"}</td>
+                      <td>{user.displayName || "-"}</td>
+                      <td>{formatDate(user.createdAt)}</td>
+                      <td>{formatDate(user.lastSeenAt ?? user.lastSignInAt)}</td>
+                      <td><span className="chip">{user.currentPlan}</span></td>
+                      <td><span className={`chip ${user.accountStatus}`}>{user.accountStatus}</span></td>
+                      <td><button className="small secondary" onClick={() => void fetchUserDetail(user.id)}>詳細</button></td>
+                    </tr>
+                  ))}
+                  {!directoryLoading && directoryUsers.length === 0 && <tr><td colSpan={7} className="empty">該当するユーザーはいません。</td></tr>}
+                </tbody>
+              </table>
+            </div>
+            <div className="pagination">
+              <button
+                className="small secondary"
+                disabled={directoryLoading || directoryOffset === 0}
+                onClick={() => void fetchUserDirectory(adminCapabilities, authHeaders, Math.max(0, directoryOffset - USER_PAGE_SIZE))}
+              >前へ</button>
+              <span>
+                {directoryTotal === 0 ? 0 : Math.floor(directoryOffset / USER_PAGE_SIZE) + 1}
+                {" / "}
+                {Math.ceil(directoryTotal / USER_PAGE_SIZE)}ページ
+              </span>
+              <button
+                className="small secondary"
+                disabled={directoryLoading || directoryOffset + USER_PAGE_SIZE >= directoryTotal}
+                onClick={() => void fetchUserDirectory(adminCapabilities, authHeaders, directoryOffset + USER_PAGE_SIZE)}
+              >次へ</button>
+            </div>
+          </>
+        )}
+      </section>}
 
       {hasCapability("promos.issue") && <section className="grid">
         <form onSubmit={sendCode} className="panel stack">
