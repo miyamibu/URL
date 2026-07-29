@@ -148,6 +148,20 @@ function formatDate(value?: string | null): string {
   }).format(new Date(value));
 }
 
+function formatCompactDate(value?: string | null, includeTime = false): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+
+  const isCurrentYear = date.getFullYear() === new Date().getFullYear();
+  return new Intl.DateTimeFormat("ja-JP", {
+    ...(isCurrentYear ? {} : { year: "2-digit" }),
+    month: "numeric",
+    day: "numeric",
+    ...(includeTime ? { hour: "2-digit", minute: "2-digit", hour12: false } : {}),
+  }).format(date);
+}
+
 function statusText(status: string): string {
   switch (status) {
     case "sent":
@@ -1099,9 +1113,11 @@ export default function AdminPage() {
                   {directoryUsers.map((user) => (
                     <tr key={user.id}>
                       <td>{user.email || "-"}</td>
-                      <td>{user.displayName || "-"}</td>
-                      <td>{formatDate(user.createdAt)}</td>
-                      <td>{formatDate(user.lastSeenAt ?? user.lastSignInAt)}</td>
+                      <td>{user.displayName || "未設定"}</td>
+                      <td className="compactDate" title={formatDate(user.createdAt)}>{formatCompactDate(user.createdAt)}</td>
+                      <td className="compactDate" title={formatDate(user.lastSeenAt ?? user.lastSignInAt)}>
+                        {formatCompactDate(user.lastSeenAt ?? user.lastSignInAt, true)}
+                      </td>
                       <td><span className="chip">{user.currentPlan}</span></td>
                       <td><span className={`chip ${user.accountStatus}`}>{user.accountStatus}</span></td>
                       <td><button className="small secondary" onClick={() => void fetchUserDetail(user.id)}>詳細</button></td>
