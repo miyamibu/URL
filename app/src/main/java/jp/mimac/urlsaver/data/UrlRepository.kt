@@ -2,12 +2,15 @@ package jp.mimac.urlsaver.data
 
 import android.content.Intent
 import jp.mimac.urlsaver.domain.SaveResult
+import jp.mimac.urlsaver.domain.RecordState
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 
 interface MainListRepository {
     fun observeActiveEntries(): Flow<List<UrlEntryEntity>>
     fun observeLocalTagEntryRefs(): Flow<List<LocalTagEntryRef>> = flowOf(emptyList())
+
+    suspend fun searchEntryIds(query: String, recordState: RecordState): Set<Long> = emptySet()
 
     suspend fun saveFromManualInput(input: String): SaveResult
     suspend fun saveFromManualInput(

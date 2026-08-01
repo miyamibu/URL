@@ -2,6 +2,15 @@
 
 Final status: REPO_GO (Apple submitted / Google Play upload blocked by signing)
 
+## Current source snapshot (manifest-backed)
+
+- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.15`, `versionCode=19`
+- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.17`, `build=19`; share extension `com.mibu.codebridge.ios.share`
+- Supabase migration head: `20260731100000_restore_shared_url_normalization_v1.sql`
+- Machine-readable source: `docs/release/release-manifest.json`
+
+> Dated provider, store, and device captures below are historical evidence unless they are explicitly re-run for the current source. They must not be treated as current proof solely because they appear in this document.
+
 ## Current working-tree status: REPO_GO (external release gates remain separate)
 
 The historical evidence below is retained. The current release candidate baseline is Android `versionName=1.0.15` / `versionCode=19` and iOS `CFBundleShortVersionString=1.0.17` / `CFBundleVersion=19`. Local implementation checks and release-artifact checks were captured on 2026-07-28. App Store Connect submission is complete and currently awaiting review; Google Play upload is blocked because the locally generated AAB is unsigned. Public/live release, Android upload-key recovery, OpenAI submission, and production secret entry remain separate gates.

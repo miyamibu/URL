@@ -9,6 +9,7 @@ import jp.mimac.urlsaver.domain.SharedTagMemberStatus
 import jp.mimac.urlsaver.domain.SharedTagScope
 import jp.mimac.urlsaver.domain.SharedTagSyncOperation
 import jp.mimac.urlsaver.domain.SharedTagSyncStatus
+import jp.mimac.urlsaver.domain.SHARED_TAG_NORMALIZATION_VERSION
 import jp.mimac.urlsaver.domain.UrlRules
 import jp.mimac.urlsaver.util.AppClock
 import kotlinx.serialization.json.Json
@@ -57,6 +58,12 @@ class SharedTagSyncCoordinator(
             }
 
             val snapshot = remoteDataSource.pullSnapshot(session)
+            check(snapshot.normalizationVersion == SHARED_TAG_NORMALIZATION_VERSION) {
+                "Unsupported shared tag normalization version=${snapshot.normalizationVersion}"
+            }
+            check(snapshot.urls.all { it.normalizationVersion == SHARED_TAG_NORMALIZATION_VERSION }) {
+                "Shared tag snapshot contains an unsupported URL normalization version"
+            }
             applySnapshot(session.authUserId, snapshot, now)
             syncDao.upsertSyncState(
                 syncState.copy(

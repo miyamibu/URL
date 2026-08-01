@@ -102,6 +102,7 @@ class DefaultTagRepository(
     override fun observeEntriesForTag(tagId: Long): Flow<List<UrlEntryEntity>> {
         return authSessionProvider.session.flatMapLatest { session ->
             tagDao.observeEntriesForVisibleTag(tagId, session?.authUserId)
+                .map { entries -> entries.map(UrlEntryListProjection::asListEntity) }
         }
     }
 

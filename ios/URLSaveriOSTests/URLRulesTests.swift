@@ -25,6 +25,30 @@ final class URLRulesTests: XCTestCase {
         )
     }
 
+    func testNormalizeMatchesSharedContractVectors() throws {
+        let fixtureURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("contracts/shared-tag-sync/url-normalization-v1.json")
+        let vectors = try JSONDecoder().decode(
+            [URLNormalizationVector].self,
+            from: Data(contentsOf: fixtureURL)
+        )
+
+        XCTAssertEqual(URLRules.normalizationContractVersion, sharedTagNormalizationVersion)
+        for vector in vectors {
+            let parsed = URLRules.parseURL(vector.input)
+            XCTAssertEqual(
+                URLRules.normalize(vector.input),
+                vector.expectedNormalizedURL,
+                vector.input
+            )
+            XCTAssertEqual(parsed?.normalizedURL, vector.expectedNormalizedURL, vector.input)
+            XCTAssertEqual(parsed?.openURL, vector.expectedNormalizedURL, vector.input)
+        }
+    }
+
     func testDisplayURLKeepsOnlyYouTubeVQuery() {
         let display = URLRules.toDisplayURL(
             normalizedURL: "https://www.youtube.com/watch?v=abc123&t=9",
@@ -309,5 +333,15 @@ final class URLRulesTests: XCTestCase {
     func testSupabaseEntitlementTimestampParserAcceptsFractionalSeconds() {
         XCTAssertNotNil(parseSupabaseISO8601Date("2026-05-01T04:05:06.789123Z"))
         XCTAssertNotNil(parseSupabaseISO8601Date("2026-05-01T04:05:06Z"))
+    }
+}
+
+private struct URLNormalizationVector: Decodable {
+    let input: String
+    let expectedNormalizedURL: String?
+
+    enum CodingKeys: String, CodingKey {
+        case input
+        case expectedNormalizedURL = "expectedNormalizedUrl"
     }
 }

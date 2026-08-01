@@ -2,19 +2,18 @@ import Foundation
 
 final class UserProfileStore: @unchecked Sendable {
     private let fileURL: URL
+    private let fileManager: FileManager
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
     init(fileURL: URL? = nil, fileManager: FileManager = .default) {
+        self.fileManager = fileManager
         if let fileURL {
             self.fileURL = fileURL
         } else {
-            let baseDirectory = try! fileManager.url(
-                for: .applicationSupportDirectory,
-                in: .userDomainMask,
-                appropriateFor: nil,
-                create: true
-            ).appendingPathComponent("URLSaveriOS", isDirectory: true)
+            let supportDirectory = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+                ?? fileManager.temporaryDirectory
+            let baseDirectory = supportDirectory.appendingPathComponent("URLSaveriOS", isDirectory: true)
             try? fileManager.createDirectory(at: baseDirectory, withIntermediateDirectories: true)
             self.fileURL = baseDirectory.appendingPathComponent("user-profile.json")
         }
@@ -29,10 +28,10 @@ final class UserProfileStore: @unchecked Sendable {
     }
 
     func load() throws -> UserProfile {
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+        guard fileManager.fileExists(atPath: fileURL.path) else {
             return .empty
         }
-        let data = try Data(contentsOf: fileURL)
+        let data = try Data(contentsOf: fileURL, options: .mappedIfSafe)
         return try decoder.decode(UserProfile.self, from: data)
     }
 

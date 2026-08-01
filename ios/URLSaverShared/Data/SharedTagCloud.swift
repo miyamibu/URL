@@ -696,7 +696,12 @@ private struct SharedTagSyncRemoteDataSource {
             session: session,
             body: EmptyPayload()
         )
-        return try makeSharedTagCloudDecoder().decode(PullSharedTagSnapshotResponse.self, from: data)
+        let snapshot = try makeSharedTagCloudDecoder().decode(PullSharedTagSnapshotResponse.self, from: data)
+        guard snapshot.normalizationVersion == sharedTagNormalizationVersion,
+              snapshot.urls.allSatisfy({ $0.normalizationVersion == sharedTagNormalizationVersion }) else {
+            throw SharedTagCloudError.message("Unsupported shared tag URL normalization version.")
+        }
+        return snapshot
     }
 
     func applyOperations(
@@ -1311,6 +1316,14 @@ final class SharedTagStore: @unchecked Sendable {
         try migrateIfNeeded()
     }
 
+    private init(unavailableDatabase: SQLiteDatabase) {
+        self.database = unavailableDatabase
+    }
+
+    static func unavailable(database: SQLiteDatabase) -> SharedTagStore {
+        SharedTagStore(unavailableDatabase: database)
+    }
+
     func loadVisibleTags(authUserID: String) throws -> [SharedTagSummary] {
         try database.fetchMany(
             sql: """
@@ -1633,8 +1646,27 @@ final class SharedTagStore: @unchecked Sendable {
         }
     }
 
-    func applySnapshot(authUserID: String, snapshot: PullSharedTagSnapshotResponse) throws {
-        try database.transaction {
+    @discardableResult
+    func applySnapshot(authUserID: String, snapshot: PullSharedTagSnapshotResponse) throws -> Bool {
+        guard let incomingPulledAt = Self.parseISO8601(snapshot.pulledAt) else {
+            throw SharedTagCloudError.message("共有タグの同期日時を解釈できませんでした。")
+        }
+
+        return try database.transaction {
+            let lastPulledAt: Double? = try database.fetchOne(
+                sql: "SELECT last_pulled_at FROM shared_tag_sync_state WHERE auth_user_id = ? LIMIT 1;",
+                binds: [sql(authUserID)],
+                decode: { statement in
+                    sqlite3_column_type(statement, 0) == SQLITE_NULL
+                        ? nil
+                        : sqlite3_column_double(statement, 0)
+                }
+            ) ?? nil
+            if let lastPulledAt,
+               incomingPulledAt.timeIntervalSince1970 <= lastPulledAt {
+                return false
+            }
+
             try database.execute("DELETE FROM shared_tag_members WHERE auth_user_id = ?;", binds: [sql(authUserID)])
             try database.execute("DELETE FROM shared_tag_group_members WHERE auth_user_id = ?;", binds: [sql(authUserID)])
             try database.execute("DELETE FROM shared_tag_group_tags WHERE auth_user_id = ?;", binds: [sql(authUserID)])
@@ -1841,6 +1873,7 @@ final class SharedTagStore: @unchecked Sendable {
                     sql(Self.parseISO8601(snapshot.pulledAt)?.timeIntervalSince1970),
                 ]
             )
+            return true
         }
     }
 
@@ -2061,6 +2094,22 @@ final class UserDefaultsSharedTagAccountLocalCleanupStateStore: @unchecked Senda
     }
 }
 
+private actor SharedTagSyncFlight {
+    private var task: Task<Bool, Never>?
+
+    func run(operation: @escaping @Sendable () async -> Bool) async -> Bool {
+        if let task {
+            return await task.value
+        }
+
+        let task = Task { await operation() }
+        self.task = task
+        let result = await task.value
+        self.task = nil
+        return result
+    }
+}
+
 final class SharedTagCloudService: @unchecked Sendable {
     let config: SharedTagCloudConfig
     private let sessionStore: SharedTagAuthSessionStore
@@ -2070,6 +2119,7 @@ final class SharedTagCloudService: @unchecked Sendable {
     private let repository: URLRepository
     private let clearLocalAiData: @Sendable () throws -> Void
     private let localCleanupStateStore: any SharedTagAccountLocalCleanupStateStore
+    private let syncFlight = SharedTagSyncFlight()
 
     init(
         config: SharedTagCloudConfig,
@@ -2412,6 +2462,12 @@ final class SharedTagCloudService: @unchecked Sendable {
     }
 
     func syncCurrentSession() async -> Bool {
+        await syncFlight.run { [self] in
+            await self.performSyncCurrentSession()
+        }
+    }
+
+    private func performSyncCurrentSession() async -> Bool {
         let session: SharedTagAuthSession?
         do {
             session = try sessionStore.load()
@@ -3028,7 +3084,12 @@ final class SharedTagCloudService: @unchecked Sendable {
 
     private func refreshLocalState(session: SharedTagAuthSession) async throws {
         let snapshot = try await syncRemoteDataSource.pullSnapshot(session: session)
-        try store.applySnapshot(authUserID: session.authUserID, snapshot: snapshot)
+        let store = self.store
+        let authUserID = session.authUserID
+        try await Task.detached(priority: .utility) {
+            try Task.checkCancellation()
+            _ = try store.applySnapshot(authUserID: authUserID, snapshot: snapshot)
+        }.value
     }
 
     private static func normalizeTagName(_ value: String) -> String {
@@ -3546,13 +3607,31 @@ struct RemoteSharedTagURL: Decodable, Sendable {
     let tagID: String
     let rawURL: String
     let normalizedURL: String
+    let normalizationVersion: Int
     let deletedAt: String?
+
+    init(
+        id: String,
+        tagID: String,
+        rawURL: String,
+        normalizedURL: String,
+        normalizationVersion: Int = sharedTagNormalizationVersion,
+        deletedAt: String?
+    ) {
+        self.id = id
+        self.tagID = tagID
+        self.rawURL = rawURL
+        self.normalizedURL = normalizedURL
+        self.normalizationVersion = normalizationVersion
+        self.deletedAt = deletedAt
+    }
 
     enum CodingKeys: String, CodingKey {
         case id
         case tagID = "tag_id"
         case rawURL = "raw_url"
         case normalizedURL = "normalized_url"
+        case normalizationVersion = "normalization_version"
         case deletedAt = "deleted_at"
     }
 }

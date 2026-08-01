@@ -161,6 +161,7 @@ SNS やメッセージで見つけた URL を後で見返したい人向けの�
 - `./gradlew lintDebug`
 - `./gradlew connectedDebugAndroidTest`（手動検証。CI hard gate ではない。通常の物理端末では保存データを消し得るため、テスト専用AVD/端末または明示承認がある場合のみ実行）
 - `psql -h <socket-or-host> -d postgres -f supabase/tests/shared_tag_sync_validation.sql`（Supabase SQL migration / RPC / validation のローカル確認）
+- `python3 scripts/verify_shared_url_normalization_contract.py --dsn <database-or-connection-string>`（Android/iOSと同じJSON fixtureをSupabase SQL関数で検証。接続せずfixtureだけ確認する場合は`--skip-sql`）
 - 契約前 release dry run: `./gradlew assembleRelease`（`release.shared.tag.cloud.enabled=false` または未設定）
 
 ## 実機インストール（USB / LAN）

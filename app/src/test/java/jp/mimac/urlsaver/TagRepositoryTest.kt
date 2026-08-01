@@ -60,6 +60,8 @@ import jp.mimac.urlsaver.domain.SaveResult
 import jp.mimac.urlsaver.domain.ShareSaveResult
 import jp.mimac.urlsaver.ui.CreateAndAssignTagResult
 import jp.mimac.urlsaver.ui.DetailViewModel
+import jp.mimac.urlsaver.ui.SaveMemoUiResult
+import jp.mimac.urlsaver.ui.SaveTitleUiResult
 import jp.mimac.urlsaver.util.AppClock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -420,6 +422,23 @@ class TagRepositoryTest {
         assertNull(created?.remoteTagId)
         assertNull(created?.authUserId)
         assertTrue(syncScheduler.enqueued.isEmpty())
+    }
+
+    @Test
+    fun detailViewModel_saveFailuresRemainExplicitForRetryableUi() = runBlocking {
+        val entryId = insertEntry(
+            url = "https://example.com/detail-save-failure",
+            createdAt = 2_050L,
+        )
+        val viewModel = DetailViewModel(
+            entryId = entryId,
+            repository = FakeUrlRepository(),
+            tagRepository = repository,
+            videoRepository = FakeVideoRepository(),
+        )
+
+        assertEquals(SaveTitleUiResult.Failed, viewModel.saveTitle("保存失敗"))
+        assertEquals(SaveMemoUiResult.Failed, viewModel.saveMemo("保存失敗"))
     }
 
     @Test

@@ -216,6 +216,44 @@ final class ServiceFilterTests: XCTestCase {
         XCTAssertTrue(cardSwipeShouldBegin(horizontal: 5, vertical: 2, velocityX: 500, velocityY: 80))
     }
 
+    func testEntryListLoadStateDistinguishesEmptyAndContent() {
+        XCTAssertEqual(entryListLoadState(for: []), .empty)
+
+        let record = makeRecord(id: 20, serviceType: .web, host: "example.com")
+        XCTAssertEqual(entryListLoadState(for: [record]), .content)
+    }
+
+    func testIOSListGuideRetrySaveFailureAndVoiceOverContractsRemainPresent() throws {
+        let rootSource = try String(contentsOf: rootViewSourceURL(), encoding: .utf8)
+        XCTAssertTrue(rootSource.contains("isShowingUsageGuide = true"))
+        XCTAssertTrue(rootSource.contains("EntryListStateCard("))
+        XCTAssertTrue(rootSource.contains("onRetryLoad"))
+        XCTAssertTrue(rootSource.contains("ViewThatFits(in: .horizontal)"))
+        XCTAssertTrue(rootSource.contains("saveResult.result == .saveFailed"))
+        XCTAssertTrue(rootSource.contains("Web版の詳しい使い方"))
+
+        let modelSource = try String(contentsOf: appModelSourceURL(), encoding: .utf8)
+        XCTAssertTrue(modelSource.contains("activeEntriesLoadState"))
+        XCTAssertTrue(modelSource.contains("activeEntriesLoadState = .error(message)"))
+        XCTAssertTrue(modelSource.contains("case retryTitle(Int64, String)"))
+        XCTAssertTrue(modelSource.contains("case retryMemo(Int64, String)"))
+        XCTAssertTrue(modelSource.contains("入力内容は保持されています"))
+
+        let chromeSource = try String(contentsOf: appChromeSourceURL(), encoding: .utf8)
+        XCTAssertTrue(chromeSource.contains("entryCardAccessibilityLabel"))
+        XCTAssertTrue(chromeSource.contains("accessibilityAction(named: Text(\"アーカイブ\"))"))
+        XCTAssertTrue(chromeSource.contains("accessibilityAction(named: Text(\"削除\"))"))
+        XCTAssertTrue(chromeSource.contains("accessibilityAction(named: Text(\"外す\"))"))
+
+        let detailSource = try String(contentsOf: detailViewSourceURL(), encoding: .utf8)
+        XCTAssertTrue(detailSource.contains("isSavingTitle"))
+        XCTAssertTrue(detailSource.contains("memoSaveError"))
+        XCTAssertTrue(detailSource.contains("タイトルを保存できませんでした。入力内容は保持されています。"))
+        XCTAssertTrue(detailSource.contains("メモを保存できませんでした。入力内容は保持されています。"))
+        XCTAssertTrue(detailSource.contains("Text(titleSaveError == nil ? \"保存\" : \"再試行\")"))
+        XCTAssertTrue(detailSource.contains("Text(saveError == nil ? \"保存\" : \"再試行\")"))
+    }
+
     func testMediaSortIndexParsesZeroPaddedPrefix() {
         XCTAssertEqual(rinbamMediaSortIndex(from: "000_shortcode_item_0.jpg"), 0)
         XCTAssertEqual(rinbamMediaSortIndex(from: "001_shortcode_item_1.mp4"), 1)
@@ -293,9 +331,29 @@ final class ServiceFilterTests: XCTestCase {
     }
 
     private func exportSheetSourceURL() -> URL {
+        sourceURL("URLSaveriOS/UI/ExportSheet.swift")
+    }
+
+    private func rootViewSourceURL() -> URL {
+        sourceURL("URLSaveriOS/UI/RootView.swift")
+    }
+
+    private func appModelSourceURL() -> URL {
+        sourceURL("URLSaveriOS/App/URLSaverAppModel.swift")
+    }
+
+    private func appChromeSourceURL() -> URL {
+        sourceURL("URLSaveriOS/UI/AppChrome.swift")
+    }
+
+    private func detailViewSourceURL() -> URL {
+        sourceURL("URLSaveriOS/UI/DetailView.swift")
+    }
+
+    private func sourceURL(_ relativePath: String) -> URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("URLSaveriOS/UI/ExportSheet.swift")
+            .appendingPathComponent(relativePath)
     }
 }

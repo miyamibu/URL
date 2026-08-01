@@ -36,7 +36,7 @@ actor SharedTagSyncExecutor {
     private func runLoop(for authUserID: String) async {
         while true {
             _ = await driver.sync(authUserID: authUserID)
-            let shouldRerun = await finishIteration(for: authUserID)
+            let shouldRerun = finishIteration(for: authUserID)
             if !shouldRerun {
                 return
             }

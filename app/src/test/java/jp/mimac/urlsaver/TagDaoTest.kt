@@ -102,6 +102,29 @@ class TagDaoTest {
         assertEquals(listOf(olderEntryId, newerEntryId), entriesForTag.map { it.id })
     }
 
+    @Test
+    fun getVisibleTagsForEntries_batchesLargeFixtureAndPreservesGrouping() = runBlocking {
+        val tagDao = db.tagDao()
+        val alphaId = tagDao.insertTag(TagEntity(name = "alpha-batch", createdAt = 1L))
+        val betaId = tagDao.insertTag(TagEntity(name = "beta-batch", createdAt = 2L))
+        val entryIds = (0 until 120).map { index ->
+            insertEntry("https://example.com/batch-$index", createdAt = index.toLong())
+        }
+        entryIds.forEach { entryId ->
+            tagDao.insertCrossRef(TagUrlCrossRef(tagId = alphaId, entryId = entryId))
+            tagDao.insertCrossRef(TagUrlCrossRef(tagId = betaId, entryId = entryId))
+        }
+
+        val rows = tagDao.getVisibleTagsForEntries(entryIds, authUserId = null)
+
+        assertEquals(entryIds.size * 2, rows.size)
+        assertEquals(entryIds.toSet(), rows.map { it.entryId }.toSet())
+        assertEquals(
+            listOf("alpha-batch", "beta-batch"),
+            rows.filter { it.entryId == entryIds.first() }.map { it.name },
+        )
+    }
+
     private suspend fun insertEntry(url: String, createdAt: Long = 1L): Long {
         return db.urlEntryDao().insert(
             UrlEntryEntity(

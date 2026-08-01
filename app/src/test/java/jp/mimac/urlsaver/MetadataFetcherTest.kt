@@ -9,6 +9,7 @@ import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CancellationException
 import java.net.HttpURLConnection
 import java.net.URLEncoder
 import java.net.URL
@@ -25,7 +26,7 @@ class MetadataFetcherTest {
                     .addHeader("Content-Type", "text/html; charset=utf-8")
                     .setBody("<html><head><title>Hello</title></head><body>ok</body></html>"),
             )
-            val result = MetadataFetcher().fetch(server.url("/ok").toString())
+            val result = MetadataFetcher(allowLocalTestUrls = true).fetch(server.url("/ok").toString())
             assertTrue(result is FetchOutcome.Ready)
             result as FetchOutcome.Ready
             assertEquals("Hello", result.fetchedTitle)
@@ -41,7 +42,7 @@ class MetadataFetcherTest {
                     .addHeader("Content-Type", "text/plain")
                     .setBody("plain text"),
             )
-            val result = MetadataFetcher().fetch(server.url("/plain").toString())
+            val result = MetadataFetcher(allowLocalTestUrls = true).fetch(server.url("/plain").toString())
             assertEquals(FetchOutcome.Unavailable(MetadataError.NON_HTML), result)
         }
     }
@@ -55,7 +56,7 @@ class MetadataFetcherTest {
                     .addHeader("Content-Type", "text/html")
                     .setBody("a".repeat(513 * 1024)),
             )
-            val result = MetadataFetcher().fetch(server.url("/big").toString())
+            val result = MetadataFetcher(allowLocalTestUrls = true).fetch(server.url("/big").toString())
             assertEquals(FetchOutcome.Unavailable(MetadataError.OVERSIZED), result)
         }
     }
@@ -71,7 +72,7 @@ class MetadataFetcherTest {
                         .addHeader("Location", loopUrl),
                 )
             }
-            val result = MetadataFetcher().fetch(loopUrl)
+            val result = MetadataFetcher(allowLocalTestUrls = true).fetch(loopUrl)
             assertEquals(FetchOutcome.Unavailable(MetadataError.TOO_MANY_REDIRECTS), result)
         }
     }
@@ -85,7 +86,7 @@ class MetadataFetcherTest {
                     .addHeader("Content-Type", "text/html")
                     .setBody("<html><body>no title and no og image</body></html>"),
             )
-            val result = MetadataFetcher().fetch(server.url("/parse").toString())
+            val result = MetadataFetcher(allowLocalTestUrls = true).fetch(server.url("/parse").toString())
             assertEquals(FetchOutcome.Unavailable(MetadataError.PARSE_FAILED), result)
         }
     }
@@ -94,7 +95,7 @@ class MetadataFetcherTest {
     fun fetch_http5xx_isRetryableFailed() {
         withServer { server ->
             server.enqueue(MockResponse().setResponseCode(503))
-            val result = MetadataFetcher().fetch(server.url("/server-error").toString())
+            val result = MetadataFetcher(allowLocalTestUrls = true).fetch(server.url("/server-error").toString())
             assertEquals(FetchOutcome.FailedRetryable(MetadataError.HTTP_5XX), result)
         }
     }
@@ -103,6 +104,40 @@ class MetadataFetcherTest {
     fun fetch_httpScheme_isUnavailableUnsupportedScheme() {
         val result = MetadataFetcher().fetch("http://example.com")
         assertEquals(FetchOutcome.Unavailable(MetadataError.UNSUPPORTED_SCHEME), result)
+    }
+
+    @Test
+    fun fetch_privateInitialUrl_isUnavailableUnsupportedScheme() {
+        val result = MetadataFetcher().fetch("https://127.0.0.1/private")
+        assertEquals(FetchOutcome.Unavailable(MetadataError.UNSUPPORTED_SCHEME), result)
+    }
+
+    @Test
+    fun fetch_redirectToPrivateUrl_isUnavailableUnsupportedScheme() {
+        withServer { server ->
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(302)
+                    .addHeader("Location", "https://127.0.0.1/private"),
+            )
+            val fetcher = MetadataFetcher(
+                connectionFactory = {
+                    URL(server.url("/redirect").toString()).openConnection() as HttpURLConnection
+                },
+            )
+
+            val result = fetcher.fetch("https://8.8.8.8/start")
+
+            assertEquals(FetchOutcome.Unavailable(MetadataError.UNSUPPORTED_SCHEME), result)
+        }
+    }
+
+    @Test(expected = CancellationException::class)
+    fun fetch_cancellationIsPropagated() {
+        MetadataFetcher(
+            allowLocalTestUrls = true,
+            connectionFactory = { throw CancellationException("cancelled") },
+        ).fetch("https://metadata-cancel.test/start")
     }
 
     @Test
@@ -124,7 +159,7 @@ class MetadataFetcherTest {
                         """.trimIndent(),
                     ),
             )
-            val result = MetadataFetcher().fetch(server.url("/x").toString())
+            val result = MetadataFetcher(allowLocalTestUrls = true).fetch(server.url("/x").toString())
             assertTrue(result is FetchOutcome.Ready)
             result as FetchOutcome.Ready
             assertEquals("111222333444", result.canonicalId)
@@ -150,7 +185,7 @@ class MetadataFetcherTest {
                         """.trimIndent(),
                     ),
             )
-            val result = MetadataFetcher().fetch(server.url("/twitter").toString())
+            val result = MetadataFetcher(allowLocalTestUrls = true).fetch(server.url("/twitter").toString())
             assertTrue(result is FetchOutcome.Ready)
             result as FetchOutcome.Ready
             assertEquals("555666777888", result.canonicalId)
@@ -167,7 +202,7 @@ class MetadataFetcherTest {
                     .setBody("<html><head><title>Header Check</title></head><body>ok</body></html>"),
             )
 
-            MetadataFetcher("UrlSaver/test").fetch(server.url("/header").toString())
+            MetadataFetcher(userAgent = "UrlSaver/test", allowLocalTestUrls = true).fetch(server.url("/header").toString())
 
             val request = server.takeRequest()
             val userAgent = request.getHeader("User-Agent")
@@ -634,6 +669,7 @@ class MetadataFetcherTest {
             )
 
             val fetcher = MetadataFetcher(
+                allowLocalTestUrls = true,
                 youtubeOEmbedEndpointBuilder = { _ ->
                     "https://oembed.youtube.test/oembed"
                 },
@@ -702,6 +738,7 @@ class MetadataFetcherTest {
             )
 
             val fetcher = MetadataFetcher(
+                allowLocalTestUrls = true,
                 youtubeOEmbedEndpointBuilder = { _ ->
                     "https://oembed.youtube.test/oembed"
                 },
@@ -782,6 +819,7 @@ class MetadataFetcherTest {
             )
 
             val fetcher = MetadataFetcher(
+                allowLocalTestUrls = true,
                 youtubeOEmbedEndpointBuilder = { _ -> "https://oembed.youtube.test/shorts" },
                 youtubePlayerEndpointBuilder = { _ -> "https://youtubei.test/player" },
                 connectionFactory = { requestedUrl ->
@@ -854,6 +892,7 @@ class MetadataFetcherTest {
             )
 
             val fetcher = MetadataFetcher(
+                allowLocalTestUrls = true,
                 youtubeOEmbedEndpointBuilder = { _ -> "https://oembed.youtube.test/embedded-short" },
                 connectionFactory = { requestedUrl ->
                     val mapped = when {
@@ -911,6 +950,7 @@ class MetadataFetcherTest {
             )
 
             val fetcher = MetadataFetcher(
+                allowLocalTestUrls = true,
                 youtubeOEmbedEndpointBuilder = { _ -> "https://oembed.youtube.test/priority" },
                 connectionFactory = { requestedUrl ->
                     val mapped = when {
@@ -999,6 +1039,7 @@ class MetadataFetcherTest {
             )
 
             val fetcher = MetadataFetcher(
+                allowLocalTestUrls = true,
                 youtubeOEmbedEndpointBuilder = { _ -> "https://oembed.youtube.test/badge" },
                 connectionFactory = { requestedUrl ->
                     val mapped = when {
@@ -1079,6 +1120,7 @@ class MetadataFetcherTest {
             )
 
             val fetcher = MetadataFetcher(
+                allowLocalTestUrls = true,
                 youtubeOEmbedEndpointBuilder = { _ -> "https://oembed.youtube.test/fallback" },
                 connectionFactory = { requestedUrl ->
                     val mapped = when {
@@ -1128,6 +1170,7 @@ class MetadataFetcherTest {
             )
 
             val fetcher = MetadataFetcher(
+                allowLocalTestUrls = true,
                 connectionFactory = { requestedUrl ->
                     val mapped = if (requestedUrl.startsWith("https://www.instagram.com/")) {
                         server.url("/instagram/p/ABC123").toString()
@@ -1178,6 +1221,7 @@ class MetadataFetcherTest {
             )
 
             val fetcher = MetadataFetcher(
+                allowLocalTestUrls = true,
                 connectionFactory = { requestedUrl ->
                     val mapped = if (requestedUrl.startsWith("https://www.instagram.com/")) {
                         server.url("/instagram/reel/XYZ789").toString()
@@ -1219,6 +1263,7 @@ class MetadataFetcherTest {
             )
 
             val fetcher = MetadataFetcher(
+                allowLocalTestUrls = true,
                 connectionFactory = { requestedUrl ->
                     val mapped = if (requestedUrl.startsWith("https://www.instagram.com/")) {
                         server.url("/instagram/p/QUOTE001").toString()
@@ -1442,6 +1487,7 @@ class MetadataFetcherTest {
             )
 
             val fetcher = MetadataFetcher(
+                allowLocalTestUrls = true,
                 instagramOEmbedEndpointBuilder = { targetUrl ->
                     val encoded = URLEncoder.encode(targetUrl, StandardCharsets.UTF_8)
                     server.url("/instagram/oembed-author?url=$encoded").toString()
@@ -1504,6 +1550,7 @@ class MetadataFetcherTest {
             )
 
             val fetcher = MetadataFetcher(
+                allowLocalTestUrls = true,
                 instagramPublicOEmbedEndpointBuilder = { targetUrl ->
                     val encoded = URLEncoder.encode(targetUrl, StandardCharsets.UTF_8)
                     server.url("/instagram/public-oembed?url=$encoded").toString()
@@ -1565,6 +1612,7 @@ class MetadataFetcherTest {
             )
 
             val fetcher = MetadataFetcher(
+                allowLocalTestUrls = true,
                 instagramPublicOEmbedEndpointBuilder = { targetUrl ->
                     val encoded = URLEncoder.encode(targetUrl, StandardCharsets.UTF_8)
                     server.url("/instagram/public-oembed-merge?url=$encoded").toString()
@@ -1658,6 +1706,7 @@ class MetadataFetcherTest {
             )
 
             val fetcher = MetadataFetcher(
+                allowLocalTestUrls = true,
                 instagramPublicOEmbedEndpointBuilder = { targetUrl ->
                     val encoded = URLEncoder.encode(targetUrl, StandardCharsets.UTF_8)
                     server.url("/instagram/public-oembed-empty?url=$encoded").toString()
@@ -2157,7 +2206,7 @@ class MetadataFetcherTest {
                     ),
             )
 
-            val fetcher = MetadataFetcher()
+            val fetcher = MetadataFetcher(allowLocalTestUrls = true)
 
             val metaResult = fetcher.fetch(server.url("/web/meta").toString())
             assertTrue(metaResult is FetchOutcome.Ready)
@@ -2200,7 +2249,7 @@ class MetadataFetcherTest {
                     ),
             )
 
-            val result = MetadataFetcher().fetch(server.url("/web/japanese-summary").toString())
+            val result = MetadataFetcher(allowLocalTestUrls = true).fetch(server.url("/web/japanese-summary").toString())
             assertTrue(result is FetchOutcome.Ready)
             result as FetchOutcome.Ready
             assertEquals("最初の文です。", result.bodySummary)
@@ -2228,7 +2277,7 @@ class MetadataFetcherTest {
                     ),
             )
 
-            val result = MetadataFetcher().fetch(server.url("/web/long-description").toString())
+            val result = MetadataFetcher(allowLocalTestUrls = true).fetch(server.url("/web/long-description").toString())
             assertTrue(result is FetchOutcome.Ready)
             result as FetchOutcome.Ready
             assertEquals(4_000, result.fetchedBody?.length)
@@ -2257,7 +2306,7 @@ class MetadataFetcherTest {
                     ),
             )
 
-            val result = MetadataFetcher().fetch(server.url("/web/favicon").toString())
+            val result = MetadataFetcher(allowLocalTestUrls = true).fetch(server.url("/web/favicon").toString())
             assertTrue(result is FetchOutcome.Ready)
             result as FetchOutcome.Ready
             assertEquals("http://localhost:${server.port}/favicon.ico", result.badgeImageUrl)
@@ -2266,6 +2315,7 @@ class MetadataFetcherTest {
 
     private fun createXFetcher(server: MockWebServer): MetadataFetcher {
         return MetadataFetcher(
+            allowLocalTestUrls = true,
             userAgent = "UrlSaver/test",
             syndicationEndpointBuilder = { statusId ->
                 server.url("/syndication/$statusId").toString()
@@ -2289,6 +2339,7 @@ class MetadataFetcherTest {
         embedPath: String? = null,
     ): MetadataFetcher {
         return MetadataFetcher(
+            allowLocalTestUrls = true,
             instagramPublicOEmbedEndpointBuilder = oEmbedPath?.let { path ->
                 { targetUrl ->
                     val encoded = URLEncoder.encode(targetUrl, StandardCharsets.UTF_8)
@@ -2317,6 +2368,7 @@ class MetadataFetcherTest {
         htmlPath: String? = null,
     ): MetadataFetcher {
         return MetadataFetcher(
+            allowLocalTestUrls = true,
             tiktokOEmbedEndpointBuilder = { targetUrl ->
                 val encoded = URLEncoder.encode(targetUrl, StandardCharsets.UTF_8)
                 server.url("/tiktok/oembed?url=$encoded").toString()

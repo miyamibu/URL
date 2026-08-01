@@ -6,6 +6,7 @@ import java.net.URI
 import java.util.Locale
 
 object UrlRules {
+    const val NORMALIZATION_CONTRACT_VERSION: Int = 1
     const val MAX_INPUT_TEXT_BYTES: Int = 256 * 1024
     const val MAX_EXTRACTED_URLS_PER_INPUT: Int = 50
     const val MAX_BATCH_SAVE_URLS_PER_INTAKE: Int = 50

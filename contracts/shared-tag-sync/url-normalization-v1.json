@@ -15,6 +15,11 @@
     "reason": "non-root trailing slash is removed"
   },
   {
+    "input": "https://example.com/path///",
+    "expectedNormalizedUrl": "https://example.com/path",
+    "reason": "all non-root trailing slashes are removed consistently"
+  },
+  {
     "input": "https://example.com/path?x=1&y=2#section",
     "expectedNormalizedUrl": "https://example.com/path?x=1&y=2",
     "reason": "query is preserved and fragment is removed"
@@ -35,9 +40,19 @@
     "reason": "non-default query parameters remain part of the normalized URL"
   },
   {
+    "input": "https://youtu.be/abc123?t=9",
+    "expectedNormalizedUrl": "https://youtu.be/abc123?t=9",
+    "reason": "short YouTube host and query parameters are preserved without service-specific rewriting"
+  },
+  {
     "input": "https://x.com/openai/status/111222333?s=20",
     "expectedNormalizedUrl": "https://x.com/openai/status/111222333?s=20",
     "reason": "service-specific query values are preserved in normalization"
+  },
+  {
+    "input": "https://twitter.com/openai/status/111222333?s=20",
+    "expectedNormalizedUrl": "https://twitter.com/openai/status/111222333?s=20",
+    "reason": "legacy X host and query parameters are preserved without host/path canonicalization"
   },
   {
     "input": "example.com/path",

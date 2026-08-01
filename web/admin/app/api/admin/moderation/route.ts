@@ -11,6 +11,7 @@ import {
   requiredOperationId,
 } from "@/lib/admin-operation";
 import { requiredAdminReason } from "@/lib/audit";
+import { parseJsonObject } from "@/lib/request-body";
 import { createServiceSupabaseClient } from "@/lib/supabase";
 
 const ACTIONS = new Set(["review", "warn", "hide_content", "suspend_user", "reject", "close"]);
@@ -44,7 +45,7 @@ export async function PATCH(request: NextRequest) {
     const admin = await requireAdmin(request);
     assertCapability(admin, "moderation.manage");
     assertHighRisk(admin);
-    const body = await request.json().catch(() => ({}));
+    const body = await parseJsonObject(request);
     const reportId = String(body.reportId ?? "").trim();
     const action = String(body.action ?? "").trim();
     const reason = requiredAdminReason(body.reason);

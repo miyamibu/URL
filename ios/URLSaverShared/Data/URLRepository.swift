@@ -15,16 +15,72 @@ final class URLRepository: @unchecked Sendable {
         try migrateIfNeeded()
     }
 
+    private init(unavailableDatabase: SQLiteDatabase) {
+        database = unavailableDatabase
+    }
+
+    static func unavailable(databaseURL: URL, message: String) -> URLRepository {
+        URLRepository(
+            unavailableDatabase: SQLiteDatabase.unavailable(
+                databaseURL: databaseURL,
+                message: message
+            )
+        )
+    }
+
+    var isAvailable: Bool {
+        database.isAvailable
+    }
+
     func observeActiveSnapshot() throws -> [URLRecord] {
-        try fetchEntries(
+        try fetchListEntries(
             whereClause: "local_provenance_count > 0 AND record_state = 'ACTIVE' ORDER BY created_at DESC"
         )
     }
 
     func observeArchiveSnapshot() throws -> [URLRecord] {
-        try fetchEntries(
+        try fetchListEntries(
             whereClause: "local_provenance_count > 0 AND record_state = 'ARCHIVED' ORDER BY archived_at DESC, created_at DESC"
         )
+    }
+
+    func searchEntryIDs(query: String, recordState: RecordState) throws -> Set<Int64> {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return [] }
+        let escapedNeedle = needle
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "%", with: "\\%")
+            .replacingOccurrences(of: "_", with: "\\_")
+        let pattern = sql("%\(escapedNeedle)%")
+        let binds = [sql(recordState.rawValue)] + Array(repeating: pattern, count: 14)
+        let ids = try database.fetchMany(
+            sql: """
+            SELECT id
+            FROM url_entries
+            WHERE local_provenance_count > 0
+              AND record_state = ?
+              AND (
+                LOWER(COALESCE(original_url, '')) LIKE LOWER(?) ESCAPE '\\'
+                OR LOWER(COALESCE(normalized_url, '')) LIKE LOWER(?) ESCAPE '\\'
+                OR LOWER(COALESCE(display_url, '')) LIKE LOWER(?) ESCAPE '\\'
+                OR LOWER(COALESCE(open_url, '')) LIKE LOWER(?) ESCAPE '\\'
+                OR LOWER(COALESCE(normalized_host, '')) LIKE LOWER(?) ESCAPE '\\'
+                OR LOWER(COALESCE(raw_source_host, '')) LIKE LOWER(?) ESCAPE '\\'
+                OR LOWER(COALESCE(user_title, '')) LIKE LOWER(?) ESCAPE '\\'
+                OR LOWER(COALESCE(fetched_title, '')) LIKE LOWER(?) ESCAPE '\\'
+                OR LOWER(COALESCE(fetched_author_name, '')) LIKE LOWER(?) ESCAPE '\\'
+                OR LOWER(COALESCE(fetched_body, '')) LIKE LOWER(?) ESCAPE '\\'
+                OR LOWER(COALESCE(body_summary, '')) LIKE LOWER(?) ESCAPE '\\'
+                OR LOWER(COALESCE(description, '')) LIKE LOWER(?) ESCAPE '\\'
+                OR LOWER(COALESCE(memo, '')) LIKE LOWER(?) ESCAPE '\\'
+                OR LOWER(COALESCE(service_type, '')) LIKE LOWER(?) ESCAPE '\\'
+              );
+            """,
+            binds: binds
+        ) { statement in
+            sqlite3_column_int64(statement, 0)
+        }
+        return Set(ids)
     }
 
     func loadExportSnapshot() throws -> [URLRecord] {
@@ -400,19 +456,21 @@ final class URLRepository: @unchecked Sendable {
     }
 
     func saveFromManualInput(_ input: String, localTagIDs: [Int64] = []) throws -> SaveResult {
-        switch URLRules.extractForManualInput(input) {
-        case .found(let url):
-            let result = try saveFromURL(url, initialMemo: URLRules.extractMemoWithoutURLs(input))
-            try assignLocalTagsAfterSave(result: result, localTagIDs: localTagIDs)
-            return result
-        case .inputTooLarge:
-            return SaveResult(result: .inputTooLarge)
-        case .invalidURL:
-            return SaveResult(result: .invalidURL)
-        case .noURLFound:
-            let result = try saveFromTextCard(input)
-            try assignLocalTagsAfterSave(result: result, localTagIDs: localTagIDs)
-            return result
+        try database.transaction {
+            switch URLRules.extractForManualInput(input) {
+            case .found(let url):
+                let result = try saveFromURLInTransaction(url, initialMemo: URLRules.extractMemoWithoutURLs(input))
+                try assignLocalTagsAfterSave(result: result, localTagIDs: localTagIDs)
+                return result
+            case .inputTooLarge:
+                return SaveResult(result: .inputTooLarge)
+            case .invalidURL:
+                return SaveResult(result: .invalidURL)
+            case .noURLFound:
+                let result = try saveFromTextCardInTransaction(input)
+                try assignLocalTagsAfterSave(result: result, localTagIDs: localTagIDs)
+                return result
+            }
         }
     }
 
@@ -421,9 +479,11 @@ final class URLRepository: @unchecked Sendable {
         localTagIDs: [Int64] = [],
         initialMemo: String? = nil
     ) throws -> SaveResult {
-        let result = try saveFromURL(url, initialMemo: initialMemo)
-        try assignLocalTagsAfterSave(result: result, localTagIDs: localTagIDs)
-        return result
+        try database.transaction {
+            let result = try saveFromURLInTransaction(url, initialMemo: initialMemo)
+            try assignLocalTagsAfterSave(result: result, localTagIDs: localTagIDs)
+            return result
+        }
     }
 
     func archive(entryID: Int64) throws -> Bool {
@@ -670,70 +730,14 @@ final class URLRepository: @unchecked Sendable {
         )
     }
 
-    private func saveFromURL(_ originalURL: String, initialMemo: String? = nil) throws -> SaveResult {
+    private func saveFromURLInTransaction(_ originalURL: String, initialMemo: String? = nil) throws -> SaveResult {
         guard let parsed = URLRules.parseURL(originalURL) else {
             return SaveResult(result: .invalidURL)
         }
         let memoForNewEntry = normalizeInitialMemo(initialMemo)
 
         if let existing = try findExisting(normalizedURL: parsed.normalizedURL) {
-            if existing.localProvenanceCount == 0 {
-                let now = Date()
-                let mergedMemo = existing.memo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    ? memoForNewEntry
-                    : existing.memo
-                try execute(
-                    """
-                    UPDATE url_entries
-                    SET local_provenance_count = 1,
-                        record_state = 'ACTIVE',
-                        memo = ?,
-                        pending_deletion_until = NULL,
-                        archived_at = NULL,
-                        updated_at = ?
-                    WHERE id = ?;
-                    """,
-                    binds: [sql(mergedMemo), sql(now.timeIntervalSince1970), sql(existing.id)]
-                )
-                return SaveResult(
-                    result: .created,
-                    entryID: existing.id,
-                    normalizedURL: existing.normalizedURL,
-                    shouldScheduleMetadata: existing.needsMetadataRetryAfterRestore
-                )
-            }
-
-            switch existing.recordState {
-            case .active:
-                return SaveResult(result: .duplicateActive, entryID: existing.id, normalizedURL: existing.normalizedURL)
-            case .archived:
-                return SaveResult(result: .duplicateArchived, entryID: existing.id, normalizedURL: existing.normalizedURL)
-            case .pendingDelete:
-                let now = Date()
-                let restoreToArchived = existing.archivedAt != nil
-                try execute(
-                    """
-                    UPDATE url_entries
-                    SET record_state = ?,
-                        pending_deletion_until = NULL,
-                        archived_at = ?,
-                        updated_at = ?
-                    WHERE id = ?;
-                    """,
-                    binds: [
-                        sql(restoreToArchived ? RecordState.archived.rawValue : RecordState.active.rawValue),
-                        sql(restoreToArchived ? existing.archivedAt?.timeIntervalSince1970 : nil),
-                        sql(now.timeIntervalSince1970),
-                        sql(existing.id)
-                    ]
-                )
-                return SaveResult(
-                    result: .restoredFromPendingDelete,
-                    entryID: existing.id,
-                    normalizedURL: existing.normalizedURL,
-                    shouldScheduleMetadata: existing.needsMetadataRetryAfterRestore
-                )
-            }
+            return try saveExistingEntry(existing, initialMemo: memoForNewEntry)
         }
 
         let now = Date()
@@ -757,23 +761,31 @@ final class URLRepository: @unchecked Sendable {
             updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, 'ACTIVE', 1, 0, ?, ?);
         """
-        let rowID = try insert(
-            sql: insertSQL,
-            binds: [
-                sql(parsed.originalURL),
-                sql(parsed.normalizedURL),
-                sql(parsed.displayURL),
-                sql(parsed.openURL),
-                sql(parsed.normalizedHost),
-                sql(parsed.rawSourceHost),
-                sql(parsed.serviceType.rawValue),
-                sql(parsed.contentContext.rawValue),
-                sql(memoForNewEntry),
-                sql(now.timeIntervalSince1970),
-                sql(now.timeIntervalSince1970),
-                sql(now.timeIntervalSince1970),
-            ]
-        )
+        let rowID: Int64
+        do {
+            rowID = try insert(
+                sql: insertSQL,
+                binds: [
+                    sql(parsed.originalURL),
+                    sql(parsed.normalizedURL),
+                    sql(parsed.displayURL),
+                    sql(parsed.openURL),
+                    sql(parsed.normalizedHost),
+                    sql(parsed.rawSourceHost),
+                    sql(parsed.serviceType.rawValue),
+                    sql(parsed.contentContext.rawValue),
+                    sql(memoForNewEntry),
+                    sql(now.timeIntervalSince1970),
+                    sql(now.timeIntervalSince1970),
+                    sql(now.timeIntervalSince1970),
+                ]
+            )
+        } catch let error as RepositoryError where error.isUniqueConstraint {
+            guard let existing = try findExisting(normalizedURL: parsed.normalizedURL) else {
+                throw error
+            }
+            return try saveExistingEntry(existing, initialMemo: memoForNewEntry)
+        }
         return SaveResult(
             result: .created,
             entryID: rowID,
@@ -782,7 +794,7 @@ final class URLRepository: @unchecked Sendable {
         )
     }
 
-    private func saveFromTextCard(_ input: String) throws -> SaveResult {
+    private func saveFromTextCardInTransaction(_ input: String) throws -> SaveResult {
         guard let parsed = URLRules.parseTextCard(input) else {
             return SaveResult(result: .noURLFound)
         }
@@ -790,49 +802,7 @@ final class URLRepository: @unchecked Sendable {
         let title = URLRules.textCardTitle(body)
 
         if let existing = try findExisting(normalizedURL: parsed.normalizedURL) {
-            if existing.localProvenanceCount == 0 {
-                let now = Date()
-                try execute(
-                    """
-                    UPDATE url_entries
-                    SET local_provenance_count = 1,
-                        record_state = 'ACTIVE',
-                        pending_deletion_until = NULL,
-                        archived_at = NULL,
-                        updated_at = ?
-                    WHERE id = ?;
-                    """,
-                    binds: [sql(now.timeIntervalSince1970), sql(existing.id)]
-                )
-                return SaveResult(result: .created, entryID: existing.id, normalizedURL: existing.normalizedURL)
-            }
-
-            switch existing.recordState {
-            case .active:
-                return SaveResult(result: .duplicateActive, entryID: existing.id, normalizedURL: existing.normalizedURL)
-            case .archived:
-                return SaveResult(result: .duplicateArchived, entryID: existing.id, normalizedURL: existing.normalizedURL)
-            case .pendingDelete:
-                let now = Date()
-                let restoreToArchived = existing.archivedAt != nil
-                try execute(
-                    """
-                    UPDATE url_entries
-                    SET record_state = ?,
-                        pending_deletion_until = NULL,
-                        archived_at = ?,
-                        updated_at = ?
-                    WHERE id = ?;
-                    """,
-                    binds: [
-                        sql(restoreToArchived ? RecordState.archived.rawValue : RecordState.active.rawValue),
-                        sql(restoreToArchived ? existing.archivedAt?.timeIntervalSince1970 : nil),
-                        sql(now.timeIntervalSince1970),
-                        sql(existing.id)
-                    ]
-                )
-                return SaveResult(result: .restoredFromPendingDelete, entryID: existing.id, normalizedURL: existing.normalizedURL)
-            }
+            return try saveExistingEntry(existing, initialMemo: nil)
         }
 
         let now = Date()
@@ -859,26 +829,34 @@ final class URLRepository: @unchecked Sendable {
             updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'READY', ?, 'ACTIVE', 1, 0, ?, ?);
         """
-        let rowID = try insert(
-            sql: insertSQL,
-            binds: [
-                sql(body),
-                sql(parsed.normalizedURL),
-                sql(parsed.displayURL),
-                sql(parsed.openURL),
-                sql(parsed.normalizedHost),
-                sql(parsed.rawSourceHost),
-                sql(ServiceType.web.rawValue),
-                sql(ContentContext.post.rawValue),
-                sql(title),
-                sql(body),
-                sql(MetadataBodyKind.webExcerpt.rawValue),
-                sql(title),
-                sql(now.timeIntervalSince1970),
-                sql(now.timeIntervalSince1970),
-                sql(now.timeIntervalSince1970),
-            ]
-        )
+        let rowID: Int64
+        do {
+            rowID = try insert(
+                sql: insertSQL,
+                binds: [
+                    sql(body),
+                    sql(parsed.normalizedURL),
+                    sql(parsed.displayURL),
+                    sql(parsed.openURL),
+                    sql(parsed.normalizedHost),
+                    sql(parsed.rawSourceHost),
+                    sql(ServiceType.web.rawValue),
+                    sql(ContentContext.post.rawValue),
+                    sql(title),
+                    sql(body),
+                    sql(MetadataBodyKind.webExcerpt.rawValue),
+                    sql(title),
+                    sql(now.timeIntervalSince1970),
+                    sql(now.timeIntervalSince1970),
+                    sql(now.timeIntervalSince1970),
+                ]
+            )
+        } catch let error as RepositoryError where error.isUniqueConstraint {
+            guard let existing = try findExisting(normalizedURL: parsed.normalizedURL) else {
+                throw error
+            }
+            return try saveExistingEntry(existing, initialMemo: nil)
+        }
         return SaveResult(result: .created, entryID: rowID, normalizedURL: parsed.normalizedURL)
     }
 
@@ -886,6 +864,82 @@ final class URLRepository: @unchecked Sendable {
         let memo = URLRules.normalizeMemo(initialMemo)
         guard !memo.isEmpty else { return "" }
         return URLRules.isMemoLengthValid(memo) ? memo : String(memo.prefix(2_000))
+    }
+
+    private func saveExistingEntry(_ existing: URLRecord, initialMemo: String?) throws -> SaveResult {
+        if existing.localProvenanceCount == 0 {
+            let now = Date()
+            if let initialMemo {
+                let memoForRestore = normalizeInitialMemo(initialMemo)
+                let mergedMemo = existing.memo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? memoForRestore
+                    : existing.memo
+                try execute(
+                    """
+                    UPDATE url_entries
+                    SET local_provenance_count = 1,
+                        record_state = 'ACTIVE',
+                        memo = ?,
+                        pending_deletion_until = NULL,
+                        archived_at = NULL,
+                        updated_at = ?
+                    WHERE id = ?;
+                    """,
+                    binds: [sql(mergedMemo), sql(now.timeIntervalSince1970), sql(existing.id)]
+                )
+            } else {
+                try execute(
+                    """
+                    UPDATE url_entries
+                    SET local_provenance_count = 1,
+                        record_state = 'ACTIVE',
+                        pending_deletion_until = NULL,
+                        archived_at = NULL,
+                        updated_at = ?
+                    WHERE id = ?;
+                    """,
+                    binds: [sql(now.timeIntervalSince1970), sql(existing.id)]
+                )
+            }
+            return SaveResult(
+                result: .created,
+                entryID: existing.id,
+                normalizedURL: existing.normalizedURL,
+                shouldScheduleMetadata: existing.needsMetadataRetryAfterRestore
+            )
+        }
+
+        switch existing.recordState {
+        case .active:
+            return SaveResult(result: .duplicateActive, entryID: existing.id, normalizedURL: existing.normalizedURL)
+        case .archived:
+            return SaveResult(result: .duplicateArchived, entryID: existing.id, normalizedURL: existing.normalizedURL)
+        case .pendingDelete:
+            let now = Date()
+            let restoreToArchived = existing.archivedAt != nil
+            try execute(
+                """
+                UPDATE url_entries
+                SET record_state = ?,
+                    pending_deletion_until = NULL,
+                    archived_at = ?,
+                    updated_at = ?
+                WHERE id = ?;
+                """,
+                binds: [
+                    sql(restoreToArchived ? RecordState.archived.rawValue : RecordState.active.rawValue),
+                    sql(restoreToArchived ? existing.archivedAt?.timeIntervalSince1970 : nil),
+                    sql(now.timeIntervalSince1970),
+                    sql(existing.id)
+                ]
+            )
+            return SaveResult(
+                result: .restoredFromPendingDelete,
+                entryID: existing.id,
+                normalizedURL: existing.normalizedURL,
+                shouldScheduleMetadata: existing.needsMetadataRetryAfterRestore
+            )
+        }
     }
 
     private func findExisting(normalizedURL: String) throws -> URLRecord? {
@@ -1232,6 +1286,29 @@ final class URLRepository: @unchecked Sendable {
         try fetchMany(sql: "SELECT * FROM url_entries WHERE \(whereClause);", binds: [])
     }
 
+    private func fetchListEntries(whereClause: String) throws -> [URLRecord] {
+        try database.fetchMany(
+            sql: """
+            SELECT
+                id, original_url, normalized_url, display_url, open_url, normalized_host, raw_source_host,
+                collection_id, service_type, content_context, user_title, fetched_title, fetched_author_name,
+                SUBSTR(fetched_body, 1, 512) AS body_preview,
+                SUBSTR(body_summary, 1, 512) AS body_summary_preview,
+                SUBSTR(description, 1, 512) AS description_preview,
+                SUBSTR(memo, 1, 512) AS memo_preview,
+                thumbnail_url, badge_image_url, canonical_id,
+                metadata_state, metadata_error, metadata_requested_at, metadata_fetched_at,
+                record_state, local_provenance_count, shared_reference_count,
+                created_at, updated_at, archived_at, pending_deletion_until
+            FROM url_entries
+            WHERE \(whereClause);
+            """,
+            binds: []
+        ) { statement in
+            try decodeListRow(statement)
+        }
+    }
+
     private func fetchMany(sql: String, binds: [SQLiteValue]) throws -> [URLRecord] {
         try database.fetchMany(sql: sql, binds: binds) { statement in
             try decodeRow(statement)
@@ -1289,7 +1366,46 @@ final class URLRepository: @unchecked Sendable {
             createdAt: dateColumn(statement, name: "created_at") ?? Date(timeIntervalSince1970: 0),
             updatedAt: dateColumn(statement, name: "updated_at") ?? Date(timeIntervalSince1970: 0),
             archivedAt: dateColumn(statement, name: "archived_at"),
-            pendingDeletionUntil: dateColumn(statement, name: "pending_deletion_until")
+            pendingDeletionUntil: dateColumn(statement, name: "pending_deletion_until"),
+            bodyPreview: nil
+        )
+    }
+
+    private func decodeListRow(_ statement: OpaquePointer?) throws -> URLRecord {
+        URLRecord(
+            id: sqlite3_column_int64(statement, 0),
+            originalURL: textColumn(statement, index: 1) ?? "",
+            normalizedURL: textColumn(statement, index: 2) ?? "",
+            displayURL: textColumn(statement, index: 3) ?? "",
+            openURL: textColumn(statement, index: 4) ?? "",
+            normalizedHost: textColumn(statement, index: 5) ?? "",
+            rawSourceHost: textColumn(statement, index: 6) ?? "",
+            collectionID: sqlite3_column_int64(statement, 7),
+            serviceType: ServiceType(rawValue: textColumn(statement, index: 8) ?? "") ?? .web,
+            contentContext: ContentContext(rawValue: textColumn(statement, index: 9) ?? "") ?? .standard,
+            userTitle: textColumn(statement, index: 10),
+            fetchedTitle: textColumn(statement, index: 11),
+            fetchedAuthorName: textColumn(statement, index: 12),
+            fetchedBody: nil,
+            fetchedBodyKind: nil,
+            bodySummary: textColumn(statement, index: 14),
+            description: textColumn(statement, index: 15),
+            memo: textColumn(statement, index: 16) ?? "",
+            thumbnailURL: textColumn(statement, index: 17),
+            badgeImageURL: textColumn(statement, index: 18),
+            canonicalID: textColumn(statement, index: 19),
+            metadataState: MetadataState(rawValue: textColumn(statement, index: 20) ?? "") ?? .pending,
+            metadataError: textColumn(statement, index: 21).flatMap(MetadataError.init(rawValue:)),
+            metadataRequestedAt: dateColumn(statement, index: 22),
+            metadataFetchedAt: dateColumn(statement, index: 23),
+            recordState: RecordState(rawValue: textColumn(statement, index: 24) ?? "") ?? .active,
+            localProvenanceCount: Int(sqlite3_column_int(statement, 25)),
+            sharedReferenceCount: Int(sqlite3_column_int(statement, 26)),
+            createdAt: dateColumn(statement, index: 27) ?? Date(timeIntervalSince1970: 0),
+            updatedAt: dateColumn(statement, index: 28) ?? Date(timeIntervalSince1970: 0),
+            archivedAt: dateColumn(statement, index: 29),
+            pendingDeletionUntil: dateColumn(statement, index: 30),
+            bodyPreview: textColumn(statement, index: 13)
         )
     }
 

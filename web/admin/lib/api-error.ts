@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { RequestBodyError } from "./request-body";
 
 function safeErrorCode(error: unknown): string | null {
   if (!error || typeof error !== "object" || !("code" in error) || typeof error.code !== "string") return null;
@@ -7,6 +8,12 @@ function safeErrorCode(error: unknown): string | null {
 
 export function adminApiError(error: unknown, publicMessage: string): Response {
   if (error instanceof Response) return error;
+  if (error instanceof RequestBodyError) {
+    return NextResponse.json(
+      { error: error.code },
+      { status: error.status, headers: { "Cache-Control": "no-store" } },
+    );
+  }
   const errorId = crypto.randomUUID();
   console.error("admin_api_error", {
     errorId,

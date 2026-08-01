@@ -171,20 +171,12 @@ struct ScreenHeader: View {
         .padding(.bottom, 12)
     }
 
-    private var headerTitleSize: CGFloat {
-        if title == "保存したURL" {
-            return 25
-        }
-
-        return leadingButton == nil ? 32 : 31
-    }
-
     private var headerTitle: some View {
         Text(title)
-            .font(.system(size: headerTitleSize, weight: .heavy, design: .rounded))
+            .font(.system(.largeTitle, design: .rounded).weight(.heavy))
             .foregroundStyle(AppPalette.textPrimary)
-            .lineLimit(1)
-            .minimumScaleFactor(0.75)
+            .lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
             .layoutPriority(1)
     }
 }
@@ -196,12 +188,12 @@ private struct IconChromeButton: View {
         Button(action: button.action) {
             HStack(spacing: button.title == nil ? 0 : 6) {
                 Image(systemName: button.icon)
-                    .font(.system(size: AppIconMetrics.chrome, weight: .semibold))
+                    .font(.system(.title3).weight(.semibold))
                 if let title = button.title {
                     Text(title)
-                        .font(.system(size: 15, weight: .heavy, design: .rounded))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.82)
+                        .font(.system(.callout, design: .rounded).weight(.heavy))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .foregroundStyle(AppPalette.textPrimary)
@@ -262,7 +254,7 @@ struct AppActionButton<Label: View>: View {
     var body: some View {
         Button(action: action) {
             label
-                .font(.system(size: 19, weight: .bold, design: .rounded))
+                .font(.system(.body, design: .rounded).weight(.bold))
                 .foregroundStyle(foregroundColor)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 18)
@@ -380,13 +372,14 @@ struct EntryCardView: View {
                             if visibleLocalTagNames.isEmpty {
                                 HStack(spacing: 10) {
                                     Text(entryCardHeaderFallbackText(for: entry))
-                                        .font(.system(size: 16, weight: .medium))
+                                        .font(.system(.body).weight(.medium))
                                         .foregroundStyle(AppPalette.textSecondary)
-                                        .lineLimit(1)
+                                        .lineLimit(2)
+                                        .fixedSize(horizontal: false, vertical: true)
 
                                     if entry.contentContext != .standard {
                                         Text(contentContextLabel(for: entry.contentContext))
-                                            .font(.system(size: 13, weight: .bold, design: .rounded))
+                                            .font(.system(.caption, design: .rounded).weight(.bold))
                                             .foregroundStyle(AppPalette.textSecondary)
                                             .padding(.horizontal, 12)
                                             .padding(.vertical, 6)
@@ -405,21 +398,23 @@ struct EntryCardView: View {
                         }
 
                         Text(preferredDisplayTitle(for: entry))
-                            .font(.system(size: 16, weight: .heavy, design: .rounded))
+                            .font(.system(.headline, design: .rounded).weight(.heavy))
                             .foregroundStyle(AppPalette.textPrimary)
                             .lineLimit(displayMode == .rich ? 3 : 2)
                             .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
 
                         if displayMode == .rich, let summary = entry.description ?? entry.bodySummary, !summary.isEmpty {
                             Text(summary)
-                                .font(.system(size: 15, weight: .medium))
+                                .font(.system(.subheadline).weight(.medium))
                                 .foregroundStyle(AppPalette.textMuted)
-                                .lineLimit(3)
+                                .lineLimit(5)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
 
                         if let metadataText = MetadataStatusText.listText(for: entry) {
                             Text(metadataText)
-                                .font(.system(size: 15, weight: .semibold))
+                                .font(.system(.subheadline).weight(.semibold))
                                 .foregroundStyle(metadataTextColor(for: entry.metadataState))
                         }
                     }
@@ -473,7 +468,7 @@ private struct EntryLocalTagFlow: View {
         EntryLocalTagFlowLayout(horizontalSpacing: 6, verticalSpacing: 6) {
             ForEach(tagNames, id: \.self) { tagName in
                 Text(tagName)
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .font(.system(.caption, design: .rounded).weight(.bold))
                     .foregroundStyle(AppPalette.primaryStrong)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -587,6 +582,20 @@ func entryCardUsesLocalTagHeader(_ localTagNames: [String]) -> Bool {
     !entryCardVisibleLocalTagNames(localTagNames).isEmpty
 }
 
+func entryCardAccessibilityLabel(for entry: URLRecord, localTagNames: [String] = []) -> String {
+    var parts = [preferredDisplayTitle(for: entry)]
+    let visibleLocalTagNames = entryCardVisibleLocalTagNames(localTagNames)
+    if visibleLocalTagNames.isEmpty {
+        parts.append(entryCardHeaderFallbackText(for: entry))
+    } else {
+        parts.append("自作タグ: \(visibleLocalTagNames.joined(separator: ", "))")
+    }
+    if let metadataText = MetadataStatusText.listText(for: entry) {
+        parts.append(metadataText)
+    }
+    return parts.joined(separator: "。")
+}
+
 struct SwipeableEntryCard: View {
     let entry: URLRecord
     let displayMode: EntryListDisplayMode
@@ -647,6 +656,12 @@ struct SwipeableEntryCard: View {
         .frame(width: cardWidth)
         .clipped()
         .animation(.interactiveSpring(response: 0.26, dampingFraction: 0.88), value: dragOffset)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(entryCardAccessibilityLabel(for: entry, localTagNames: localTagNames))
+        .accessibilityHint("ダブルタップで詳細を開きます。追加の操作からアーカイブまたは削除を選べます。")
+        .accessibilityAction { onTap() }
+        .accessibilityAction(named: Text("アーカイブ")) { onArchive() }
+        .accessibilityAction(named: Text("削除")) { onDelete() }
     }
 
     private func handleSwipeEnd(offset: CGFloat, velocity: CGFloat) {
@@ -722,6 +737,12 @@ struct SwipeableArchivedEntryCard: View {
         .frame(width: cardWidth)
         .clipped()
         .animation(.interactiveSpring(response: 0.26, dampingFraction: 0.88), value: dragOffset)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(entryCardAccessibilityLabel(for: entry, localTagNames: localTagNames))
+        .accessibilityHint("ダブルタップで詳細を開きます。追加の操作から戻すまたは削除を選べます。")
+        .accessibilityAction { onTap() }
+        .accessibilityAction(named: Text("戻す")) { onRestore() }
+        .accessibilityAction(named: Text("削除")) { onDelete() }
     }
 
     private func handleSwipeEnd(offset: CGFloat, velocity: CGFloat) {
@@ -795,6 +816,15 @@ struct SwipeableSharedTagEntryCard: View {
         .frame(width: cardWidth)
         .clipped()
         .animation(.interactiveSpring(response: 0.26, dampingFraction: 0.88), value: dragOffset)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(entryCardAccessibilityLabel(for: entry))
+        .accessibilityHint(canRemove ? "ダブルタップで詳細を開きます。追加の操作から共有タグを外せます。" : "ダブルタップで詳細を開きます。")
+        .accessibilityAction { onTap() }
+        .accessibilityAction(named: Text("外す")) {
+            if canRemove {
+                onRemove()
+            }
+        }
     }
 
     private func handleSwipeEnd(offset: CGFloat, velocity: CGFloat) {
@@ -1597,14 +1627,14 @@ func preferredDisplayTitle(for entry: URLRecord) -> String {
         if let fetchedTitle = nonBlank(entry.fetchedTitle) {
             return fetchedTitle
         }
-        if let body = nonBlank(entry.fetchedBody) ?? nonBlank(entry.originalURL) {
+        if let body = firstNonBlank(entry.fetchedBody, entry.bodyPreview) ?? nonBlank(entry.originalURL) {
             return URLRules.textCardTitle(body)
         }
         return "テキスト"
     }
 
     if isSocialPostTitleContentFirstService(entry.serviceType),
-       let contentText = firstNonBlank(entry.fetchedBody, entry.bodySummary, entry.description) {
+       let contentText = firstNonBlank(entry.fetchedBody, entry.bodyPreview, entry.bodySummary, entry.description) {
         return contentText
     }
 

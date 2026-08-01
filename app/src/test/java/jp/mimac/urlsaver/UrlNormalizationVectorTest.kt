@@ -16,11 +16,14 @@ class UrlNormalizationVectorTest {
     fun normalizationVectors_matchCurrentAndroidRules() {
         val vectors = loadVectors()
         vectors.forEach { vector ->
+            val parsed = UrlRules.parseUrl(vector.input)
             assertEquals(
                 "Normalization mismatch for ${vector.input}",
                 vector.expectedNormalizedUrl,
                 UrlRules.normalize(vector.input),
             )
+            assertEquals(vector.expectedNormalizedUrl, parsed?.normalizedUrl)
+            assertEquals(vector.expectedNormalizedUrl, parsed?.openUrl)
         }
     }
 

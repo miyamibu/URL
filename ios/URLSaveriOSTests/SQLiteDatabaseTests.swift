@@ -10,4 +10,19 @@ final class SQLiteDatabaseTests: XCTestCase {
         let database = try SQLiteDatabase(databaseURL: directory.appendingPathComponent("wal.sqlite"))
         XCTAssertEqual(try database.currentJournalMode()?.lowercased(), "wal")
     }
+
+    func testUnavailableDatabaseIsDiagnosableWithoutOpeningOrDeletingIt() {
+        let databaseURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("unavailable-\(UUID().uuidString).sqlite")
+        let database = SQLiteDatabase.unavailable(
+            databaseURL: databaseURL,
+            message: "test database is unavailable"
+        )
+
+        XCTAssertFalse(database.isAvailable)
+        XCTAssertThrowsError(try database.execute("CREATE TABLE should_not_be_created (id INTEGER);")) { error in
+            XCTAssertEqual((error as? RepositoryError)?.localizedDescription, "test database is unavailable")
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: databaseURL.path))
+    }
 }

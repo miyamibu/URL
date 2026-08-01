@@ -398,11 +398,17 @@ enum URLExportArchiveBuilder {
         )
         zip.addFile(path: "redaction_report.json", data: try prettyEncoder().encode(redactionReport))
         let encoder = lineEncoder()
-        let jsonl = try documents.map { document in
-            String(data: try encoder.encode(document), encoding: .utf8) ?? "{}"
-        }.joined(separator: "\n")
-        zip.addFile(path: "entries.jsonl", data: Data(jsonl.utf8))
+        var jsonl = Data()
         for (index, document) in documents.enumerated() {
+            try Task.checkCancellation()
+            if index > 0 {
+                jsonl.append(0x0A)
+            }
+            jsonl.append(try encoder.encode(document))
+        }
+        zip.addFile(path: "entries.jsonl", data: jsonl)
+        for (index, document) in documents.enumerated() {
+            try Task.checkCancellation()
             let fileName = buildEntryFileName(
                 index: index + 1,
                 document: document,

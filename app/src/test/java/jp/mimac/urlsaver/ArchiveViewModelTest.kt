@@ -7,18 +7,28 @@ import jp.mimac.urlsaver.data.SaveTitleResult
 import jp.mimac.urlsaver.data.UrlEntryEntity
 import jp.mimac.urlsaver.data.UrlRepository
 import jp.mimac.urlsaver.domain.EntryCardDisplayMode
+import jp.mimac.urlsaver.domain.ContentContext
+import jp.mimac.urlsaver.domain.MetadataState
+import jp.mimac.urlsaver.domain.RecordState
 import jp.mimac.urlsaver.domain.SaveResult
 import jp.mimac.urlsaver.domain.ShareSaveResult
+import jp.mimac.urlsaver.domain.ServiceType
 import jp.mimac.urlsaver.ui.ArchiveViewModel
+import jp.mimac.urlsaver.ui.ListFilterLoadState
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class ArchiveViewModelTest {
 
     @get:Rule
@@ -35,6 +45,56 @@ class ArchiveViewModelTest {
         assertEquals(EntryCardDisplayMode.COMPACT, viewModel.entryCardDisplayMode.value)
     }
 
+    @Test
+    fun archiveEntries_errorPreservesCachedEntries_andRetryRecovers() = runTest {
+        val cached = archiveEntry(id = 71L)
+        val recovered = archiveEntry(id = 72L)
+        val repository = FakeUrlRepository().apply {
+            archiveEntries.value = listOf(cached)
+        }
+        val viewModel = ArchiveViewModel(repository)
+        advanceUntilIdle()
+
+        assertEquals(ListFilterLoadState.Content, viewModel.uiState.value.loadState)
+        assertEquals(listOf(cached.id), viewModel.uiState.value.entries.map { it.id })
+
+        repository.archiveEntriesFlow = flow {
+            emit(listOf(cached))
+            throw IllegalStateException("test failure")
+        }
+        viewModel.retryLoading()
+        advanceUntilIdle()
+
+        assertTrue(viewModel.uiState.value.loadState is ListFilterLoadState.Error)
+        assertEquals(listOf(cached.id), viewModel.uiState.value.entries.map { it.id })
+
+        repository.archiveEntriesFlow = flowOf(listOf(recovered))
+        viewModel.retryLoading()
+        advanceUntilIdle()
+
+        assertEquals(ListFilterLoadState.Content, viewModel.uiState.value.loadState)
+        assertEquals(listOf(recovered.id), viewModel.uiState.value.entries.map { it.id })
+    }
+
+    private fun archiveEntry(id: Long): UrlEntryEntity {
+        return UrlEntryEntity(
+            id = id,
+            originalUrl = "https://example.com/archive/$id",
+            normalizedUrl = "https://example.com/archive/$id",
+            displayUrl = "example.com/archive/$id",
+            openUrl = "https://example.com/archive/$id",
+            normalizedHost = "example.com",
+            rawSourceHost = "example.com",
+            serviceType = ServiceType.WEB,
+            contentContext = ContentContext.STANDARD,
+            metadataState = MetadataState.READY,
+            recordState = RecordState.ARCHIVED,
+            createdAt = id,
+            updatedAt = id,
+            archivedAt = id,
+        )
+    }
+
     private class FakeDisplayModeStore(
         initialMode: EntryCardDisplayMode,
     ) : EntryCardDisplayModeStore {
@@ -48,6 +108,9 @@ class ArchiveViewModelTest {
     }
 
     private class FakeUrlRepository : UrlRepository {
+        val archiveEntries = MutableStateFlow<List<UrlEntryEntity>>(emptyList())
+        var archiveEntriesFlow: Flow<List<UrlEntryEntity>> = archiveEntries
+
         override fun observeActiveEntries(): Flow<List<UrlEntryEntity>> = emptyFlow()
 
         override suspend fun saveFromManualInput(input: String): SaveResult = SaveResult(ShareSaveResult.SAVE_FAILED)
@@ -56,7 +119,7 @@ class ArchiveViewModelTest {
 
         override suspend fun markPendingDelete(entryId: Long, gracePeriodMillis: Long): Long? = null
 
-        override fun observeArchiveEntries(): Flow<List<UrlEntryEntity>> = flowOf(emptyList())
+        override fun observeArchiveEntries(): Flow<List<UrlEntryEntity>> = archiveEntriesFlow
 
         override fun observeEntry(entryId: Long): Flow<UrlEntryEntity?> = flowOf(null)
 

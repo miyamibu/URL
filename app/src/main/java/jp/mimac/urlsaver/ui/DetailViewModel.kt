@@ -18,6 +18,7 @@ import jp.mimac.urlsaver.domain.SharedTagCloudState
 import jp.mimac.urlsaver.domain.normalizeSharedTagName
 import jp.mimac.urlsaver.domain.validateSharedTagName
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.Flow
@@ -62,7 +63,13 @@ class DetailViewModel(
     }
 
     suspend fun saveTitle(input: String): SaveTitleUiResult {
-        val result = repository.saveUserTitle(entryId, input)
+        val result = try {
+            repository.saveUserTitle(entryId, input)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Throwable) {
+            return SaveTitleUiResult.Failed
+        }
         if (result.success) {
             effectChannel.send(DetailEffect.TitleEdited(entryId, result.oldTitle))
             return SaveTitleUiResult.Success
@@ -71,7 +78,13 @@ class DetailViewModel(
     }
 
     suspend fun saveMemo(input: String): SaveMemoUiResult {
-        val result = repository.saveMemo(entryId, input)
+        val result = try {
+            repository.saveMemo(entryId, input)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Throwable) {
+            return SaveMemoUiResult.Failed
+        }
         if (result.success) return SaveMemoUiResult.Success
         return if (result.tooLong) SaveMemoUiResult.TooLong else SaveMemoUiResult.Failed
     }

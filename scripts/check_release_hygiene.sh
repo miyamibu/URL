@@ -45,7 +45,14 @@ fi
 for privacy_manifest in ios/URLSaveriOS/PrivacyInfo.xcprivacy ios/URLSaverShareExtension/PrivacyInfo.xcprivacy; do
   if [[ ! -f "$privacy_manifest" ]]; then
     fail "NO_GO missing iOS privacy manifest: $privacy_manifest"
-  elif ! plutil -lint "$privacy_manifest" >/dev/null 2>&1; then
+  elif ! python3 - "$privacy_manifest" >/dev/null 2>&1 <<'PY'
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as handle:
+    plistlib.load(handle)
+PY
+  then
     fail "NO_GO invalid iOS privacy manifest: $privacy_manifest"
   else
     accessed_api_block="$(grep -A1 -F '<key>NSPrivacyAccessedAPITypes</key>' "$privacy_manifest" || true)"
@@ -98,22 +105,19 @@ grep -q 'tools:node="remove"' app/src/release/AndroidManifest.xml \
   && pass "release manifest removes debug/ad-only declarations" \
   || fail "release manifest removal rules are missing"
 
-ios_app_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' ios/URLSaveriOS/Info.plist 2>/dev/null || true)"
-ios_share_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' ios/URLSaverShareExtension/Info.plist 2>/dev/null || true)"
-ios_app_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' ios/URLSaveriOS/Info.plist 2>/dev/null || true)"
-ios_share_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' ios/URLSaverShareExtension/Info.plist 2>/dev/null || true)"
-if [[ -n "$ios_app_version" \
-  && "$ios_app_version" == "$ios_share_version" \
-  && -n "$ios_app_build" \
-  && "$ios_app_build" == "$ios_share_build" ]]; then
-  pass "iOS app and share extension version/build match: ${ios_app_version} (${ios_app_build})"
+if python3 scripts/verify_release_manifest.py; then
+  pass "release manifest matches Android/iOS sources, migration head, and current release docs"
 else
-  fail "iOS app and share extension version/build do not match"
+  fail "release manifest does not match Android/iOS sources, migration head, or current release docs"
 fi
 
-[[ -f docs/release/release-ops-readiness-2026-07-09.md ]] \
-  && pass "current release readiness tracker exists" \
-  || fail "current release readiness tracker is missing"
+[[ -f docs/release/release-manifest.json ]] \
+  && pass "machine-readable release manifest exists" \
+  || fail "machine-readable release manifest is missing"
+
+[[ -f docs/release/launch-go-checklist.md ]] \
+  && pass "current release readiness checklist exists" \
+  || fail "current release readiness checklist is missing"
 
 if [[ "$failures" -gt 0 ]]; then
   printf 'FAIL release hygiene: %s issue(s)\n' "$failures" >&2

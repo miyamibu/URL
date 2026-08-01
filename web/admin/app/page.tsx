@@ -3,6 +3,7 @@
 import { createClient, Session, SupabaseClient } from "@supabase/supabase-js";
 import Image from "next/image";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { createDebouncedSearchController, USER_SEARCH_DEBOUNCE_MS } from "@/lib/debounced-search";
 
 type PromoCodeRow = {
   id: string;
@@ -252,6 +253,14 @@ export default function AdminPage() {
   const sendInFlightRef = useRef(false);
   const pendingPromoOperationRef = useRef<PendingPromoOperation | null>(null);
   const pendingAdminOperationsRef = useRef(new Map<string, string>());
+  const userSearchController = useMemo(
+    () => createDebouncedSearchController<UserSearchRow[]>(
+      USER_SEARCH_DEBOUNCE_MS,
+      (results) => setUsers(results),
+      () => setError("ユーザー検索に失敗しました"),
+    ),
+    [],
+  );
 
   const hasCapability = (capability: AdminCapability) => adminCapabilities.includes(capability);
   const hasHighRiskCapability = hasCapability("promos.issue") || hasCapability("support.write") || hasCapability("moderation.manage") || hasCapability("users.manage");
@@ -263,6 +272,8 @@ export default function AdminPage() {
     const timer = window.setTimeout(() => setStepUpClock(Math.floor(Date.now() / 1000)), Math.min(delay, 2_147_000_000));
     return () => window.clearTimeout(timer);
   }, [stepUpExpiresAt]);
+
+  useEffect(() => () => userSearchController.cancel(), [userSearchController]);
 
   const authHeaders = useMemo<Record<string, string>>(
     () => {
@@ -590,17 +601,23 @@ export default function AdminPage() {
     await fetchOperations();
   }
 
-  async function searchUsers(value: string) {
+  function searchUsers(value: string) {
     setTargetEmail(value);
     if (!session || !hasCapability("users.search") || value.trim().length < 2) {
+      userSearchController.cancel();
       setUsers([]);
       return;
     }
-    const response = await fetch(`/api/admin/users?q=${encodeURIComponent(value)}`, { headers: authHeaders });
-    const body = await response.json();
-    if (response.ok) {
-      setUsers(body.users ?? []);
-    }
+    const query = value.trim();
+    userSearchController.schedule(async (signal) => {
+      const response = await fetch(`/api/admin/users?q=${encodeURIComponent(query)}`, {
+        headers: authHeaders,
+        signal,
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error("user_search_failed");
+      return Array.isArray(body.users) ? body.users as UserSearchRow[] : [];
+    });
   }
 
   async function fetchUserDirectory(
@@ -1151,6 +1168,7 @@ export default function AdminPage() {
             <div className="suggestions">
               {users.map((user) => (
                 <button key={user.id} type="button" onClick={() => {
+                  userSearchController.cancel();
                   setTargetEmail(user.email);
                   setUsers([]);
                 }}>

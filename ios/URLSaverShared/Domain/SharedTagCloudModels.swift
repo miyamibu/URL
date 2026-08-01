@@ -137,7 +137,7 @@ enum SharedTagInviteCreationResult: Equatable, Sendable {
 }
 
 let maxSharedTagNameLength = 50
-let sharedTagNormalizationVersion = 1
+let sharedTagNormalizationVersion = URLRules.normalizationContractVersion
 let sharedTagInviteRole = "editor"
 
 struct SharedTagAuthSession: Codable, Equatable, Sendable {

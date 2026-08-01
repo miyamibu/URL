@@ -6,10 +6,30 @@ import jp.mimac.urlsaver.domain.MetadataState
 import jp.mimac.urlsaver.domain.RecordState
 import jp.mimac.urlsaver.domain.ServiceType
 import jp.mimac.urlsaver.ui.buildListFilterUiState
+import jp.mimac.urlsaver.ui.ListFilterLoadState
+import jp.mimac.urlsaver.ui.ListFilterUiState
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class ListFilterStateTest {
+    @Test
+    fun defaultState_isExplicitlyInitial() {
+        assertEquals(ListFilterLoadState.Initial, ListFilterUiState().loadState)
+    }
+
+    @Test
+    fun buildState_canRepresentLoadingWithoutReplacingEntries() {
+        val web = entry(id = 1, serviceType = ServiceType.WEB)
+
+        val state = buildListFilterUiState(
+            entries = listOf(web),
+            selectedService = ServiceType.ALL,
+            loadState = ListFilterLoadState.Loading,
+        )
+
+        assertEquals(ListFilterLoadState.Loading, state.loadState)
+        assertEquals(listOf(web), state.entries)
+    }
 
     @Test
     fun selectedAll_returnsAllEntries() {

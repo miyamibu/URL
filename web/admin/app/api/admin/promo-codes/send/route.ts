@@ -4,6 +4,7 @@ import { adminApiError } from "@/lib/api-error";
 import { recordAdminAudit, requiredAdminReason } from "@/lib/audit";
 import { normalizedEmail } from "@/lib/env";
 import { generatePromoCode, promoCodeHash, promoLinkForCode, sendPromoEmail } from "@/lib/promo";
+import { parseJsonObject } from "@/lib/request-body";
 import { createServiceSupabaseClient } from "@/lib/supabase";
 
 const MAX_CODE_INSERT_ATTEMPTS = 5;
@@ -117,10 +118,7 @@ export async function POST(request: NextRequest) {
     assertWritable(admin);
     assertHighRisk(admin);
 
-    const parsedBody = await request.json().catch(() => ({}));
-    const body = parsedBody && typeof parsedBody === "object" && !Array.isArray(parsedBody)
-      ? parsedBody as Record<string, unknown>
-      : {};
+    const body = await parseJsonObject(request);
     const requestedOperationId = typeof body.operationId === "string" ? body.operationId.trim() : "";
     if (!requestedOperationId) {
       return NextResponse.json({ error: "operation_id_required" }, { status: 400 });

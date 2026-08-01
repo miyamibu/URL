@@ -2,6 +2,7 @@ import Foundation
 import CryptoKit
 
 enum URLRules {
+    static let normalizationContractVersion = 1
     static let maxInputTextBytes = 256 * 1024
     static let maxExtractedURLsPerInput = 50
     static let maxBatchSaveURLsPerIntake = 50
@@ -241,12 +242,8 @@ enum URLRules {
         }
 
         var path = components.percentEncodedPath.isEmpty ? "/" : components.percentEncodedPath
-        if path != "/" && path.hasSuffix("/") {
-            path = String(path.drop(while: { $0 == "/" }).dropLast())
-            path = "/" + path
-            if path == "/" {
-                path = "/"
-            }
+        while path.count > 1 && path.hasSuffix("/") {
+            path.removeLast()
         }
         components.percentEncodedPath = path
 

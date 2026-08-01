@@ -9,9 +9,11 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -158,70 +160,87 @@ class DefaultExportRepository(
         validate(request)
         syncBeforeExport()
 
-        val authUserId = authSessionProvider.session.value?.authUserId
-        val collectionsById = collectionDao.loadCollections().associateBy { it.id }
-        val availableTags = tagDao.getVisibleTagsWithCount(authUserId)
-        val availableTagNamesById = availableTags.associate { it.id to it.name }
-
-        val selectedTagNames = request.selectedTagIds.mapNotNull(availableTagNamesById::get)
-        val entries = urlEntryDao.loadAllEntries()
-            .map { entry ->
-                val tags = tagDao.getVisibleTagsForEntry(entry.id, authUserId)
+        val databaseSnapshot = withContext(ioDispatcher) {
+            val authUserId = authSessionProvider.session.value?.authUserId
+            val collectionsById = collectionDao.loadCollections().associateBy { it.id }
+            val availableTags = tagDao.getVisibleTagsWithCount(authUserId)
+            val availableTagNamesById = availableTags.associate { it.id to it.name }
+            val allEntries = urlEntryDao.loadAllEntries()
+            val tagsByEntryId = linkedMapOf<Long, MutableList<SharedTagRecord>>()
+            allEntries.map { it.id }
+                .chunked(ROOM_QUERY_CHUNK_SIZE)
+                .forEach { entryIds ->
+                    if (entryIds.isNotEmpty()) {
+                        tagDao.getVisibleTagsForEntries(entryIds, authUserId).forEach { record ->
+                            tagsByEntryId.getOrPut(record.entryId) { mutableListOf() }
+                                .add(record.asSharedTagRecord())
+                        }
+                    }
+                }
+            val entries = allEntries.map { entry ->
                 ExportSourceEntry(
                     entry = entry,
-                    tags = tags,
+                    tags = tagsByEntryId[entry.id].orEmpty(),
                     collectionName = collectionsById[entry.collectionId]?.name,
                 )
+            }.filter { source -> source.matches(request) }
+
+            ExportDatabaseSnapshot(
+                selectedTagNames = request.selectedTagIds.mapNotNull(availableTagNamesById::get),
+                entries = entries,
+            )
+        }
+
+        return withContext(computationDispatcher) {
+            val createdAt = clock.nowEpochMillis()
+            val exportedAtIso = Instant.ofEpochMilli(createdAt).toString()
+            val entryDocuments = databaseSnapshot.entries.map { source ->
+                currentCoroutineContext().ensureActive()
+                source.toDocument()
             }
-            .filter { source -> source.matches(request) }
-
-        val createdAt = clock.nowEpochMillis()
-        val exportedAtIso = Instant.ofEpochMilli(createdAt).toString()
-        val entryDocuments = entries.map { source ->
-            source.toDocument()
-        }
-        val redactionReport = ExportRedactionReport.from(
-            generatedAt = exportedAtIso,
-            documents = entryDocuments,
-        )
-
-        val manifest = ExportManifest(
-            generatedAt = exportedAtIso,
-            appVersion = appVersion,
-            entryCount = entryDocuments.size,
-            exportScope = request.scope.name,
-            selectedTagIds = request.selectedTagIds.toList().sorted(),
-            selectedTagNames = selectedTagNames.sorted(),
-            recordStateFilter = request.recordStateFilter.name,
-            serviceFilter = request.serviceType?.name,
-            onlyWithMemo = request.onlyWithMemo,
-            dateFrom = request.dateFrom?.toString(),
-            dateTo = request.dateTo?.toString(),
-            fields = EXPORT_FIELDS,
-        )
-
-        val bytes = when (request.outputFormat) {
-            ExportOutputFormat.ZIP -> buildZipExportBytes(
-                manifest = manifest,
-                entryDocuments = entryDocuments,
-                redactionReport = redactionReport,
+            val redactionReport = ExportRedactionReport.from(
+                generatedAt = exportedAtIso,
+                documents = entryDocuments,
             )
-            ExportOutputFormat.JSON -> buildJsonExportBytes(
-                manifest = manifest,
-                entryDocuments = entryDocuments,
-                redactionReport = redactionReport,
+
+            val manifest = ExportManifest(
+                generatedAt = exportedAtIso,
+                appVersion = appVersion,
+                entryCount = entryDocuments.size,
+                exportScope = request.scope.name,
+                selectedTagIds = request.selectedTagIds.toList().sorted(),
+                selectedTagNames = databaseSnapshot.selectedTagNames.sorted(),
+                recordStateFilter = request.recordStateFilter.name,
+                serviceFilter = request.serviceType?.name,
+                onlyWithMemo = request.onlyWithMemo,
+                dateFrom = request.dateFrom?.toString(),
+                dateTo = request.dateTo?.toString(),
+                fields = EXPORT_FIELDS,
+            )
+
+            val bytes = when (request.outputFormat) {
+                ExportOutputFormat.ZIP -> buildZipExportBytes(
+                    manifest = manifest,
+                    entryDocuments = entryDocuments,
+                    redactionReport = redactionReport,
+                )
+                ExportOutputFormat.JSON -> buildJsonExportBytes(
+                    manifest = manifest,
+                    entryDocuments = entryDocuments,
+                    redactionReport = redactionReport,
+                )
+            }
+
+            PreparedExportArchive(
+                fileName = buildExportFileName(
+                    createdAt = createdAt,
+                    outputFormat = request.outputFormat,
+                ),
+                bytes = bytes,
+                entryCount = entryDocuments.size,
+                mimeType = request.outputFormat.mimeType,
             )
         }
-
-        return PreparedExportArchive(
-            fileName = buildExportFileName(
-                createdAt = createdAt,
-                outputFormat = request.outputFormat,
-            ),
-            bytes = bytes,
-            entryCount = entryDocuments.size,
-            mimeType = request.outputFormat.mimeType,
-        )
     }
 
     override suspend fun loadChatGptExportPreview(selectedTagIds: Set<Long>): ChatGptExportPreview {
@@ -399,6 +418,9 @@ class DefaultExportRepository(
         val eligibleSources = candidates
             .filter { candidate -> candidate.exclusionReason() == null }
             .map { candidate -> candidate.source }
+        require(eligibleSources.size <= CHATGPT_MAX_ENTRY_COUNT) {
+            "ChatGPT用ZIPは最大${CHATGPT_MAX_ENTRY_COUNT}件までです。タグを分けてお試しください。"
+        }
         val documents = buildChatGptDocuments(eligibleSources)
         val exclusionsByReason = excludedCandidates
             .map { (_, reason) -> reason }
@@ -550,7 +572,7 @@ class DefaultExportRepository(
         return sha256Hex(material)
     }
 
-    private fun buildZipExportBytes(
+    private suspend fun buildZipExportBytes(
         manifest: ExportManifest,
         entryDocuments: List<ExportEntryDocument>,
         redactionReport: ExportRedactionReport,
@@ -572,12 +594,16 @@ class DefaultExportRepository(
                 )
                 addZipEntry(zip, "redaction_report.json", json.encodeToString(redactionReport))
 
-                val jsonl = entryDocuments.joinToString(separator = "\n") { document ->
-                    encodeEntryDocument(document, stripLocalIds)
+                zip.putNextEntry(ZipEntry("entries.jsonl"))
+                entryDocuments.forEachIndexed { index, document ->
+                    currentCoroutineContext().ensureActive()
+                    if (index > 0) zip.write('\n'.code)
+                    zip.write(encodeEntryDocument(document, stripLocalIds).toByteArray(Charsets.UTF_8))
                 }
-                addZipEntry(zip, "entries.jsonl", jsonl)
+                zip.closeEntry()
 
                 entryDocuments.forEachIndexed { index, document ->
+                    currentCoroutineContext().ensureActive()
                     val stableName = buildEntryFileName(
                         index = index + 1,
                         document = document,
@@ -663,6 +689,11 @@ class DefaultExportRepository(
         zip.write(content.toByteArray(Charsets.UTF_8))
         zip.closeEntry()
     }
+
+    private data class ExportDatabaseSnapshot(
+        val selectedTagNames: List<String>,
+        val entries: List<ExportSourceEntry>,
+    )
 
     private data class ChatGptExportDatabaseSnapshot(
         val selectedTagIds: Set<Long>,

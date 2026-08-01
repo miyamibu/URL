@@ -11,6 +11,7 @@ import {
   requiredOperationId,
 } from "@/lib/admin-operation";
 import { requiredAdminReason } from "@/lib/audit";
+import { parseJsonObject } from "@/lib/request-body";
 import { createServiceSupabaseClient } from "@/lib/supabase";
 
 const STATUSES = new Set(["open", "in_progress", "resolved", "closed"]);
@@ -44,7 +45,7 @@ export async function PATCH(request: NextRequest) {
     const admin = await requireAdmin(request);
     assertCapability(admin, "support.write");
     assertHighRisk(admin);
-    const body = await request.json().catch(() => ({}));
+    const body = await parseJsonObject(request);
     const id = String(body.id ?? "").trim();
     const supportStatus = String(body.supportStatus ?? "").trim();
     const reason = requiredAdminReason(body.reason);

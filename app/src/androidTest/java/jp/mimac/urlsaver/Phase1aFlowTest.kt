@@ -68,6 +68,17 @@ class Phase1aFlowTest {
     }
 
     @Test
+    fun usageGuideMenu_opensRichInAppGuideAndKeepsWebLinkAsSecondaryAction() {
+        composeRule.onNodeWithContentDescription("メニュー").performClick()
+        composeRule.onNodeWithText("使い方").performClick()
+
+        waitForText("まず覚える")
+        composeRule.onNodeWithText("便利な操作").assertExists()
+        composeRule.onNodeWithText("共有とAI").assertExists()
+        composeRule.onNodeWithText("Web版の使い方を開く").assertExists()
+    }
+
+    @Test
     fun archive_duplicateArchived_viewCta_andArchiveHasNoFab() {
         val url = uniqueUrl("archived")
 

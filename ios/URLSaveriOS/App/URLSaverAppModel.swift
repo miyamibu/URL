@@ -16,6 +16,8 @@ struct AppNotification: Identifiable, Equatable {
         case undoArchive(Int64)
         case undoArchiveBatch([Int64])
         case undoTitle(Int64, String?)
+        case retryTitle(Int64, String)
+        case retryMemo(Int64, String)
     }
 
     let id = UUID()
@@ -123,6 +125,18 @@ enum ManualSaveOutcome: Equatable {
     case completed
 }
 
+enum EntryListLoadState: Equatable {
+    case initial
+    case loading
+    case content
+    case empty
+    case error(String)
+}
+
+func entryListLoadState(for entries: [URLRecord]) -> EntryListLoadState {
+    entries.isEmpty ? .empty : .content
+}
+
 enum PromoCodeApplyResult: Equatable {
     case success
     case authRequired
@@ -183,6 +197,8 @@ struct SavedAppMediaFile: Identifiable, Equatable, Sendable {
 final class URLSaverAppModel: ObservableObject {
     @Published private(set) var activeEntries: [URLRecord] = []
     @Published private(set) var archivedEntries: [URLRecord] = []
+    @Published private(set) var activeEntriesLoadState: EntryListLoadState = .initial
+    @Published private(set) var archivedEntriesLoadState: EntryListLoadState = .initial
     @Published private(set) var profile: UserProfile = .empty
     @Published private(set) var pendingInviteRecord: PendingInviteRecord?
     @Published private(set) var incomingLocalTagID: Int64?
@@ -208,6 +224,7 @@ final class URLSaverAppModel: ObservableObject {
     private var notificationDismissTask: Task<Void, Never>?
     private var deleteTimers: [Int64: Task<Void, Never>] = [:]
     private var hasBootstrapped = false
+    private var isReloading = false
 
     init(services: AppServices) {
         self.services = services
@@ -241,10 +258,41 @@ final class URLSaverAppModel: ObservableObject {
     }
 
     func reload() async {
-        activeEntries = (try? services.repository.observeActiveSnapshot()) ?? []
-        archivedEntries = (try? services.repository.observeArchiveSnapshot()) ?? []
-        localTags = (try? services.repository.loadLocalTags()) ?? []
-        localTagAssignments = (try? services.repository.loadLocalTagAssignments()) ?? [:]
+        guard !isReloading else { return }
+        isReloading = true
+        defer { isReloading = false }
+
+        if activeEntriesLoadState == .initial || isLoadError(activeEntriesLoadState) {
+            activeEntriesLoadState = .loading
+        }
+        if archivedEntriesLoadState == .initial || isLoadError(archivedEntriesLoadState) {
+            archivedEntriesLoadState = .loading
+        }
+
+        do {
+            let nextActiveEntries = try services.repository.observeActiveSnapshot()
+            let nextArchivedEntries = try services.repository.observeArchiveSnapshot()
+            let nextLocalTags = try services.repository.loadLocalTags()
+            let nextLocalTagAssignments = try services.repository.loadLocalTagAssignments()
+
+            activeEntries = nextActiveEntries
+            archivedEntries = nextArchivedEntries
+            localTags = nextLocalTags
+            localTagAssignments = nextLocalTagAssignments
+            activeEntriesLoadState = entryListLoadState(for: nextActiveEntries)
+            archivedEntriesLoadState = entryListLoadState(for: nextArchivedEntries)
+        } catch {
+            let message = "保存したURLを読み込めませんでした。もう一度お試しください。"
+            activeEntriesLoadState = .error(message)
+            archivedEntriesLoadState = .error(message)
+        }
+    }
+
+    private func isLoadError(_ state: EntryListLoadState) -> Bool {
+        if case .error = state {
+            return true
+        }
+        return false
     }
 
     func processMetadataBacklog() async {
@@ -634,7 +682,14 @@ final class URLSaverAppModel: ObservableObject {
 
     func saveTitle(entryID: Int64, text: String) async -> Bool {
         guard let result = try? services.repository.saveUserTitle(entryID: entryID, rawTitle: text), result.success else {
-            enqueueNotification(AppNotification(message: "タイトルを保存できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
+            enqueueNotification(
+                AppNotification(
+                    message: "タイトルを保存できませんでした。入力内容は保持されています。",
+                    actionLabel: "再試行",
+                    action: .retryTitle(entryID, text),
+                    autoDismissAfter: 5
+                )
+            )
             return false
         }
         await reload()
@@ -651,7 +706,14 @@ final class URLSaverAppModel: ObservableObject {
 
     func saveMemo(entryID: Int64, text: String) async -> Bool {
         guard let result = try? services.repository.saveMemo(entryID: entryID, rawMemo: text), result.success else {
-            enqueueNotification(AppNotification(message: "メモを保存できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
+            enqueueNotification(
+                AppNotification(
+                    message: "メモを保存できませんでした。入力内容は保持されています。",
+                    actionLabel: "再試行",
+                    action: .retryMemo(entryID, text),
+                    autoDismissAfter: 5
+                )
+            )
             return false
         }
         await reload()
@@ -1267,20 +1329,29 @@ final class URLSaverAppModel: ObservableObject {
 
     func prepareExportArchive(request: URLExportRequest) async throws -> PreparedExportArchive {
         _ = await syncSharedTagCloud(showFailureNotification: false)
-        let entries = (try? services.repository.loadExportSnapshot()) ?? (activeEntries + archivedEntries)
-        let sharedTagsByEntryID = Dictionary(
-            uniqueKeysWithValues: entries.map { entry in
-                (entry.id, loadSharedTagsForEntry(entryID: entry.id))
-            }
-        )
+        let services = services
+        let fallbackEntries = activeEntries + archivedEntries
+        let localTags = localTags
+        let localTagAssignments = localTagAssignments
         let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "iOS"
-        return try URLExportArchiveBuilder.prepareExport(
-            request: request,
-            entries: entries,
-            localTags: localTags,
-            localTagAssignments: localTagAssignments,
-            sharedTagsByEntryID: sharedTagsByEntryID,
-            appVersion: appVersion
+        let operation = Task.detached(priority: .userInitiated) {
+            try Task.checkCancellation()
+            let entries = (try? services.repository.loadExportSnapshot()) ?? fallbackEntries
+            let sharedTagsByEntryID = (try? services.sharedTagCloud.loadVisibleTagsByEntryID(entries: entries))
+                ?? Dictionary(uniqueKeysWithValues: entries.map { ($0.id, []) })
+            try Task.checkCancellation()
+            return try URLExportArchiveBuilder.prepareExport(
+                request: request,
+                entries: entries,
+                localTags: localTags,
+                localTagAssignments: localTagAssignments,
+                sharedTagsByEntryID: sharedTagsByEntryID,
+                appVersion: appVersion
+            )
+        }
+        return try await withTaskCancellationHandler(
+            operation: { try await operation.value },
+            onCancel: { operation.cancel() }
         )
     }
 
@@ -1661,6 +1732,10 @@ final class URLSaverAppModel: ObservableObject {
                 _ = try? services.repository.restoreUserTitle(entryID: entryID, oldTitle: oldTitle)
                 await reload()
             }
+        case .retryTitle(let entryID, let text):
+            Task { _ = await saveTitle(entryID: entryID, text: text) }
+        case .retryMemo(let entryID, let text):
+            Task { _ = await saveMemo(entryID: entryID, text: text) }
         }
     }
 
@@ -1680,10 +1755,14 @@ final class URLSaverAppModel: ObservableObject {
     }
 
     func entry(for entryID: Int64) -> URLRecord? {
-        if let visibleEntry = activeEntries.first(where: { $0.id == entryID }) ?? archivedEntries.first(where: { $0.id == entryID }) {
-            return visibleEntry
-        }
         return try? services.repository.loadEntry(id: entryID)
+    }
+
+    func searchActiveEntryIDs(query: String) async -> Set<Int64> {
+        let repository = services.repository
+        return await Task.detached(priority: .userInitiated) {
+            (try? repository.searchEntryIDs(query: query, recordState: .active)) ?? []
+        }.value
     }
 
     func savedAppMediaItemsForEntry(entryID: Int64) -> [SavedAppMediaFile] {

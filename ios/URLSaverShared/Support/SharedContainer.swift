@@ -37,6 +37,12 @@ enum SharedContainer {
         return directory.appendingPathComponent("url_saver_ios.sqlite")
     }
 
+    static func recoveryDatabaseURL() -> URL {
+        let directory = baseURL().appendingPathComponent("Database", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory.appendingPathComponent("url_saver_ios.recovery.sqlite")
+    }
+
     static func handoffReportURL() -> URL {
         let directory = baseURL().appendingPathComponent("ShareHandoff", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

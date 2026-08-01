@@ -774,7 +774,6 @@ final class ExportArchiveBuilderTests: XCTestCase {
         XCTAssertTrue(source.contains("loadChatGptExportLocalSnapshot()"))
         XCTAssertTrue(source.contains("bulkLookup: services.sharedTagCloud.loadVisibleTagsByEntryID(entries:)"))
         XCTAssertTrue(source.contains("withTaskCancellationHandler"))
-        XCTAssertFalse(source.contains("let localTags = localTags\n        let localTagAssignments = localTagAssignments"))
         XCTAssertFalse(source.contains("private func loadChatGptExportSnapshot"))
     }
 

@@ -18,11 +18,70 @@ interface UrlEntryDao {
     @Query("SELECT * FROM url_entries ORDER BY createdAt DESC")
     suspend fun loadAllEntries(): List<UrlEntryEntity>
 
-    @Query("SELECT * FROM url_entries WHERE localProvenanceCount > 0 AND recordState = 'ACTIVE' ORDER BY createdAt DESC")
-    fun observeActiveEntries(): Flow<List<UrlEntryEntity>>
+    @Query(
+        """
+        SELECT
+            id, originalUrl, normalizedUrl, displayUrl, openUrl, normalizedHost, rawSourceHost,
+            collectionId, serviceType, contentContext, userTitle, fetchedTitle, fetchedAuthorName,
+            SUBSTR(fetchedBody, 1, 512) AS fetchedBodyPreview, fetchedBodyKind,
+            SUBSTR(bodySummary, 1, 512) AS bodySummaryPreview,
+            SUBSTR(description, 1, 512) AS descriptionPreview,
+            SUBSTR(memo, 1, 512) AS memoPreview,
+            thumbnailUrl, badgeImageUrl, canonicalId, userLabelId,
+            localProvenanceCount, sharedReferenceCount, metadataState, metadataError,
+            metadataRequestedAt, metadataFetchedAt, recordState, createdAt, updatedAt,
+            archivedAt, pendingDeletionUntil
+        FROM url_entries
+        WHERE localProvenanceCount > 0 AND recordState = 'ACTIVE'
+        ORDER BY createdAt DESC
+        """
+    )
+    fun observeActiveEntries(): Flow<List<UrlEntryListProjection>>
 
-    @Query("SELECT * FROM url_entries WHERE localProvenanceCount > 0 AND recordState = 'ARCHIVED' ORDER BY archivedAt DESC")
-    fun observeArchiveEntries(): Flow<List<UrlEntryEntity>>
+    @Query(
+        """
+        SELECT
+            id, originalUrl, normalizedUrl, displayUrl, openUrl, normalizedHost, rawSourceHost,
+            collectionId, serviceType, contentContext, userTitle, fetchedTitle, fetchedAuthorName,
+            SUBSTR(fetchedBody, 1, 512) AS fetchedBodyPreview, fetchedBodyKind,
+            SUBSTR(bodySummary, 1, 512) AS bodySummaryPreview,
+            SUBSTR(description, 1, 512) AS descriptionPreview,
+            SUBSTR(memo, 1, 512) AS memoPreview,
+            thumbnailUrl, badgeImageUrl, canonicalId, userLabelId,
+            localProvenanceCount, sharedReferenceCount, metadataState, metadataError,
+            metadataRequestedAt, metadataFetchedAt, recordState, createdAt, updatedAt,
+            archivedAt, pendingDeletionUntil
+        FROM url_entries
+        WHERE localProvenanceCount > 0 AND recordState = 'ARCHIVED'
+        ORDER BY archivedAt DESC
+        """
+    )
+    fun observeArchiveEntries(): Flow<List<UrlEntryListProjection>>
+
+    @Query(
+        """
+        SELECT id
+        FROM url_entries
+        WHERE localProvenanceCount > 0
+          AND recordState = :recordState
+          AND (
+            LOWER(COALESCE(originalUrl, '')) LIKE '%' || LOWER(:query) || '%' ESCAPE '\'
+            OR LOWER(COALESCE(normalizedUrl, '')) LIKE '%' || LOWER(:query) || '%' ESCAPE '\'
+            OR LOWER(COALESCE(displayUrl, '')) LIKE '%' || LOWER(:query) || '%' ESCAPE '\'
+            OR LOWER(COALESCE(openUrl, '')) LIKE '%' || LOWER(:query) || '%' ESCAPE '\'
+            OR LOWER(COALESCE(normalizedHost, '')) LIKE '%' || LOWER(:query) || '%' ESCAPE '\'
+            OR LOWER(COALESCE(userTitle, '')) LIKE '%' || LOWER(:query) || '%' ESCAPE '\'
+            OR LOWER(COALESCE(fetchedTitle, '')) LIKE '%' || LOWER(:query) || '%' ESCAPE '\'
+            OR LOWER(COALESCE(fetchedAuthorName, '')) LIKE '%' || LOWER(:query) || '%' ESCAPE '\'
+            OR LOWER(COALESCE(fetchedBody, '')) LIKE '%' || LOWER(:query) || '%' ESCAPE '\'
+            OR LOWER(COALESCE(bodySummary, '')) LIKE '%' || LOWER(:query) || '%' ESCAPE '\'
+            OR LOWER(COALESCE(description, '')) LIKE '%' || LOWER(:query) || '%' ESCAPE '\'
+            OR LOWER(COALESCE(memo, '')) LIKE '%' || LOWER(:query) || '%' ESCAPE '\'
+            OR LOWER(COALESCE(serviceType, '')) LIKE '%' || LOWER(:query) || '%' ESCAPE '\'
+          )
+        """
+    )
+    suspend fun searchEntryIds(query: String, recordState: RecordState): List<Long>
 
     @Query("SELECT * FROM url_entries WHERE id = :entryId")
     fun observeEntry(entryId: Long): Flow<UrlEntryEntity?>

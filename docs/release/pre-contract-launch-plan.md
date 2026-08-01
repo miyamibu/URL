@@ -1,5 +1,7 @@
 # Pre-contract Launch Plan
 
+> Historical contract-preparation baseline. Current version and migration values come from `docs/release/release-manifest.json`.
+
 ## Goal
 外部契約前に完了できる launch 準備を終わらせ、契約後に差し込む値と外部操作だけを残す。
 

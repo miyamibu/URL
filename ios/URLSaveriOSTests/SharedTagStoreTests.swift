@@ -228,4 +228,62 @@ final class SharedTagStoreTests: XCTestCase {
         XCTAssertTrue(sharedEligibility.reasons.contains("local_provenance_required"))
         XCTAssertTrue(sharedEligibility.reasons.contains("shared_tag_allocation"))
     }
+
+    func testOlderOrEqualSnapshotCannotReplaceNewerSnapshot() throws {
+        let newer = makeSnapshot(
+            pulledAt: "2026-04-23T10:00:00Z",
+            tagID: "new-tag",
+            tagName: "新しい状態",
+            urlID: "new-url",
+            normalizedURL: "https://example.com/new-state"
+        )
+        XCTAssertTrue(try store.applySnapshot(authUserID: "user-1", snapshot: newer))
+
+        let older = makeSnapshot(
+            pulledAt: "2026-04-23T09:00:00Z",
+            tagID: "old-tag",
+            tagName: "古い状態",
+            urlID: "old-url",
+            normalizedURL: "https://example.com/old-state"
+        )
+        XCTAssertFalse(try store.applySnapshot(authUserID: "user-1", snapshot: older))
+        XCTAssertFalse(try store.applySnapshot(authUserID: "user-1", snapshot: newer))
+
+        XCTAssertEqual(try store.loadVisibleTags(authUserID: "user-1").map(\.name), ["新しい状態"])
+        XCTAssertNotNil(try repository.loadEntry(id: 1))
+        XCTAssertEqual(try repository.loadEntry(id: 1)?.normalizedURL, "https://example.com/new-state")
+        XCTAssertTrue(try repository.loadChatGptPersonalLinkSnapshot().allSatisfy { $0.normalizedURL != "https://example.com/old-state" })
+    }
+
+    private func makeSnapshot(
+        pulledAt: String,
+        tagID: String,
+        tagName: String,
+        urlID: String,
+        normalizedURL: String
+    ) -> PullSharedTagSnapshotResponse {
+        PullSharedTagSnapshotResponse(
+            pulledAt: pulledAt,
+            normalizationVersion: 1,
+            tags: [
+                RemoteSharedTag(
+                    id: tagID,
+                    name: tagName,
+                    createdAt: pulledAt,
+                    updatedAt: pulledAt,
+                    deletedAt: nil
+                )
+            ],
+            members: [],
+            urls: [
+                RemoteSharedTagURL(
+                    id: urlID,
+                    tagID: tagID,
+                    rawURL: normalizedURL,
+                    normalizedURL: normalizedURL,
+                    deletedAt: nil
+                )
+            ]
+        )
+    }
 }

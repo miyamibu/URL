@@ -708,6 +708,78 @@ struct URLRecord: Identifiable, Equatable, Sendable {
     let updatedAt: Date
     let archivedAt: Date?
     let pendingDeletionUntil: Date?
+    /// Bounded metadata text populated only by list snapshots.
+    let bodyPreview: String?
+
+    init(
+        id: Int64,
+        originalURL: String,
+        normalizedURL: String,
+        displayURL: String,
+        openURL: String,
+        normalizedHost: String,
+        rawSourceHost: String,
+        collectionID: Int64,
+        serviceType: ServiceType,
+        contentContext: ContentContext,
+        userTitle: String?,
+        fetchedTitle: String?,
+        fetchedAuthorName: String? = nil,
+        fetchedBody: String?,
+        fetchedBodyKind: MetadataBodyKind?,
+        bodySummary: String?,
+        description: String?,
+        memo: String,
+        thumbnailURL: String?,
+        badgeImageURL: String?,
+        canonicalID: String?,
+        metadataState: MetadataState,
+        metadataError: MetadataError?,
+        metadataRequestedAt: Date?,
+        metadataFetchedAt: Date?,
+        recordState: RecordState,
+        localProvenanceCount: Int,
+        sharedReferenceCount: Int,
+        createdAt: Date,
+        updatedAt: Date,
+        archivedAt: Date?,
+        pendingDeletionUntil: Date?,
+        bodyPreview: String? = nil
+    ) {
+        self.id = id
+        self.originalURL = originalURL
+        self.normalizedURL = normalizedURL
+        self.displayURL = displayURL
+        self.openURL = openURL
+        self.normalizedHost = normalizedHost
+        self.rawSourceHost = rawSourceHost
+        self.collectionID = collectionID
+        self.serviceType = serviceType
+        self.contentContext = contentContext
+        self.userTitle = userTitle
+        self.fetchedTitle = fetchedTitle
+        self.fetchedAuthorName = fetchedAuthorName
+        self.fetchedBody = fetchedBody
+        self.fetchedBodyKind = fetchedBodyKind
+        self.bodySummary = bodySummary
+        self.description = description
+        self.memo = memo
+        self.thumbnailURL = thumbnailURL
+        self.badgeImageURL = badgeImageURL
+        self.canonicalID = canonicalID
+        self.metadataState = metadataState
+        self.metadataError = metadataError
+        self.metadataRequestedAt = metadataRequestedAt
+        self.metadataFetchedAt = metadataFetchedAt
+        self.recordState = recordState
+        self.localProvenanceCount = localProvenanceCount
+        self.sharedReferenceCount = sharedReferenceCount
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.archivedAt = archivedAt
+        self.pendingDeletionUntil = pendingDeletionUntil
+        self.bodyPreview = bodyPreview
+    }
 
     var effectiveTitle: String {
         URLRules.effectiveTitle(
