@@ -11,7 +11,7 @@ enum BackgroundTaskRunner {
         operation: @escaping @Sendable () async -> Bool
     ) {
         let completion = CompletionReporter(task: task)
-        let workTask = Task(priority: .background) {
+        let workTask = Task.detached(priority: .utility) {
             let succeeded = await operation()
             completion.finish(success: succeeded && !Task.isCancelled)
         }
