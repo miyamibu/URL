@@ -9,7 +9,7 @@ if ! command -v deno >/dev/null 2>&1; then
   exit 1
 fi
 
-test_files="$(rg --files supabase/functions -g '*.test.ts' | sort || true)"
+test_files="$(find supabase/functions -type f -name '*.test.ts' | sort)"
 if [[ -z "$test_files" ]]; then
   echo "FAIL no Deno test files found" >&2
   exit 1

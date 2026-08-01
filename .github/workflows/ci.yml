@@ -116,7 +116,7 @@ jobs:
 
       - name: Typecheck all functions
         run: |
-          rg --files supabase/functions -g 'index.ts' | sort | while IFS= read -r source; do
+          find supabase/functions -type f -name 'index.ts' | sort | while IFS= read -r source; do
             deno check "$source"
           done
 
