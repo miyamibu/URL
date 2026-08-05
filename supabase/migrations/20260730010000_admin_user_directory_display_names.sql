@@ -1,35 +1,7 @@
 begin;
 
--- 当面は付与履歴の有無や下位プランにかかわらず、全ユーザーをPro以上として扱う。
-create or replace function private.active_entitlement_plan_for_user(p_user_id uuid)
-returns text
-language sql
-stable
-security definer
-set search_path = public, private, pg_temp
-as $$
-    select coalesce(
-        (
-            select grant_row.plan
-            from public.user_entitlement_grants grant_row
-            where grant_row.user_id = p_user_id
-              and grant_row.status = 'active'
-              and grant_row.starts_at <= now()
-              and (grant_row.expires_at is null or grant_row.expires_at > now())
-              and grant_row.plan in ('promo_pro', 'pro')
-            order by
-                case grant_row.plan
-                    when 'promo_pro' then 0
-                    when 'pro' then 1
-                    else 2
-                end,
-                grant_row.starts_at desc
-            limit 1
-        ),
-        'pro'
-    )
-$$;
-
+-- Prefer names explicitly maintained by the app, then fall back to names
+-- supplied by the authentication provider. These RPCs remain service-role-only.
 create or replace function public.admin_list_users(
     p_search text default '',
     p_status text default null,
@@ -110,7 +82,7 @@ begin
         counted.created_at,
         counted.last_sign_in_at,
         counted.last_seen_at,
-        coalesce(active_grant.plan, 'pro') as current_plan,
+        coalesce(active_grant.plan, 'free') as current_plan,
         counted.account_status,
         counted.total_count
     from counted_users counted
@@ -121,12 +93,14 @@ begin
           and entitlement.status = 'active'
           and entitlement.starts_at <= now()
           and (entitlement.expires_at is null or entitlement.expires_at > now())
-          and entitlement.plan in ('promo_pro', 'pro')
         order by
             case entitlement.plan
                 when 'promo_pro' then 0
                 when 'pro' then 1
-                else 2
+                when 'standard' then 2
+                when 'launch_standard' then 3
+                when 'free' then 4
+                else 5
             end,
             entitlement.starts_at desc
         limit 1
@@ -135,9 +109,70 @@ begin
 end;
 $$;
 
-revoke all on function private.active_entitlement_plan_for_user(uuid) from public;
-grant execute on function private.active_entitlement_plan_for_user(uuid) to service_role;
+create or replace function public.admin_get_user(p_user_id uuid)
+returns table (
+    user_id uuid,
+    email text,
+    email_confirmed_at timestamptz,
+    display_name text,
+    auth_provider text,
+    created_at timestamptz,
+    last_sign_in_at timestamptz,
+    last_seen_at timestamptz,
+    account_status text,
+    admin_note text,
+    support_ticket_id text,
+    entitlement_grants jsonb
+)
+language sql
+security definer
+stable
+set search_path = pg_catalog, public, auth, pg_temp
+as $$
+    select
+        auth_user.id,
+        auth_user.email::text,
+        auth_user.email_confirmed_at,
+        left(coalesce(
+            nullif(btrim(profile.display_name), ''),
+            nullif(btrim(shared_profile.display_name), ''),
+            nullif(btrim(auth_user.raw_user_meta_data ->> 'full_name'), ''),
+            nullif(btrim(auth_user.raw_user_meta_data ->> 'name'), '')
+        ), 120),
+        profile.auth_provider,
+        auth_user.created_at,
+        auth_user.last_sign_in_at,
+        profile.last_seen_at,
+        coalesce(profile.account_status, 'active'),
+        profile.admin_note,
+        profile.support_ticket_id,
+        coalesce((
+            select jsonb_agg(
+                jsonb_build_object(
+                    'id', entitlement.id,
+                    'plan', entitlement.plan,
+                    'source', entitlement.source,
+                    'storePlatform', entitlement.store_platform,
+                    'startsAt', entitlement.starts_at,
+                    'expiresAt', entitlement.expires_at,
+                    'status', entitlement.status,
+                    'createdAt', entitlement.created_at
+                )
+                order by entitlement.created_at desc
+            )
+            from public.user_entitlement_grants entitlement
+            where entitlement.user_id = auth_user.id
+        ), '[]'::jsonb)
+    from auth.users auth_user
+    left join public.user_profiles profile on profile.user_id = auth_user.id
+    left join public.shared_user_profiles shared_profile on shared_profile.user_id = auth_user.id
+    where auth_user.id = p_user_id
+    limit 1;
+$$;
+
 revoke all on function public.admin_list_users(text, text, integer, integer) from public, anon, authenticated;
+revoke all on function public.admin_get_user(uuid) from public, anon, authenticated;
 grant execute on function public.admin_list_users(text, text, integer, integer) to service_role;
+grant execute on function public.admin_get_user(uuid) to service_role;
 
 commit;
