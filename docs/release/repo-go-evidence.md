@@ -25,7 +25,9 @@ The historical evidence below is retained. The current release candidate baselin
 | Web / contracts | Web Admin 19 tests, typecheck, lint, and production build passed. Python resolver/release tests 31/31, mobile UI contract, MCP contract, release manifest, and release hygiene passed. |
 | Pixel 9a | Serial `55211JEBF16639`. A validated pre-install backup was saved, canonical debug build 19 was overwrite-installed and launched without clearing app data, and the database retained `ACTIVE=121` before and after installation. The device returned to another foreground app, so this pass does not claim current-screen UI operation proof. |
 | iPhone 12 | UDID `00008101-00066D96340A001E`. A fresh signed `Debug-iphoneos` build for `com.mibu.codebridge.ios` was built, overwrite-installed, and launched without resetting app data. Appium/WDA UI proof is `NOT_VERIFIED`: RemoteXPC tunnel startup requires administrator authorization and WDA timed out while enabling automation mode. |
-| External state | The three Supabase production migrations listed above were applied. No Vercel deploy, Store upload/submission, staged rollout change, OpenAI submission, or production-secret change was performed during this revalidation. |
+| App Store Connect | Version `1.0.17` build `19` is approved as `配信準備完了`, with automatic release selected for 2026-08-05 19:00 JST or later. No additional release button is available. |
+| Google Play | Production version `1.0.15` versionCode `19` is active and has been publicly available to 10% of users since 2026-07-30 00:48. The rollout percentage was not changed. |
+| External state | The three Supabase production migrations listed above were applied and current Store states were inspected. No Vercel deploy, Store upload/submission, staged rollout change, OpenAI submission, or production-secret change was performed during this revalidation. |
 
 ## 2026-07-30 Android API 36 production decision
 
