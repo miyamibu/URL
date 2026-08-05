@@ -21,11 +21,11 @@ The historical evidence below is retained. The current release candidate baselin
 |---|---|
 | Repository cleanup | Removed the unneeded destructive migration `20260730003000_delete_ios_owner_test_accounts.sql`. Updated the release-manifest head test and made Launch Standard limit tests explicit after the default entitlement changed to Pro. |
 | Android local | Java 21 `testDebugUnitTest`, `lintDebug`, `assembleDebug`, and `assembleRelease` passed. Canonical package remains `jp.miyamibu.urlalbum`, versionCode `19`, target SDK `36`. |
-| Supabase local | Fresh local migration replay, public/private schema lint, and pgTAP passed: 18 files / 112 tests. No linked or production database migration was run. |
+| Supabase local / production | Fresh local migration replay, public/private schema lint, and pgTAP passed: 18 files / 112 tests. The obsolete `20260730003000` production history entry was marked reverted without changing application data, then `20260731090000`, `20260731100000`, and `20260804090000` were applied to the linked production project. Local and remote migration histories match through `20260804090000`; linked public/private lint has no errors and only two pre-existing unused-parameter warnings in `consume_rinbam_mcp_rate_limit`. |
 | Web / contracts | Web Admin 19 tests, typecheck, lint, and production build passed. Python resolver/release tests 31/31, mobile UI contract, MCP contract, release manifest, and release hygiene passed. |
 | Pixel 9a | Serial `55211JEBF16639`. A validated pre-install backup was saved, canonical debug build 19 was overwrite-installed and launched without clearing app data, and the database retained `ACTIVE=121` before and after installation. The device returned to another foreground app, so this pass does not claim current-screen UI operation proof. |
 | iPhone 12 | UDID `00008101-00066D96340A001E`. A fresh signed `Debug-iphoneos` build for `com.mibu.codebridge.ios` was built, overwrite-installed, and launched without resetting app data. Appium/WDA UI proof is `NOT_VERIFIED`: RemoteXPC tunnel startup requires administrator authorization and WDA timed out while enabling automation mode. |
-| External state | No Supabase linked/production migration, Vercel deploy, Store upload/submission, staged rollout change, OpenAI submission, or production-secret change was performed during this revalidation. |
+| External state | The three Supabase production migrations listed above were applied. No Vercel deploy, Store upload/submission, staged rollout change, OpenAI submission, or production-secret change was performed during this revalidation. |
 
 ## 2026-07-30 Android API 36 production decision
 
