@@ -1,6 +1,6 @@
 # REPO_GO Evidence
 
-Final status: REPO_GO (Apple submitted / Google Play API 36 production rollout submitted for review)
+Final status: REPO_GO (Apple 1.0.17 public / Google Play 1.0.15 fully public / Android 1.0.16 submitted for full production release)
 
 ## Current source snapshot (manifest-backed)
 
@@ -13,7 +13,18 @@ Final status: REPO_GO (Apple submitted / Google Play API 36 production rollout s
 
 ## Current working-tree status: REPO_GO (external release gates remain separate)
 
-The historical evidence below is retained. The current release candidate baseline is Android `versionName=1.0.16` / `versionCode=20` and iOS `CFBundleShortVersionString=1.0.17` / `CFBundleVersion=19`. Android API 36 local validation and Play Console evidence were refreshed on 2026-07-30. App Store Connect submission is complete and currently awaiting review. OpenAI submission and production secret entry remain separate gates.
+The historical evidence below is retained. The current release candidate baseline is Android `versionName=1.0.16` / `versionCode=20` and iOS `CFBundleShortVersionString=1.0.17` / `CFBundleVersion=19`. Android v20 production submission and Play Console evidence were refreshed on 2026-08-05. iOS 1.0.17 is publicly available. OpenAI submission and production secret entry remain separate gates.
+
+## 2026-08-05 Android v20 full-production submission and maintenance
+
+| Surface | Confirmed evidence |
+|---|---|
+| Android source | Bumped canonical `jp.miyamibu.urlalbum` to `versionName=1.0.16`, `versionCode=20`, retaining target SDK 36. This release contains the streaming storage-capacity accounting fix merged as `8eba9294`. |
+| Local validation | JDK 21 `testDebugUnitTest`, `lintDebug`, and `bundleRelease` passed. The signed AAB was validated with Bundletool and reports package `jp.miyamibu.urlalbum`, version `1.0.16 (20)`, and target SDK 36. |
+| Signed artifact | `/Users/mimac/.urlsaver-signing/app-release-1.0.16-20-play-upload-signed-20260805.aab`; SHA-256 `e25b2c32b6514076130a151c0a558ea800693cba940ee82ceca77b5eeb205238`. Its upload-certificate SHA-256 exactly matches the accepted versionCode 19 artifact. |
+| Google Play | Existing `1.0.15 (19)` rollout was expanded from 10% to 100% and Play Console now shows it as published. `1.0.16 (20)` was uploaded to production, configured for 100% / all eligible countries, and sent for Google review. It is submitted, not yet publicly live. |
+| Web Admin | `postcss` was updated to `8.5.25`; lockfile resolution also updated vulnerable `brace-expansion` instances. `npm audit` reports 0 vulnerabilities, and typecheck, lint, 19 tests, and production build pass. |
+| GitHub | Removed the obsolete required status context `verify`. Updated checkout, Java, Gradle, Node, Python, Deno, and Supabase setup actions to current Node 24-compatible major versions; `actionlint` passes. |
 
 ## 2026-08-05 release-integration revalidation
 
