@@ -10,6 +10,8 @@ import jp.mimac.urlsaver.data.MetadataScheduler
 import jp.mimac.urlsaver.data.MetadataUpdate
 import jp.mimac.urlsaver.data.UrlEntryEntity
 import jp.mimac.urlsaver.domain.ContentContext
+import jp.mimac.urlsaver.domain.DefaultEntitlementResolver
+import jp.mimac.urlsaver.domain.LaunchStandardPlan
 import jp.mimac.urlsaver.domain.MetadataError
 import jp.mimac.urlsaver.domain.MetadataBodyKind
 import jp.mimac.urlsaver.domain.MetadataState
@@ -53,6 +55,9 @@ class RepositoryBehaviorTest {
                 urlEntryDao = db.urlEntryDao(),
                 tagDao = db.tagDao(),
                 authSessionProvider = FakeAuthSessionProvider(),
+                entitlementResolver = DefaultEntitlementResolver(
+                    defaultEntitlements = LaunchStandardPlan.entitlements,
+                ),
             ),
         )
     }

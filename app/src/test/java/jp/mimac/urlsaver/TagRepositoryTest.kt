@@ -39,6 +39,8 @@ import jp.mimac.urlsaver.domain.ApplySharedTagOpsResponse
 import jp.mimac.urlsaver.domain.ContentContext
 import jp.mimac.urlsaver.domain.CreateTagResult
 import jp.mimac.urlsaver.domain.CreateSharedTagInviteResponse
+import jp.mimac.urlsaver.domain.DefaultEntitlementResolver
+import jp.mimac.urlsaver.domain.LaunchStandardPlan
 import jp.mimac.urlsaver.domain.PreviewSharedTagInviteResponse
 import jp.mimac.urlsaver.domain.MetadataState
 import jp.mimac.urlsaver.domain.PullSharedTagSnapshotResponse
@@ -141,6 +143,9 @@ class TagRepositoryTest {
                 urlEntryDao = db.urlEntryDao(),
                 tagDao = db.tagDao(),
                 authSessionProvider = authProvider,
+                entitlementResolver = DefaultEntitlementResolver(
+                    defaultEntitlements = LaunchStandardPlan.entitlements,
+                ),
             ),
             aiLocalDataClearer = aiLocalDataClearer,
             localAccountCleanupStore = localAccountCleanupStore,
@@ -462,14 +467,14 @@ class TagRepositoryTest {
     }
 
     @Test
-    fun createTagWithResult_blocksAtNormalTagLimit() = runBlocking {
+    fun createTagWithResult_allowsBeyondLegacyNormalTagLimit() = runBlocking {
         repeat(10) { index ->
             val result = repository.createTagWithResult("local-limit-$index")
             assertTrue(result is CreateTagResult.Success)
         }
 
-        val blocked = repository.createTagWithResult("local-limit-over")
-        assertTrue(blocked is CreateTagResult.LimitReached)
+        val created = repository.createTagWithResult("local-limit-over")
+        assertTrue(created is CreateTagResult.Success)
     }
 
     @Test
