@@ -1,6 +1,6 @@
 # REPO_GO Evidence
 
-Final status: REPO_GO (Apple 1.0.17 public / Google Play 1.0.15 fully public / Android 1.0.17 release candidate prepared)
+Final status: REPO_GO (Apple 1.0.17 public / Google Play 1.0.16 fully public / Android 1.0.17 full-production review submitted)
 
 ## Current source snapshot (manifest-backed)
 
@@ -13,7 +13,7 @@ Final status: REPO_GO (Apple 1.0.17 public / Google Play 1.0.15 fully public / A
 
 ## Current working-tree status: REPO_GO (external release gates remain separate)
 
-The historical evidence below is retained. The current release candidate baseline is Android `versionName=1.0.17` / `versionCode=21` and iOS `CFBundleShortVersionString=1.0.17` / `CFBundleVersion=19`. Android v21 removes unused native code and embeds R8 mapping metadata; its production state must be recorded after the Play Console operation. iOS 1.0.17 is publicly available. OpenAI submission and production secret entry remain separate gates.
+The historical evidence below is retained. The current release candidate baseline is Android `versionName=1.0.17` / `versionCode=21` and iOS `CFBundleShortVersionString=1.0.17` / `CFBundleVersion=19`. Android v21 removes unused native code, embeds R8 mapping metadata, and is submitted to Google Play for a 100% production rollout. Android v20 and iOS 1.0.17 are publicly available. OpenAI submission and production secret entry remain separate gates.
 
 ## 2026-08-05 Android v21 release-metadata hardening
 
@@ -24,7 +24,8 @@ The historical evidence below is retained. The current release candidate baselin
 | Native code | The app uses DataStore's single-process coordinator only. Its unused, stripped MultiProcess native counter is excluded from packaging; the v21 AAB contains no `.so` libraries, so native debug symbols are not applicable. |
 | Automated guard | `scripts/verify_android_release_artifacts.sh` fails when mapping is absent, or when native libraries exist without embedded debug-symbol metadata. Cross-platform CI builds the release bundle and runs this guard. |
 | Local validation | JDK 21 `testDebugUnitTest`, `lintDebug`, and `bundleRelease` passed. The release-artifact guard reports R8 mapping present and no native libraries. |
-| Production state | Not yet updated in this evidence row. Google Play submission/publication remains a separate external action. |
+| Signed artifact | `/Users/mimac/.urlsaver-signing/app-release-1.0.17-21-play-upload-signed-20260805.aab`; SHA-256 `e88c8e978bea63b8d811c12569fb8e6b28c62111da4bca39c500705ccc6f9605`. `jarsigner -verify` passed, its upload-certificate SHA-256 matches the Play-accepted v20 artifact, and Bundletool 1.18.3 validated package `jp.miyamibu.urlalbum`, version `1.0.17 (21)`, and target SDK 36. |
+| Google Play | Play accepted v21 for the production track. The artifact row shows the attached `ReTrace` mapping file and no native debug-symbol warning. The release is configured for 100% / all eligible countries, has zero supported-device loss, and the publishing overview shows `審査中の変更` / `完全公開を開始`. It is submitted, not yet publicly live. |
 
 ## 2026-08-05 Android v20 full-production submission and maintenance
 
@@ -33,7 +34,7 @@ The historical evidence below is retained. The current release candidate baselin
 | Android source | Bumped canonical `jp.miyamibu.urlalbum` to `versionName=1.0.16`, `versionCode=20`, retaining target SDK 36. This release contains the streaming storage-capacity accounting fix merged as `8eba9294`. |
 | Local validation | JDK 21 `testDebugUnitTest`, `lintDebug`, and `bundleRelease` passed. The signed AAB was validated with Bundletool and reports package `jp.miyamibu.urlalbum`, version `1.0.16 (20)`, and target SDK 36. |
 | Signed artifact | `/Users/mimac/.urlsaver-signing/app-release-1.0.16-20-play-upload-signed-20260805.aab`; SHA-256 `e25b2c32b6514076130a151c0a558ea800693cba940ee82ceca77b5eeb205238`. Its upload-certificate SHA-256 exactly matches the accepted versionCode 19 artifact. |
-| Google Play | Existing `1.0.15 (19)` rollout was expanded from 10% to 100% and Play Console now shows it as published. `1.0.16 (20)` was uploaded to production, configured for 100% / all eligible countries, and sent for Google review. It is submitted, not yet publicly live. |
+| Google Play | Existing `1.0.15 (19)` rollout was expanded from 10% to 100%. `1.0.16 (20)` was uploaded to production, configured for 100% / all eligible countries, passed review, and is now the publicly active production release. |
 | Web Admin | `postcss` was updated to `8.5.25`; lockfile resolution also updated vulnerable `brace-expansion` instances. `npm audit` reports 0 vulnerabilities, and typecheck, lint, 19 tests, and production build pass. |
 | GitHub | Removed the obsolete required status context `verify`. Updated checkout, Java, Gradle, Node, Python, Deno, and Supabase setup actions to current Node 24-compatible major versions; `actionlint` passes. |
 
@@ -67,7 +68,7 @@ Current proof boundary:
 
 - Android/iOS manual-handoff implementation and automated tests prove local-tag selection, eligible-only preview/ZIP, preview/archive parity, zero-result rejection, filename/manifest contracts, known-pattern redaction, unknown-secret warning/confirmation, and no question/API/OAuth path.
 - The existing physical iPhone and Android handoff records below are historical evidence for earlier source snapshots; Appium/WDA and Android physical operation were not re-run for the current `main` snapshot in this pass.
-- Android Release build succeeds; the generated AAB remains unsigned, while the separately signed upload AAB was accepted by Google Play and the 10% production rollout was submitted for review. The iOS Distribution archive/export/upload succeeded for build 19, and App Store Connect now shows the version as `審査待ち`.
+- Android Release build succeeds; the generated repository AAB is unsigned by design, while the separately signed v21 upload AAB was accepted by Google Play with embedded R8 mapping and submitted for a 100% production rollout. Public users remain on v20 until Google approves v21. The iOS Distribution archive/export/upload succeeded for build 19, and iOS 1.0.17 is publicly available.
 - `web/invite-link` was deployed to Vercel production deployment `dpl_GeSsSnoG2tUyNfkuAtgaHqtQrmBd` on 2026-07-26 and aliased to `https://miyamibu.xyz`; `scripts/verify_public_web_release.sh` passed after deployment.
 
 ## 2026-07-28 Store submission / device evidence
@@ -98,8 +99,8 @@ The following records are a dated provider-state capture made while the applicat
 
 | Area | Result | Evidence |
 |---|---|---|
-| Android | LOCAL_TEST_PASS / PLAY_PRODUCTION_REVIEW_SUBMITTED_10_PERCENT / GENERATED_AAB_UNSIGNED / PHYSICAL_NOT_REVERIFIED | Canonical `jp.miyamibu.urlalbum`, `versionCode=19`, `versionName=1.0.15`, target SDK 36. Unit tests, lint, Release bundle, signature, and Bundletool validation pass. Google Play accepted the separately signed AAB; the 10% production rollout is submitted and awaiting automated checks/review. Physical build 19 upgrade/data preservation remains unverified by release-owner exception. |
-| iOS | LOCAL_TEST_PASS / DISTRIBUTION_UPLOAD_SUBMITTED / PHYSICAL_INSTALL_VERIFIED | Current source `com.mibu.codebridge.ios`, `1.0.17` build `19`, distribution archive/export and App Store Connect upload/submission succeeded; App Store Connect shows `審査待ち`. iPhone 12 install/launch is verified, while Appium/WDA UI-operation proof for this build was not re-run. |
+| Android | LOCAL_TEST_PASS / PLAY_V20_PUBLIC / PLAY_V21_REVIEW_SUBMITTED_100_PERCENT / PHYSICAL_V21_NOT_REVERIFIED | Canonical `jp.miyamibu.urlalbum`, `versionCode=21`, `versionName=1.0.17`, target SDK 36. Unit tests, lint, Release bundle, artifact guard, signature, and Bundletool validation pass. Google Play confirms the embedded ReTrace mapping and accepted v21 for a 100% / all-eligible-country production rollout; v20 remains public while v21 is under review. Physical v21 install and UI operation remain unverified. |
+| iOS | LOCAL_TEST_PASS / APP_STORE_PUBLIC / PHYSICAL_INSTALL_VERIFIED | Current source `com.mibu.codebridge.ios`, `1.0.17` build `19`; distribution archive/export, App Store Connect upload/review, and public release succeeded. iPhone 12 install/launch is verified, while Appium/WDA UI-operation proof for this build was not re-run. |
 | Supabase migration/replay | REMOTE_APPLIED_WITH_VALIDATION_PASS | Current-main evidence: project `xocumgxbylmpoobfqows`, functions `contact-support` v17, `contact-support-resend-webhook` v3, and `verify-store-purchase` v15; migration list is local=remote through `20260716140000`; `supabase db lint --linked` PASS. Local and linked databases include 42 migrations through `20260716140000_restore_account_reassignment.sql`; the additive fixes `20260716130000_fix_promo_invite_updated_at.sql` and `20260716140000_restore_account_reassignment.sql` are applied remotely. Linked pgTAP remains `NOT VERIFIED` because the CLI cannot resolve `db.xocumgxbylmpoobfqows.supabase.co`; the fixture-writing suite was not forced against production. |
 | Physical iPhone UI | VERIFIED_TO_CHATGPT_COMPOSER_FOR_BUILD16 | Canonical build16 was overwrite-installed on UDID `00008101-00066D96340A001E` with app data retained. Appium/WDA verified tag selection, preview, confirmation, ChatGPT-specific ZIP `rinbam-chatgpt-…zip`, iOS SharingUIService ChatGPT selection, normal ChatGPT composer attachment, empty question field, and unsent state. Final ChatGPT send was intentionally not performed. |
 | Physical Android latest candidate | VERIFIED_FOR_DEBUG_VERSIONCODE18 / PRIOR_DATA_BACKUP_INVALID | Canonical Pixel 9a `55211JEBF16639` had an incompatible Play-signed install. The first backup attempt was invalid (`run-as: package ... not debuggable`); no recoverable backup exists. After explicit approval, the Play install was removed, Debug `versionCode=18` was installed/launched, and the ChatGPT composer handoff was verified. The install script now validates the tar archive before proceeding. |
@@ -127,14 +128,14 @@ The following records are a dated provider-state capture made while the applicat
 | Provider deployment/source revision correspondence | External / unverified: provider deployment/function state is recorded above, but independent confirmation that Vercel, Railway, Supabase, and `web/invite-link` artifacts correspond to the repository HEAD is still required. |
 | Production MCP/OAuth registration | Requires owner-controlled provider console and secret entry. |
 | OpenAI Apps Developer Mode connection and submission | Requires owner ChatGPT/OpenAI account and deployed HTTPS MCP endpoint. |
-| Google Play review and release | Version `1.0.15 (19)` / target SDK 36 was submitted for a 10% production rollout on 2026-07-30. Automated quick checks and Google review remain external; public availability is not yet confirmed. |
-| App Store Connect review and release | Version `1.0.17 (19)` is submitted and currently `審査待ち`. Apple approval and App Store publication remain external and unverified. |
+| Google Play review and release | Version `1.0.17 (21)` / target SDK 36 is submitted for a 100% production rollout to all eligible countries. Google review and public availability remain external; v20 stays publicly active until approval. |
+| App Store Connect review and release | Version `1.0.17 (19)` is publicly available. No review or release action remains for this version. |
 | Production secrets | Must be entered outside repo and chat. |
 | Store/live verification | External state changes over time and must be verified at release time. |
-| Physical-device final verification | iPhone 12 build 19 install/launch is verified; Android Pixel 9a build 19 installation is unverified because the device was not connected. UI-operation proof remains separate. |
+| Physical-device final verification | iPhone 12 build 19 install/launch is verified. Android v21 installation and UI operation are unverified because no Android device or emulator was attached during the v21 release pass. |
 | Sandbox purchase | External / unverified. |
 | Full launch GO | External / unverified; the deployment evidence above does not constitute launch approval. |
-| Signed iOS archive/upload | Distribution archive/export, App Store Connect upload, and review submission for build 19 are complete; review outcome and live release remain pending. |
+| Signed iOS archive/upload | Distribution archive/export, App Store Connect upload/review, and public release for build 19 are complete. |
 
 ## REPO_GO vs LAUNCH_READY_REPO
 
