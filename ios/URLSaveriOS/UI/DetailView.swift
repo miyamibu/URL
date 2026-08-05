@@ -12,7 +12,11 @@ struct DetailView: View {
     @State private var titleText = ""
     @State private var memoText = ""
     @State private var isEditingTitle = false
+    @State private var isSavingTitle = false
+    @State private var titleSaveError: String?
     @State private var isShowingMemoEditor = false
+    @State private var isSavingMemo = false
+    @State private var memoSaveError: String?
     @State private var isShowingDeleteConfirm = false
     @State private var isShowingDetails = false
     @State private var isRetryingMetadata = false
@@ -99,7 +103,7 @@ struct DetailView: View {
                                         VStack(alignment: .leading, spacing: 12) {
                                             if isEditingTitle {
                                                 TextField("タイトル", text: $titleText, axis: .vertical)
-                                                    .font(.system(size: 23, weight: .heavy, design: .rounded))
+                                                    .font(.system(.title2, design: .rounded).weight(.heavy))
                                                     .textFieldStyle(.plain)
                                                     .padding(.horizontal, 14)
                                                     .padding(.vertical, 16)
@@ -111,9 +115,12 @@ struct DetailView: View {
                                                         RoundedRectangle(cornerRadius: 16, style: .continuous)
                                                             .stroke(AppPalette.outline, lineWidth: 1.5)
                                                     )
+                                                    .onChange(of: titleText) { _, _ in
+                                                        titleSaveError = nil
+                                                    }
                                             } else {
                                                 Text(preferredDisplayTitle(for: entry))
-                                                    .font(.system(size: 23, weight: .heavy, design: .rounded))
+                                                    .font(.system(.title2, design: .rounded).weight(.heavy))
                                                     .foregroundStyle(Color.white.opacity(0.94))
                                                     .multilineTextAlignment(.leading)
                                                     .lineLimit(3)
@@ -148,23 +155,42 @@ struct DetailView: View {
                                         }
                                     }
 
-                                    if isEditingTitle {
+                                            if isEditingTitle {
+                                        if let titleSaveError {
+                                            Label(titleSaveError, systemImage: "exclamationmark.triangle.fill")
+                                                .font(.system(.callout).weight(.semibold))
+                                                .foregroundStyle(AppPalette.warning)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                        }
+
                                         HStack(spacing: 10) {
                                             AppActionButton {
                                                 isEditingTitle = false
                                                 titleText = entry.userTitle ?? ""
+                                                titleSaveError = nil
                                             } label: {
                                                 Text("キャンセル")
                                             }
 
-                                            AppActionButton(tone: .primary) {
+                                            AppActionButton(tone: .primary, enabled: !isSavingTitle) {
+                                                guard !isSavingTitle else { return }
+                                                isSavingTitle = true
                                                 Task {
-                                                    if await model.saveTitle(entryID: entryID, text: titleText) {
+                                                    let saved = await model.saveTitle(entryID: entryID, text: titleText)
+                                                    isSavingTitle = false
+                                                    if saved {
                                                         isEditingTitle = false
+                                                        titleSaveError = nil
+                                                    } else {
+                                                        titleSaveError = "タイトルを保存できませんでした。入力内容は保持されています。もう一度お試しください。"
                                                     }
                                                 }
                                             } label: {
-                                                Text("保存")
+                                                if isSavingTitle {
+                                                    ProgressView().tint(Color.white)
+                                                } else {
+                                                    Text(titleSaveError == nil ? "保存" : "再試行")
+                                                }
                                             }
                                         }
                                     }
@@ -302,6 +328,8 @@ struct DetailView: View {
 
                                     AppActionButton {
                                         memoText = entry.memo
+                                        memoSaveError = nil
+                                        isSavingMemo = false
                                         isShowingMemoEditor = true
                                     } label: {
                                         Text("メモを編集")
@@ -431,10 +459,19 @@ struct DetailView: View {
         .sheet(isPresented: $isShowingMemoEditor) {
             MemoEditorSheet(
                 memoText: $memoText,
+                saveError: $memoSaveError,
+                isSaving: $isSavingMemo,
                 onSave: {
+                    guard !isSavingMemo else { return }
+                    isSavingMemo = true
                     Task {
-                        if await model.saveMemo(entryID: entryID, text: memoText) {
+                        let saved = await model.saveMemo(entryID: entryID, text: memoText)
+                        isSavingMemo = false
+                        if saved {
+                            memoSaveError = nil
                             isShowingMemoEditor = false
+                        } else {
+                            memoSaveError = "メモを保存できませんでした。入力内容は保持されています。もう一度お試しください。"
                         }
                     }
                 }
@@ -795,6 +832,8 @@ private struct ExpandableDetailBodySection: View {
 private struct MemoEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var memoText: String
+    @Binding var saveError: String?
+    @Binding var isSaving: Bool
     let onSave: () -> Void
 
     var body: some View {
@@ -811,7 +850,7 @@ private struct MemoEditorSheet: View {
                     .foregroundStyle(AppPalette.textPrimary)
 
                 TextEditor(text: $memoText)
-                    .font(.system(size: 17, weight: .medium))
+                    .font(.system(.body).weight(.medium))
                     .scrollContentBackground(.hidden)
                     .padding(16)
                     .background(AppPalette.background, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -820,6 +859,16 @@ private struct MemoEditorSheet: View {
                             .stroke(AppPalette.outlineSoft, lineWidth: 1.5)
                     )
                     .frame(minHeight: 220)
+                    .onChange(of: memoText) { _, _ in
+                        saveError = nil
+                    }
+
+                if let saveError {
+                    Label(saveError, systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(.callout).weight(.semibold))
+                        .foregroundStyle(AppPalette.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 HStack(spacing: 10) {
                     AppActionButton {
@@ -828,10 +877,14 @@ private struct MemoEditorSheet: View {
                         Text("キャンセル")
                     }
 
-                    AppActionButton(tone: .primary) {
+                    AppActionButton(tone: .primary, enabled: !isSaving) {
                         onSave()
                     } label: {
-                        Text("保存")
+                        if isSaving {
+                            ProgressView().tint(Color.white)
+                        } else {
+                            Text(saveError == nil ? "保存" : "再試行")
+                        }
                     }
                 }
             }

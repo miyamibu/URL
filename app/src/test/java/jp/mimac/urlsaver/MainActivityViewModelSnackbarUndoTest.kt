@@ -168,6 +168,18 @@ class MainActivityViewModelSnackbarUndoTest {
         assertEquals("メモを保存しました", memo.message)
         assertNull(memo.actionLabel)
 
+        viewModel.notifyTitleSaveFailed()
+        val titleFailed = viewModel.snackbarEvents.first()
+        assertEquals(SnackbarEventKind.INFO, titleFailed.kind)
+        assertEquals("タイトルを保存できませんでした", titleFailed.message)
+        assertNull(titleFailed.actionLabel)
+
+        viewModel.notifyMemoSaveFailed()
+        val memoFailed = viewModel.snackbarEvents.first()
+        assertEquals(SnackbarEventKind.INFO, memoFailed.kind)
+        assertEquals("メモを保存できませんでした", memoFailed.message)
+        assertNull(memoFailed.actionLabel)
+
         viewModel.notifyOpenFailed()
         val openFailed = viewModel.snackbarEvents.first()
         assertEquals(SnackbarEventKind.INFO, openFailed.kind)

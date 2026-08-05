@@ -76,18 +76,6 @@ class AppContainer(context: Context) {
         val encodedUrl = URLEncoder.encode(targetUrl, Charsets.UTF_8.name())
         "$INSTAGRAM_PUBLIC_OEMBED_ENDPOINT?omitscript=true&url=$encodedUrl"
     }
-    private val instagramOEmbedEndpointBuilder: ((String) -> String)? by lazy {
-        val token = BuildConfig.INSTAGRAM_OEMBED_ACCESS_TOKEN.trim()
-        if (token.isBlank()) {
-            null
-        } else {
-            { targetUrl ->
-                val encodedUrl = URLEncoder.encode(targetUrl, Charsets.UTF_8.name())
-                val encodedToken = URLEncoder.encode(token, Charsets.UTF_8.name())
-                "$INSTAGRAM_OEMBED_ENDPOINT?omitscript=true&url=$encodedUrl&access_token=$encodedToken"
-            }
-        }
-    }
     private val instagramCaptionedEmbedEndpointBuilder: (String) -> String = { targetUrl ->
         buildInstagramCaptionedEmbedUrl(targetUrl)
     }
@@ -95,7 +83,6 @@ class AppContainer(context: Context) {
         MetadataFetcher(
             userAgent = "UrlSaver/${BuildConfig.VERSION_NAME}",
             instagramPublicOEmbedEndpointBuilder = instagramPublicOEmbedEndpointBuilder,
-            instagramOEmbedEndpointBuilder = instagramOEmbedEndpointBuilder,
             instagramCaptionedEmbedEndpointBuilder = instagramCaptionedEmbedEndpointBuilder,
         )
     }
@@ -331,7 +318,6 @@ class AppContainer(context: Context) {
     private companion object {
         const val TAG = "AppContainer"
         const val INSTAGRAM_PUBLIC_OEMBED_ENDPOINT = "https://www.instagram.com/api/v1/oembed/"
-        const val INSTAGRAM_OEMBED_ENDPOINT = "https://graph.facebook.com/v22.0/instagram_oembed"
 
         fun buildInstagramCaptionedEmbedUrl(targetUrl: String): String {
             val uri = URI(targetUrl)

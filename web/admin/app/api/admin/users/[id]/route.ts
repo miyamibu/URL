@@ -11,6 +11,7 @@ import {
   requiredOperationId,
 } from "@/lib/admin-operation";
 import { requiredAdminReason } from "@/lib/audit";
+import { parseJsonObject } from "@/lib/request-body";
 import { createServiceSupabaseClient } from "@/lib/supabase";
 
 type AdminUserDetailRpcRow = {
@@ -102,7 +103,7 @@ export async function PATCH(
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
       return NextResponse.json({ error: "ユーザーIDが不正です" }, { status: 400 });
     }
-    const body = await request.json().catch(() => ({}));
+    const body = await parseJsonObject(request);
     const action = typeof body.action === "string" ? body.action.trim().toLowerCase() : "";
     const auditAction = AUDIT_ACTIONS[action];
     if (!auditAction) {

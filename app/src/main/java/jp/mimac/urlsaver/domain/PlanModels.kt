@@ -8,6 +8,9 @@ enum class PlanType {
     PROMO_PRO,
 }
 
+val PlanType.isPaidCourse: Boolean
+    get() = this == PlanType.STANDARD || this == PlanType.PRO || this == PlanType.PROMO_PRO
+
 enum class BillingPeriod {
     MONTHLY,
     YEARLY,
@@ -118,13 +121,9 @@ class LimitChecker(
         return LimitResult.Allowed
     }
 
+    @Suppress("UNUSED_PARAMETER")
     fun checkCanCreateNormalTag(usage: UsageSummary): LimitResult {
-        if (usage.normalTagCount >= limits.normalTagLimit) {
-            return LimitResult.Blocked(
-                target = LimitTarget.NORMAL_TAG,
-                message = "通常タグは${planLabel}では${limits.normalTagLimit}個まで作成できます。",
-            )
-        }
+        // 自作タグは現在、プランや利用数にかかわらず無制限で作成できる。
         return LimitResult.Allowed
     }
 

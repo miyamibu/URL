@@ -471,6 +471,7 @@ private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
             viewModel = vm,
             onBack = { navController.popBackStack() },
             onOpenDetail = { navController.navigate(Routes.detail(it)) },
+            onRetryLoad = vm::retryLoading,
             onRestoreEntry = { entryId ->
                 activityViewModel.onDetailEffect(DetailEffect.NavigateBackAfterRestore(entryId))
             },
@@ -531,6 +532,8 @@ private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
             onTitleEditStarted = { activityViewModel.onTitleEditStarted() },
             onCopySuccess = { activityViewModel.notifyCopySuccess() },
             onMemoSaved = { activityViewModel.notifyMemoSaved() },
+            onTitleSaveFailed = { activityViewModel.notifyTitleSaveFailed() },
+            onMemoSaveFailed = { activityViewModel.notifyMemoSaveFailed() },
             onOpenFailed = { activityViewModel.notifyOpenFailed() },
             onMetadataRetryUnavailable = { activityViewModel.notifyMetadataRetryUnavailable() },
         )
@@ -743,6 +746,17 @@ private fun MainScreen(
     var selectedMainLocalTagId by rememberSaveable { mutableStateOf<Long?>(null) }
     var searchBarVisible by rememberSaveable { mutableStateOf(false) }
     var searchQueryLocal by rememberSaveable { mutableStateOf("") }
+    var databaseSearchMatchIds by remember { mutableStateOf<Set<Long>?>(emptySet()) }
+    LaunchedEffect(searchQueryLocal) {
+        if (searchQueryLocal.isBlank()) {
+            databaseSearchMatchIds = emptySet()
+        } else {
+            databaseSearchMatchIds = null
+            databaseSearchMatchIds = runCatching {
+                viewModel.searchEntryIds(searchQueryLocal)
+            }.getOrDefault(emptySet())
+        }
+    }
     LaunchedEffect(localSaveTags, selectedMainLocalTagId) {
         val selectedTagId = selectedMainLocalTagId ?: return@LaunchedEffect
         if (localSaveTags.none { it.id == selectedTagId }) {
@@ -760,12 +774,19 @@ private fun MainScreen(
             uiState.entries.filter { it.id in matchingEntryIds }
         }
     }
-    val searchFilteredEntries = remember(localTagFilteredEntries, searchQueryLocal, sharedTags, localTagEntryRefs) {
+    val searchFilteredEntries = remember(
+        localTagFilteredEntries,
+        searchQueryLocal,
+        sharedTags,
+        localTagEntryRefs,
+        databaseSearchMatchIds,
+    ) {
         filterEntriesBySearch(
             entries = localTagFilteredEntries,
             query = searchQueryLocal,
             tags = sharedTags,
             localTagEntryRefs = localTagEntryRefs,
+            databaseMatchedEntryIds = databaseSearchMatchIds,
         )
     }
     val displayedUiState = remember(uiState, searchQueryLocal, selectedMainLocalTagId, searchFilteredEntries) {
@@ -1638,13 +1659,7 @@ private fun MainScreen(
                                             searchQueryLocal = ""
                                             searchBarVisible = false
                                             mainPane = MainPane.URLS
-                                            when (context.tryOpenExternalUrl(RINBAM_USAGE_GUIDE_URL)) {
-                                                OpenUrlResult.Success -> Unit
-                                                OpenUrlResult.NoHandler,
-                                                OpenUrlResult.Failed -> scope.launch {
-                                                    snackbarHostState.showSnackbar("使い方ページを開けませんでした")
-                                                }
-                                            }
+                                            showUsageGuide = true
                                         },
                                     )
                                     DropdownMenuItem(
@@ -1702,6 +1717,15 @@ private fun MainScreen(
                         onBack = {
                             showUsageGuide = false
                             mainPane = MainPane.URLS
+                        },
+                        onOpenExternalGuide = {
+                            when (context.tryOpenExternalUrl(RINBAM_USAGE_GUIDE_URL)) {
+                                OpenUrlResult.Success -> Unit
+                                OpenUrlResult.NoHandler,
+                                OpenUrlResult.Failed -> scope.launch {
+                                    snackbarHostState.showSnackbar("Web版の使い方を開けませんでした")
+                                }
+                            }
                         },
                     )
                 } else if (mainPane == MainPane.GROUPS && showSharedTagCloudUi) {
@@ -1829,6 +1853,7 @@ private fun MainScreen(
                         onOpenDetail = onOpenDetail,
                         onArchiveActiveEntry = { entryId -> archiveActiveEntry(entryId) },
                         onPendingDeleteActiveEntry = { entryId -> pendingDeleteActiveEntry(entryId) },
+                        onRetryLoad = viewModel::retryLoading,
                     )
                 }
             }
@@ -2161,6 +2186,7 @@ private fun CreateSharedTagDialog(
 @Composable
 private fun UsageGuideContent(
     onBack: () -> Unit,
+    onOpenExternalGuide: () -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -2280,7 +2306,7 @@ private fun UsageGuideContent(
             ) {
                 GuideAIExportPreview()
             }
-            UsageGuideNote()
+            UsageGuideNote(onOpenExternalGuide = onOpenExternalGuide)
         }
     }
 }
@@ -2525,23 +2551,35 @@ private fun GuideAIExportPreview() {
 }
 
 @Composable
-private fun UsageGuideNote() {
-    Row(
+private fun UsageGuideNote(
+    onOpenExternalGuide: () -> Unit,
+) {
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = 12.dp, bottom = 24.dp)
             .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f), RoundedCornerShape(10.dp))
             .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.22f), RoundedCornerShape(10.dp))
             .padding(14.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text("✦", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary)
-        Text(
-            text = "もっと詳しい使い方や、よくある質問は「使い方」を随時更新しています。\nブックマークからいつでも見返せます。",
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary,
-        )
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("✦", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary)
+            Text(
+                text = "このページはアプリ内でいつでも見返せます。",
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        TextButton(
+            onClick = onOpenExternalGuide,
+            modifier = Modifier.testTag("usage_guide_external_link"),
+        ) {
+            Icon(Icons.Outlined.IosShare, contentDescription = null)
+            Spacer(Modifier.width(6.dp))
+            Text("Web版の使い方を開く")
+        }
     }
 }
 
@@ -2760,6 +2798,7 @@ private fun MainListContent(
     onOpenDetail: (Long) -> Unit,
     onArchiveActiveEntry: (Long) -> Unit,
     onPendingDeleteActiveEntry: (Long) -> Unit,
+    onRetryLoad: () -> Unit,
 ) {
     ServiceFilterRow(
         selectedService = selectedService,
@@ -2814,33 +2853,170 @@ private fun MainListContent(
         Spacer(modifier = Modifier.height(8.dp))
     }
 
-    when {
-        uiState.globalCount == 0 -> {
+    when (val loadState = uiState.loadState) {
+        ListFilterLoadState.Initial -> {
+            MainListLoadStatePanel(
+                title = "読み込みを準備しています",
+                body = "保存したURLを確認しています。",
+                isLoading = true,
+                onRetry = null,
+            )
+        }
+
+        ListFilterLoadState.Loading -> {
+            MainListLoadStatePanel(
+                title = if (uiState.globalCount == 0) "読み込み中" else "更新中",
+                body = if (uiState.globalCount == 0) {
+                    "保存したURLを読み込んでいます。"
+                } else {
+                    "保存済みのURLを表示しています。"
+                },
+                isLoading = true,
+                onRetry = null,
+            )
+            if (uiState.globalCount > 0) {
+                MainListEntriesOrEmpty(
+                    uiState = uiState,
+                    mainListState = mainListState,
+                    selectionModeActive = selectionModeActive,
+                    selectedEntryIds = selectedEntryIds,
+                    entryCardDisplayMode = entryCardDisplayMode,
+                    localTagNamesByEntryId = localTagNamesByEntryId,
+                    onStartEntrySelection = onStartEntrySelection,
+                    onToggleEntrySelection = onToggleEntrySelection,
+                    onOpenDetail = onOpenDetail,
+                    onArchiveActiveEntry = onArchiveActiveEntry,
+                    onPendingDeleteActiveEntry = onPendingDeleteActiveEntry,
+                )
+            }
+        }
+
+        is ListFilterLoadState.Error -> {
+            MainListLoadStatePanel(
+                title = loadState.message,
+                body = if (uiState.globalCount == 0) {
+                    "保存したURLを読み込めませんでした。"
+                } else {
+                    "保存済みのURLを表示しています。確認してから再試行してください。"
+                },
+                isLoading = false,
+                onRetry = onRetryLoad,
+            )
+            if (uiState.globalCount > 0) {
+                MainListEntriesOrEmpty(
+                    uiState = uiState,
+                    mainListState = mainListState,
+                    selectionModeActive = selectionModeActive,
+                    selectedEntryIds = selectedEntryIds,
+                    entryCardDisplayMode = entryCardDisplayMode,
+                    localTagNamesByEntryId = localTagNamesByEntryId,
+                    onStartEntrySelection = onStartEntrySelection,
+                    onToggleEntrySelection = onToggleEntrySelection,
+                    onOpenDetail = onOpenDetail,
+                    onArchiveActiveEntry = onArchiveActiveEntry,
+                    onPendingDeleteActiveEntry = onPendingDeleteActiveEntry,
+                )
+            }
+        }
+
+        ListFilterLoadState.Empty -> {
             EmptyState(
                 title = stringResource(R.string.main_empty_title),
             )
         }
 
-        uiState.scopeCount == 0 -> {
-            EmptyState(
-                title = stringResource(R.string.main_filtered_empty_title),
-            )
-        }
-
-        else -> {
-            MainEntryList(
-                entries = uiState.entries,
-                listState = mainListState,
+        ListFilterLoadState.Content -> {
+            MainListEntriesOrEmpty(
+                uiState = uiState,
+                mainListState = mainListState,
                 selectionModeActive = selectionModeActive,
                 selectedEntryIds = selectedEntryIds,
                 entryCardDisplayMode = entryCardDisplayMode,
                 localTagNamesByEntryId = localTagNamesByEntryId,
-                onStartSelection = onStartEntrySelection,
-                onToggleSelection = onToggleEntrySelection,
+                onStartEntrySelection = onStartEntrySelection,
+                onToggleEntrySelection = onToggleEntrySelection,
                 onOpenDetail = onOpenDetail,
                 onArchiveActiveEntry = onArchiveActiveEntry,
                 onPendingDeleteActiveEntry = onPendingDeleteActiveEntry,
             )
+        }
+    }
+}
+
+@Composable
+private fun MainListEntriesOrEmpty(
+    uiState: ListFilterUiState,
+    mainListState: androidx.compose.foundation.lazy.LazyListState,
+    selectionModeActive: Boolean,
+    selectedEntryIds: Set<Long>,
+    entryCardDisplayMode: EntryCardDisplayMode,
+    localTagNamesByEntryId: Map<Long, List<String>>,
+    onStartEntrySelection: (Long) -> Unit,
+    onToggleEntrySelection: (Long) -> Unit,
+    onOpenDetail: (Long) -> Unit,
+    onArchiveActiveEntry: (Long) -> Unit,
+    onPendingDeleteActiveEntry: (Long) -> Unit,
+) {
+    if (uiState.scopeCount == 0) {
+        EmptyState(
+            title = stringResource(R.string.main_filtered_empty_title),
+        )
+    } else {
+        MainEntryList(
+            entries = uiState.entries,
+            listState = mainListState,
+            selectionModeActive = selectionModeActive,
+            selectedEntryIds = selectedEntryIds,
+            entryCardDisplayMode = entryCardDisplayMode,
+            localTagNamesByEntryId = localTagNamesByEntryId,
+            onStartSelection = onStartEntrySelection,
+            onToggleSelection = onToggleEntrySelection,
+            onOpenDetail = onOpenDetail,
+            onArchiveActiveEntry = onArchiveActiveEntry,
+            onPendingDeleteActiveEntry = onPendingDeleteActiveEntry,
+        )
+    }
+}
+
+@Composable
+private fun MainListLoadStatePanel(
+    title: String,
+    body: String,
+    isLoading: Boolean,
+    onRetry: (() -> Unit)?,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 20.dp)
+            .testTag(if (isLoading) "main_list_loading" else "main_list_error"),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        if (isLoading) {
+            CircularProgressIndicator(modifier = Modifier.size(28.dp))
+        }
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+        )
+        Text(
+            text = body,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+        if (onRetry != null) {
+            Button(
+                onClick = onRetry,
+                modifier = Modifier.testTag("main_list_retry"),
+            ) {
+                Icon(Icons.Outlined.Refresh, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                Text("再試行")
+            }
         }
     }
 }
@@ -4160,6 +4336,7 @@ private fun ArchiveScreen(
     viewModel: ArchiveViewModel,
     onBack: () -> Unit,
     onOpenDetail: (Long) -> Unit,
+    onRetryLoad: () -> Unit,
     onRestoreEntry: (Long) -> Unit,
     onPendingDeleteEntry: (Long, Long) -> Unit,
     onDeleteFailed: () -> Unit,
@@ -4374,38 +4551,114 @@ private fun ArchiveScreen(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
 
-                when {
-                    uiState.globalCount == 0 -> {
-                        EmptyState(
-                            title = "アーカイブしたURLはまだありません",
-                            body = "アーカイブしたURLがここに表示されます",
+                when (val loadState = uiState.loadState) {
+                    ListFilterLoadState.Initial -> {
+                        MainListLoadStatePanel(
+                            title = "読み込みを準備しています",
+                            body = "アーカイブしたURLを確認しています。",
+                            isLoading = true,
+                            onRetry = null,
                         )
                     }
 
-                    uiState.scopeCount == 0 -> {
-                        EmptyState(
-                            title = "この保存先のアーカイブはありません",
-                            body = "フィルターを変更してください",
+                    ListFilterLoadState.Loading -> {
+                        MainListLoadStatePanel(
+                            title = if (uiState.globalCount == 0) "読み込み中" else "更新中",
+                            body = if (uiState.globalCount == 0) {
+                                "アーカイブしたURLを読み込んでいます。"
+                            } else {
+                                "保存済みのアーカイブを表示しています。"
+                            },
+                            isLoading = true,
+                            onRetry = null,
                         )
-                    }
-
-                    else -> {
-                        LazyColumn(modifier = Modifier.fillMaxSize()) {
-                            items(uiState.entries, key = { it.id }) { entry ->
-                                SwipeableArchiveEntry(
-                                    entry = entry,
-                                    displayMode = entryCardDisplayMode,
-                                    onClick = { onOpenDetail(entry.id) },
-                                    onSwipeAction = { action ->
-                                        when (action) {
-                                            ArchiveSwipeAction.RESTORE -> restoreArchivedEntry(entry.id)
-                                            ArchiveSwipeAction.PENDING_DELETE -> pendingDeleteArchivedEntry(entry.id)
-                                        }
-                                    },
-                                )
-                            }
+                        if (uiState.globalCount > 0) {
+                            ArchiveEntriesOrEmpty(
+                                uiState = uiState,
+                                entryCardDisplayMode = entryCardDisplayMode,
+                                onOpenDetail = onOpenDetail,
+                                onRestoreEntry = ::restoreArchivedEntry,
+                                onPendingDeleteEntry = ::pendingDeleteArchivedEntry,
+                            )
                         }
                     }
+
+                    is ListFilterLoadState.Error -> {
+                        MainListLoadStatePanel(
+                            title = loadState.message,
+                            body = if (uiState.globalCount == 0) {
+                                "アーカイブしたURLを読み込めませんでした。"
+                            } else {
+                                "保存済みのアーカイブを表示しています。確認してから再試行してください。"
+                            },
+                            isLoading = false,
+                            onRetry = onRetryLoad,
+                        )
+                        if (uiState.globalCount > 0) {
+                            ArchiveEntriesOrEmpty(
+                                uiState = uiState,
+                                entryCardDisplayMode = entryCardDisplayMode,
+                                onOpenDetail = onOpenDetail,
+                                onRestoreEntry = ::restoreArchivedEntry,
+                                onPendingDeleteEntry = ::pendingDeleteArchivedEntry,
+                            )
+                        }
+                    }
+
+                    ListFilterLoadState.Empty,
+                    ListFilterLoadState.Content,
+                    -> {
+                        ArchiveEntriesOrEmpty(
+                            uiState = uiState,
+                            entryCardDisplayMode = entryCardDisplayMode,
+                            onOpenDetail = onOpenDetail,
+                            onRestoreEntry = ::restoreArchivedEntry,
+                            onPendingDeleteEntry = ::pendingDeleteArchivedEntry,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ArchiveEntriesOrEmpty(
+    uiState: ListFilterUiState,
+    entryCardDisplayMode: EntryCardDisplayMode,
+    onOpenDetail: (Long) -> Unit,
+    onRestoreEntry: (Long) -> Unit,
+    onPendingDeleteEntry: (Long) -> Unit,
+) {
+    when {
+        uiState.globalCount == 0 -> {
+            EmptyState(
+                title = "アーカイブしたURLはまだありません",
+                body = "アーカイブしたURLがここに表示されます",
+            )
+        }
+
+        uiState.scopeCount == 0 -> {
+            EmptyState(
+                title = "この保存先のアーカイブはありません",
+                body = "フィルターを変更してください",
+            )
+        }
+
+        else -> {
+            LazyColumn(modifier = Modifier.fillMaxSize()) {
+                items(uiState.entries, key = { it.id }) { entry ->
+                    SwipeableArchiveEntry(
+                        entry = entry,
+                        displayMode = entryCardDisplayMode,
+                        onClick = { onOpenDetail(entry.id) },
+                        onSwipeAction = { action ->
+                            when (action) {
+                                ArchiveSwipeAction.RESTORE -> onRestoreEntry(entry.id)
+                                ArchiveSwipeAction.PENDING_DELETE -> onPendingDeleteEntry(entry.id)
+                            }
+                        },
+                    )
                 }
             }
         }
@@ -4424,6 +4677,8 @@ private fun DetailScreen(
     onTitleEditStarted: () -> Unit,
     onCopySuccess: () -> Unit,
     onMemoSaved: () -> Unit,
+    onTitleSaveFailed: () -> Unit,
+    onMemoSaveFailed: () -> Unit,
     onOpenFailed: () -> Unit,
     onMetadataRetryUnavailable: () -> Unit,
 ) {
@@ -4441,10 +4696,12 @@ private fun DetailScreen(
     var isEditingTitle by rememberSaveable { mutableStateOf(false) }
     var titleInput by rememberSaveable { mutableStateOf("") }
     var titleTooLong by rememberSaveable { mutableStateOf(false) }
+    var titleSaveFailed by rememberSaveable { mutableStateOf(false) }
 
     var showMemoDialog by rememberSaveable { mutableStateOf(false) }
     var memoInput by rememberSaveable { mutableStateOf("") }
     var memoTooLong by rememberSaveable { mutableStateOf(false) }
+    var memoSaveFailed by rememberSaveable { mutableStateOf(false) }
 
     var retryRequested by rememberSaveable { mutableStateOf(false) }
 
@@ -4535,9 +4792,16 @@ private fun DetailScreen(
                 SaveTitleUiResult.Success -> {
                     isEditingTitle = false
                     titleTooLong = false
+                    titleSaveFailed = false
                 }
-                SaveTitleUiResult.TooLong -> titleTooLong = true
-                SaveTitleUiResult.Failed -> Unit
+                SaveTitleUiResult.TooLong -> {
+                    titleTooLong = true
+                    titleSaveFailed = false
+                }
+                SaveTitleUiResult.Failed -> {
+                    titleSaveFailed = true
+                    onTitleSaveFailed()
+                }
             }
         }
     }
@@ -4573,6 +4837,7 @@ private fun DetailScreen(
         isEditingTitle = false
         titleInput = current?.userTitle.orEmpty()
         titleTooLong = false
+        titleSaveFailed = false
     }
 
     LaunchedEffect(entryId) {
@@ -4734,6 +4999,7 @@ private fun DetailScreen(
                 showMemoDialog = false
                 memoInput = current.memo
                 memoTooLong = false
+                memoSaveFailed = false
             },
             title = { Text("メモを編集") },
             text = {
@@ -4742,15 +5008,18 @@ private fun DetailScreen(
                     onValueChange = {
                         memoInput = it
                         memoTooLong = it.trim().length > 2000
+                        memoSaveFailed = false
                     },
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("detail_memo_input"),
                     minLines = 4,
-                    isError = memoTooLong,
+                    isError = memoTooLong || memoSaveFailed,
                     supportingText = {
                         if (memoTooLong) {
                             Text("2000文字以内で入力してください")
+                        } else if (memoSaveFailed) {
+                            Text("保存に失敗しました。もう一度お試しください。")
                         }
                     },
                 )
@@ -4765,19 +5034,27 @@ private fun DetailScreen(
                                     onMemoSaved()
                                     showMemoDialog = false
                                     memoTooLong = false
+                                    memoSaveFailed = false
                                 }
-                                SaveMemoUiResult.TooLong -> memoTooLong = true
-                                SaveMemoUiResult.Failed -> Unit
+                                SaveMemoUiResult.TooLong -> {
+                                    memoTooLong = true
+                                    memoSaveFailed = false
+                                }
+                                SaveMemoUiResult.Failed -> {
+                                    memoSaveFailed = true
+                                    onMemoSaveFailed()
+                                }
                             }
                         }
                     },
-                ) { Text("保存") }
+                ) { Text(if (memoSaveFailed) "再試行" else "保存") }
             },
             dismissButton = {
                 TextButton(onClick = {
                     showMemoDialog = false
                     memoInput = current.memo
                     memoTooLong = false
+                    memoSaveFailed = false
                 }) { Text("キャンセル") }
             },
         )
@@ -5183,6 +5460,7 @@ private fun DetailScreen(
                                     onValueChange = {
                                         titleInput = it
                                         titleTooLong = it.trim().length > 120
+                                        titleSaveFailed = false
                                     },
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -5191,10 +5469,12 @@ private fun DetailScreen(
                                     maxLines = 2,
                                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                                     keyboardActions = KeyboardActions(onDone = { requestSaveTitle() }),
-                                    isError = titleTooLong,
+                                    isError = titleTooLong || titleSaveFailed,
                                     supportingText = {
                                         if (titleTooLong) {
                                             Text("120文字以内で入力してください")
+                                        } else if (titleSaveFailed) {
+                                            Text("保存に失敗しました。もう一度お試しください。")
                                         }
                                     },
                                 )
@@ -5214,11 +5494,13 @@ private fun DetailScreen(
                                     isEditingTitle = false
                                     titleInput = current.userTitle.orEmpty()
                                     titleTooLong = false
+                                    titleSaveFailed = false
                                 } else {
                                     onTitleEditStarted()
                                     isEditingTitle = true
                                     titleInput = current.userTitle.orEmpty()
                                     titleTooLong = false
+                                    titleSaveFailed = false
                                 }
                             },
                         ) {
@@ -5240,6 +5522,7 @@ private fun DetailScreen(
                                     isEditingTitle = false
                                     titleInput = current.userTitle.orEmpty()
                                     titleTooLong = false
+                                    titleSaveFailed = false
                                 },
                                 modifier = Modifier.weight(1f),
                             ) {
@@ -5257,7 +5540,7 @@ private fun DetailScreen(
                             ) {
                                 Icon(Icons.Outlined.Check, contentDescription = null)
                                 Spacer(Modifier.width(6.dp))
-                                OrbitActionText("保存")
+                                OrbitActionText(if (titleSaveFailed) "再試行" else "保存")
                             }
                         }
                     }
@@ -5462,6 +5745,7 @@ private fun DetailScreen(
                         onClick = {
                             memoInput = current.memo
                             memoTooLong = false
+                            memoSaveFailed = false
                             showMemoDialog = true
                         },
                         modifier = Modifier.fillMaxWidth(),
@@ -5479,6 +5763,7 @@ private fun DetailScreen(
                             .clickable {
                                 memoInput = current.memo
                                 memoTooLong = false
+                                memoSaveFailed = false
                                 showMemoDialog = true
                             },
                         style = MaterialTheme.typography.bodyMedium,
@@ -6672,6 +6957,7 @@ fun filterEntriesBySearch(
     query: String,
     tags: List<TagWithCount>,
     localTagEntryRefs: List<LocalTagEntryRef> = emptyList(),
+    databaseMatchedEntryIds: Set<Long>? = null,
 ): List<UrlEntryEntity> {
     val normalizedQuery = query.trim().lowercase()
     if (normalizedQuery.isBlank()) return entries
@@ -6681,6 +6967,7 @@ fun filterEntriesBySearch(
         valueTransform = { it.tagId },
     )
     return entries.filter { entry ->
+        if (databaseMatchedEntryIds?.contains(entry.id) == true) return@filter true
         val entryTagNames = tagIdsByEntryId[entry.id].orEmpty().mapNotNull { tagNamesById[it] }
         entry.normalizedUrl.lowercase().contains(normalizedQuery) ||
             entry.originalUrl.lowercase().contains(normalizedQuery) ||

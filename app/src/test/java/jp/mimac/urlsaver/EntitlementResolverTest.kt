@@ -10,6 +10,7 @@ import jp.mimac.urlsaver.domain.DefaultEntitlementResolver
 import jp.mimac.urlsaver.domain.EntitlementGrant
 import jp.mimac.urlsaver.domain.EntitlementGrantStatus
 import jp.mimac.urlsaver.domain.EntitlementSource
+import jp.mimac.urlsaver.domain.FreePlan
 import jp.mimac.urlsaver.domain.LaunchStandardPlan
 import jp.mimac.urlsaver.domain.LimitChecker
 import jp.mimac.urlsaver.domain.LimitResult
@@ -18,6 +19,7 @@ import jp.mimac.urlsaver.domain.PlanType
 import jp.mimac.urlsaver.domain.ProPlan
 import jp.mimac.urlsaver.domain.SharedTagUsage
 import jp.mimac.urlsaver.domain.UsageSummary
+import jp.mimac.urlsaver.domain.isPaidCourse
 import jp.mimac.urlsaver.util.AppClock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -28,6 +30,14 @@ import org.junit.Test
 import java.io.IOException
 
 class EntitlementResolverTest {
+
+    @Test
+    fun resolve_withoutExplicitDefault_returnsPro() {
+        val resolved = DefaultEntitlementResolver().resolve(currentTimeMillis = 1_000L)
+
+        assertEquals(PlanType.PRO, resolved.planType)
+        assertTrue(resolved.planType.isPaidCourse)
+    }
 
     @Test
     fun resolve_withoutGrant_returnsLaunchStandard() {
@@ -172,6 +182,36 @@ class EntitlementResolverTest {
         val resolved = resolver.resolve(currentTimeMillis = 5_000L)
 
         assertEquals(PlanType.PRO, resolved.planType)
+    }
+
+    @Test
+    fun resolve_lowerGrantDoesNotDowngradeProDefault() {
+        val resolver = DefaultEntitlementResolver(
+            grantsProvider = {
+                listOf(
+                    EntitlementGrant(
+                        planType = PlanType.FREE,
+                        source = EntitlementSource.ADMIN_GRANT,
+                        startsAt = 0L,
+                    ),
+                )
+            },
+        )
+
+        assertEquals(PlanType.PRO, resolver.resolve(currentTimeMillis = 5_000L).planType)
+    }
+
+    @Test
+    fun limitChecker_allowsNormalTagsForEveryPlan() {
+        val result = LimitChecker(FreePlan.entitlements).checkCanCreateNormalTag(
+            UsageSummary(
+                personalUrlCount = 0,
+                normalTagCount = Int.MAX_VALUE,
+                sharedTagCount = 0,
+            ),
+        )
+
+        assertEquals(LimitResult.Allowed, result)
     }
 
     @Test

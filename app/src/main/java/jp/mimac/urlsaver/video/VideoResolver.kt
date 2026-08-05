@@ -1,10 +1,13 @@
 package jp.mimac.urlsaver.video
 
+import jp.mimac.urlsaver.BuildConfig
 import jp.mimac.urlsaver.data.UrlEntryEntity
 import jp.mimac.urlsaver.domain.ServiceType
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import org.json.JSONObject
 import java.net.HttpURLConnection
-import java.net.URL
 
 interface VideoResolver {
     suspend fun resolve(entry: UrlEntryEntity): VideoResolveResult
@@ -48,7 +51,12 @@ class BackendVideoResolver(
             val asset = assetsArray?.optJSONObject(index) ?: return@mapNotNull null
             val downloadUrl = asset.optString("downloadUrl")
                 .normalizeMediaUrl()
-                .takeIf { it.startsWith("http://") || it.startsWith("https://") }
+                .takeIf {
+                    MediaNetworkPolicy.hasAllowedUrlShape(
+                        rawUrl = it,
+                        allowLoopbackHttp = BuildConfig.DEBUG,
+                    )
+                }
                 ?: return@mapNotNull null
             val mediaType = asset.optString("mediaType").takeIf { it == "IMAGE" || it == "VIDEO" }
                 ?: if (downloadUrl.substringBefore('?').endsWith(".mp4", ignoreCase = true)) "VIDEO" else "IMAGE"
@@ -59,7 +67,17 @@ class BackendVideoResolver(
                 authorName = asset.optString("authorName").takeIf { it.isNotBlank() } ?: entry.fetchedAuthorName,
                 title = asset.optString("title").takeIf { it.isNotBlank() } ?: entry.fetchedTitle ?: entry.userTitle,
                 bodyText = entry.fetchedBody,
-                thumbnailUrl = asset.optString("thumbnailUrl").normalizeMediaUrl().takeIf { it.isNotBlank() } ?: entry.thumbnailUrl,
+                thumbnailUrl = sequenceOf(
+                    asset.optString("thumbnailUrl").normalizeMediaUrl(),
+                    entry.thumbnailUrl?.normalizeMediaUrl(),
+                ).mapNotNull { candidate ->
+                    candidate?.takeIf {
+                        it.isNotBlank() && MediaNetworkPolicy.hasAllowedUrlShape(
+                            rawUrl = it,
+                            allowLoopbackHttp = BuildConfig.DEBUG,
+                        )
+                    }
+                }.firstOrNull(),
                 durationMs = asset.optLong("durationMs").takeIf { it > 0 },
                 mediaType = mediaType,
                 downloadUrl = downloadUrl,
@@ -98,20 +116,41 @@ class BackendVideoResolver(
         }
     }
 
-    private fun postJson(url: String, json: String): String {
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            instanceFollowRedirects = true
-            connectTimeout = 20_000
-            readTimeout = 60_000
-            requestMethod = "POST"
-            doOutput = true
-            setRequestProperty("User-Agent", "Rinbam Android")
-            setRequestProperty("Content-Type", "application/json; charset=UTF-8")
-            setRequestProperty("Accept", "application/json")
+    private suspend fun postJson(url: String, json: String): String {
+        currentCoroutineContext().ensureActive()
+        var activeConnection: HttpURLConnection? = null
+        val cancellationHandle = currentCoroutineContext()[Job]?.invokeOnCompletion {
+            activeConnection?.disconnect()
         }
-        connection.outputStream.use { it.write(json.toByteArray(Charsets.UTF_8)) }
-        val stream = if (connection.responseCode in 200..299) connection.inputStream else connection.errorStream
-        return stream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+        try {
+            val response = MediaNetworkPolicy.openPostResponse(
+                rawUrl = url,
+                body = json.toByteArray(Charsets.UTF_8),
+                connectTimeoutMillis = 20_000,
+                readTimeoutMillis = 60_000,
+                headers = mapOf(
+                    "User-Agent" to "Rinbam Android",
+                    "Content-Type" to "application/json; charset=UTF-8",
+                    "Accept" to "application/json",
+                ),
+                allowLoopbackHttp = BuildConfig.DEBUG,
+                allowErrorStatus = true,
+                onConnectionOpened = { activeConnection = it },
+            )
+            activeConnection = response.connection
+            currentCoroutineContext().ensureActive()
+            return MediaNetworkPolicy.readLimitedUtf8(
+                connection = response.connection,
+                maxBytes = MediaNetworkPolicy.MAX_RESOLVER_RESPONSE_BYTES,
+                statusCode = response.statusCode,
+            )
+        } catch (error: Throwable) {
+            currentCoroutineContext().ensureActive()
+            throw error
+        } finally {
+            cancellationHandle?.dispose()
+            activeConnection?.disconnect()
+        }
     }
 
     private fun String.escapeJson(): String = replace("\\", "\\\\").replace("\"", "\\\"")
@@ -119,7 +158,7 @@ class BackendVideoResolver(
 }
 
 private fun String.normalizeMediaUrl(): String {
-    return replace("\\%", "%").trim()
+    return MediaNetworkPolicy.normalizeUrl(this)
 }
 
 internal fun mediaResolveErrorReason(error: String?, message: String?): String {

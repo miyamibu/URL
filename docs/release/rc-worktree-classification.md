@@ -1,5 +1,7 @@
 # RC Worktree Classification
 
+> Historical worktree classification. It is retained for traceability and is not the current release manifest or readiness result.
+
 ## Date
 2026-05-13
 

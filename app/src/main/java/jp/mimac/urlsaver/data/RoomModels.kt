@@ -59,6 +59,103 @@ data class UrlEntryEntity(
     val pendingDeletionUntil: Long? = null,
 )
 
+/**
+ * Fields needed by list cards and filters. Long metadata bodies are deliberately
+ * selected as bounded previews so list observers do not retain the full body.
+ */
+data class UrlEntryListProjection(
+    val id: Long,
+    val originalUrl: String,
+    val normalizedUrl: String,
+    val displayUrl: String,
+    val openUrl: String,
+    val normalizedHost: String,
+    val rawSourceHost: String,
+    val collectionId: Long,
+    val serviceType: ServiceType,
+    val contentContext: ContentContext,
+    val userTitle: String?,
+    val fetchedTitle: String?,
+    val fetchedAuthorName: String?,
+    val fetchedBodyPreview: String?,
+    val fetchedBodyKind: MetadataBodyKind?,
+    val bodySummaryPreview: String?,
+    val descriptionPreview: String?,
+    val memoPreview: String,
+    val thumbnailUrl: String?,
+    val badgeImageUrl: String?,
+    val canonicalId: String?,
+    val userLabelId: Long?,
+    val localProvenanceCount: Int,
+    val sharedReferenceCount: Int,
+    val metadataState: MetadataState,
+    val metadataError: MetadataError?,
+    val metadataRequestedAt: Long?,
+    val metadataFetchedAt: Long?,
+    val recordState: RecordState,
+    val createdAt: Long,
+    val updatedAt: Long,
+    val archivedAt: Long?,
+    val pendingDeletionUntil: Long?,
+) {
+    fun asListEntity(): UrlEntryEntity = UrlEntryEntity(
+        id = id,
+        originalUrl = originalUrl,
+        normalizedUrl = normalizedUrl,
+        displayUrl = displayUrl,
+        openUrl = openUrl,
+        normalizedHost = normalizedHost,
+        rawSourceHost = rawSourceHost,
+        collectionId = collectionId,
+        serviceType = serviceType,
+        contentContext = contentContext,
+        userTitle = userTitle,
+        fetchedTitle = fetchedTitle,
+        fetchedAuthorName = fetchedAuthorName,
+        fetchedBody = fetchedBodyPreview,
+        fetchedBodyKind = fetchedBodyKind,
+        bodySummary = bodySummaryPreview,
+        description = descriptionPreview,
+        memo = memoPreview,
+        thumbnailUrl = thumbnailUrl,
+        badgeImageUrl = badgeImageUrl,
+        canonicalId = canonicalId,
+        userLabelId = userLabelId,
+        localProvenanceCount = localProvenanceCount,
+        sharedReferenceCount = sharedReferenceCount,
+        metadataState = metadataState,
+        metadataError = metadataError,
+        metadataRequestedAt = metadataRequestedAt,
+        metadataFetchedAt = metadataFetchedAt,
+        recordState = recordState,
+        createdAt = createdAt,
+        updatedAt = updatedAt,
+        archivedAt = archivedAt,
+        pendingDeletionUntil = pendingDeletionUntil,
+    )
+}
+
+data class EntryVisibleTagRecord(
+    val entryId: Long,
+    val id: Long,
+    val name: String,
+    val scope: jp.mimac.urlsaver.domain.SharedTagScope,
+    val authUserId: String?,
+    val remoteTagId: String?,
+    val syncStatus: jp.mimac.urlsaver.domain.SharedTagSyncStatus,
+    val currentUserRole: jp.mimac.urlsaver.domain.SharedTagMemberRole?,
+) {
+    fun asSharedTagRecord() = jp.mimac.urlsaver.domain.SharedTagRecord(
+        id = id,
+        name = name,
+        scope = scope,
+        authUserId = authUserId,
+        remoteTagId = remoteTagId,
+        syncStatus = syncStatus,
+        currentUserRole = currentUserRole,
+    )
+}
+
 const val DEFAULT_COLLECTION_ID = 1L
 
 @Entity(

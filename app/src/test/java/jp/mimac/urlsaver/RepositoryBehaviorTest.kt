@@ -10,6 +10,8 @@ import jp.mimac.urlsaver.data.MetadataScheduler
 import jp.mimac.urlsaver.data.MetadataUpdate
 import jp.mimac.urlsaver.data.UrlEntryEntity
 import jp.mimac.urlsaver.domain.ContentContext
+import jp.mimac.urlsaver.domain.DefaultEntitlementResolver
+import jp.mimac.urlsaver.domain.LaunchStandardPlan
 import jp.mimac.urlsaver.domain.MetadataError
 import jp.mimac.urlsaver.domain.MetadataBodyKind
 import jp.mimac.urlsaver.domain.MetadataState
@@ -18,6 +20,7 @@ import jp.mimac.urlsaver.domain.ServiceType
 import jp.mimac.urlsaver.domain.ShareSaveResult
 import jp.mimac.urlsaver.util.AppClock
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.first
 import org.junit.After
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
@@ -52,6 +55,9 @@ class RepositoryBehaviorTest {
                 urlEntryDao = db.urlEntryDao(),
                 tagDao = db.tagDao(),
                 authSessionProvider = FakeAuthSessionProvider(),
+                entitlementResolver = DefaultEntitlementResolver(
+                    defaultEntitlements = LaunchStandardPlan.entitlements,
+                ),
             ),
         )
     }
@@ -141,6 +147,37 @@ class RepositoryBehaviorTest {
         assertEquals(100L, updated.updatedAt)
         assertEquals(500L, updated.metadataFetchedAt)
         assertEquals("title", updated.fetchedTitle)
+    }
+
+    @Test
+    fun listProjection_boundsBody_butDetailAndDatabaseSearchKeepFullBody() = runBlocking {
+        val id = db.urlEntryDao().insert(
+            UrlEntryEntity(
+                originalUrl = "https://example.com/large-list-row",
+                normalizedUrl = "https://example.com/large-list-row",
+                displayUrl = "example.com/large-list-row",
+                openUrl = "https://example.com/large-list-row",
+                normalizedHost = "example.com",
+                rawSourceHost = "example.com",
+                serviceType = ServiceType.WEB,
+                contentContext = ContentContext.STANDARD,
+                fetchedBody = "prefix-${"x".repeat(700)}-deep-search-marker",
+                bodySummary = "summary",
+                memo = "memo",
+                metadataState = MetadataState.READY,
+                recordState = RecordState.ACTIVE,
+                createdAt = 100L,
+                updatedAt = 100L,
+            ),
+        )
+
+        val listEntry = repository.observeActiveEntries().first().single { it.id == id }
+        assertEquals(512, listEntry.fetchedBody?.length)
+        assertEquals("memo", listEntry.memo)
+
+        val detailEntry = repository.loadEntry(id)!!
+        assertEquals("prefix-${"x".repeat(700)}-deep-search-marker", detailEntry.fetchedBody)
+        assertTrue(repository.searchEntryIds("deep-search-marker", RecordState.ACTIVE).contains(id))
     }
 
     @Test

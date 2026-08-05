@@ -1,5 +1,7 @@
 # 2026-07-18 Verification Record
 
+> Historical device verification. The build and device results below are not current-source proof unless re-run.
+
 This record freezes the latest Chapter 13 manual ChatGPT handoff evidence without claiming store or distribution readiness.
 
 ## Android physical verification

@@ -1,6 +1,7 @@
 package jp.mimac.urlsaver.video
 
 import android.content.Context
+import android.os.storage.StorageManager
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import jp.mimac.urlsaver.BuildConfig
@@ -10,11 +11,14 @@ import jp.mimac.urlsaver.data.VideoDownloadDao
 import jp.mimac.urlsaver.data.VideoDownloadEntity
 import jp.mimac.urlsaver.util.AppClock
 import java.net.HttpURLConnection
-import java.net.URI
-import java.net.URL
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.Locale
+import java.util.concurrent.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 
 class VideoDownloadWorker(
     appContext: Context,
@@ -31,7 +35,12 @@ class VideoDownloadWorker(
         urlEntryDao.findById(asset.entryId) ?: return Result.success()
         val downloadUrl = asset.downloadUrl
             ?.let(::normalizeDownloadUrl)
-            ?.takeIf(::isAllowedDownloadUrl)
+            ?.takeIf {
+                hasAllowedUrlShape(
+                    url = it,
+                    allowLoopbackHttp = BuildConfig.DEBUG && BuildConfig.ALLOW_LOCAL_MEDIA_DOWNLOADS,
+                )
+            }
         val downloadId = videoDownloadDao.insertOrUpdateDownload(
             VideoDownloadEntity(
                 entryId = asset.entryId,
@@ -49,14 +58,29 @@ class VideoDownloadWorker(
         )
         if (downloadUrl == null) {
             videoDownloadDao.markFailed(downloadId, "メディアURLを取得できませんでした")
-            return Result.success()
+            return Result.failure()
         }
-        return runCatching {
-            download(downloadId, asset.entryId, asset.provider, asset.providerAssetId, asset.mediaType, asset.mimeType, downloadUrl)
+        return try {
+            download(
+                downloadId,
+                asset.entryId,
+                asset.provider,
+                asset.providerAssetId,
+                asset.mediaType,
+                asset.mimeType,
+                downloadUrl,
+            )
             Result.success()
-        }.getOrElse { error ->
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            currentCoroutineContext().ensureActive()
             videoDownloadDao.markFailed(downloadId, error.message ?: "メディアを保存できませんでした")
-            Result.success()
+            if (MediaNetworkPolicy.classifyForRetry(error) && runAttemptCount < MAX_RETRY_ATTEMPTS) {
+                Result.retry()
+            } else {
+                Result.failure()
+            }
         }
     }
 
@@ -74,38 +98,128 @@ class VideoDownloadWorker(
         val temporaryFile = outputFile.resolveSibling("${outputFile.name}.download")
         outputFile.parentFile?.mkdirs()
         temporaryFile.delete()
+        var outputInstalled = false
         try {
-            val connection = (URL(downloadUrl).openConnection() as HttpURLConnection).apply {
-                instanceFollowRedirects = true
-                connectTimeout = 20_000
-                readTimeout = 60_000
-                requestMethod = "GET"
-                setRequestProperty("User-Agent", DEFAULT_USER_AGENT)
-                setRequestProperty("Accept", "image/avif,image/webp,image/apng,image/*,video/*,*/*;q=0.8")
-                setRequestProperty("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+            val entryBytesBeforeDownload = outputFile.parentFile
+                ?.listFiles()
+                ?.filter { it.isFile && it != temporaryFile && it != outputFile }
+                ?.sumOf { it.length().coerceAtLeast(0L) }
+                ?: 0L
+            if (entryBytesBeforeDownload >= MediaNetworkPolicy.MAX_ENTRY_MEDIA_BYTES) {
+                throw MediaNetworkPolicy.QuotaExceededException()
             }
-            val responseCode = connection.responseCode
-            if (responseCode !in 200..299) error("HTTP_$responseCode")
-            val totalBytes = connection.contentLengthLong.takeIf { it > 0 }
-            temporaryFile.outputStream().use { output ->
-                connection.inputStream.use { input ->
-                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                    var downloaded = 0L
-                    var lastProgress = -1
-                    while (true) {
-                        val read = input.read(buffer)
-                        if (read < 0) break
-                        output.write(buffer, 0, read)
-                        downloaded += read
-                        val progress = totalBytes?.let { ((downloaded * 100) / it).toInt().coerceIn(0, 99) } ?: 0
-                        if (progress != lastProgress && (progress == 0 || progress - lastProgress >= 5)) {
-                            videoDownloadDao.updateProgress(downloadId, progress, downloaded, totalBytes)
-                            lastProgress = progress
+            var activeConnection: HttpURLConnection? = null
+            val cancellationHandle = currentCoroutineContext()[Job]?.invokeOnCompletion {
+                activeConnection?.disconnect()
+            }
+            try {
+                val response = MediaNetworkPolicy.openGetResponse(
+                    rawUrl = downloadUrl,
+                    connectTimeoutMillis = 20_000,
+                    readTimeoutMillis = 60_000,
+                    allowLoopbackHttp = BuildConfig.DEBUG && BuildConfig.ALLOW_LOCAL_MEDIA_DOWNLOADS,
+                    headers = mapOf(
+                        "User-Agent" to DEFAULT_USER_AGENT,
+                        "Accept" to "image/avif,image/webp,image/apng,image/*,video/*,*/*;q=0.8",
+                        "Accept-Language" to "ja,en-US;q=0.9,en;q=0.8",
+                    ),
+                    onConnectionOpened = { activeConnection = it },
+                )
+                activeConnection = response.connection
+                val connection = response.connection
+                try {
+                    currentCoroutineContext().ensureActive()
+                    val totalBytes = connection.contentLengthLong.takeIf { it > 0L }
+                    if (totalBytes != null && totalBytes > MediaNetworkPolicy.MAX_MEDIA_BYTES) {
+                        throw MediaNetworkPolicy.QuotaExceededException()
+                    }
+                    if (
+                        totalBytes != null &&
+                        !hasEnoughStorage(
+                            directory = outputFile.parentFile,
+                            entryBytes = entryBytesBeforeDownload,
+                            incomingBytes = totalBytes,
+                            additionalBytesRequired = totalBytes,
+                        )
+                    ) {
+                        throw MediaNetworkPolicy.InsufficientStorageException()
+                    }
+                    MediaNetworkPolicy.validateContentType(mediaType, mimeType, connection.contentType)
+                    val magicPrefix = ByteArray(MAGIC_PREFIX_BYTES)
+                    var magicSize = 0
+                    temporaryFile.outputStream().use { output ->
+                        connection.inputStream.use { input ->
+                            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                            var downloaded = 0L
+                            var lastProgress = -1
+                            while (true) {
+                                currentCoroutineContext().ensureActive()
+                                val read = input.read(buffer)
+                                if (read < 0) break
+                                if (read == 0) continue
+                                if (downloaded > MediaNetworkPolicy.MAX_MEDIA_BYTES - read) {
+                                    throw MediaNetworkPolicy.QuotaExceededException()
+                                }
+                                if (magicSize < magicPrefix.size) {
+                                    val copied = minOf(read, magicPrefix.size - magicSize)
+                                    buffer.copyInto(magicPrefix, magicSize, 0, copied)
+                                    magicSize += copied
+                                }
+                                output.write(buffer, 0, read)
+                                downloaded += read
+                                if (
+                                    !hasEnoughStorage(
+                                        directory = outputFile.parentFile,
+                                        entryBytes = entryBytesBeforeDownload,
+                                        incomingBytes = downloaded,
+                                        additionalBytesRequired = 0L,
+                                    )
+                                ) {
+                                    throw MediaNetworkPolicy.InsufficientStorageException()
+                                }
+                                val progress = totalBytes?.let { ((downloaded * 100) / it).toInt().coerceIn(0, 99) } ?: 0
+                                if (progress != lastProgress && (progress == 0 || progress - lastProgress >= 5)) {
+                                    videoDownloadDao.updateProgress(downloadId, progress, downloaded, totalBytes)
+                                    lastProgress = progress
+                                }
+                            }
                         }
                     }
+                    if (magicSize == 0) throw MediaNetworkPolicy.InvalidResponseException("MEDIA_EMPTY")
+                    MediaNetworkPolicy.validateMagic(mediaType, mimeType ?: connection.contentType, magicPrefix.copyOf(magicSize))
+                    val downloadedBytes = temporaryFile.length()
+                    if (downloadedBytes <= 0L || downloadedBytes > MediaNetworkPolicy.MAX_MEDIA_BYTES) {
+                        throw MediaNetworkPolicy.InvalidResponseException("MEDIA_SIZE_INVALID")
+                    }
+                    if (
+                        !hasEnoughStorage(
+                            directory = outputFile.parentFile,
+                            entryBytes = entryBytesBeforeDownload,
+                            incomingBytes = downloadedBytes,
+                            additionalBytesRequired = 0L,
+                        )
+                    ) {
+                        throw MediaNetworkPolicy.InsufficientStorageException()
+                    }
+                    currentCoroutineContext().ensureActive()
+                    if (urlEntryDao.findById(entryId) == null) {
+                        throw CancellationException("URL entry was deleted while downloading media")
+                    }
+                } finally {
+                    connection.disconnect()
                 }
+            } finally {
+                cancellationHandle?.dispose()
+                activeConnection?.disconnect()
             }
             Files.move(temporaryFile.toPath(), outputFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            outputInstalled = true
+            currentCoroutineContext().ensureActive()
+            if (urlEntryDao.findById(entryId) == null) {
+                Files.deleteIfExists(outputFile.toPath())
+                outputInstalled = false
+                throw CancellationException("URL entry was deleted while saving media")
+            }
             videoDownloadDao.markSaved(
                 downloadId = downloadId,
                 localUri = AppMediaStore.localUri(entryId, fileName),
@@ -113,14 +227,53 @@ class VideoDownloadWorker(
                 savedAt = clock.nowEpochMillis(),
             )
         } catch (error: Throwable) {
+            if (error is CancellationException) {
+                if (outputInstalled && urlEntryDao.findById(entryId) == null) {
+                    runCatching { Files.deleteIfExists(outputFile.toPath()) }
+                }
+                temporaryFile.delete()
+                throw error
+            }
+            if (!currentCoroutineContext().isActive) {
+                temporaryFile.delete()
+                if (outputInstalled && urlEntryDao.findById(entryId) == null) {
+                    runCatching { Files.deleteIfExists(outputFile.toPath()) }
+                }
+                currentCoroutineContext().ensureActive()
+            }
             temporaryFile.delete()
             throw error
         }
     }
 
+    private fun hasEnoughStorage(
+        directory: java.io.File?,
+        entryBytes: Long,
+        incomingBytes: Long,
+        additionalBytesRequired: Long,
+    ): Boolean {
+        if (directory == null) return false
+        val allocatableBytes = applicationContext
+            .getSystemService(StorageManager::class.java)
+            ?.let { storageManager ->
+                runCatching {
+                    storageManager.getAllocatableBytes(StorageManager.UUID_DEFAULT)
+                }.getOrNull()
+            }
+            ?: return false
+        return MediaNetworkPolicy.hasEnoughStorage(
+            entryBytes = entryBytes,
+            incomingBytes = incomingBytes,
+            allocatableBytes = allocatableBytes,
+            additionalBytesRequired = additionalBytesRequired,
+        )
+    }
+
     companion object {
         const val KEY_VIDEO_ASSET_ID = "videoAssetId"
+        private const val MAX_RETRY_ATTEMPTS = 3
         private const val DEFAULT_BUFFER_SIZE = 64 * 1024
+        private const val MAGIC_PREFIX_BYTES = 32
         private const val DEFAULT_USER_AGENT =
             "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Mobile Safari/537.36"
 
@@ -160,17 +313,8 @@ class VideoDownloadWorker(
             return fromUrl ?: if (mediaType == "IMAGE") "jpg" else "mp4"
         }
 
-        private fun isAllowedDownloadUrl(url: String): Boolean {
-            val uri = runCatching { URI(url) }.getOrNull() ?: return false
-            val scheme = uri.scheme?.lowercase(Locale.US) ?: return false
-            if (scheme == "https") return true
-            if (scheme != "http" || !BuildConfig.ALLOW_LOCAL_MEDIA_DOWNLOADS) return false
-            val host = uri.host?.lowercase(Locale.US) ?: return false
-            return host == "localhost" ||
-                host == "127.0.0.1" ||
-                host.startsWith("10.") ||
-                host.startsWith("192.168.") ||
-                Regex("""172\.(1[6-9]|2[0-9]|3[0-1])\..+""").matches(host)
+        private fun hasAllowedUrlShape(url: String, allowLoopbackHttp: Boolean): Boolean {
+            return MediaNetworkPolicy.hasAllowedUrlShape(url, allowLoopbackHttp)
         }
 
         private fun normalizeDownloadUrl(url: String): String {

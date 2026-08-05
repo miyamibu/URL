@@ -1,5 +1,7 @@
 # Release / Ops Readiness Baseline 2026-07-09
 
+> Historical baseline. The machine-checked current source snapshot is maintained in `docs/release/release-manifest.json`; dated findings in this document are not current release proof.
+
 ## Goal
 Track the current Android `1.0.15` / iOS `1.0.16` repo readiness without mixing it with the historical `1.0.11` store submission log.
 

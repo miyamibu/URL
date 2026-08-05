@@ -241,6 +241,17 @@ class SharedTagSyncRepositoryTest {
     }
 
     @Test
+    fun sync_rejectsUnsupportedNormalizationVersion() = runBlocking {
+        authProvider.updateSession(SharedTagAuthSession(USER_A, "token-a"))
+        remote.snapshot = remote.snapshot.copy(normalizationVersion = 2)
+
+        assertFalse(coordinator.syncCurrentSession())
+
+        val syncState = db.sharedTagSyncDao().findSyncState(USER_A)
+        assertTrue(syncState?.lastErrorMessage.orEmpty().contains("Unsupported shared tag normalization version"))
+    }
+
+    @Test
     fun syncForAuthUser_sessionMismatch_skipsRemoteAndDoesNotMutatePendingOps() = runBlocking {
         authProvider.updateSession(SharedTagAuthSession(USER_A, "token-a"))
         val createResult = repository.createSyncedTagWithResult("queued-for-user-a")

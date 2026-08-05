@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Webhook } from "svix";
 import { requireEnv } from "@/lib/env";
+import {
+  MAX_RESEND_WEBHOOK_BODY_BYTES,
+  readRequestBodyText,
+  RequestBodyError,
+} from "@/lib/request-body";
 import { createServiceSupabaseClient } from "@/lib/supabase";
 
 type ResendWebhookEvent = {
@@ -65,7 +70,18 @@ function deliveryErrorFor(event: ResendWebhookEvent): string | null {
 }
 
 export async function POST(request: NextRequest) {
-  const payload = await request.text();
+  let payload: string;
+  try {
+    payload = await readRequestBodyText(request, MAX_RESEND_WEBHOOK_BODY_BYTES);
+  } catch (error) {
+    if (error instanceof RequestBodyError) {
+      return NextResponse.json(
+        { error: error.code },
+        { status: error.status, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+    throw error;
+  }
   let event: ResendWebhookEvent;
 
   try {

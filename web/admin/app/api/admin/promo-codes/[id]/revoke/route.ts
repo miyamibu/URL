@@ -11,6 +11,7 @@ import {
   requiredOperationId,
 } from "@/lib/admin-operation";
 import { requiredAdminReason } from "@/lib/audit";
+import { parseJsonObject } from "@/lib/request-body";
 import { createServiceSupabaseClient } from "@/lib/supabase";
 
 function asErrorResponse(error: unknown): Response {
@@ -33,7 +34,7 @@ export async function POST(
     assertWritable(admin);
     assertHighRisk(admin);
     const { id } = await context.params;
-    const body = await request.json().catch(() => ({}));
+    const body = await parseJsonObject(request);
     const reason = requiredAdminReason(body.reason);
     const operationId = requiredOperationId(body.operationId);
     const supabase = createServiceSupabaseClient();

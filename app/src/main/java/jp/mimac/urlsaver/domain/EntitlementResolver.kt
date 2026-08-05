@@ -37,7 +37,7 @@ interface EntitlementResolver {
 }
 
 class DefaultEntitlementResolver(
-    private val defaultEntitlements: FeatureEntitlements = LaunchStandardPlan.entitlements,
+    private val defaultEntitlements: FeatureEntitlements = ProPlan.entitlements,
     private val grantsProvider: () -> List<EntitlementGrant> = { emptyList() },
 ) : EntitlementResolver {
 
@@ -52,7 +52,7 @@ class DefaultEntitlementResolver(
             )
             .firstOrNull()
 
-        return if (activeGrant == null) {
+        return if (activeGrant == null || activeGrant.planType.priority > defaultEntitlements.planType.priority) {
             defaultEntitlements
         } else {
             PlanEntitlements.forPlan(activeGrant.planType)

@@ -1,5 +1,7 @@
 # Prelaunch Report
 
+> Historical report from 2026-05-11. Use `docs/release/release-manifest.json` and current checks for the present source.
+
 ## Date
 2026-05-11
 

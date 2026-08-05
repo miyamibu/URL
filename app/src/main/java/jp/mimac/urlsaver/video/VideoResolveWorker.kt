@@ -11,6 +11,7 @@ import jp.mimac.urlsaver.data.UrlEntryDao
 import jp.mimac.urlsaver.data.VideoAssetDao
 import jp.mimac.urlsaver.data.VideoAssetEntity
 import jp.mimac.urlsaver.util.AppClock
+import java.util.concurrent.CancellationException
 
 class VideoResolveWorker(
     appContext: Context,
@@ -24,7 +25,11 @@ class VideoResolveWorker(
         val entryId = inputData.getLong(KEY_ENTRY_ID, 0L)
         if (entryId <= 0L) return Result.failure()
         val entry = urlEntryDao.findById(entryId) ?: return Result.success()
-        val resolved = runCatching { resolver.resolve(entry) }.getOrElse { error ->
+        val resolved = try {
+            resolver.resolve(entry)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
             VideoResolveResult(
                 provider = entry.serviceType.name.lowercase(),
                 assets = emptyList(),

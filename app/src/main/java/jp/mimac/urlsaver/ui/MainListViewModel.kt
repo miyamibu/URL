@@ -7,18 +7,25 @@ import jp.mimac.urlsaver.data.MainListRepository
 import jp.mimac.urlsaver.data.ServiceFilterOrderStore
 import jp.mimac.urlsaver.data.TagRepository
 import jp.mimac.urlsaver.data.TopFilterOrderStore
+import jp.mimac.urlsaver.data.UrlEntryEntity
 import jp.mimac.urlsaver.domain.AssignTagResult
 import jp.mimac.urlsaver.domain.CreateTagResult
 import jp.mimac.urlsaver.domain.EntryCardDisplayMode
+import jp.mimac.urlsaver.domain.RecordState
 import jp.mimac.urlsaver.domain.ServiceType
 import jp.mimac.urlsaver.domain.ShareSaveResult
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 
 class MainListViewModel(
     private val repository: MainListRepository,
@@ -29,6 +36,12 @@ class MainListViewModel(
 ) : ViewModel() {
 
     private val selectedService = MutableStateFlow(ServiceType.ALL)
+    private val entrySourceState = MutableStateFlow(EntrySourceUiState())
+    private var observeEntriesJob: Job? = null
+
+    init {
+        observeActiveEntries()
+    }
 
     val localTagEntryRefs = repository.observeLocalTagEntryRefs()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -47,19 +60,31 @@ class MainListViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val uiState: StateFlow<ListFilterUiState> = combine(
-        repository.observeActiveEntries(),
+        entrySourceState,
         selectedService,
-    ) { entries, selectedService ->
+    ) { sourceState, selectedService ->
         buildListFilterUiState(
-            entries = entries,
+            entries = sourceState.entries,
             selectedService = selectedService,
+            loadState = sourceState.loadState,
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ListFilterUiState())
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, ListFilterUiState())
 
     val selectedServiceFlow: StateFlow<ServiceType> = selectedService
 
     fun selectService(serviceType: ServiceType) {
         selectedService.value = serviceType
+    }
+
+    suspend fun searchEntryIds(query: String): Set<Long> {
+        return repository.searchEntryIds(query = query, recordState = RecordState.ACTIVE)
+    }
+
+    fun retryLoading() {
+        entrySourceState.update { current ->
+            current.copy(loadState = ListFilterLoadState.Loading)
+        }
+        observeActiveEntries()
     }
 
     fun toggleEntryCardDisplayMode() {
@@ -167,7 +192,48 @@ class MainListViewModel(
             }
         }
     }
+
+    private fun observeActiveEntries() {
+        observeEntriesJob?.cancel()
+        observeEntriesJob = viewModelScope.launch {
+            val entriesFlow = try {
+                repository.observeActiveEntries()
+            } catch (_: Throwable) {
+                entrySourceState.update { current ->
+                    current.copy(loadState = ListFilterLoadState.Error())
+                }
+                return@launch
+            }
+            entriesFlow
+                .onStart {
+                    entrySourceState.update { current ->
+                        current.copy(loadState = ListFilterLoadState.Loading)
+                    }
+                }
+                .catch { error ->
+                    if (error is CancellationException) throw error
+                    entrySourceState.update { current ->
+                        current.copy(loadState = ListFilterLoadState.Error())
+                    }
+                }
+                .collect { entries ->
+                    entrySourceState.value = EntrySourceUiState(
+                        entries = entries,
+                        loadState = if (entries.isEmpty()) {
+                            ListFilterLoadState.Empty
+                        } else {
+                            ListFilterLoadState.Content
+                        },
+                    )
+                }
+        }
+    }
 }
+
+private data class EntrySourceUiState(
+    val entries: List<UrlEntryEntity> = emptyList(),
+    val loadState: ListFilterLoadState = ListFilterLoadState.Initial,
+)
 
 data class ManualInputSubmitResult(
     val saveResult: ShareSaveResult,

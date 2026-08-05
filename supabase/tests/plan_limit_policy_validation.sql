@@ -31,7 +31,7 @@ begin
     insert into public.shared_tag_members (tag_id, user_id, role, status)
     values (normal_tag, normal_owner, 'owner', 'active');
 
-    for i in 1..50 loop
+    for i in 1..100 loop
         insert into public.shared_tag_urls (
             id,
             tag_id,
@@ -67,7 +67,7 @@ begin
             1,
             normal_owner
         );
-        raise exception 'normal shared tag url limit did not block 51st active url';
+        raise exception 'default Pro shared tag url limit did not block 101st active url';
     exception
         when others then
             if position('shared_tag_url_limit_reached' in sqlerrm) = 0 then
@@ -75,15 +75,19 @@ begin
             end if;
     end;
 
-    insert into public.shared_tag_groups (id, name, created_by)
-    values
-        ('60000000-0000-0000-0000-000000000501', 'Normal Group 1', normal_owner),
-        ('60000000-0000-0000-0000-000000000502', 'Normal Group 2', normal_owner);
+    for i in 1..50 loop
+        insert into public.shared_tag_groups (id, name, created_by)
+        values (
+            ('60000000-0000-0000-0000-00000000' || lpad((500 + i)::text, 4, '0'))::uuid,
+            'Default Pro Group ' || i,
+            normal_owner
+        );
+    end loop;
 
     begin
         insert into public.shared_tag_groups (id, name, created_by)
-        values ('60000000-0000-0000-0000-000000000503', 'Normal Group 3', normal_owner);
-        raise exception 'normal shared tag group limit did not block 3rd group';
+        values ('60000000-0000-0000-0000-000000000999', 'Default Pro Group 51', normal_owner);
+        raise exception 'default Pro shared tag group limit did not block 51st group';
     exception
         when others then
             if position('shared_tag_group_limit_reached' in sqlerrm) = 0 then
@@ -95,7 +99,7 @@ begin
     insert into public.shared_tag_group_members (group_id, user_id, role, status)
     values (normal_group, normal_owner, 'owner', 'active');
 
-    for i in 1..9 loop
+    for i in 1..49 loop
         insert into auth.users (id)
         values (('00000000-0000-0000-0000-000000001' || lpad(i::text, 3, '0'))::uuid)
         on conflict (id) do nothing;
@@ -116,7 +120,7 @@ begin
 
         insert into public.shared_tag_group_members (group_id, user_id, role, status)
         values (normal_group, '00000000-0000-0000-0000-000000001999', 'viewer', 'active');
-        raise exception 'normal shared tag group member limit did not block 11th active member';
+        raise exception 'default Pro shared tag group member limit did not block 51st active member';
     exception
         when others then
             if position('shared_tag_group_member_limit_reached' in sqlerrm) = 0 then

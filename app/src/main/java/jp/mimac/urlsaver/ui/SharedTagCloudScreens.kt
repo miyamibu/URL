@@ -89,6 +89,7 @@ import jp.mimac.urlsaver.domain.PlanType
 import jp.mimac.urlsaver.domain.SharedTagInviteAcceptanceResult
 import jp.mimac.urlsaver.domain.SharedTagInvitePreviewResult
 import jp.mimac.urlsaver.domain.UsageSummary
+import jp.mimac.urlsaver.domain.isPaidCourse
 import jp.mimac.urlsaver.ui.theme.AppThemeMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -547,6 +548,7 @@ fun SharedTagCloudAuthScreen(
                     PaidCourseSection(
                         isEnabled = !isSubmitting && !isPurchasing,
                         isPurchasing = isPurchasing,
+                        showMonthlyOptions = !entitlements.planType.isPaidCourse,
                         onPurchase = ::purchasePaidCourse,
                     )
                     PromoCodeSection(
@@ -638,6 +640,7 @@ fun SharedTagCloudAuthScreen(
                 PaidCourseSection(
                     isEnabled = !isSubmitting && !isPurchasing,
                     isPurchasing = isPurchasing,
+                    showMonthlyOptions = !entitlements.planType.isPaidCourse,
                     onPurchase = ::purchasePaidCourse,
                 )
                 PromoCodeSection(
@@ -1765,6 +1768,7 @@ private fun SharedTagAuthForm(
 private fun PaidCourseSection(
     isEnabled: Boolean,
     isPurchasing: Boolean,
+    showMonthlyOptions: Boolean,
     onPurchase: (PlanType, BillingPeriod) -> Unit,
 ) {
     Column(
@@ -1775,43 +1779,65 @@ private fun PaidCourseSection(
             text = "有料コース",
             style = MaterialTheme.typography.titleMedium,
         )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            PaidCourseButton(
-                label = "Standard 月額",
-                enabled = isEnabled,
-                isPurchasing = isPurchasing,
-                modifier = Modifier.weight(1f),
-                onClick = { onPurchase(PlanType.STANDARD, BillingPeriod.MONTHLY) },
-            )
-            PaidCourseButton(
-                label = "Standard 年払い",
-                enabled = isEnabled,
-                isPurchasing = isPurchasing,
-                modifier = Modifier.weight(1f),
-                onClick = { onPurchase(PlanType.STANDARD, BillingPeriod.YEARLY) },
-            )
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            PaidCourseButton(
-                label = "Pro 月額",
-                enabled = isEnabled,
-                isPurchasing = isPurchasing,
-                modifier = Modifier.weight(1f),
-                onClick = { onPurchase(PlanType.PRO, BillingPeriod.MONTHLY) },
-            )
-            PaidCourseButton(
-                label = "Pro 年払い",
-                enabled = isEnabled,
-                isPurchasing = isPurchasing,
-                modifier = Modifier.weight(1f),
-                onClick = { onPurchase(PlanType.PRO, BillingPeriod.YEARLY) },
-            )
+        if (showMonthlyOptions) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                PaidCourseButton(
+                    label = "Standard 月額",
+                    enabled = isEnabled,
+                    isPurchasing = isPurchasing,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onPurchase(PlanType.STANDARD, BillingPeriod.MONTHLY) },
+                )
+                PaidCourseButton(
+                    label = "Standard 年払い",
+                    enabled = isEnabled,
+                    isPurchasing = isPurchasing,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onPurchase(PlanType.STANDARD, BillingPeriod.YEARLY) },
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                PaidCourseButton(
+                    label = "Pro 月額",
+                    enabled = isEnabled,
+                    isPurchasing = isPurchasing,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onPurchase(PlanType.PRO, BillingPeriod.MONTHLY) },
+                )
+                PaidCourseButton(
+                    label = "Pro 年払い",
+                    enabled = isEnabled,
+                    isPurchasing = isPurchasing,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onPurchase(PlanType.PRO, BillingPeriod.YEARLY) },
+                )
+            }
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                PaidCourseButton(
+                    label = "Standard 年払い",
+                    enabled = isEnabled,
+                    isPurchasing = isPurchasing,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onPurchase(PlanType.STANDARD, BillingPeriod.YEARLY) },
+                )
+                PaidCourseButton(
+                    label = "Pro 年払い",
+                    enabled = isEnabled,
+                    isPurchasing = isPurchasing,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onPurchase(PlanType.PRO, BillingPeriod.YEARLY) },
+                )
+            }
         }
     }
 }

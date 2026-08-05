@@ -15,7 +15,6 @@ func shouldShowPendingInviteBanner(hasPendingInvite: Bool) -> Bool {
 
 struct RootView: View {
     @ObservedObject var model: URLSaverAppModel
-    @Environment(\.openURL) private var openURL
 
     @State private var isShowingManualSheet = false
     @State private var selectedMainService: ServiceType = .all
@@ -29,6 +28,7 @@ struct RootView: View {
     @State private var isShowingUsageGuide = false
     @State private var isShowingSearchBar = false
     @State private var searchQuery = ""
+    @State private var databaseSearchMatchIDs: Set<Int64>? = []
     @State private var isShowingSharedTagCloudSheet = false
     @State private var isShowingSharedTagCreateSheet = false
     @State private var isShowingSharedTagGroupCreateSheet = false
@@ -71,6 +71,7 @@ struct RootView: View {
                 localTags: model.localTags,
                 localTagAssignments: model.localTagAssignments,
                 sharedTags: model.sharedTags,
+                loadState: model.activeEntriesLoadState,
                 selectedService: $selectedMainService,
                 selectedLocalTagID: $selectedMainLocalTagID,
                 displayMode: displayModeBinding,
@@ -138,12 +139,13 @@ struct RootView: View {
                     selectedMainEntryIDs = []
                     searchQuery = ""
                     isShowingSearchBar = false
-                    openURL(rinbamUsageGuideURL)
+                    isShowingUsageGuide = true
                 },
                 onOpenPrivacyInfo: { isShowingPrivacyInfoSheet = true },
                 onOpenSharedTagCloud: { isShowingSharedTagCloudSheet = true },
                 onCreateSharedTag: { isShowingSharedTagCreateSheet = true },
                 onOpenSharedTag: { selectedSharedTagID = $0 },
+                onRetryLoad: { Task { await model.reload() } },
                 showsPendingInviteBanner: showsPendingInviteBanner
             )
         case .archive:
@@ -156,6 +158,7 @@ struct RootView: View {
                     localTags: model.localTags
                 ),
                 totalEntries: model.archivedEntries,
+                loadState: model.archivedEntriesLoadState,
                 localTags: model.localTags,
                 localTagAssignments: model.localTagAssignments,
                 selectedService: $selectedArchiveService,
@@ -174,7 +177,8 @@ struct RootView: View {
                 },
                 onDelete: { entryID in
                     Task { await model.markPendingDelete(entryID: entryID) }
-                }
+                },
+                onRetryLoad: { Task { await model.reload() } }
             )
         case .groups:
             SharedTagGroupScreen(
@@ -205,7 +209,8 @@ struct RootView: View {
                 mainVisibleEntries,
                 query: searchQuery,
                 localTags: model.localTags,
-                localTagAssignments: model.localTagAssignments
+                localTagAssignments: model.localTagAssignments,
+                databaseMatchedEntryIDs: databaseSearchMatchIDs
             )
             let showsPendingInviteBanner = shouldShowPendingInviteBanner(
                 hasPendingInvite: model.pendingInviteRecord != nil
@@ -234,6 +239,14 @@ struct RootView: View {
                         DetailView(entryID: entryID, model: model)
                     }
                 }
+            }
+            .task(id: searchQuery) {
+                guard !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    databaseSearchMatchIDs = []
+                    return
+                }
+                databaseSearchMatchIDs = nil
+                databaseSearchMatchIDs = await model.searchActiveEntryIDs(query: searchQuery)
             }
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
             .toolbar(.hidden, for: .navigationBar)
@@ -556,6 +569,7 @@ private struct MainScreen: View {
     let localTags: [LocalTagSummary]
     let localTagAssignments: [Int64: Set<Int64>]
     let sharedTags: [SharedTagSummary]
+    let loadState: EntryListLoadState
     @Binding var selectedService: ServiceType
     @Binding var selectedLocalTagID: Int64?
     @Binding var displayMode: EntryListDisplayMode
@@ -588,6 +602,7 @@ private struct MainScreen: View {
     let onOpenSharedTagCloud: () -> Void
     let onCreateSharedTag: () -> Void
     let onOpenSharedTag: (String) -> Void
+    let onRetryLoad: () -> Void
     let showsPendingInviteBanner: Bool
 
     @State private var isShowingMainMenu = false
@@ -714,16 +729,24 @@ private struct MainScreen: View {
                             )
                             .frame(width: cardWidth)
                         }
-                        if totalEntries.isEmpty {
-                            Color.clear.frame(height: 560)
+                        if loadState != .content {
+                            EntryListStateCard(
+                                state: loadState,
+                                emptyTitle: "保存したURLはまだありません",
+                                emptyMessage: "共有または「＋」からURLを保存できます。",
+                                emptyActionTitle: "URLを追加",
+                                onEmptyAction: onOpenManualInput,
+                                onRetry: onRetryLoad
+                            )
+                            .frame(width: cardWidth)
+                            .padding(.top, 120)
                         } else if entries.isEmpty {
                             AppPanel {
                                 Text("この条件に一致するURLはありません")
-                                    .font(.system(size: 21, weight: .heavy, design: .rounded))
+                                    .font(.system(.title3, design: .rounded).weight(.heavy))
                                     .foregroundStyle(AppPalette.textSecondary)
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.82)
                                     .multilineTextAlignment(.center)
+                                    .fixedSize(horizontal: false, vertical: true)
                                     .frame(maxWidth: .infinity)
                             }
                             .frame(width: cardWidth)
@@ -1013,6 +1036,7 @@ private struct PrivacyInfoPanel: View {
 }
 
 private struct UsageGuideView: View {
+    @Environment(\.openURL) private var openURL
     let onBack: () -> Void
 
     var body: some View {
@@ -1032,12 +1056,12 @@ private struct UsageGuideView: View {
                 .padding(.bottom, 20)
 
                 Text("使い方")
-                    .font(.system(size: 34, weight: .heavy, design: .rounded))
+                    .font(.system(.largeTitle, design: .rounded).weight(.heavy))
                     .foregroundStyle(AppPalette.textPrimary)
                     .padding(.bottom, 8)
 
                 Text("りんばむの基本から便利な使い方、AIとの連携までまとめました。\n最初だけ読んでも、あとで見返しても大丈夫です。")
-                    .font(.system(size: 16, weight: .medium))
+                    .font(.system(.body).weight(.medium))
                     .foregroundStyle(AppPalette.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.bottom, 22)
@@ -1090,7 +1114,7 @@ private struct UsageGuideSectionHeader: View {
     var body: some View {
         HStack(spacing: 14) {
             Text(title)
-                .font(.system(size: 22, weight: .heavy, design: .rounded))
+                .font(.system(.title3, design: .rounded).weight(.heavy))
                 .foregroundStyle(AppPalette.textPrimary)
             Rectangle()
                 .fill(AppPalette.outlineSoft.opacity(0.7))
@@ -1133,21 +1157,11 @@ private struct UsageGuideRow<Preview: View>: View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 12) {
                 if layout == .stacked {
-                    HStack(alignment: .center, spacing: 10) {
-                        rowLabel
-                        rowIcon
-                        rowText
-                    }
-                    preview
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-                        .padding(.leading, 40)
+                    stackedLayout
                 } else {
-                    HStack(alignment: .center, spacing: 10) {
-                        rowLabel
-                        rowIcon
-                        rowText
-                        preview
-                            .frame(width: 166, alignment: .trailing)
+                    ViewThatFits(in: .horizontal) {
+                        inlineLayout
+                        stackedLayout
                     }
                 }
             }
@@ -1161,7 +1175,7 @@ private struct UsageGuideRow<Preview: View>: View {
 
     private var rowLabel: some View {
         Text(marker)
-            .font(.system(size: 17, weight: .heavy, design: .rounded))
+            .font(.system(.body, design: .rounded).weight(.heavy))
             .foregroundStyle(.white)
             .frame(width: 28, height: 28)
             .background(markerColor, in: Circle())
@@ -1178,15 +1192,38 @@ private struct UsageGuideRow<Preview: View>: View {
     private var rowText: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(.system(size: 16, weight: .heavy, design: .rounded))
+                .font(.system(.headline, design: .rounded).weight(.heavy))
                 .foregroundStyle(AppPalette.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
             Text(bodyText)
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(.subheadline).weight(.medium))
                 .foregroundStyle(AppPalette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var inlineLayout: some View {
+        HStack(alignment: .center, spacing: 10) {
+            rowLabel
+            rowIcon
+            rowText
+            preview
+                .frame(width: 166, alignment: .trailing)
+        }
+    }
+
+    @ViewBuilder
+    private var stackedLayout: some View {
+        HStack(alignment: .center, spacing: 10) {
+            rowLabel
+            rowIcon
+            rowText
+        }
+        preview
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .padding(.leading, 40)
     }
 }
 
@@ -1543,15 +1580,32 @@ private struct DetailedMiniURLCard: View {
 }
 
 private struct UsageGuideNote: View {
+    @Environment(\.openURL) private var openURL
+
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .top, spacing: 12) {
             Text("✦")
-                .font(.system(size: 24, weight: .heavy, design: .rounded))
+                .font(.system(.title3, design: .rounded).weight(.heavy))
                 .foregroundStyle(AppPalette.primaryStrong)
-            Text("もっと詳しい使い方や、よくある質問は「使い方」を随時更新しています。\nブックマークからいつでも見返せます。")
-                .font(.system(size: 14, weight: .bold))
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("もっと詳しい使い方や、よくある質問は「使い方」を随時更新しています。\nブックマークからいつでも見返せます。")
+                    .font(.system(.callout).weight(.bold))
+                    .foregroundStyle(AppPalette.primaryStrong)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Button {
+                    openURL(rinbamUsageGuideURL)
+                } label: {
+                    Label("Web版の詳しい使い方", systemImage: "safari")
+                        .font(.system(.callout).weight(.bold))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .buttonStyle(.plain)
                 .foregroundStyle(AppPalette.primaryStrong)
-                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityHint("ブラウザで詳しい使い方を開きます")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1882,12 +1936,16 @@ func searchFilteredEntries(
     _ entries: [URLRecord],
     query: String,
     localTags: [LocalTagSummary] = [],
-    localTagAssignments: [Int64: Set<Int64>] = [:]
+    localTagAssignments: [Int64: Set<Int64>] = [:],
+    databaseMatchedEntryIDs: Set<Int64>? = nil
 ) -> [URLRecord] {
     let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     guard !needle.isEmpty else { return entries }
     let localTagNamesByID = Dictionary(uniqueKeysWithValues: localTags.map { ($0.id, $0.name.lowercased()) })
     return entries.filter { entry in
+        if databaseMatchedEntryIDs?.contains(entry.id) == true {
+            return true
+        }
         let entryLocalTagNames = (localTagAssignments[entry.id] ?? [])
             .compactMap { localTagNamesByID[$0] }
         return [
@@ -1900,7 +1958,7 @@ func searchFilteredEntries(
             entry.userTitle ?? "",
             entry.fetchedTitle ?? "",
             entry.fetchedAuthorName ?? "",
-            entry.fetchedBody ?? "",
+            entry.fetchedBody ?? entry.bodyPreview ?? "",
             entry.bodySummary ?? "",
             entry.description ?? "",
             entry.memo,
@@ -2064,9 +2122,91 @@ private struct SharedTagInviteConfirmationView: View {
     }
 }
 
+private struct EntryListStateCard: View {
+    let state: EntryListLoadState
+    let emptyTitle: String
+    let emptyMessage: String
+    let emptyActionTitle: String?
+    let onEmptyAction: (() -> Void)?
+    let onRetry: () -> Void
+
+    var body: some View {
+        AppPanel {
+            switch state {
+            case .initial:
+                Image(systemName: "tray")
+                    .font(.system(size: 28, weight: .semibold))
+                    .foregroundStyle(AppPalette.primaryStrong)
+                    .frame(maxWidth: .infinity)
+                Text("準備しています")
+                    .font(.system(.title3, design: .rounded).weight(.heavy))
+                    .foregroundStyle(AppPalette.textPrimary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity)
+            case .loading:
+                ProgressView()
+                    .tint(AppPalette.primaryStrong)
+                    .frame(maxWidth: .infinity)
+                Text("保存したURLを読み込んでいます…")
+                    .font(.system(.body).weight(.medium))
+                    .foregroundStyle(AppPalette.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity)
+            case .content:
+                EmptyView()
+            case .empty:
+                Image(systemName: "tray")
+                    .font(.system(size: 28, weight: .semibold))
+                    .foregroundStyle(AppPalette.textSecondary)
+                    .frame(maxWidth: .infinity)
+                Text(emptyTitle)
+                    .font(.system(.title2, design: .rounded).weight(.heavy))
+                    .foregroundStyle(AppPalette.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity)
+                Text(emptyMessage)
+                    .font(.system(.body).weight(.medium))
+                    .foregroundStyle(AppPalette.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity)
+                if let emptyActionTitle, let onEmptyAction {
+                    AppActionButton(tone: .primary, action: onEmptyAction) {
+                        Text(emptyActionTitle)
+                    }
+                }
+            case .error(let message):
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 28, weight: .semibold))
+                    .foregroundStyle(AppPalette.danger)
+                    .frame(maxWidth: .infinity)
+                Text("読み込めませんでした")
+                    .font(.system(.title3, design: .rounded).weight(.heavy))
+                    .foregroundStyle(AppPalette.textPrimary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity)
+                Text(message)
+                    .font(.system(.body).weight(.medium))
+                    .foregroundStyle(AppPalette.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity)
+                AppActionButton(tone: .primary, action: onRetry) {
+                    Text("再試行")
+                }
+            }
+        }
+    }
+}
+
 private struct ArchiveScreen: View {
     let entries: [URLRecord]
     let totalEntries: [URLRecord]
+    let loadState: EntryListLoadState
     let localTags: [LocalTagSummary]
     let localTagAssignments: [Int64: Set<Int64>]
     @Binding var selectedService: ServiceType
@@ -2080,6 +2220,7 @@ private struct ArchiveScreen: View {
     let onOpenDetail: (Int64) -> Void
     let onRestore: (Int64) -> Void
     let onDelete: (Int64) -> Void
+    let onRetryLoad: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -2115,20 +2256,29 @@ private struct ArchiveScreen: View {
 
                 ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: 14) {
-                        if totalEntries.isEmpty {
-                            ArchiveEmptyStateCard()
-                                .frame(width: cardWidth)
-                                .padding(.top, 220)
+                        if loadState != .content {
+                            EntryListStateCard(
+                                state: loadState,
+                                emptyTitle: "アーカイブしたURLはまだありません",
+                                emptyMessage: "アーカイブしたURLがここに表示されます。",
+                                emptyActionTitle: nil,
+                                onEmptyAction: nil,
+                                onRetry: onRetryLoad
+                            )
+                            .frame(width: cardWidth)
+                            .padding(.top, 120)
                         } else if entries.isEmpty {
                             AppPanel {
                                 Text("この保存先のアーカイブはありません")
-                                    .font(.system(size: 26, weight: .heavy, design: .rounded))
+                                    .font(.system(.title2, design: .rounded).weight(.heavy))
                                     .foregroundStyle(AppPalette.textSecondary)
                                     .multilineTextAlignment(.center)
+                                    .fixedSize(horizontal: false, vertical: true)
                                     .frame(maxWidth: .infinity)
                                 Text("フィルターを変更してください")
-                                    .font(.system(size: 17, weight: .medium))
+                                    .font(.system(.body).weight(.medium))
                                     .foregroundStyle(AppPalette.textSecondary)
+                                    .fixedSize(horizontal: false, vertical: true)
                                     .frame(maxWidth: .infinity)
                             }
                             .frame(width: cardWidth)
@@ -3395,10 +3545,15 @@ private struct ManualInputSheet: View {
                             inputErrorMessage = nil
                             pendingTagImport = preview
                         case .saved(let saveResult):
-                            dismiss()
-                            Task {
-                                try? await Task.sleep(nanoseconds: 350_000_000)
-                                await model.finishPreparedManualSave(saveResult)
+                            if saveResult.result == .saveFailed {
+                                inputError = .saveFailed
+                                inputErrorMessage = "保存できませんでした。入力内容は保持されています。もう一度お試しください。"
+                            } else {
+                                dismiss()
+                                Task {
+                                    try? await Task.sleep(nanoseconds: 350_000_000)
+                                    await model.finishPreparedManualSave(saveResult)
+                                }
                             }
                         case .completed:
                             dismiss()
@@ -3407,6 +3562,8 @@ private struct ManualInputSheet: View {
                 } label: {
                     if isSaving {
                         ProgressView().tint(AppPalette.textPrimary)
+                    } else if inputError == .saveFailed {
+                        Text("再試行")
                     } else {
                         Text("保存")
                     }
@@ -3569,24 +3726,30 @@ private struct NotificationBanner: View {
     let onClose: () -> Void
 
     var body: some View {
-        HStack(spacing: 14) {
-            Text(notification.message)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(Color.white.opacity(0.92))
-                .multilineTextAlignment(.leading)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                Text(notification.message)
+                    .font(.system(.body).weight(.semibold))
+                    .foregroundStyle(Color.white.opacity(0.92))
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
 
-            Spacer(minLength: 8)
+                Spacer(minLength: 0)
+
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(.caption).weight(.bold))
+                        .foregroundStyle(Color.white.opacity(0.75))
+                        .frame(width: 32, height: 32)
+                }
+                .accessibilityLabel("閉じる")
+            }
 
             if let actionLabel = notification.actionLabel {
                 Button(actionLabel, action: onAction)
-                    .font(.system(size: 16, weight: .heavy))
+                    .font(.system(.body).weight(.heavy))
                     .foregroundStyle(AppPalette.primary)
-            }
-
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(Color.white.opacity(0.75))
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(.horizontal, 16)

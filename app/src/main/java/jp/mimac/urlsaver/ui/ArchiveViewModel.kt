@@ -6,18 +6,24 @@ import jp.mimac.urlsaver.data.EntryCardDisplayModeStore
 import jp.mimac.urlsaver.data.ServiceFilterOrderStore
 import jp.mimac.urlsaver.data.TagRepository
 import jp.mimac.urlsaver.data.TopFilterOrderStore
+import jp.mimac.urlsaver.data.UrlEntryEntity
 import jp.mimac.urlsaver.data.UrlRepository
 import jp.mimac.urlsaver.domain.CreateTagResult
 import jp.mimac.urlsaver.domain.EntryCardDisplayMode
 import jp.mimac.urlsaver.domain.ServiceType
 import jp.mimac.urlsaver.domain.TagWithCount
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 
 class ArchiveViewModel(
     private val repository: UrlRepository,
@@ -28,6 +34,12 @@ class ArchiveViewModel(
 ) : ViewModel() {
     private val selectedService = MutableStateFlow(ServiceType.ALL)
     private val selectedLocalTagId = MutableStateFlow<Long?>(null)
+    private val entrySourceState = MutableStateFlow(ArchiveEntrySourceUiState())
+    private var observeEntriesJob: Job? = null
+
+    init {
+        observeArchiveEntries()
+    }
 
     val allTagsWithCount: StateFlow<List<TagWithCount>> = tagRepository
         ?.observeAllTagsWithCount()
@@ -48,14 +60,15 @@ class ArchiveViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val uiState: StateFlow<ListFilterUiState> = combine(
-        repository.observeArchiveEntries(),
+        entrySourceState,
         selectedService,
         selectedLocalTagId,
         repository.observeLocalTagEntryRefs(),
-    ) { entries, selectedService, selectedLocalTag, entryRefs ->
+    ) { sourceState, selectedService, selectedLocalTag, entryRefs ->
         val baseState = buildListFilterUiState(
-            entries = entries,
+            entries = sourceState.entries,
             selectedService = selectedService,
+            loadState = sourceState.loadState,
         )
         val scopedEntries = if (selectedLocalTag == null) {
             baseState.entries
@@ -70,7 +83,7 @@ class ArchiveViewModel(
             entries = scopedEntries,
             scopeCount = scopedEntries.size,
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ListFilterUiState())
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, ListFilterUiState())
 
     val selectedServiceFlow: StateFlow<ServiceType> = selectedService
     val selectedLocalTagIdFlow: StateFlow<Long?> = selectedLocalTagId
@@ -83,6 +96,13 @@ class ArchiveViewModel(
     fun selectLocalTag(tagId: Long?) {
         selectedLocalTagId.value = tagId
         selectedService.value = ServiceType.ALL
+    }
+
+    fun retryLoading() {
+        entrySourceState.update { current ->
+            current.copy(loadState = ListFilterLoadState.Loading)
+        }
+        observeArchiveEntries()
     }
 
     suspend fun createLocalTag(name: String): CreateTagResult {
@@ -112,7 +132,48 @@ class ArchiveViewModel(
     suspend fun markPendingDelete(entryId: Long): Long? {
         return repository.markPendingDelete(entryId)
     }
+
+    private fun observeArchiveEntries() {
+        observeEntriesJob?.cancel()
+        observeEntriesJob = viewModelScope.launch {
+            val entriesFlow = try {
+                repository.observeArchiveEntries()
+            } catch (_: Throwable) {
+                entrySourceState.update { current ->
+                    current.copy(loadState = ListFilterLoadState.Error())
+                }
+                return@launch
+            }
+            entriesFlow
+                .onStart {
+                    entrySourceState.update { current ->
+                        current.copy(loadState = ListFilterLoadState.Loading)
+                    }
+                }
+                .catch { error ->
+                    if (error is CancellationException) throw error
+                    entrySourceState.update { current ->
+                        current.copy(loadState = ListFilterLoadState.Error())
+                    }
+                }
+                .collect { entries ->
+                    entrySourceState.value = ArchiveEntrySourceUiState(
+                        entries = entries,
+                        loadState = if (entries.isEmpty()) {
+                            ListFilterLoadState.Empty
+                        } else {
+                            ListFilterLoadState.Content
+                        },
+                    )
+                }
+        }
+    }
 }
+
+private data class ArchiveEntrySourceUiState(
+    val entries: List<UrlEntryEntity> = emptyList(),
+    val loadState: ListFilterLoadState = ListFilterLoadState.Initial,
+)
 
 private class InMemoryArchiveEntryCardDisplayModeStore : EntryCardDisplayModeStore {
     override fun observeDisplayMode() = flowOf(EntryCardDisplayMode.RICH)

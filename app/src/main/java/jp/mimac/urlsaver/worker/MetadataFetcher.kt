@@ -3,6 +3,7 @@ package jp.mimac.urlsaver.worker
 import jp.mimac.urlsaver.domain.MetadataError
 import jp.mimac.urlsaver.domain.MetadataBodyKind
 import jp.mimac.urlsaver.domain.UrlRules
+import jp.mimac.urlsaver.network.NetworkUrlPolicy
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -20,6 +21,7 @@ import java.net.URI
 import java.net.URLEncoder
 import java.net.URL
 import java.util.Locale
+import java.util.concurrent.CancellationException
 
 sealed interface FetchOutcome {
     data class Ready(
@@ -42,9 +44,7 @@ sealed interface FetchOutcome {
 
 class MetadataFetcher(
     private val userAgent: String = DEFAULT_USER_AGENT,
-    private val syndicationEndpointBuilder: (String) -> String = { statusId ->
-        "$SYNDICATION_ENDPOINT?id=$statusId&token=$DEFAULT_SYNDICATION_TOKEN"
-    },
+    private val syndicationEndpointBuilder: ((String) -> String)? = null,
     private val oEmbedEndpointBuilder: (String) -> String = { targetUrl ->
         "$OEMBED_ENDPOINT?omit_script=true&dnt=true&url=${URLEncoder.encode(targetUrl, Charsets.UTF_8.name())}"
     },
@@ -52,13 +52,11 @@ class MetadataFetcher(
     private val xArticleGraphQLEndpointBuilder: (String) -> String = { statusId ->
         buildXArticleGraphQLEndpoint(statusId)
     },
-    private val xPublicBearerToken: String = X_PUBLIC_BEARER_TOKEN,
+    private val xPublicBearerToken: String? = null,
     private val youtubeOEmbedEndpointBuilder: (String) -> String = { targetUrl ->
         "$YOUTUBE_OEMBED_ENDPOINT?format=json&url=${URLEncoder.encode(targetUrl, Charsets.UTF_8.name())}"
     },
-    private val youtubePlayerEndpointBuilder: (String) -> String = {
-        "$YOUTUBE_PLAYER_ENDPOINT?key=$YOUTUBE_INNERTUBE_API_KEY&prettyPrint=false"
-    },
+    private val youtubePlayerEndpointBuilder: ((String) -> String)? = null,
     private val tiktokOEmbedEndpointBuilder: (String) -> String = { targetUrl ->
         "$TIKTOK_OEMBED_ENDPOINT?url=${URLEncoder.encode(targetUrl, Charsets.UTF_8.name())}"
     },
@@ -73,10 +71,15 @@ class MetadataFetcher(
     },
     private val connectTimeoutMillis: Int = 10_000,
     private val readTimeoutMillis: Int = 30_000,
+    private val allowLocalTestUrls: Boolean = false,
 ) {
     fun fetch(url: String): FetchOutcome {
         return try {
             fetchInternal(url)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: NetworkUrlPolicy.BlockedUrlException) {
+            FetchOutcome.Unavailable(MetadataError.UNSUPPORTED_SCHEME)
         } catch (_: SocketTimeoutException) {
             FetchOutcome.FailedRetryable(MetadataError.TIMEOUT)
         } catch (_: java.io.InterruptedIOException) {
@@ -551,7 +554,8 @@ class MetadataFetcher(
     }
 
     private fun fetchSyndicationMetadata(statusId: String): FetchOutcome {
-        val endpoint = syndicationEndpointBuilder(statusId)
+        val endpoint = syndicationEndpointBuilder?.invoke(statusId)
+            ?: return FetchOutcome.Unavailable(MetadataError.PARSE_FAILED)
         return fetchJsonPayload(endpoint) { payload ->
             val user = payload.jsonObjectOrNull("user")
             val title = user?.firstNonBlankString("name", "screen_name")
@@ -627,6 +631,7 @@ class MetadataFetcher(
     }
 
     private fun fetchXArticlePlainText(statusId: String): String? {
+        val bearerToken = xPublicBearerToken?.trim()?.takeIf { it.isNotBlank() } ?: return null
         val guestToken = fetchXGuestToken() ?: return null
         val connection = connectionFactory(xArticleGraphQLEndpointBuilder(statusId)).apply {
             instanceFollowRedirects = false
@@ -635,7 +640,7 @@ class MetadataFetcher(
             requestMethod = "GET"
             setRequestProperty("User-Agent", X_WEB_USER_AGENT)
             setRequestProperty("Accept", "application/json")
-            setRequestProperty("Authorization", "Bearer $xPublicBearerToken")
+            setRequestProperty("Authorization", "Bearer $bearerToken")
             setRequestProperty("X-Guest-Token", guestToken)
             setRequestProperty("X-Twitter-Active-User", "yes")
             setRequestProperty("X-Twitter-Client-Language", "ja")
@@ -659,6 +664,7 @@ class MetadataFetcher(
     }
 
     private fun fetchXGuestToken(): String? {
+        val bearerToken = xPublicBearerToken?.trim()?.takeIf { it.isNotBlank() } ?: return null
         val connection = connectionFactory(xGuestActivationEndpoint).apply {
             instanceFollowRedirects = false
             connectTimeout = connectTimeoutMillis
@@ -668,7 +674,7 @@ class MetadataFetcher(
             setFixedLengthStreamingMode(0)
             setRequestProperty("User-Agent", X_WEB_USER_AGENT)
             setRequestProperty("Accept", "application/json")
-            setRequestProperty("Authorization", "Bearer $xPublicBearerToken")
+            setRequestProperty("Authorization", "Bearer $bearerToken")
         }
         return try {
             if (connection.responseCode !in 200..299 || connection.contentLengthLong > BODY_LIMIT_BYTES) return null
@@ -726,7 +732,8 @@ class MetadataFetcher(
         val parsed = runCatching { URI(targetUrl) }.getOrNull()
         val videoId = parsed?.let(::extractServiceCanonical)
             ?: return YouTubePlayerMetadata(failureOutcome = FetchOutcome.Unavailable(MetadataError.PARSE_FAILED))
-        val endpoint = youtubePlayerEndpointBuilder(videoId)
+        val endpoint = youtubePlayerEndpointBuilder?.invoke(videoId)
+            ?: return YouTubePlayerMetadata(failureOutcome = FetchOutcome.Unavailable(MetadataError.PARSE_FAILED))
         val requestBody = buildYouTubePlayerRequest(videoId)
         val outcome = fetchJsonPayloadPost(endpoint, requestBody) { payload ->
             val videoDetails = payload.jsonObjectOrNull("videoDetails")
@@ -2069,8 +2076,10 @@ class MetadataFetcher(
         val buffer = ByteArray(8 * 1024)
         var total = 0L
         while (true) {
+            checkInterrupted()
             val read = input.read(buffer)
-            if (read <= 0) break
+            if (read < 0) break
+            if (read == 0) continue
             total += read
             if (total > maxBytes) return null
             out.write(buffer, 0, read)
@@ -2083,13 +2092,21 @@ class MetadataFetcher(
         val buffer = ByteArray(8 * 1024)
         var total = 0
         while (total < maxBytes) {
+            checkInterrupted()
             val toRead = minOf(buffer.size, maxBytes - total)
             val read = input.read(buffer, 0, toRead)
-            if (read <= 0) break
+            if (read < 0) break
+            if (read == 0) continue
             out.write(buffer, 0, read)
             total += read
         }
         return out.toByteArray()
+    }
+
+    private fun checkInterrupted() {
+        if (Thread.currentThread().isInterrupted) {
+            throw java.io.InterruptedIOException("Metadata fetch interrupted")
+        }
     }
 
     private fun normalizeTitleText(raw: String?): String? {
@@ -2401,15 +2418,15 @@ class MetadataFetcher(
     }
 
     private fun isFetchableScheme(uri: URI): Boolean {
-        return when (uri.scheme?.lowercase(Locale.ROOT)) {
-            "https" -> true
-            // Allow loopback http for local test infrastructure only.
-            "http" -> {
-                val host = uri.host?.lowercase(Locale.ROOT)
-                host == "127.0.0.1" || host == "localhost" || host == "::1"
-            }
-
-            else -> false
+        return try {
+            NetworkUrlPolicy.validateExternalUrl(
+                rawUrl = uri.toString(),
+                allowLoopbackHttp = allowLocalTestUrls,
+                allowTestHosts = allowLocalTestUrls,
+            )
+            true
+        } catch (_: NetworkUrlPolicy.BlockedUrlException) {
+            false
         }
     }
 
@@ -2527,20 +2544,14 @@ class MetadataFetcher(
             "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
         private const val TIKTOK_BROWSER_USER_AGENT =
             "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
-        private const val DEFAULT_SYNDICATION_TOKEN = "1"
-        private const val SYNDICATION_ENDPOINT = "https://cdn.syndication.twimg.com/tweet-result"
         private const val OEMBED_ENDPOINT = "https://publish.twitter.com/oembed"
         private const val X_GUEST_ACTIVATION_ENDPOINT = "https://api.x.com/1.1/guest/activate.json"
         private const val X_ARTICLE_GRAPHQL_ENDPOINT =
             "https://api.x.com/graphql/-4_LMahNlI4MuLJ-EAFEog/TweetResultByRestId"
-        private const val X_PUBLIC_BEARER_TOKEN =
-            "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
         private const val X_WEB_USER_AGENT =
             "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
         private const val X_ARTICLE_BODY_MAX_LENGTH = 200_000
         private const val YOUTUBE_OEMBED_ENDPOINT = "https://www.youtube.com/oembed"
-        private const val YOUTUBE_PLAYER_ENDPOINT = "https://www.youtube.com/youtubei/v1/player"
-        private const val YOUTUBE_INNERTUBE_API_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
         private const val YOUTUBE_WEB_CLIENT_VERSION = "2.20260422.08.00"
         private const val TIKTOK_OEMBED_ENDPOINT = "https://www.tiktok.com/oembed"
         private const val TIKTOK_FALLBACK_ENDPOINT = "https://www.tikwm.com/api/"

@@ -26,6 +26,10 @@ enum PlanType: String, Codable, CaseIterable, Sendable {
     case standard
     case pro
     case promoPro = "promo_pro"
+
+    var isPaidCourse: Bool {
+        self == .standard || self == .pro || self == .promoPro
+    }
 }
 
 enum BillingPeriod: String, Codable, CaseIterable, Sendable {
@@ -177,13 +181,8 @@ struct LimitChecker: Sendable {
         return .allowed
     }
 
-    func checkCanCreateNormalTag(_ usage: UsageSummary) -> LimitResult {
-        if usage.normalTagCount >= limits.normalTagLimit {
-            return .blocked(
-                target: .normalTag,
-                message: "通常タグは\(planLabel)では\(limits.normalTagLimit)個まで作成できます。"
-            )
-        }
+    func checkCanCreateNormalTag(_: UsageSummary) -> LimitResult {
+        // 自作タグは現在、プランや利用数にかかわらず無制限で作成できる。
         return .allowed
     }
 
@@ -373,7 +372,7 @@ struct EntitlementResolver: EntitlementResolving {
     let grantsProvider: @Sendable () -> [EntitlementGrant]
 
     init(
-        defaultEntitlements: FeatureEntitlements = LaunchStandardPlan.entitlements,
+        defaultEntitlements: FeatureEntitlements = ProPlan.entitlements,
         grantsProvider: @escaping @Sendable () -> [EntitlementGrant] = { [] }
     ) {
         self.defaultEntitlements = defaultEntitlements
@@ -384,7 +383,8 @@ struct EntitlementResolver: EntitlementResolving {
         guard let grant = grantsProvider()
             .filter({ $0.isActive(at: date) })
             .sorted(by: Self.grantSort)
-            .first
+            .first,
+              grant.planType.priority <= defaultEntitlements.planType.priority
         else {
             return defaultEntitlements
         }
@@ -708,6 +708,78 @@ struct URLRecord: Identifiable, Equatable, Sendable {
     let updatedAt: Date
     let archivedAt: Date?
     let pendingDeletionUntil: Date?
+    /// Bounded metadata text populated only by list snapshots.
+    let bodyPreview: String?
+
+    init(
+        id: Int64,
+        originalURL: String,
+        normalizedURL: String,
+        displayURL: String,
+        openURL: String,
+        normalizedHost: String,
+        rawSourceHost: String,
+        collectionID: Int64,
+        serviceType: ServiceType,
+        contentContext: ContentContext,
+        userTitle: String?,
+        fetchedTitle: String?,
+        fetchedAuthorName: String? = nil,
+        fetchedBody: String?,
+        fetchedBodyKind: MetadataBodyKind?,
+        bodySummary: String?,
+        description: String?,
+        memo: String,
+        thumbnailURL: String?,
+        badgeImageURL: String?,
+        canonicalID: String?,
+        metadataState: MetadataState,
+        metadataError: MetadataError?,
+        metadataRequestedAt: Date?,
+        metadataFetchedAt: Date?,
+        recordState: RecordState,
+        localProvenanceCount: Int,
+        sharedReferenceCount: Int,
+        createdAt: Date,
+        updatedAt: Date,
+        archivedAt: Date?,
+        pendingDeletionUntil: Date?,
+        bodyPreview: String? = nil
+    ) {
+        self.id = id
+        self.originalURL = originalURL
+        self.normalizedURL = normalizedURL
+        self.displayURL = displayURL
+        self.openURL = openURL
+        self.normalizedHost = normalizedHost
+        self.rawSourceHost = rawSourceHost
+        self.collectionID = collectionID
+        self.serviceType = serviceType
+        self.contentContext = contentContext
+        self.userTitle = userTitle
+        self.fetchedTitle = fetchedTitle
+        self.fetchedAuthorName = fetchedAuthorName
+        self.fetchedBody = fetchedBody
+        self.fetchedBodyKind = fetchedBodyKind
+        self.bodySummary = bodySummary
+        self.description = description
+        self.memo = memo
+        self.thumbnailURL = thumbnailURL
+        self.badgeImageURL = badgeImageURL
+        self.canonicalID = canonicalID
+        self.metadataState = metadataState
+        self.metadataError = metadataError
+        self.metadataRequestedAt = metadataRequestedAt
+        self.metadataFetchedAt = metadataFetchedAt
+        self.recordState = recordState
+        self.localProvenanceCount = localProvenanceCount
+        self.sharedReferenceCount = sharedReferenceCount
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.archivedAt = archivedAt
+        self.pendingDeletionUntil = pendingDeletionUntil
+        self.bodyPreview = bodyPreview
+    }
 
     var effectiveTitle: String {
         URLRules.effectiveTitle(

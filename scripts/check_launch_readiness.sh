@@ -1,6 +1,33 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+level="full"
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --level)
+      if [[ "$#" -lt 2 ]]; then
+        echo "FAIL --level requires a value" >&2
+        exit 2
+      fi
+      level="$2"
+      shift 2
+      ;;
+    *)
+      echo "FAIL unknown argument: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+case "$level" in
+  full|internal)
+    ;;
+  *)
+    echo "FAIL unsupported readiness level: $level" >&2
+    exit 2
+    ;;
+esac
+
 failures=0
 
 fail() {
@@ -18,18 +45,22 @@ else
   ok "working tree is clean"
 fi
 
-current_branch="$(git symbolic-ref --short -q HEAD || echo "DETACHED")"
-if [[ "$current_branch" == "main" ]]; then
-  ok "current branch is main"
+if [[ "$level" == "internal" ]]; then
+  ok "internal readiness level skips main/origin release-integration checks"
 else
-  fail "current branch is '$current_branch'; integrate the release candidate into main before launch"
-fi
+  current_branch="$(git symbolic-ref --short -q HEAD || echo "DETACHED")"
+  if [[ "$current_branch" == "main" ]]; then
+    ok "current branch is main"
+  else
+    fail "current branch is '$current_branch'; integrate the release candidate into main before launch"
+  fi
 
-read -r ahead behind < <(git rev-list --left-right --count HEAD...origin/main 2>/dev/null || echo "0 0")
-if [[ "${ahead:-0}" -ne 0 || "${behind:-0}" -ne 0 ]]; then
-  fail "current main differs from origin/main (ahead=${ahead:-0}, behind=${behind:-0}); publish the reviewed release commit before launch"
-else
-  ok "current main matches origin/main"
+  read -r ahead behind < <(git rev-list --left-right --count HEAD...origin/main 2>/dev/null || echo "0 0")
+  if [[ "${ahead:-0}" -ne 0 || "${behind:-0}" -ne 0 ]]; then
+    fail "current main differs from origin/main (ahead=${ahead:-0}, behind=${behind:-0}); publish the reviewed release commit before launch"
+  else
+    ok "current main matches origin/main"
+  fi
 fi
 
 active_untracked="$(git ls-files --others --exclude-standard | rg '^(app/src/main/|ios/|web/|supabase/|scripts/)' | rg -v '^(app/build/|ios/build/)' || true)"
@@ -53,6 +84,7 @@ required_files=(
   "docs/release/repo-go-evidence.md"
   "docs/release/launch-status-model.md"
   "docs/release/launch-go-checklist.md"
+  "docs/release/release-manifest.json"
   "docs/release/manual-qa-matrix.md"
   "docs/release/staging-deploy-checklist.md"
   "docs/release/android-internal-testing-checklist.md"
@@ -65,6 +97,9 @@ required_files=(
   "docs/ai/openai-submission-readiness.md"
   "scripts/smoke_mcp_staging.sh"
   "scripts/check_release_hygiene.sh"
+  "scripts/verify_release_manifest.py"
+  "scripts/run_deno_tests.sh"
+  "scripts/verify_supabase_local.sh"
   "scripts/create_clean_review_archive.sh"
 )
 
@@ -81,6 +116,8 @@ fi
 today="$(date +%F)"
 if rg -q "$today" docs/release/repo-go-evidence.md 2>/dev/null; then
   ok "REPO_GO evidence is dated today"
+elif [[ "$level" == "internal" ]]; then
+  echo "WARN REPO_GO evidence is stale for today ($today); internal level records this but does not rewrite dated evidence"
 else
   fail "REPO_GO evidence is stale for today ($today)"
 fi

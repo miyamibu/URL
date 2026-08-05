@@ -285,5 +285,5 @@ fun tryDecodeTagSharePayload(text: String): TagSharePayload? {
 }
 
 const val MAX_SHARED_TAG_NAME_LENGTH = 50
-const val SHARED_TAG_NORMALIZATION_VERSION = 1
+const val SHARED_TAG_NORMALIZATION_VERSION = UrlRules.NORMALIZATION_CONTRACT_VERSION
 const val SHARED_TAG_INVITE_ROLE = "editor"

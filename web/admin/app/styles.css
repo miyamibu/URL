@@ -182,10 +182,21 @@ button:disabled {
 
 .result code {
   display: inline-block;
+  max-width: 100%;
   padding: 6px 8px;
   border-radius: 6px;
   background: #eef2ff;
   font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.result {
+  min-width: 0;
+}
+
+.result p,
+.result a {
+  overflow-wrap: anywhere;
 }
 
 .tableWrap {
@@ -209,6 +220,11 @@ td {
 th {
   color: var(--muted);
   font-size: 12px;
+}
+
+.compactDate {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .chip {

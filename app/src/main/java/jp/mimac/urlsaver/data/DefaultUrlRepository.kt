@@ -15,9 +15,8 @@ import jp.mimac.urlsaver.domain.ShareExtractionResult
 import jp.mimac.urlsaver.domain.ShareSaveResult
 import jp.mimac.urlsaver.domain.UrlRules
 import jp.mimac.urlsaver.util.AppClock
-import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 
 class DefaultUrlRepository(
     private val database: AppDatabase,
@@ -27,12 +26,20 @@ class DefaultUrlRepository(
     private val scheduler: MetadataScheduler,
     private val usageSummaryDataSource: UsageSummaryDataSource,
 ) : UrlRepository {
-    override fun observeActiveEntries(): Flow<List<UrlEntryEntity>> = flow {
-        emitAll(dao.observeActiveEntries())
-    }
+    override fun observeActiveEntries(): Flow<List<UrlEntryEntity>> = dao.observeActiveEntries()
+        .map { entries -> entries.map(UrlEntryListProjection::asListEntity) }
 
-    override fun observeArchiveEntries(): Flow<List<UrlEntryEntity>> = flow {
-        emitAll(dao.observeArchiveEntries())
+    override fun observeArchiveEntries(): Flow<List<UrlEntryEntity>> = dao.observeArchiveEntries()
+        .map { entries -> entries.map(UrlEntryListProjection::asListEntity) }
+
+    override suspend fun searchEntryIds(query: String, recordState: RecordState): Set<Long> {
+        val normalizedQuery = query.trim()
+        if (normalizedQuery.isBlank()) return emptySet()
+        val escapedQuery = normalizedQuery
+            .replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        return dao.searchEntryIds(escapedQuery, recordState).toSet()
     }
 
     override fun observeEntry(entryId: Long): Flow<UrlEntryEntity?> = dao.observeEntry(entryId)

@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "product": "りんばむ",
+  "android": {
+    "applicationId": "jp.miyamibu.urlalbum",
+    "versionName": "1.0.15",
+    "versionCode": 19,
+    "source": "app/build.gradle.kts"
+  },
+  "ios": {
+    "bundleId": "com.mibu.codebridge.ios",
+    "shareExtensionBundleId": "com.mibu.codebridge.ios.share",
+    "shortVersion": "1.0.17",
+    "build": 19,
+    "appPlist": "ios/URLSaveriOS/Info.plist",
+    "shareExtensionPlist": "ios/URLSaverShareExtension/Info.plist",
+    "project": "ios/URLSaveriOS.xcodeproj/project.pbxproj"
+  },
+  "supabase": {
+    "migrationDirectory": "supabase/migrations",
+    "migrationHead": "20260804090000_default_all_users_to_pro.sql"
+  },
+  "currentDocumentation": [
+    "docs/release/repo-go-evidence.md",
+    "docs/release/final-submission-checklist.md",
+    "docs/release/android-internal-testing-checklist.md",
+    "docs/release/store-listing-draft.md",
+    "docs/release/privacy-data-safety-draft.md"
+  ],
+  "historicalDocumentation": [
+    "docs/release/release-ops-readiness-2026-07-09.md",
+    "docs/release/prelaunch-report.md",
+    "docs/release/verification-2026-07-18.md",
+    "docs/release/rc-worktree-classification.md",
+    "docs/release/pre-contract-launch-plan.md"
+  ]
+}

@@ -211,7 +211,17 @@ interface TagDao {
 
     @Query(
         """
-        SELECT e.*
+        SELECT
+            e.id, e.originalUrl, e.normalizedUrl, e.displayUrl, e.openUrl, e.normalizedHost, e.rawSourceHost,
+            e.collectionId, e.serviceType, e.contentContext, e.userTitle, e.fetchedTitle, e.fetchedAuthorName,
+            SUBSTR(e.fetchedBody, 1, 512) AS fetchedBodyPreview, e.fetchedBodyKind,
+            SUBSTR(e.bodySummary, 1, 512) AS bodySummaryPreview,
+            SUBSTR(e.description, 1, 512) AS descriptionPreview,
+            SUBSTR(e.memo, 1, 512) AS memoPreview,
+            e.thumbnailUrl, e.badgeImageUrl, e.canonicalId, e.userLabelId,
+            e.localProvenanceCount, e.sharedReferenceCount, e.metadataState, e.metadataError,
+            e.metadataRequestedAt, e.metadataFetchedAt, e.recordState, e.createdAt, e.updatedAt,
+            e.archivedAt, e.pendingDeletionUntil
         FROM url_entries AS e
         INNER JOIN tag_url_cross_refs AS r ON r.entryId = e.id
         INNER JOIN tags AS t ON t.id = r.tagId
@@ -225,9 +235,10 @@ interface TagDao {
         ORDER BY r.createdAt DESC, e.createdAt DESC
         """
     )
-    fun observeEntriesForVisibleTag(tagId: Long, authUserId: String?): Flow<List<UrlEntryEntity>>
+    fun observeEntriesForVisibleTag(tagId: Long, authUserId: String?): Flow<List<UrlEntryListProjection>>
 
-    fun observeEntriesForTag(tagId: Long): Flow<List<UrlEntryEntity>> = observeEntriesForVisibleTag(tagId, null)
+    fun observeEntriesForTag(tagId: Long): Flow<List<UrlEntryListProjection>> =
+        observeEntriesForVisibleTag(tagId, null)
 
     @Query(
         """
@@ -315,6 +326,39 @@ interface TagDao {
         """
     )
     suspend fun getVisibleTagsForEntry(entryId: Long, authUserId: String?): List<SharedTagRecord>
+
+    @Query(
+        """
+        SELECT
+            r.entryId AS entryId,
+            t.id AS id,
+            t.name AS name,
+            t.scope AS scope,
+            t.authUserId AS authUserId,
+            t.remoteTagId AS remoteTagId,
+            t.syncStatus AS syncStatus,
+            me.role AS currentUserRole
+        FROM tags AS t
+        INNER JOIN tag_url_cross_refs AS r ON r.tagId = t.id
+        LEFT JOIN shared_tag_members AS me
+            ON me.tagId = t.id
+           AND me.authUserId = :authUserId
+           AND me.userId = :authUserId
+           AND me.status = 'ACTIVE'
+        WHERE r.entryId IN (:entryIds)
+          AND r.deletedAt IS NULL
+          AND t.deletedAt IS NULL
+          AND (
+            t.scope = 'LOCAL_ONLY'
+            OR (:authUserId IS NOT NULL AND t.scope = 'SYNCED' AND t.authUserId = :authUserId)
+          )
+        ORDER BY r.entryId ASC, t.name ASC
+        """
+    )
+    suspend fun getVisibleTagsForEntries(
+        entryIds: List<Long>,
+        authUserId: String?,
+    ): List<EntryVisibleTagRecord>
 
     @Query(
         """

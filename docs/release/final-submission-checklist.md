@@ -4,16 +4,19 @@
 2026-06-28 historical submission log; current source re-baseline added 2026-07-09.
 
 ## Goal
-この文書の下部に残る `1.0.11` の表は、2026-06-27/28 の Google Play / App Store 提出時点の履歴ログとして扱う。現在の repo source は Android `1.0.15 (versionCode=18)` / iOS `1.0.16 (build=18)` であり、この履歴ログだけでは次回提出可否を判断しない。
+この文書の下部に残る `1.0.11` の表は、2026-06-27/28 の Google Play / App Store 提出時点の履歴ログとして扱う。現在の repo source はmanifestと実ソースで照合し、この履歴ログだけでは次回提出可否を判断しない。
 
-## Current Source Snapshot (2026-07-26 current-main)
-- Android source: `versionName = "1.0.15"`, `versionCode = 18`, package `jp.miyamibu.urlalbum`.
-- iOS source: `CFBundleShortVersionString = 1.0.16`, `CFBundleVersion = 18`, bundle `com.mibu.codebridge.ios`.
-- Current release/ops readiness tracker: `docs/release/release-ops-readiness-2026-07-09.md`.
+## Current source snapshot (manifest-backed)
+- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.15`, `versionCode=19`
+- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.17`, `build=19`; share extension `com.mibu.codebridge.ios.share`
+- Supabase migration head: `20260804090000_default_all_users_to_pro.sql`
+- Machine-readable source: `docs/release/release-manifest.json`.
+- The dated provider and store records below are historical evidence and do not become current proof without a fresh recheck.
+- Current release/ops readiness tracker: `docs/release/launch-go-checklist.md`.
 - Current source gate remains `NO_GO_INTERNAL` for final submission. The 2026-07-18 manual ChatGPT handoff implementation, docs, tests, Release builds, pre-transfer confirmation, and disclosure source review are historical/local evidence; the physical-iPhone-to-ChatGPT-composer proof is not current-source proof. The hamburger-menu source change is integrated into `main`; Android physical E2E is not verified; Android AAB is unsigned; listed production deployment evidence is recorded below, while iOS distribution signing, store console state, sandbox purchase, OpenAI submission, production secrets, and full launch GO remain external/unverified.
 - AI-safe export, manual ChatGPT handoff, and MCP source contracts are tracked separately under `docs/ai/`. Manual handoff is local ZIP + OS share with no question/API/OAuth; those local docs do not mean production MCP deployment, production OAuth registration, OpenAI submission, store submission, production secret entry, or store/live recheck is complete.
-- The `1.0.11` store submission, public URL, screenshot, signing, and console rows below are not current proof for Android `1.0.15 (18)` / iOS `1.0.16 (18)`.
-- Rows below that say `DONE` are historical `1.0.11` evidence unless the row explicitly names the 2026-07-10 repo gate. Do not use them as `LAUNCH_GO` evidence for the current source snapshot without re-running the manual launch checklist.
+- The `1.0.11` store submission, public URL, screenshot, signing, and console rows below are historical evidence, not current proof for the manifest-backed source.
+- Rows below that say `DONE` are historical `1.0.11` evidence unless the row explicitly names a current repo gate. Do not use them as `LAUNCH_GO` evidence without re-running the manual launch checklist.
 
 ## Current-main / Production Deployment Evidence (2026-07-26)
 
@@ -52,7 +55,7 @@ The following records are a dated provider-state capture made while the applicat
 - Apple account deletion: apps with account creation must let users initiate deletion in app.
 
 ## Historical Release Mode Finding (2026-06-28)
-Historical `1.0.11` repo snapshot was aligned to cloud-enabled submission at that time. This is not proof that current `1.0.16 (18)` production secrets or external consoles have been rechecked.
+Historical `1.0.11` repo snapshot was aligned to cloud-enabled submission at that time. This is not proof that current `1.0.17 (19)` production secrets or external consoles have been rechecked.
 
 - Android release config had `release.shared.tag.cloud.enabled=true` and production Supabase values in local release configuration for that historical submission.
 - iOS Release build settings read `ios/Config/URLSaverSecrets.xcconfig` and showed `URLSAVER_SHARED_TAG_CLOUD_ENABLED=true` plus production Supabase/contact-support values for that historical submission.
@@ -132,7 +135,7 @@ The repo-side cloud-enabled alignment is fixed. Google Play and App Store Connec
 | Release keystore/upload key | DONE | Existing upload keystore under `/Users/mimac/.urlsaver-signing/` produced verified signed AAB. | Keep secret material outside repo/chat. |
 | Apple Developer Program / Team | DONE | Updated Apple Developer agreement was accepted by the account holder; App Store Connect accepted the `1.0.11 (11)` submission under Team ID `8R3B5675ZJ`. | Monitor App Review result. |
 | App Store Connect record/SKU | DONE | App Store Connect shows `りんばむ` app record, Apple ID `6771251450`; submission ID `428bdf26-5233-47e2-89a2-c3925f32994b` is `審査待ち`. | Monitor App Review result. |
-| Production Supabase | HISTORICAL_DONE_FOR_1.0.11 | Historical Android/iOS local release settings contained production Supabase values; values are intentionally not printed in this doc. Current `1.0.16 (18)` launch still requires owner-controlled secret entry and recheck. | Follow `docs/release/production-secrets-and-flags.md` before marking `LAUNCH_GO`. |
+| Production Supabase | HISTORICAL_DONE_FOR_1.0.11 | Historical Android/iOS local release settings contained production Supabase values; values are intentionally not printed in this doc. Current `1.0.17 (19)` launch still requires owner-controlled secret entry and recheck. | Follow `docs/release/production-secrets-and-flags.md` before marking `LAUNCH_GO`. |
 | Public HTTPS deployment | DONE_PUBLIC_VERIFIED | Vercel production deployment `dpl_GeSsSnoG2tUyNfkuAtgaHqtQrmBd` serves `https://miyamibu.xyz`; account-deletion, privacy, and `.well-known` checks passed in `./scripts/verify_public_web_release.sh` on 2026-07-26. | Re-run public URL verification after deployment or release-copy changes. |
 | Final release screenshots | PARTIAL | iOS cloud-enabled screenshot captured; Android AVD capture blocked internally. | Decide whether existing Play screenshots can remain or capture later on a working emulator/device. |
 | Chrome console automation | DONE | Chrome launched and Play Console/App Store Connect were reachable. Play production release `11 (1.0.11)` was submitted for review on 2026-06-27. App Store Connect `1.0.11 (11)` was submitted on 2026-06-28. | Monitor both store review results. |
@@ -150,7 +153,7 @@ The repo-side cloud-enabled alignment is fixed. Google Play and App Store Connec
 | Android screenshot set | MANUAL_STEP | Older release-equivalent screenshots with demo data are saved under `artifacts/store-assets/screenshots/2026-05-13/android/`, but they do not prove cloud-enabled `1.0.11`; AVD launch failed on 2026-06-27. |
 | iOS simulator build | DONE | Debug simulator build installed and launched on `URLSaverStoreShot-iOS26-5` on 2026-06-27 for cloud-enabled `1.0.11` screenshot capture. |
 | iOS tests | DONE | `xcodebuild ... test` passed on 2026-05-11. |
-| iOS release settings | HISTORICAL_DONE_FOR_1.0.11 | `xcodebuild ... -configuration Release -showBuildSettings` on 2026-06-27 reported `URLSAVER_SHARED_TAG_CLOUD_ENABLED=true` and production Supabase/contact-support values for the historical `1.0.11` submission. Current `1.0.16 (18)` launch requires a fresh owner recheck. |
+| iOS release settings | HISTORICAL_DONE_FOR_1.0.11 | `xcodebuild ... -configuration Release -showBuildSettings` on 2026-06-27 reported `URLSAVER_SHARED_TAG_CLOUD_ENABLED=true` and production Supabase/contact-support values for the historical `1.0.11` submission. Current `1.0.17 (19)` launch requires a fresh owner recheck. |
 | iOS release-style build | DONE | `xcodebuild ... -configuration Release -destination generic/platform=iOS CODE_SIGNING_ALLOWED=NO build` passed on 2026-06-27. |
 | iOS archive/export/upload | DONE | Archive `build/archives/URLSaveriOS-1.0.11-11-20260628-0644.xcarchive` uploaded successfully on 2026-06-28; App Store Connect submission `428bdf26-5233-47e2-89a2-c3925f32994b` is `審査待ち`. |
 | iOS screenshot | PARTIAL | A simulator screenshot was captured from a build with `SharedTagCloudEnabled=true`; the temporary artifact was intentionally left out of git. Full store screenshot set still needs approval if replacing screenshots. |

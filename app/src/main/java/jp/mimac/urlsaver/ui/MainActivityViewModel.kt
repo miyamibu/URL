@@ -443,6 +443,14 @@ class MainActivityViewModel(
         enqueueSnackbar(SnackbarEvent(kind = SnackbarEventKind.INFO, message = "メモを保存しました"))
     }
 
+    fun notifyTitleSaveFailed() {
+        enqueueSnackbar(SnackbarEvent(kind = SnackbarEventKind.INFO, message = "タイトルを保存できませんでした"))
+    }
+
+    fun notifyMemoSaveFailed() {
+        enqueueSnackbar(SnackbarEvent(kind = SnackbarEventKind.INFO, message = "メモを保存できませんでした"))
+    }
+
     fun notifyOpenFailed() {
         enqueueSnackbar(SnackbarEvent(kind = SnackbarEventKind.INFO, message = "リンクを開けませんでした"))
     }

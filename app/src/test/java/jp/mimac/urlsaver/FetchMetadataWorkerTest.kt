@@ -1,6 +1,7 @@
 package jp.mimac.urlsaver
 
 import android.content.Context
+import androidx.work.WorkerFactory
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.ListenableWorker
 import androidx.work.testing.TestListenableWorkerBuilder
@@ -11,7 +12,9 @@ import jp.mimac.urlsaver.domain.MetadataError
 import jp.mimac.urlsaver.domain.MetadataState
 import jp.mimac.urlsaver.worker.FetchOutcome
 import jp.mimac.urlsaver.worker.FetchMetadataWorker
+import jp.mimac.urlsaver.worker.MetadataFetcher
 import jp.mimac.urlsaver.worker.resolveFetchOutcome
+import jp.mimac.urlsaver.util.SystemAppClock
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -216,7 +219,22 @@ class FetchMetadataWorkerTest {
         runAttemptCount: Int,
     ): FetchMetadataWorker {
         return TestListenableWorkerBuilder<FetchMetadataWorker>(context)
-            .setWorkerFactory((context as UrlSaverApp).container.workerFactory)
+            .setWorkerFactory(object : WorkerFactory() {
+                override fun createWorker(
+                    appContext: Context,
+                    workerClassName: String,
+                    workerParameters: androidx.work.WorkerParameters,
+                ): ListenableWorker? {
+                    if (workerClassName != FetchMetadataWorker::class.qualifiedName) return null
+                    return FetchMetadataWorker(
+                        appContext = appContext,
+                        workerParams = workerParameters,
+                        repository = (context as UrlSaverApp).container.repository,
+                        fetcher = MetadataFetcher(allowLocalTestUrls = true),
+                        clock = SystemAppClock,
+                    )
+                }
+            })
             .setInputData(workDataOf(MetadataWorkScheduler.KEY_ENTRY_ID to entryId))
             .setRunAttemptCount(runAttemptCount)
             .build()

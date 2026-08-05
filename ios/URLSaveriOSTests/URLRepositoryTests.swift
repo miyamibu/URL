@@ -35,6 +35,31 @@ final class URLRepositoryTests: XCTestCase {
         XCTAssertEqual(duplicateArchived.entryID, created.entryID)
     }
 
+    func testConcurrentRepositoriesMapSameNormalizedURLToOneEntry() async throws {
+        let repositories = try (0..<8).map { _ in
+            try URLRepository(databaseURL: databaseURL)
+        }
+
+        let results = try await withThrowingTaskGroup(of: SaveResult.self, returning: [SaveResult].self) { group in
+            for repository in repositories {
+                group.addTask {
+                    try repository.saveFromResolvedURL("HTTPS://Example.COM:443/concurrent-save/#fragment")
+                }
+            }
+
+            var results: [SaveResult] = []
+            for try await result in group {
+                results.append(result)
+            }
+            return results
+        }
+
+        XCTAssertEqual(results.filter { $0.result == .created }.count, 1)
+        XCTAssertEqual(results.filter { $0.result == .duplicateActive }.count, 7)
+        XCTAssertEqual(Set(results.compactMap(\.entryID)).count, 1)
+        XCTAssertEqual(try repository.observeActiveSnapshot().count, 1)
+    }
+
     func testManualInputUppercaseSchemeAndDefaultPortDeduplicates() throws {
         let created = try repository.saveFromManualInput("HTTPS://Example.COM:443/manual-normalize/#frag")
         XCTAssertEqual(created.result, .created)
@@ -97,6 +122,39 @@ final class URLRepositoryTests: XCTestCase {
         XCTAssertEqual(entry.fetchedBodyKind, .webExcerpt)
         XCTAssertEqual(entry.bodySummary, "投稿メモのタイトル")
         XCTAssertEqual(entry.metadataState, .ready)
+    }
+
+    func testListSnapshotBoundsBodyDetailLoadsFullBodyAndSearchUsesDatabase() throws {
+        let created = try repository.saveFromManualInput("https://example.com/list-projection")
+        let entryID = try XCTUnwrap(created.entryID)
+        let body = "prefix-" + String(repeating: "x", count: 700) + "-deep-search-marker"
+
+        try repository.applyMetadataUpdate(
+            entryID: entryID,
+            metadata: MetadataUpdate(
+                fetchedTitle: "title",
+                fetchedBody: body,
+                fetchedBodyKind: .webExcerpt,
+                bodySummary: "summary",
+                description: "description",
+                thumbnailURL: nil,
+                badgeImageURL: nil,
+                metadataState: .ready,
+                metadataFetchedAt: Date(timeIntervalSince1970: 500),
+                metadataError: nil,
+                canonicalID: nil,
+                normalizedHost: nil,
+                rawSourceHost: nil
+            )
+        )
+
+        let listEntry = try XCTUnwrap(repository.observeActiveSnapshot().first { $0.id == entryID })
+        XCTAssertNil(listEntry.fetchedBody)
+        XCTAssertEqual(listEntry.bodyPreview?.count, 512)
+
+        let detailEntry = try XCTUnwrap(repository.loadEntry(id: entryID))
+        XCTAssertEqual(detailEntry.fetchedBody, body)
+        XCTAssertTrue(try repository.searchEntryIDs(query: "deep-search-marker", recordState: .active).contains(entryID))
     }
 
     func testLegacyCollectionSchemaAndDefaultDecodeRemain() throws {

@@ -39,6 +39,8 @@ import jp.mimac.urlsaver.domain.ApplySharedTagOpsResponse
 import jp.mimac.urlsaver.domain.ContentContext
 import jp.mimac.urlsaver.domain.CreateTagResult
 import jp.mimac.urlsaver.domain.CreateSharedTagInviteResponse
+import jp.mimac.urlsaver.domain.DefaultEntitlementResolver
+import jp.mimac.urlsaver.domain.LaunchStandardPlan
 import jp.mimac.urlsaver.domain.PreviewSharedTagInviteResponse
 import jp.mimac.urlsaver.domain.MetadataState
 import jp.mimac.urlsaver.domain.PullSharedTagSnapshotResponse
@@ -60,6 +62,8 @@ import jp.mimac.urlsaver.domain.SaveResult
 import jp.mimac.urlsaver.domain.ShareSaveResult
 import jp.mimac.urlsaver.ui.CreateAndAssignTagResult
 import jp.mimac.urlsaver.ui.DetailViewModel
+import jp.mimac.urlsaver.ui.SaveMemoUiResult
+import jp.mimac.urlsaver.ui.SaveTitleUiResult
 import jp.mimac.urlsaver.util.AppClock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -139,6 +143,9 @@ class TagRepositoryTest {
                 urlEntryDao = db.urlEntryDao(),
                 tagDao = db.tagDao(),
                 authSessionProvider = authProvider,
+                entitlementResolver = DefaultEntitlementResolver(
+                    defaultEntitlements = LaunchStandardPlan.entitlements,
+                ),
             ),
             aiLocalDataClearer = aiLocalDataClearer,
             localAccountCleanupStore = localAccountCleanupStore,
@@ -423,6 +430,23 @@ class TagRepositoryTest {
     }
 
     @Test
+    fun detailViewModel_saveFailuresRemainExplicitForRetryableUi() = runBlocking {
+        val entryId = insertEntry(
+            url = "https://example.com/detail-save-failure",
+            createdAt = 2_050L,
+        )
+        val viewModel = DetailViewModel(
+            entryId = entryId,
+            repository = FakeUrlRepository(),
+            tagRepository = repository,
+            videoRepository = FakeVideoRepository(),
+        )
+
+        assertEquals(SaveTitleUiResult.Failed, viewModel.saveTitle("保存失敗"))
+        assertEquals(SaveMemoUiResult.Failed, viewModel.saveMemo("保存失敗"))
+    }
+
+    @Test
     fun localTagDuplicateAndAlreadyAssignedResults_areExplicit() = runBlocking {
         val entryId = insertEntry(
             url = "https://example.com/detail-existing-local",
@@ -443,14 +467,14 @@ class TagRepositoryTest {
     }
 
     @Test
-    fun createTagWithResult_blocksAtNormalTagLimit() = runBlocking {
+    fun createTagWithResult_allowsBeyondLegacyNormalTagLimit() = runBlocking {
         repeat(10) { index ->
             val result = repository.createTagWithResult("local-limit-$index")
             assertTrue(result is CreateTagResult.Success)
         }
 
-        val blocked = repository.createTagWithResult("local-limit-over")
-        assertTrue(blocked is CreateTagResult.LimitReached)
+        val created = repository.createTagWithResult("local-limit-over")
+        assertTrue(created is CreateTagResult.Success)
     }
 
     @Test

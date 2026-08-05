@@ -4,7 +4,7 @@ create schema if not exists extensions;
 create extension if not exists pgtap with schema extensions;
 
 begin;
-select extensions.plan(13);
+select extensions.plan(17);
 
 select extensions.ok(
     to_regprocedure('public.admin_list_users(text,text,integer,integer)') is not null,
@@ -37,9 +37,17 @@ select extensions.ok(
     'directory list is a controlled security-definer boundary'
 );
 
+select extensions.ok(
+    has_table_privilege('service_role', 'public.admin_audit_logs', 'select')
+    and has_table_privilege('service_role', 'public.shared_content_reports', 'select'),
+    'admin operational read tables are readable by service role'
+);
+
 do $$
 declare
     fixture_user_id uuid := gen_random_uuid();
+    shared_profile_user_id uuid := gen_random_uuid();
+    metadata_user_id uuid := gen_random_uuid();
 begin
     insert into auth.users (id, email, created_at, last_sign_in_at)
     values (fixture_user_id, 'directory-fixture@example.invalid', now() - interval '2 days', now() - interval '1 hour');
@@ -49,6 +57,17 @@ begin
 
     insert into public.user_entitlement_grants (user_id, plan, source, starts_at, expires_at, status)
     values (fixture_user_id, 'pro', 'admin_grant', now() - interval '1 day', now() + interval '30 days', 'active');
+
+    insert into auth.users (id, email, created_at)
+    values (gen_random_uuid(), 'directory-default-pro@example.invalid', now());
+
+    insert into auth.users (id, email, raw_user_meta_data)
+    values
+        (shared_profile_user_id, 'directory-shared-name@example.invalid', '{"full_name":"Metadata Should Not Win"}'::jsonb),
+        (metadata_user_id, 'directory-metadata-name@example.invalid', '{"full_name":"Metadata Fixture"}'::jsonb);
+
+    insert into public.shared_user_profiles (user_id, display_name)
+    values (shared_profile_user_id, 'Shared Profile Fixture');
 end
 $$;
 
@@ -62,6 +81,24 @@ select extensions.is(
     (select current_plan from public.admin_list_users('Directory Fixture', 'active', 50, 0) limit 1),
     'pro',
     'directory search joins profile and active plan'
+);
+
+select extensions.is(
+    (select current_plan from public.admin_list_users('directory-default-pro@example.invalid', null, 50, 0) limit 1),
+    'pro',
+    'directory reports users without a grant as Pro'
+);
+
+select extensions.is(
+    (select display_name from public.admin_list_users('Shared Profile Fixture', 'active', 50, 0) limit 1),
+    'Shared Profile Fixture',
+    'directory uses and searches the shared profile name before auth metadata'
+);
+
+select extensions.is(
+    (select display_name from public.admin_list_users('Metadata Fixture', 'active', 50, 0) limit 1),
+    'Metadata Fixture',
+    'directory falls back to and searches auth metadata name'
 );
 
 select extensions.is(

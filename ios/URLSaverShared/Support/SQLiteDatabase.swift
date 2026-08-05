@@ -1,20 +1,59 @@
 import Foundation
 import SQLite3
 
-enum RepositoryError: Error {
+enum RepositoryError: Error, LocalizedError, Sendable {
     case openDatabase(String)
     case sqlite(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .openDatabase(let message), .sqlite(let message):
+            return message
+        }
+    }
+
+    var isUniqueConstraint: Bool {
+        guard case .sqlite(let message) = self else { return false }
+        let normalized = message.lowercased()
+        return normalized.contains("unique constraint failed") ||
+            normalized.contains("constraint failed") && normalized.contains("unique")
+    }
 }
 
 final class SQLiteDatabase: @unchecked Sendable {
     private let databaseURL: URL
+    private let unavailableError: RepositoryError?
     private var db: OpaquePointer?
     private let lock = NSRecursiveLock()
 
     init(databaseURL: URL) throws {
         self.databaseURL = databaseURL
-        try open()
-        try configureConnection()
+        self.unavailableError = nil
+        do {
+            try open()
+            try configureConnection()
+        } catch {
+            sqlite3_close(db)
+            db = nil
+            throw error
+        }
+    }
+
+    private init(databaseURL: URL, unavailableError: RepositoryError) {
+        self.databaseURL = databaseURL
+        self.unavailableError = unavailableError
+        self.db = nil
+    }
+
+    static func unavailable(databaseURL: URL, message: String) -> SQLiteDatabase {
+        SQLiteDatabase(
+            databaseURL: databaseURL,
+            unavailableError: .openDatabase(message)
+        )
+    }
+
+    var isAvailable: Bool {
+        unavailableError == nil && db != nil
     }
 
     deinit {
@@ -23,6 +62,7 @@ final class SQLiteDatabase: @unchecked Sendable {
 
     func execute(_ sql: String, binds: [SQLiteValue] = []) throws {
         try lock.withLock {
+            try ensureAvailable()
             let statement = try prepare(sql: sql)
             defer { sqlite3_finalize(statement) }
             try bind(binds, to: statement)
@@ -32,6 +72,7 @@ final class SQLiteDatabase: @unchecked Sendable {
 
     func insert(_ sql: String, binds: [SQLiteValue] = []) throws -> Int64 {
         try lock.withLock {
+            try ensureAvailable()
             let statement = try prepare(sql: sql)
             defer { sqlite3_finalize(statement) }
             try bind(binds, to: statement)
@@ -42,6 +83,7 @@ final class SQLiteDatabase: @unchecked Sendable {
 
     func executeBatch(_ sql: String) throws {
         try lock.withLock {
+            try ensureAvailable()
             try exec(sql)
         }
     }
@@ -52,6 +94,7 @@ final class SQLiteDatabase: @unchecked Sendable {
         decode: (OpaquePointer?) throws -> T
     ) throws -> [T] {
         try lock.withLock {
+            try ensureAvailable()
             let statement = try prepare(sql: sql)
             defer { sqlite3_finalize(statement) }
             try bind(binds, to: statement)
@@ -77,6 +120,7 @@ final class SQLiteDatabase: @unchecked Sendable {
         decode: (OpaquePointer?) throws -> T
     ) throws -> T? {
         try lock.withLock {
+            try ensureAvailable()
             let statement = try prepare(sql: sql)
             defer { sqlite3_finalize(statement) }
             try bind(binds, to: statement)
@@ -130,6 +174,7 @@ final class SQLiteDatabase: @unchecked Sendable {
 
     func transaction<T>(_ body: () throws -> T) throws -> T {
         try lock.withLock {
+            try ensureAvailable()
             try exec("BEGIN IMMEDIATE;")
             do {
                 let result = try body()
@@ -152,7 +197,10 @@ final class SQLiteDatabase: @unchecked Sendable {
             withIntermediateDirectories: true
         )
         if sqlite3_open(databaseURL.path, &db) != SQLITE_OK {
-            throw RepositoryError.openDatabase(lastErrorMessage())
+            let message = lastErrorMessage()
+            sqlite3_close(db)
+            db = nil
+            throw RepositoryError.openDatabase(message)
         }
     }
 
@@ -163,6 +211,7 @@ final class SQLiteDatabase: @unchecked Sendable {
     }
 
     private func prepare(sql: String) throws -> OpaquePointer? {
+        try ensureAvailable()
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
             throw RepositoryError.sqlite(lastErrorMessage())
@@ -225,7 +274,19 @@ final class SQLiteDatabase: @unchecked Sendable {
         if let db, let cString = sqlite3_errmsg(db) {
             return String(cString: cString)
         }
+        if let unavailableError {
+            return unavailableError.localizedDescription
+        }
         return "Unknown SQLite error"
+    }
+
+    private func ensureAvailable() throws {
+        if let unavailableError {
+            throw unavailableError
+        }
+        guard db != nil else {
+            throw RepositoryError.openDatabase("SQLite database is not open")
+        }
     }
 
     private static let maxBusyRetryCount = 4

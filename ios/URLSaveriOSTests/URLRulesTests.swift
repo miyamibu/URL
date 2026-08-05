@@ -25,6 +25,30 @@ final class URLRulesTests: XCTestCase {
         )
     }
 
+    func testNormalizeMatchesSharedContractVectors() throws {
+        let fixtureURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("contracts/shared-tag-sync/url-normalization-v1.json")
+        let vectors = try JSONDecoder().decode(
+            [URLNormalizationVector].self,
+            from: Data(contentsOf: fixtureURL)
+        )
+
+        XCTAssertEqual(URLRules.normalizationContractVersion, sharedTagNormalizationVersion)
+        for vector in vectors {
+            let parsed = URLRules.parseURL(vector.input)
+            XCTAssertEqual(
+                URLRules.normalize(vector.input),
+                vector.expectedNormalizedURL,
+                vector.input
+            )
+            XCTAssertEqual(parsed?.normalizedURL, vector.expectedNormalizedURL, vector.input)
+            XCTAssertEqual(parsed?.openURL, vector.expectedNormalizedURL, vector.input)
+        }
+    }
+
     func testDisplayURLKeepsOnlyYouTubeVQuery() {
         let display = URLRules.toDisplayURL(
             normalizedURL: "https://www.youtube.com/watch?v=abc123&t=9",
@@ -138,13 +162,13 @@ final class URLRulesTests: XCTestCase {
         XCTAssertEqual(URLRules.extractFromCandidateGroups(groups), .inputTooLarge)
     }
 
-    func testEntitlementResolverFallsBackWithoutGrant() {
+    func testEntitlementResolverFallsBackToProWithoutGrant() {
         let resolver = EntitlementResolver(grantsProvider: { [] })
 
         let resolved = resolver.resolve(at: Date(timeIntervalSince1970: 1_000))
 
-        XCTAssertEqual(resolved.planType, .launchStandard)
-        XCTAssertEqual(resolved.limits.personalURLLimit, 200)
+        XCTAssertEqual(resolved.planType, .pro)
+        XCTAssertEqual(resolved.limits.personalURLLimit, 10_000)
     }
 
     func testEntitlementResolverReturnsProForActiveGrant() {
@@ -195,7 +219,7 @@ final class URLRulesTests: XCTestCase {
 
         let resolved = resolver.resolve(at: now)
 
-        XCTAssertEqual(resolved.planType, .launchStandard)
+        XCTAssertEqual(resolved.planType, .pro)
     }
 
     func testEntitlementResolverUsesHighestPlanPriority() {
@@ -219,6 +243,42 @@ final class URLRulesTests: XCTestCase {
         let resolved = resolver.resolve(at: Date(timeIntervalSince1970: 1_000))
 
         XCTAssertEqual(resolved.planType, .pro)
+    }
+
+    func testEntitlementResolverDefaultsToPro() {
+        let planType = EntitlementResolver().resolve().planType
+
+        XCTAssertEqual(planType, .pro)
+        XCTAssertTrue(planType.isPaidCourse)
+    }
+
+    func testEntitlementResolverDoesNotDowngradeProDefault() {
+        let resolver = EntitlementResolver(
+            grantsProvider: {
+                [
+                    EntitlementGrant(
+                        planType: .free,
+                        source: .adminGrant,
+                        startsAt: Date(timeIntervalSince1970: 0)
+                    )
+                ]
+            }
+        )
+
+        XCTAssertEqual(resolver.resolve(at: Date(timeIntervalSince1970: 1_000)).planType, .pro)
+    }
+
+    func testLimitCheckerAllowsUnlimitedNormalTagsForEveryPlan() {
+        let result = LimitChecker(entitlements: FreePlan.entitlements).checkCanCreateNormalTag(
+            UsageSummary(
+                personalURLCount: 0,
+                normalTagCount: .max,
+                sharedTagCount: 0,
+                sharedTagUsages: []
+            )
+        )
+
+        XCTAssertEqual(result, .allowed)
     }
 
     func testLimitCheckerMatchesLaunchStandardLimits() {
@@ -309,5 +369,15 @@ final class URLRulesTests: XCTestCase {
     func testSupabaseEntitlementTimestampParserAcceptsFractionalSeconds() {
         XCTAssertNotNil(parseSupabaseISO8601Date("2026-05-01T04:05:06.789123Z"))
         XCTAssertNotNil(parseSupabaseISO8601Date("2026-05-01T04:05:06Z"))
+    }
+}
+
+private struct URLNormalizationVector: Decodable {
+    let input: String
+    let expectedNormalizedURL: String?
+
+    enum CodingKeys: String, CodingKey {
+        case input
+        case expectedNormalizedURL = "expectedNormalizedUrl"
     }
 }

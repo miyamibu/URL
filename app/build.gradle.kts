@@ -109,12 +109,12 @@ if (releaseBuildRequested && releaseLocalMediaDownloadsEnabled && !mediaResolver
 
 android {
     namespace = "jp.mimac.urlsaver"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "jp.miyamibu.urlalbum"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 19
         versionName = "1.0.15"
 
@@ -129,7 +129,6 @@ android {
             buildConfigField("String", "ADMOB_APP_ID", buildConfigString("ca-app-pub-3940256099942544~3347511713"))
             buildConfigField("String", "ADMOB_BANNER_AD_UNIT_ID", buildConfigString("ca-app-pub-3940256099942544/9214589741"))
             buildConfigField("String", "ADMOB_INTERSTITIAL_AD_UNIT_ID", buildConfigString("ca-app-pub-3940256099942544/1033173712"))
-            buildConfigField("String", "INSTAGRAM_OEMBED_ACCESS_TOKEN", buildConfigString(configString("instagram.oembed.access.token", "URLSAVER_INSTAGRAM_OEMBED_ACCESS_TOKEN")))
             buildConfigField("boolean", "SHARED_TAG_CLOUD_ENABLED", configBoolean("shared.tag.cloud.enabled", "URLSAVER_SHARED_TAG_CLOUD_ENABLED").toString())
             buildConfigField("String", "SUPABASE_URL", buildConfigString(debugSupabaseUrl))
             buildConfigField("String", "SUPABASE_ANON_KEY", buildConfigString(debugSupabaseAnonKey))
@@ -147,7 +146,6 @@ android {
             buildConfigField("String", "ADMOB_APP_ID", buildConfigString(""))
             buildConfigField("String", "ADMOB_BANNER_AD_UNIT_ID", buildConfigString(""))
             buildConfigField("String", "ADMOB_INTERSTITIAL_AD_UNIT_ID", buildConfigString(""))
-            buildConfigField("String", "INSTAGRAM_OEMBED_ACCESS_TOKEN", buildConfigString(configString("instagram.oembed.access.token", "URLSAVER_INSTAGRAM_OEMBED_ACCESS_TOKEN")))
             buildConfigField("boolean", "SHARED_TAG_CLOUD_ENABLED", releaseSharedTagCloudEnabled.toString())
             buildConfigField("String", "SUPABASE_URL", buildConfigString(releaseSupabaseUrl))
             buildConfigField("String", "SUPABASE_ANON_KEY", buildConfigString(releaseSupabaseAnonKey))
@@ -228,7 +226,7 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("androidx.test:core:1.7.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
-    testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation("org.robolectric:robolectric:4.16")
     testImplementation("androidx.room:room-testing:2.6.1")
     testImplementation("androidx.work:work-testing:2.9.1")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")

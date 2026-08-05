@@ -13,11 +13,14 @@ import jp.mimac.urlsaver.domain.ServiceType
 import jp.mimac.urlsaver.domain.ShareSaveResult
 import jp.mimac.urlsaver.domain.TagWithCount
 import jp.mimac.urlsaver.ui.filterEntriesBySearch
+import jp.mimac.urlsaver.ui.ListFilterLoadState
 import jp.mimac.urlsaver.ui.MainListViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -207,11 +210,44 @@ class MainListViewModelTest {
         assertEquals(listOf(2L), result.map { it.id })
     }
 
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun activeEntries_errorPreservesCachedEntries_andRetryRecovers() = runTest {
+        val cached = entry(id = 41L, serviceType = ServiceType.WEB, collectionId = 1L)
+        val recovered = entry(id = 42L, serviceType = ServiceType.YOUTUBE, collectionId = 1L)
+        val repository = FakeRepository().apply {
+            activeEntries.value = listOf(cached)
+        }
+        val viewModel = MainListViewModel(repository, FakeDisplayModeStore())
+        advanceUntilIdle()
+
+        assertEquals(ListFilterLoadState.Content, viewModel.uiState.value.loadState)
+        assertEquals(listOf(cached.id), viewModel.uiState.value.entries.map { it.id })
+
+        repository.activeEntriesFlow = flow {
+            emit(listOf(cached))
+            throw IllegalStateException("test failure")
+        }
+        viewModel.retryLoading()
+        advanceUntilIdle()
+
+        assertTrue(viewModel.uiState.value.loadState is ListFilterLoadState.Error)
+        assertEquals(listOf(cached.id), viewModel.uiState.value.entries.map { it.id })
+
+        repository.activeEntriesFlow = flowOf(listOf(recovered))
+        viewModel.retryLoading()
+        advanceUntilIdle()
+
+        assertEquals(ListFilterLoadState.Content, viewModel.uiState.value.loadState)
+        assertEquals(listOf(recovered.id), viewModel.uiState.value.entries.map { it.id })
+    }
+
     private class FakeRepository : MainListRepository {
         val archiveCalls = mutableListOf<Long>()
         val pendingDeleteCalls = mutableListOf<Long>()
         val manualInputCalls = mutableListOf<String>()
         val activeEntries = MutableStateFlow<List<UrlEntryEntity>>(emptyList())
+        var activeEntriesFlow: Flow<List<UrlEntryEntity>> = activeEntries
         val localTagEntryRefs = MutableStateFlow<List<LocalTagEntryRef>>(emptyList())
         val archiveResultsById = mutableMapOf<Long, Boolean>()
         val pendingDeleteResultsById = mutableMapOf<Long, Long?>()
@@ -219,7 +255,7 @@ class MainListViewModelTest {
         var pendingDeleteResult: Long? = null
         var manualSaveResult: SaveResult = SaveResult(ShareSaveResult.SAVE_FAILED)
 
-        override fun observeActiveEntries(): Flow<List<UrlEntryEntity>> = activeEntries
+        override fun observeActiveEntries(): Flow<List<UrlEntryEntity>> = activeEntriesFlow
         override fun observeLocalTagEntryRefs(): Flow<List<LocalTagEntryRef>> = localTagEntryRefs
 
         override suspend fun saveFromManualInput(input: String): SaveResult {
