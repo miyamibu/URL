@@ -18,7 +18,7 @@
   },
   "supabase": {
     "migrationDirectory": "supabase/migrations",
-    "migrationHead": "20260731100000_restore_shared_url_normalization_v1.sql"
+    "migrationHead": "20260804090000_default_all_users_to_pro.sql"
   },
   "currentDocumentation": [
     "docs/release/repo-go-evidence.md",

@@ -162,13 +162,13 @@ final class URLRulesTests: XCTestCase {
         XCTAssertEqual(URLRules.extractFromCandidateGroups(groups), .inputTooLarge)
     }
 
-    func testEntitlementResolverFallsBackWithoutGrant() {
+    func testEntitlementResolverFallsBackToProWithoutGrant() {
         let resolver = EntitlementResolver(grantsProvider: { [] })
 
         let resolved = resolver.resolve(at: Date(timeIntervalSince1970: 1_000))
 
-        XCTAssertEqual(resolved.planType, .launchStandard)
-        XCTAssertEqual(resolved.limits.personalURLLimit, 200)
+        XCTAssertEqual(resolved.planType, .pro)
+        XCTAssertEqual(resolved.limits.personalURLLimit, 10_000)
     }
 
     func testEntitlementResolverReturnsProForActiveGrant() {
@@ -219,7 +219,7 @@ final class URLRulesTests: XCTestCase {
 
         let resolved = resolver.resolve(at: now)
 
-        XCTAssertEqual(resolved.planType, .launchStandard)
+        XCTAssertEqual(resolved.planType, .pro)
     }
 
     func testEntitlementResolverUsesHighestPlanPriority() {
@@ -243,6 +243,42 @@ final class URLRulesTests: XCTestCase {
         let resolved = resolver.resolve(at: Date(timeIntervalSince1970: 1_000))
 
         XCTAssertEqual(resolved.planType, .pro)
+    }
+
+    func testEntitlementResolverDefaultsToPro() {
+        let planType = EntitlementResolver().resolve().planType
+
+        XCTAssertEqual(planType, .pro)
+        XCTAssertTrue(planType.isPaidCourse)
+    }
+
+    func testEntitlementResolverDoesNotDowngradeProDefault() {
+        let resolver = EntitlementResolver(
+            grantsProvider: {
+                [
+                    EntitlementGrant(
+                        planType: .free,
+                        source: .adminGrant,
+                        startsAt: Date(timeIntervalSince1970: 0)
+                    )
+                ]
+            }
+        )
+
+        XCTAssertEqual(resolver.resolve(at: Date(timeIntervalSince1970: 1_000)).planType, .pro)
+    }
+
+    func testLimitCheckerAllowsUnlimitedNormalTagsForEveryPlan() {
+        let result = LimitChecker(entitlements: FreePlan.entitlements).checkCanCreateNormalTag(
+            UsageSummary(
+                personalURLCount: 0,
+                normalTagCount: .max,
+                sharedTagCount: 0,
+                sharedTagUsages: []
+            )
+        )
+
+        XCTAssertEqual(result, .allowed)
     }
 
     func testLimitCheckerMatchesLaunchStandardLimits() {

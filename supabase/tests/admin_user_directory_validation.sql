@@ -4,7 +4,7 @@ create schema if not exists extensions;
 create extension if not exists pgtap with schema extensions;
 
 begin;
-select extensions.plan(13);
+select extensions.plan(14);
 
 select extensions.ok(
     to_regprocedure('public.admin_list_users(text,text,integer,integer)') is not null,
@@ -49,6 +49,9 @@ begin
 
     insert into public.user_entitlement_grants (user_id, plan, source, starts_at, expires_at, status)
     values (fixture_user_id, 'pro', 'admin_grant', now() - interval '1 day', now() + interval '30 days', 'active');
+
+    insert into auth.users (id, email, created_at)
+    values (gen_random_uuid(), 'directory-default-pro@example.invalid', now());
 end
 $$;
 
@@ -62,6 +65,12 @@ select extensions.is(
     (select current_plan from public.admin_list_users('Directory Fixture', 'active', 50, 0) limit 1),
     'pro',
     'directory search joins profile and active plan'
+);
+
+select extensions.is(
+    (select current_plan from public.admin_list_users('directory-default-pro@example.invalid', null, 50, 0) limit 1),
+    'pro',
+    'directory reports users without a grant as Pro'
 );
 
 select extensions.is(

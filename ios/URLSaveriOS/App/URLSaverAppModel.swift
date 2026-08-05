@@ -205,7 +205,7 @@ final class URLSaverAppModel: ObservableObject {
     @Published var pendingPromoCode: String?
     @Published var inviteConfirmationToken: String?
     @Published private(set) var sharedTagCloudState = SharedTagCloudState(isConfigured: false, isSignedIn: false, signedInEmail: nil)
-    @Published private(set) var entitlements: FeatureEntitlements = LaunchStandardPlan.entitlements
+    @Published private(set) var entitlements: FeatureEntitlements = ProPlan.entitlements
     @Published private(set) var sharedTags: [SharedTagSummary] = []
     @Published private(set) var sharedTagGroups: [SharedTagGroupSummary] = []
     @Published private(set) var localTags: [LocalTagSummary] = []

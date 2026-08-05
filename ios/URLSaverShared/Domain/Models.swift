@@ -26,6 +26,10 @@ enum PlanType: String, Codable, CaseIterable, Sendable {
     case standard
     case pro
     case promoPro = "promo_pro"
+
+    var isPaidCourse: Bool {
+        self == .standard || self == .pro || self == .promoPro
+    }
 }
 
 enum BillingPeriod: String, Codable, CaseIterable, Sendable {
@@ -177,13 +181,8 @@ struct LimitChecker: Sendable {
         return .allowed
     }
 
-    func checkCanCreateNormalTag(_ usage: UsageSummary) -> LimitResult {
-        if usage.normalTagCount >= limits.normalTagLimit {
-            return .blocked(
-                target: .normalTag,
-                message: "通常タグは\(planLabel)では\(limits.normalTagLimit)個まで作成できます。"
-            )
-        }
+    func checkCanCreateNormalTag(_: UsageSummary) -> LimitResult {
+        // 自作タグは現在、プランや利用数にかかわらず無制限で作成できる。
         return .allowed
     }
 
@@ -373,7 +372,7 @@ struct EntitlementResolver: EntitlementResolving {
     let grantsProvider: @Sendable () -> [EntitlementGrant]
 
     init(
-        defaultEntitlements: FeatureEntitlements = LaunchStandardPlan.entitlements,
+        defaultEntitlements: FeatureEntitlements = ProPlan.entitlements,
         grantsProvider: @escaping @Sendable () -> [EntitlementGrant] = { [] }
     ) {
         self.defaultEntitlements = defaultEntitlements
@@ -384,7 +383,8 @@ struct EntitlementResolver: EntitlementResolving {
         guard let grant = grantsProvider()
             .filter({ $0.isActive(at: date) })
             .sorted(by: Self.grantSort)
-            .first
+            .first,
+              grant.planType.priority <= defaultEntitlements.planType.priority
         else {
             return defaultEntitlements
         }

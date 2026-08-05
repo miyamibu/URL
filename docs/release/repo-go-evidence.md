@@ -6,7 +6,7 @@ Final status: REPO_GO (Apple submitted / Google Play upload blocked by signing)
 
 - Android: `jp.miyamibu.urlalbum`, `versionName=1.0.15`, `versionCode=19`
 - iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.17`, `build=19`; share extension `com.mibu.codebridge.ios.share`
-- Supabase migration head: `20260731100000_restore_shared_url_normalization_v1.sql`
+- Supabase migration head: `20260804090000_default_all_users_to_pro.sql`
 - Machine-readable source: `docs/release/release-manifest.json`
 
 > Dated provider, store, and device captures below are historical evidence unless they are explicitly re-run for the current source. They must not be treated as current proof solely because they appear in this document.

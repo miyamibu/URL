@@ -825,9 +825,13 @@ struct SharedTagCloudSheet: View {
                 .foregroundStyle(AppPalette.textSecondary)
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                paidCourseButton(title: "Standard 月額", plan: .standard, period: .monthly)
+                if !model.entitlements.planType.isPaidCourse {
+                    paidCourseButton(title: "Standard 月額", plan: .standard, period: .monthly)
+                }
                 paidCourseButton(title: "Standard 年払い", plan: .standard, period: .yearly)
-                paidCourseButton(title: "Pro 月額", plan: .pro, period: .monthly)
+                if !model.entitlements.planType.isPaidCourse {
+                    paidCourseButton(title: "Pro 月額", plan: .pro, period: .monthly)
+                }
                 paidCourseButton(title: "Pro 年払い", plan: .pro, period: .yearly)
             }
         }
