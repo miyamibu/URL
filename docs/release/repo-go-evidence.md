@@ -1,10 +1,10 @@
 # REPO_GO Evidence
 
-Final status: REPO_GO (Apple 1.0.17 public / Google Play 1.0.15 fully public / Android 1.0.16 submitted for full production release)
+Final status: REPO_GO (Apple 1.0.17 public / Google Play 1.0.15 fully public / Android 1.0.17 release candidate prepared)
 
 ## Current source snapshot (manifest-backed)
 
-- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.16`, `versionCode=20`
+- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.17`, `versionCode=21`
 - iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.17`, `build=19`; share extension `com.mibu.codebridge.ios.share`
 - Supabase migration head: `20260804090000_default_all_users_to_pro.sql`
 - Machine-readable source: `docs/release/release-manifest.json`
@@ -13,7 +13,18 @@ Final status: REPO_GO (Apple 1.0.17 public / Google Play 1.0.15 fully public / A
 
 ## Current working-tree status: REPO_GO (external release gates remain separate)
 
-The historical evidence below is retained. The current release candidate baseline is Android `versionName=1.0.16` / `versionCode=20` and iOS `CFBundleShortVersionString=1.0.17` / `CFBundleVersion=19`. Android v20 production submission and Play Console evidence were refreshed on 2026-08-05. iOS 1.0.17 is publicly available. OpenAI submission and production secret entry remain separate gates.
+The historical evidence below is retained. The current release candidate baseline is Android `versionName=1.0.17` / `versionCode=21` and iOS `CFBundleShortVersionString=1.0.17` / `CFBundleVersion=19`. Android v21 removes unused native code and embeds R8 mapping metadata; its production state must be recorded after the Play Console operation. iOS 1.0.17 is publicly available. OpenAI submission and production secret entry remain separate gates.
+
+## 2026-08-05 Android v21 release-metadata hardening
+
+| Surface | Confirmed evidence |
+|---|---|
+| Android source | Bumped canonical `jp.miyamibu.urlalbum` to `versionName=1.0.17`, `versionCode=21`, retaining target SDK 36. Release R8 is enabled and DataStore is updated to `1.1.7`, which contains its corrected consumer ProGuard rules. |
+| R8 mapping | `bundleRelease` embeds `BUNDLE-METADATA/com.android.tools.build.obfuscation/proguard.map` in the AAB. The standalone local mapping is also generated under `app/build/outputs/mapping/release/mapping.txt`. |
+| Native code | The app uses DataStore's single-process coordinator only. Its unused, stripped MultiProcess native counter is excluded from packaging; the v21 AAB contains no `.so` libraries, so native debug symbols are not applicable. |
+| Automated guard | `scripts/verify_android_release_artifacts.sh` fails when mapping is absent, or when native libraries exist without embedded debug-symbol metadata. Cross-platform CI builds the release bundle and runs this guard. |
+| Local validation | JDK 21 `testDebugUnitTest`, `lintDebug`, and `bundleRelease` passed. The release-artifact guard reports R8 mapping present and no native libraries. |
+| Production state | Not yet updated in this evidence row. Google Play submission/publication remains a separate external action. |
 
 ## 2026-08-05 Android v20 full-production submission and maintenance
 

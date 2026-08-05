@@ -206,6 +206,7 @@ SNS やメッセージで見かけた URL をあとで見返したいユーザ�
 - 障害対応は OS ログ + 手動再現手順で運用し、将来リリースで再評価する。
 - `ACTION_SEND_MULTIPLE` は対応済み（重複除外の順次保存 + 集計通知）。
 - release minify は `isMinifyEnabled=false` を維持し、R8/shrinker 有効化は別ハードニングパスへ延期する。
+- 2026-08-05: 上記の当初判断は専用ハードニング検証によって更新され、release R8 とAAB内mapping検証を有効化した。
 
 ## 12. 検証結果（2026-04-17）
 - `./gradlew --version`: 成功（JVM: `17.0.18`）
