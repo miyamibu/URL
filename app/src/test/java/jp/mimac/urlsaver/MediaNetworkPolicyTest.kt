@@ -41,6 +41,48 @@ class MediaNetworkPolicyTest {
     }
 
     @Test
+    fun storagePreflightRequiresIncomingBytesPlusReserve() {
+        val incomingBytes = 80L
+
+        assertFalse(
+            MediaNetworkPolicy.hasEnoughStorage(
+                entryBytes = 0L,
+                incomingBytes = incomingBytes,
+                allocatableBytes = MediaNetworkPolicy.MIN_FREE_BYTES + incomingBytes - 1L,
+                additionalBytesRequired = incomingBytes,
+            ),
+        )
+        assertTrue(
+            MediaNetworkPolicy.hasEnoughStorage(
+                entryBytes = 0L,
+                incomingBytes = incomingBytes,
+                allocatableBytes = MediaNetworkPolicy.MIN_FREE_BYTES + incomingBytes,
+                additionalBytesRequired = incomingBytes,
+            ),
+        )
+    }
+
+    @Test
+    fun streamedBytesAreNotCountedTwiceAgainstRemainingStorage() {
+        assertTrue(
+            MediaNetworkPolicy.hasEnoughStorage(
+                entryBytes = 0L,
+                incomingBytes = 80L,
+                allocatableBytes = MediaNetworkPolicy.MIN_FREE_BYTES,
+                additionalBytesRequired = 0L,
+            ),
+        )
+        assertFalse(
+            MediaNetworkPolicy.hasEnoughStorage(
+                entryBytes = MediaNetworkPolicy.MAX_ENTRY_MEDIA_BYTES,
+                incomingBytes = 1L,
+                allocatableBytes = Long.MAX_VALUE,
+                additionalBytesRequired = 0L,
+            ),
+        )
+    }
+
+    @Test
     fun resolverErrorStatusBodyRemainsBoundedAndReadable() {
         MockWebServer().use { server ->
             server.enqueue(

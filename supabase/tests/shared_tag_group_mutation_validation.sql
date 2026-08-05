@@ -187,6 +187,11 @@ begin
     legacy_invite_payload := public.create_shared_tag_group_invite(group_id, 'editor');
     wrapper_invite_payload := public.create_shared_tag_group_invite(group_id, 'viewer');
 
+    if private.hash_shared_tag_invite_token(legacy_invite_payload ->> 'invite_token') <>
+       private.hash_shared_tag_group_invite_token(legacy_invite_payload ->> 'invite_token') then
+        raise exception 'group invite hash functions diverged';
+    end if;
+
     if coalesce(invite_payload ->> 'invite_token', '') = '' or
        coalesce(legacy_invite_payload ->> 'invite_token', '') = '' or
        coalesce(wrapper_invite_payload ->> 'invite_token', '') = '' then

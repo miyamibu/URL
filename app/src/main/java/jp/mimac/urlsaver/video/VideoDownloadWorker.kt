@@ -133,7 +133,15 @@ class VideoDownloadWorker(
                     if (totalBytes != null && totalBytes > MediaNetworkPolicy.MAX_MEDIA_BYTES) {
                         throw MediaNetworkPolicy.QuotaExceededException()
                     }
-                    if (totalBytes != null && !hasEnoughStorage(outputFile.parentFile, entryBytesBeforeDownload, totalBytes)) {
+                    if (
+                        totalBytes != null &&
+                        !hasEnoughStorage(
+                            directory = outputFile.parentFile,
+                            entryBytes = entryBytesBeforeDownload,
+                            incomingBytes = totalBytes,
+                            additionalBytesRequired = totalBytes,
+                        )
+                    ) {
                         throw MediaNetworkPolicy.InsufficientStorageException()
                     }
                     MediaNetworkPolicy.validateContentType(mediaType, mimeType, connection.contentType)
@@ -159,7 +167,14 @@ class VideoDownloadWorker(
                                 }
                                 output.write(buffer, 0, read)
                                 downloaded += read
-                                if (!hasEnoughStorage(outputFile.parentFile, entryBytesBeforeDownload, downloaded)) {
+                                if (
+                                    !hasEnoughStorage(
+                                        directory = outputFile.parentFile,
+                                        entryBytes = entryBytesBeforeDownload,
+                                        incomingBytes = downloaded,
+                                        additionalBytesRequired = 0L,
+                                    )
+                                ) {
                                     throw MediaNetworkPolicy.InsufficientStorageException()
                                 }
                                 val progress = totalBytes?.let { ((downloaded * 100) / it).toInt().coerceIn(0, 99) } ?: 0
@@ -176,7 +191,14 @@ class VideoDownloadWorker(
                     if (downloadedBytes <= 0L || downloadedBytes > MediaNetworkPolicy.MAX_MEDIA_BYTES) {
                         throw MediaNetworkPolicy.InvalidResponseException("MEDIA_SIZE_INVALID")
                     }
-                    if (!hasEnoughStorage(outputFile.parentFile, entryBytesBeforeDownload, downloadedBytes)) {
+                    if (
+                        !hasEnoughStorage(
+                            directory = outputFile.parentFile,
+                            entryBytes = entryBytesBeforeDownload,
+                            incomingBytes = downloadedBytes,
+                            additionalBytesRequired = 0L,
+                        )
+                    ) {
                         throw MediaNetworkPolicy.InsufficientStorageException()
                     }
                     currentCoroutineContext().ensureActive()
@@ -224,9 +246,13 @@ class VideoDownloadWorker(
         }
     }
 
-    private fun hasEnoughStorage(directory: java.io.File?, entryBytes: Long, incomingBytes: Long): Boolean {
+    private fun hasEnoughStorage(
+        directory: java.io.File?,
+        entryBytes: Long,
+        incomingBytes: Long,
+        additionalBytesRequired: Long,
+    ): Boolean {
         if (directory == null) return false
-        if (entryBytes > MediaNetworkPolicy.MAX_ENTRY_MEDIA_BYTES - incomingBytes) return false
         val allocatableBytes = applicationContext
             .getSystemService(StorageManager::class.java)
             ?.let { storageManager ->
@@ -235,7 +261,12 @@ class VideoDownloadWorker(
                 }.getOrNull()
             }
             ?: return false
-        return allocatableBytes >= incomingBytes + MediaNetworkPolicy.MIN_FREE_BYTES
+        return MediaNetworkPolicy.hasEnoughStorage(
+            entryBytes = entryBytes,
+            incomingBytes = incomingBytes,
+            allocatableBytes = allocatableBytes,
+            additionalBytesRequired = additionalBytesRequired,
+        )
     }
 
     companion object {

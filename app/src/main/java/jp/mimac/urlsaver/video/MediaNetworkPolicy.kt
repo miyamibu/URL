@@ -55,6 +55,20 @@ internal object MediaNetworkPolicy {
 
     class InsufficientStorageException : IOException("MEDIA_STORAGE_LOW")
 
+    fun hasEnoughStorage(
+        entryBytes: Long,
+        incomingBytes: Long,
+        allocatableBytes: Long,
+        additionalBytesRequired: Long,
+    ): Boolean {
+        if (entryBytes < 0L || incomingBytes < 0L || allocatableBytes < 0L || additionalBytesRequired < 0L) {
+            return false
+        }
+        if (entryBytes > MAX_ENTRY_MEDIA_BYTES - incomingBytes) return false
+        if (additionalBytesRequired > Long.MAX_VALUE - MIN_FREE_BYTES) return false
+        return allocatableBytes >= additionalBytesRequired + MIN_FREE_BYTES
+    }
+
     fun normalizeUrl(rawUrl: String): String = NetworkUrlPolicy.normalizeUrl(rawUrl)
 
     fun validateUrl(rawUrl: String, allowLoopbackHttp: Boolean = false): URI {
