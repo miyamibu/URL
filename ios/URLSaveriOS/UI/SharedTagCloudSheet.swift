@@ -704,6 +704,22 @@ struct SharedTagCloudSheet: View {
     private var accountActionsSection: some View {
         VStack(spacing: 16) {
             if model.sharedTagCloudState.isSignedIn {
+                AppActionButton(tone: .secondary, enabled: !isWorking) {
+                    guard !isWorking else { return }
+                    isWorking = true
+                    Task {
+                        let enabled = await model.requestSharedTagNotifications()
+                        model.showProfileStatusMessage(
+                            enabled
+                                ? "共有タグの新着通知を有効にしました"
+                                : "通知は有効になりませんでした。iPhoneの設定から変更できます"
+                        )
+                        isWorking = false
+                    }
+                } label: {
+                    Text("共有タグの新着通知を有効にする")
+                }
+
                 HStack(spacing: 10) {
                     AppActionButton(enabled: !isWorking) {
                         guard !isWorking else { return }

@@ -7,6 +7,7 @@ import androidx.work.WorkManager
 import jp.mimac.urlsaver.BuildConfig
 import jp.mimac.urlsaver.billing.GooglePlayBillingService
 import jp.mimac.urlsaver.data.AppDatabase
+import jp.mimac.urlsaver.data.AndroidSharedTagUpdateNotifier
 import jp.mimac.urlsaver.data.AiTransparencyRepository
 import jp.mimac.urlsaver.data.ChatGptPersonalLinkSyncRepository
 import jp.mimac.urlsaver.data.ConfiguredContactSupportClient
@@ -202,6 +203,7 @@ class AppContainer(context: Context) {
             remoteDataSource = sharedTagSyncRemoteDataSource,
             clock = clock,
             metadataScheduler = scheduler,
+            updateNotifier = AndroidSharedTagUpdateNotifier(appContext),
         )
     }
     private val usageSummaryDataSource: UsageSummaryDataSource by lazy {

@@ -1,7 +1,27 @@
 import SwiftUI
+import UIKit
+import UserNotifications
+
+final class URLSaverNotificationDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        UNUserNotificationCenter.current().delegate = self
+        return true
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        [.banner, .list, .sound]
+    }
+}
 
 @main
 struct URLSaveriOSApp: App {
+    @UIApplicationDelegateAdaptor(URLSaverNotificationDelegate.self) private var notificationDelegate
     @StateObject private var model = URLSaverAppModel(services: .shared)
     @AppStorage("appThemeMode") private var themeModeRaw = AppThemeMode.system.rawValue
     @Environment(\.scenePhase) private var scenePhase

@@ -71,6 +71,12 @@ class DefaultTagRepository(
     },
 ) : TagRepository {
 
+    init {
+        if (remoteConfig.isConfigured) {
+            authSessionProvider.session.value?.authUserId?.let(::scheduleSync)
+        }
+    }
+
     override val isSyncAvailable: Flow<Boolean> = authSessionProvider.session.map { session ->
         session != null && remoteConfig.isConfigured
     }
@@ -698,6 +704,7 @@ class DefaultTagRepository(
     }
 
     override suspend fun signOut() {
+        authSessionProvider.session.value?.authUserId?.let { syncScheduler?.cancel(it) }
         authSessionProvider.updateSession(null)
     }
 

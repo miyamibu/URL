@@ -15,6 +15,8 @@ import jp.mimac.urlsaver.data.SharedTagAuthSessionProvider
 import jp.mimac.urlsaver.data.SharedTagSyncCoordinator
 import jp.mimac.urlsaver.data.SharedTagSyncRemoteConfig
 import jp.mimac.urlsaver.data.SharedTagSyncRemoteDataSource
+import jp.mimac.urlsaver.data.SharedTagUpdateNotice
+import jp.mimac.urlsaver.data.SharedTagUpdateNotifier
 import jp.mimac.urlsaver.data.TagEntity
 import jp.mimac.urlsaver.data.TagUrlCrossRef
 import jp.mimac.urlsaver.data.UrlEntryEntity
@@ -59,6 +61,7 @@ class SharedTagSyncRepositoryTest {
     private lateinit var authProvider: FakeAuthSessionProvider
     private lateinit var remote: FakeRemoteDataSource
     private lateinit var coordinator: SharedTagSyncCoordinator
+    private lateinit var updateNotifier: FakeUpdateNotifier
     private val scheduler = FakeScheduler()
     private val clock = FakeClock(10_000L)
 
@@ -70,6 +73,7 @@ class SharedTagSyncRepositoryTest {
             .build()
         authProvider = FakeAuthSessionProvider()
         remote = FakeRemoteDataSource()
+        updateNotifier = FakeUpdateNotifier()
         coordinator = SharedTagSyncCoordinator(
             database = db,
             tagDao = db.tagDao(),
@@ -79,6 +83,7 @@ class SharedTagSyncRepositoryTest {
             remoteDataSource = remote,
             clock = clock,
             metadataScheduler = scheduler,
+            updateNotifier = updateNotifier,
         )
         repository = DefaultTagRepository(
             database = db,
@@ -171,6 +176,49 @@ class SharedTagSyncRepositoryTest {
         assertEquals(SharedTagSyncStatus.SYNCED, visibleTags.first().syncStatus)
         assertEquals(1, visibleTags.first().urlCount)
         assertTrue(db.sharedTagSyncDao().getPendingOutbox(USER_A).isEmpty())
+    }
+
+    @Test
+    fun sync_notifiesOnlyNewSharedUrlsAddedByAnotherUserAfterBaseline() = runBlocking {
+        authProvider.updateSession(SharedTagAuthSession(USER_A, "token-a"))
+        val tag = RemoteSharedTag(
+            id = "remote-team",
+            name = "Team Links",
+            createdBy = USER_A,
+            createdAt = "2026-04-20T00:00:00Z",
+            updatedAt = "2026-04-20T00:00:00Z",
+            version = 1,
+        )
+        remote.snapshot = PullSharedTagSnapshotResponse(
+            pulledAt = "2026-04-20T00:00:00Z",
+            normalizationVersion = 1,
+            tags = listOf(tag),
+            members = emptyList(),
+            urls = emptyList(),
+        )
+        assertTrue(coordinator.syncCurrentSession())
+        assertTrue(updateNotifier.notices.isEmpty())
+
+        remote.snapshot = remote.snapshot.copy(
+            urls = listOf(
+                RemoteSharedTagUrl(
+                    id = "remote-url-1",
+                    tagId = tag.id,
+                    rawUrl = "https://example.com/from-member",
+                    normalizedUrl = "https://example.com/from-member",
+                    normalizationVersion = 1,
+                    addedBy = USER_B,
+                    createdAt = "2026-04-20T00:01:00Z",
+                    updatedAt = "2026-04-20T00:01:00Z",
+                ),
+            ),
+        )
+
+        assertTrue(coordinator.syncCurrentSession())
+        assertEquals(
+            listOf(SharedTagUpdateNotice(newUrlCount = 1, tagNames = listOf("Team Links"))),
+            updateNotifier.notices,
+        )
     }
 
     @Test
@@ -385,6 +433,14 @@ class SharedTagSyncRepositoryTest {
 
     private class FakeScheduler : MetadataScheduler {
         override fun enqueueMetadata(entryId: Long) = Unit
+    }
+
+    private class FakeUpdateNotifier : SharedTagUpdateNotifier {
+        val notices = mutableListOf<SharedTagUpdateNotice>()
+
+        override fun notify(notice: SharedTagUpdateNotice) {
+            notices += notice
+        }
     }
 
     private class FakeClock(

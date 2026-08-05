@@ -125,6 +125,36 @@ final class URLRulesTests: XCTestCase {
         )
     }
 
+    func testInstagramReelSharedTextExtractsURL() {
+        let groups = ShareCandidateGroups(
+            providerTextCandidates: [
+                "Instagramでこのリールを見る https://www.instagram.com/reel/ABC123/?igsh=test"
+            ]
+        )
+
+        XCTAssertEqual(
+            URLRules.extractFromCandidateGroups(groups),
+            .found("https://www.instagram.com/reel/ABC123/?igsh=test")
+        )
+    }
+
+    func testShareHandoffReportDecodesLegacyPayloadWithoutSharedTagFields() throws {
+        let payload = """
+        {
+          "result": "CREATED",
+          "entryID": 42,
+          "normalizedURL": "https://example.com/",
+          "createdAt": 0
+        }
+        """.data(using: .utf8)!
+
+        let report = try JSONDecoder().decode(ShareHandoffReport.self, from: payload)
+
+        XCTAssertEqual(report.entryID, 42)
+        XCTAssertNil(report.entryIDs)
+        XCTAssertNil(report.sharedTagRemoteIDs)
+    }
+
     func testExtractMemoWithoutURLsRemovesValidURLsAndKeepsSharedText() {
         let memo = URLRules.extractMemoWithoutURLs(
             """

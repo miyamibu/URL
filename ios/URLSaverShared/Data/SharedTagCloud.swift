@@ -338,6 +338,32 @@ final class SharedTagAuthSessionStore: @unchecked Sendable {
     }
 }
 
+final class SharedTagExtensionAuthContextStore: @unchecked Sendable {
+    private let userDefaults: UserDefaults?
+    private let authUserIDKey = "shared_tag_extension_auth_user_id"
+
+    init(suiteName: String = SharedContainer.appGroupIdentifier) {
+        userDefaults = UserDefaults(suiteName: suiteName)
+    }
+
+    func loadAuthUserID() -> String? {
+        guard let value = userDefaults?.string(forKey: authUserIDKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else {
+            return nil
+        }
+        return value
+    }
+
+    func update(authUserID: String?) {
+        if let value = authUserID?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
+            userDefaults?.set(value, forKey: authUserIDKey)
+        } else {
+            userDefaults?.removeObject(forKey: authUserIDKey)
+        }
+    }
+}
+
 private struct KeychainSharedTagAuthSecureStorage: SharedTagAuthSecureStorage {
     private let service: String
     private let account: String

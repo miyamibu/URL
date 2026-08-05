@@ -65,6 +65,7 @@ import jp.mimac.urlsaver.domain.AssignTagResult
 import jp.mimac.urlsaver.domain.CreateTagResult
 import jp.mimac.urlsaver.domain.SaveResult
 import jp.mimac.urlsaver.domain.SharedTagScope
+import jp.mimac.urlsaver.domain.SharedTagMemberRole
 import jp.mimac.urlsaver.domain.ShareExtractionResult
 import jp.mimac.urlsaver.domain.ShareSaveResult
 import jp.mimac.urlsaver.domain.TagWithCount
@@ -236,7 +237,17 @@ private fun ShareReceiverContent(
             .sortedByDescending { tag -> tag.id }
             .distinctBy { tag -> normalizeSharedTagName(tag.name) }
     }
-    var selectedLocalTagIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    val assignableSharedTags = remember(allTags) {
+        allTags
+            .filter { tag ->
+                tag.scope == SharedTagScope.SYNCED &&
+                    (tag.currentUserRole == SharedTagMemberRole.OWNER ||
+                        tag.currentUserRole == SharedTagMemberRole.EDITOR)
+            }
+            .sortedBy { tag -> tag.name.lowercase() }
+            .distinctBy { tag -> tag.remoteTagId ?: "local:${tag.id}" }
+    }
+    var selectedTagIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var newTagName by remember { mutableStateOf("") }
     var tagCreateError by remember { mutableStateOf<String?>(null) }
     var isSaving by remember { mutableStateOf(false) }
@@ -298,15 +309,16 @@ private fun ShareReceiverContent(
                     payload is ShareReceiverPayload.Pending -> {
                         ShareReceiverPendingContent(
                             localTags = localTags,
-                            selectedLocalTagIds = selectedLocalTagIds,
+                            sharedTags = assignableSharedTags,
+                            selectedTagIds = selectedTagIds,
                             newTagName = newTagName,
                             tagCreateError = tagCreateError,
                             isSaving = isSaving,
-                            onToggleLocalTag = { tagId ->
-                                selectedLocalTagIds = if (tagId in selectedLocalTagIds) {
-                                    selectedLocalTagIds - tagId
+                            onToggleTag = { tagId ->
+                                selectedTagIds = if (tagId in selectedTagIds) {
+                                    selectedTagIds - tagId
                                 } else {
-                                    selectedLocalTagIds + tagId
+                                    selectedTagIds + tagId
                                 }
                             },
                             onNewTagNameChange = {
@@ -318,14 +330,14 @@ private fun ShareReceiverContent(
                                     val normalizedName = normalizeSharedTagName(newTagName)
                                     when (val result = container.tagRepository.createLocalTagWithResult(normalizedName)) {
                                         is CreateTagResult.Success -> {
-                                            selectedLocalTagIds = selectedLocalTagIds + result.tagId
+                                            selectedTagIds = selectedTagIds + result.tagId
                                             newTagName = ""
                                             tagCreateError = null
                                         }
                                         CreateTagResult.Duplicate -> {
                                             val duplicateId = container.tagRepository.findLocalTagIdByName(normalizedName)
                                             if (duplicateId != null) {
-                                                selectedLocalTagIds = selectedLocalTagIds + duplicateId
+                                                selectedTagIds = selectedTagIds + duplicateId
                                                 newTagName = ""
                                                 tagCreateError = null
                                             } else {
@@ -345,7 +357,7 @@ private fun ShareReceiverContent(
                                     val saveResult = savePendingShare(
                                         payload = payload,
                                         container = container,
-                                        selectedLocalTagIds = selectedLocalTagIds,
+                                        selectedTagIds = selectedTagIds,
                                     )
                                     if (saveResult.meaningfulAction) {
                                         AdsManager.registerMeaningfulActionAndMaybeShow(context)
@@ -410,11 +422,12 @@ private fun ShareReceiverTagImportContent(
 @Composable
 private fun ShareReceiverPendingContent(
     localTags: List<TagWithCount>,
-    selectedLocalTagIds: Set<Long>,
+    sharedTags: List<TagWithCount>,
+    selectedTagIds: Set<Long>,
     newTagName: String,
     tagCreateError: String?,
     isSaving: Boolean,
-    onToggleLocalTag: (Long) -> Unit,
+    onToggleTag: (Long) -> Unit,
     onNewTagNameChange: (String) -> Unit,
     onCreateTag: () -> Unit,
     onCancel: () -> Unit,
@@ -427,6 +440,12 @@ private fun ShareReceiverPendingContent(
     )
     Spacer(Modifier.height(18.dp))
 
+    Text(
+        text = "自作タグ",
+        style = MaterialTheme.typography.titleMedium,
+        fontWeight = FontWeight.Bold,
+    )
+    Spacer(Modifier.height(10.dp))
     if (localTags.isEmpty()) {
         Surface(
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
@@ -448,13 +467,34 @@ private fun ShareReceiverPendingContent(
             localTags.forEach { tag ->
                 ShareReceiverTagRow(
                     tag = tag,
-                    selected = tag.id in selectedLocalTagIds,
-                    onClick = { onToggleLocalTag(tag.id) },
+                    selected = tag.id in selectedTagIds,
+                    onClick = { onToggleTag(tag.id) },
                 )
             }
         }
     }
-    Spacer(Modifier.height(54.dp))
+    if (sharedTags.isNotEmpty()) {
+        Spacer(Modifier.height(24.dp))
+        Text(
+            text = "共有タグ",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+        )
+        Spacer(Modifier.height(10.dp))
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            sharedTags.forEach { tag ->
+                ShareReceiverTagRow(
+                    tag = tag,
+                    selected = tag.id in selectedTagIds,
+                    onClick = { onToggleTag(tag.id) },
+                )
+            }
+        }
+    }
+    Spacer(Modifier.height(40.dp))
     OutlinedTextField(
         value = newTagName,
         onValueChange = onNewTagNameChange,
@@ -630,7 +670,7 @@ private fun ShareReceiverErrorContent(
 private suspend fun savePendingShare(
     payload: ShareReceiverPayload.Pending,
     container: AppContainer,
-    selectedLocalTagIds: Set<Long>,
+    selectedTagIds: Set<Long>,
 ): ShareReceiverSaveOutcome {
     var tagAssignmentFailed = false
 
@@ -639,11 +679,11 @@ private suspend fun savePendingShare(
             payload.urls.first(),
             initialMemo = payload.memo,
         )
-        if (shouldAssignShareTags(result.result, result.entryId) && selectedLocalTagIds.isNotEmpty()) {
-            val assigned = assignLocalTags(
+        if (shouldAssignShareTags(result.result, result.entryId) && selectedTagIds.isNotEmpty()) {
+            val assigned = assignSelectedTags(
                 entryId = requireNotNull(result.entryId),
                 container = container,
-                tagIds = selectedLocalTagIds,
+                tagIds = selectedTagIds,
             )
             tagAssignmentFailed = !assigned
         }
@@ -663,11 +703,11 @@ private suspend fun savePendingShare(
             url,
             initialMemo = payload.memo,
         )
-        if (shouldAssignShareTags(result.result, result.entryId) && selectedLocalTagIds.isNotEmpty()) {
-            val assigned = assignLocalTags(
+        if (shouldAssignShareTags(result.result, result.entryId) && selectedTagIds.isNotEmpty()) {
+            val assigned = assignSelectedTags(
                 entryId = requireNotNull(result.entryId),
                 container = container,
-                tagIds = selectedLocalTagIds,
+                tagIds = selectedTagIds,
             )
             if (!assigned) tagAssignmentFailed = true
         }
@@ -694,7 +734,7 @@ private suspend fun savePendingShare(
     return ShareReceiverSaveOutcome(message = message, meaningfulAction = created > 0 || restored > 0)
 }
 
-private suspend fun assignLocalTags(
+private suspend fun assignSelectedTags(
     entryId: Long,
     container: AppContainer,
     tagIds: Set<Long>,

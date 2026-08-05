@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UserNotifications
 
 enum RootTab: Hashable {
     case main
@@ -529,6 +530,7 @@ final class URLSaverAppModel: ObservableObject {
     func consumeShareHandoffReport() async {
         guard let report = try? await services.handoffStore.consume() else { return }
         handleShareReport(report)
+        await assignSharedTagsFromShareHandoff(report)
         if let entryID = report.entryID, report.result == .created || report.result == .restoredFromPendingDelete {
             if report.result == .created || report.result == .restoredFromPendingDelete {
                 Task {
@@ -538,6 +540,32 @@ final class URLSaverAppModel: ObservableObject {
             }
         }
         await reload()
+    }
+
+    private func assignSharedTagsFromShareHandoff(_ report: ShareHandoffReport) async {
+        let remoteTagIDs = report.sharedTagRemoteIDs ?? []
+        let entryIDs = report.entryIDs ?? report.entryID.map { [$0] } ?? []
+        guard !remoteTagIDs.isEmpty, !entryIDs.isEmpty else { return }
+
+        var failed = 0
+        for entryID in entryIDs {
+            for remoteTagID in remoteTagIDs {
+                if await services.sharedTagCloud.assignEntry(remoteTagID: remoteTagID, entryID: entryID) != .success {
+                    failed += 1
+                }
+            }
+        }
+        if failed > 0 {
+            enqueueNotification(
+                AppNotification(
+                    message: "URLは保存しましたが、一部の共有タグへの追加に失敗しました",
+                    actionLabel: nil,
+                    action: nil,
+                    autoDismissAfter: 5
+                )
+            )
+        }
+        await refreshSharedTagCloudState()
     }
 
     func refreshAfterReturningToForeground() async {
@@ -967,6 +995,9 @@ final class URLSaverAppModel: ObservableObject {
 
     func refreshSharedTagCloudState() async {
         sharedTagCloudState = services.sharedTagCloud.state
+        SharedTagExtensionAuthContextStore().update(
+            authUserID: services.sharedTagCloud.currentSession()?.authUserID
+        )
         sharedTags = (try? services.sharedTagCloud.loadVisibleTags()) ?? []
         sharedTagGroups = (try? services.sharedTagCloud.loadVisibleGroups()) ?? []
     }
@@ -1180,27 +1211,74 @@ final class URLSaverAppModel: ObservableObject {
     func signOutFromSharedTagCloud() async {
         do {
             try services.sharedTagCloud.signOut()
-            await refreshSharedTagCloudState()
-            await refreshEntitlements()
+        } catch {}
+
+        await refreshSharedTagCloudState()
+        await refreshEntitlements()
+        if !sharedTagCloudState.isSignedIn {
             profileStatusMessage = "サインアウトしました。プロフィールはこのiPhoneに残ります。"
             enqueueNotification(AppNotification(message: "共有タグクラウドからサインアウトしました", actionLabel: nil, action: nil, autoDismissAfter: 4))
             await reload()
-        } catch {
+        } else {
             enqueueNotification(AppNotification(message: "共有タグクラウドからサインアウトできませんでした", actionLabel: nil, action: nil, autoDismissAfter: 4))
+        }
+    }
+
+    func requestSharedTagNotifications() async -> Bool {
+        do {
+            return try await UNUserNotificationCenter.current().requestAuthorization(
+                options: [.alert, .sound, .badge]
+            )
+        } catch {
+            return false
         }
     }
 
     @discardableResult
     func syncSharedTagCloud(showFailureNotification: Bool = true) async -> Bool {
+        let beforeSync = (try? services.sharedTagCloud.loadVisibleTags()) ?? []
         let success = await services.sharedTagCloud.syncCurrentSession()
         await refreshSharedTagCloudState()
         if success {
+            await notifySharedTagUpdates(before: beforeSync, after: sharedTags)
             await processMetadataBacklog()
         }
         if !success && showFailureNotification {
             enqueueNotification(AppNotification(message: "共有タグの同期に失敗しました", actionLabel: nil, action: nil, autoDismissAfter: 4))
         }
         return success
+    }
+
+    private func notifySharedTagUpdates(
+        before: [SharedTagSummary],
+        after: [SharedTagSummary]
+    ) async {
+        let beforeCounts = Dictionary(uniqueKeysWithValues: before.map { ($0.remoteTagID, $0.activeURLCount) })
+        let increases = after.compactMap { tag -> (String, Int)? in
+            guard let previous = beforeCounts[tag.remoteTagID], tag.activeURLCount > previous else {
+                return nil
+            }
+            return (tag.name, tag.activeURLCount - previous)
+        }
+        let count = increases.reduce(0) { $0 + $1.1 }
+        guard count > 0 else { return }
+
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
+            return
+        }
+        let tagNames = increases.map(\.0).prefix(3).joined(separator: "、")
+        let content = UNMutableNotificationContent()
+        content.title = "共有タグに新着があります"
+        content.body = "\(tagNames)に新しいURLが\(count)件追加されました"
+        content.sound = .default
+        try? await UNUserNotificationCenter.current().add(
+            UNNotificationRequest(
+                identifier: "shared-tag-update-\(UUID().uuidString)",
+                content: content,
+                trigger: nil
+            )
+        )
     }
 
     func acceptPendingInvite() async {

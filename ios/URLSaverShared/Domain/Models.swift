@@ -652,7 +652,9 @@ struct BatchSaveSummary: Codable, Equatable, Sendable {
 struct ShareHandoffReport: Codable, Equatable, Sendable {
     let result: ShareSaveResult
     let entryID: Int64?
+    var entryIDs: [Int64]? = nil
     let normalizedURL: String?
+    var sharedTagRemoteIDs: [String]? = nil
     let degradationNotice: ShareDegradationNotice?
     let batchSummary: BatchSaveSummary?
     let createdAt: Date
