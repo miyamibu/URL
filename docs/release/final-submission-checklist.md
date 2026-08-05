@@ -9,7 +9,7 @@
 ## Current source snapshot (manifest-backed)
 - Android: `jp.miyamibu.urlalbum`, `versionName=1.0.15`, `versionCode=19`
 - iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.17`, `build=19`; share extension `com.mibu.codebridge.ios.share`
-- Supabase migration head: `20260731100000_restore_shared_url_normalization_v1.sql`
+- Supabase migration head: `20260804090000_default_all_users_to_pro.sql`
 - Machine-readable source: `docs/release/release-manifest.json`.
 - The dated provider and store records below are historical evidence and do not become current proof without a fresh recheck.
 - Current release/ops readiness tracker: `docs/release/launch-go-checklist.md`.

@@ -7,7 +7,7 @@ App Store / Google Play へ次回提出する文言を、現在の source baseli
 
 - Android: `jp.miyamibu.urlalbum`, `versionName=1.0.15`, `versionCode=19`
 - iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.17`, `build=19`; share extension `com.mibu.codebridge.ios.share`
-- Supabase migration head: `20260731100000_restore_shared_url_normalization_v1.sql`
+- Supabase migration head: `20260804090000_default_all_users_to_pro.sql`
 
 ## App Identity
 - App name: りんばむ
