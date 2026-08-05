@@ -7,7 +7,7 @@
 この文書の下部に残る `1.0.11` の表は、2026-06-27/28 の Google Play / App Store 提出時点の履歴ログとして扱う。現在の repo source はmanifestと実ソースで照合し、この履歴ログだけでは次回提出可否を判断しない。
 
 ## Current source snapshot (manifest-backed)
-- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.15`, `versionCode=19`
+- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.16`, `versionCode=20`
 - iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.17`, `build=19`; share extension `com.mibu.codebridge.ios.share`
 - Supabase migration head: `20260804090000_default_all_users_to_pro.sql`
 - Machine-readable source: `docs/release/release-manifest.json`.

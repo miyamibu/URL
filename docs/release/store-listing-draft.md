@@ -1,11 +1,11 @@
 # Store Listing Draft
 
 ## Goal
-App Store / Google Play へ次回提出する文言を、現在の source baseline（Android `1.0.15 (versionCode=19)` / iOS `1.0.17 (build=19)`）と、実際に選択した release mode に一致させる。
+App Store / Google Play へ次回提出する文言を、現在の source baseline（Android `1.0.16 (versionCode=20)` / iOS `1.0.17 (build=19)`）と、実際に選択した release mode に一致させる。
 
 ## Current source snapshot (manifest-backed)
 
-- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.15`, `versionCode=19`
+- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.16`, `versionCode=20`
 - iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.17`, `build=19`; share extension `com.mibu.codebridge.ios.share`
 - Supabase migration head: `20260804090000_default_all_users_to_pro.sql`
 
@@ -21,7 +21,7 @@ App Store / Google Play へ次回提出する文言を、現在の source baseli
 - Account deletion URL: required for this cloud-enabled release. Use the deployed public deletion route that matches `web/invite-link/account-deletion/index.html`.
 
 ## Current Release Branch Decision
-Current source baseline is Android `1.0.15 (versionCode=19)` and iOS `1.0.17 (build=19)`, but store/live submission state was not reverified in this document. Do not reuse the historical `1.0.11` submission state as current proof.
+Current source baseline is Android `1.0.16 (versionCode=20)` and iOS `1.0.17 (build=19)`, but store/live submission state was not reverified in this document. Do not reuse the historical `1.0.11` submission state as current proof.
 
 - Android release mode depends on `release.shared.tag.cloud.enabled` and release Supabase values from local/env configuration.
 - iOS defaults to tracked local-only xcconfig; cloud-sharing Archive/TestFlight must pass ignored `ios/Config/URLSaverSecrets.xcconfig` explicitly.
