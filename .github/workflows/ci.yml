@@ -43,8 +43,10 @@ jobs:
       - name: Lint debug
         run: ./gradlew lintDebug
 
-      - name: Assemble release
-        run: ./gradlew assembleRelease
+      - name: Build and verify release bundle metadata
+        run: |
+          ./gradlew bundleRelease
+          bash scripts/verify_android_release_artifacts.sh
 
       # Never invoke connectedAndroidTest here. The Gradle guard protects
       # physical-device data, and CI uses JVM tests plus release compilation.

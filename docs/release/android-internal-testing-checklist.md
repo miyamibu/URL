@@ -5,7 +5,7 @@ Prepare Android internal testing without Codex uploading to Play Console.
 
 ## Current source snapshot (manifest-backed)
 
-- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.16`, `versionCode=20`
+- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.17`, `versionCode=21`
 - iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.17`, `build=19`; share extension `com.mibu.codebridge.ios.share`
 - Supabase migration head: `20260804090000_default_all_users_to_pro.sql`
 
@@ -13,7 +13,7 @@ Prepare Android internal testing without Codex uploading to Play Console.
 
 - [ ] Check `app/build.gradle.kts`.
   - Expected: `applicationId = "jp.miyamibu.urlalbum"`.
-  - Expected current source: `versionName = "1.0.16"`, `versionCode = 20`.
+  - Expected current source: `versionName = "1.0.17"`, `versionCode = 21`.
   - Stop if: package name changes or version is not the intended release.
 
 ## Signing Config

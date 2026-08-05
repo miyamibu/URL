@@ -115,8 +115,8 @@ android {
         applicationId = "jp.miyamibu.urlalbum"
         minSdk = 26
         targetSdk = 36
-        versionCode = 20
-        versionName = "1.0.16"
+        versionCode = 21
+        versionName = "1.0.17"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -140,7 +140,7 @@ android {
             buildConfigField("boolean", "CHATGPT_PERSONAL_LINK_SYNC_OPERATION_ENABLED", debugChatGptPersonalLinkSyncOperationEnabled.toString())
         }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
             buildConfigField("boolean", "ADS_TRIAL_LAUNCH_ADS_ENABLED", "false")
             buildConfigField("boolean", "ADS_ENABLED", "false")
             buildConfigField("String", "ADMOB_APP_ID", buildConfigString(""))
@@ -180,6 +180,11 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+        jniLibs {
+            // The app uses only PreferenceDataStoreFactory's single-process coordinator.
+            // Exclude DataStore's unused, stripped MultiProcess-only native counter.
+            excludes += "**/libdatastore_shared_counter.so"
+        }
     }
 
     testOptions {
@@ -212,7 +217,7 @@ dependencies {
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.navigation:navigation-compose:2.7.7")
     implementation("androidx.work:work-runtime-ktx:2.9.1")
-    implementation("androidx.datastore:datastore-preferences:1.1.1")
+    implementation("androidx.datastore:datastore-preferences:1.1.7")
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
     implementation("com.android.billingclient:billing:8.3.0")
