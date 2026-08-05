@@ -1,11 +1,11 @@
 # Privacy And Data Safety Draft
 
 ## Goal
-現在の source baseline（Android `1.0.15 (versionCode=19)` / iOS `1.0.17 (build=19)`）から次回提出する privacy / Data safety 回答を、選択した release mode と照合できる状態にする。過去の `1.0.11` 提出証跡は履歴として残すが、現在の提出可否の証明には使わない。
+現在の source baseline（Android `1.0.16 (versionCode=20)` / iOS `1.0.17 (build=19)`）から次回提出する privacy / Data safety 回答を、選択した release mode と照合できる状態にする。過去の `1.0.11` 提出証跡は履歴として残すが、現在の提出可否の証明には使わない。
 
 ## Current source snapshot (manifest-backed)
 
-- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.15`, `versionCode=19`
+- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.16`, `versionCode=20`
 - iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.17`, `build=19`; share extension `com.mibu.codebridge.ios.share`
 - Supabase migration head: `20260804090000_default_all_users_to_pro.sql`
 

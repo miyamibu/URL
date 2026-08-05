@@ -4,7 +4,7 @@ Final status: REPO_GO (Apple submitted / Google Play API 36 production rollout s
 
 ## Current source snapshot (manifest-backed)
 
-- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.15`, `versionCode=19`
+- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.16`, `versionCode=20`
 - iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.17`, `build=19`; share extension `com.mibu.codebridge.ios.share`
 - Supabase migration head: `20260804090000_default_all_users_to_pro.sql`
 - Machine-readable source: `docs/release/release-manifest.json`
@@ -13,7 +13,7 @@ Final status: REPO_GO (Apple submitted / Google Play API 36 production rollout s
 
 ## Current working-tree status: REPO_GO (external release gates remain separate)
 
-The historical evidence below is retained. The current release candidate baseline is Android `versionName=1.0.15` / `versionCode=19` and iOS `CFBundleShortVersionString=1.0.17` / `CFBundleVersion=19`. Android API 36 local validation and Play Console evidence were refreshed on 2026-07-30. App Store Connect submission is complete and currently awaiting review. OpenAI submission and production secret entry remain separate gates.
+The historical evidence below is retained. The current release candidate baseline is Android `versionName=1.0.16` / `versionCode=20` and iOS `CFBundleShortVersionString=1.0.17` / `CFBundleVersion=19`. Android API 36 local validation and Play Console evidence were refreshed on 2026-07-30. App Store Connect submission is complete and currently awaiting review. OpenAI submission and production secret entry remain separate gates.
 
 ## 2026-08-05 release-integration revalidation
 
