@@ -679,6 +679,12 @@ private fun MainScreen(
     onDeleteFailed: () -> Unit,
 ) {
     val context = LocalContext.current
+    val onboardingPreferences = remember(context) {
+        context.getSharedPreferences("rinbam_onboarding", Context.MODE_PRIVATE)
+    }
+    var showInitialOnboarding by rememberSaveable {
+        mutableStateOf(!onboardingPreferences.getBoolean("has_seen_onboarding_v2", false))
+    }
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val localTagEntryRefs by viewModel.localTagEntryRefs.collectAsStateWithLifecycle()
     val sharedTags by tagViewModel.tags.collectAsStateWithLifecycle()
@@ -748,13 +754,18 @@ private fun MainScreen(
     var searchQueryLocal by rememberSaveable { mutableStateOf("") }
     var databaseSearchMatchIds by remember { mutableStateOf<Set<Long>?>(emptySet()) }
     LaunchedEffect(searchQueryLocal) {
-        if (searchQueryLocal.isBlank()) {
+        val query = searchQueryLocal.trim()
+        if (query.isBlank()) {
             databaseSearchMatchIds = emptySet()
         } else {
             databaseSearchMatchIds = null
-            databaseSearchMatchIds = runCatching {
-                viewModel.searchEntryIds(searchQueryLocal)
+            delay(250)
+            val result = runCatching {
+                viewModel.searchEntryIds(query)
             }.getOrDefault(emptySet())
+            if (searchQueryLocal.trim() == query) {
+                databaseSearchMatchIds = result
+            }
         }
     }
     LaunchedEffect(localSaveTags, selectedMainLocalTagId) {
@@ -1551,6 +1562,9 @@ private fun MainScreen(
     val isGroupPane = mainPane == MainPane.GROUPS && showSharedTagCloudUi && !showUsageGuide
     val isSearchActive = searchBarVisible || searchQueryLocal.isNotBlank()
     val showMainBottomBar = !selectionModeActive && selectedEntryIds.isEmpty() && !showUsageGuide && !isGroupPane && !isSearchActive
+    val navigationBarHeight = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val mainBottomFillHeight = if (navigationBarHeight < 32.dp) 32.dp else navigationBarHeight
+    val mainBottomBarReservedHeight = 156.dp + mainBottomFillHeight
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             containerColor = MaterialTheme.colorScheme.background,
@@ -1680,7 +1694,7 @@ private fun MainScreen(
             Box(
                 modifier = Modifier
                     .padding(paddingValues)
-                .then(if (showMainBottomBar) Modifier.padding(bottom = 92.dp) else Modifier)
+                    .then(if (showMainBottomBar) Modifier.padding(bottom = mainBottomBarReservedHeight) else Modifier)
                     .fillMaxSize()
                     .background(MaterialTheme.colorScheme.background),
                 contentAlignment = Alignment.TopCenter,
@@ -1874,6 +1888,15 @@ private fun MainScreen(
                 onAdd = { openManualInput() },
                 onTagManage = { showLocalTagManagerSheet = true },
                 onOpenArchive = onOpenArchive,
+                bottomFillHeight = mainBottomFillHeight,
+            )
+        }
+        if (showInitialOnboarding) {
+            OnboardingGuideOverlay(
+                onFinish = {
+                    onboardingPreferences.edit().putBoolean("has_seen_onboarding_v2", true).apply()
+                    showInitialOnboarding = false
+                },
             )
         }
     }
@@ -6787,9 +6810,8 @@ private fun MainBottomNavBar(
     onAdd: () -> Unit,
     onTagManage: () -> Unit,
     onOpenArchive: () -> Unit,
+    bottomFillHeight: Dp,
 ) {
-    val navigationBarHeight = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-    val bottomFillHeight = if (navigationBarHeight < 32.dp) 32.dp else navigationBarHeight
     val bottomBarColor = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp)
     Box(
         modifier = modifier
@@ -6855,7 +6877,7 @@ private fun MainBottomNavBar(
                     shape = RoundedCornerShape(99.dp),
                 )
                 .clickable(onClick = onAdd)
-                .semantics { contentDescription = "追加" },
+                .semantics { contentDescription = "URLを追加" },
             contentAlignment = Alignment.Center,
         ) {
             Text(
@@ -6919,6 +6941,8 @@ private fun MainBottomNavItem(
     var labelScale by remember(label) { mutableStateOf(1f) }
     Column(
         modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 64.dp)
             .offset(y = (-2).dp)
             .clip(RoundedCornerShape(12.dp))
             .clickable(enabled = enabled, onClick = onClick, role = Role.Button)
@@ -6991,65 +7015,21 @@ private fun OnboardingGuideOverlay(onFinish: () -> Unit) {
     val page = onboardingGuidePages[pageIndex]
     val isLast = pageIndex == onboardingGuidePages.lastIndex
 
-    BoxWithConstraints(
+    Box(
         modifier = Modifier
             .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.72f))
             .semantics { contentDescription = "使い方ガイド" },
+        contentAlignment = Alignment.Center,
     ) {
-        val density = LocalDensity.current
-        val widthPx = with(density) { maxWidth.toPx() }
-        val heightPx = with(density) { maxHeight.toPx() }
-        val canvasSize = Size(widthPx, heightPx)
-        val spotlight = page.spotlight(canvasSize)
-        val arrow = page.arrowOffset(canvasSize)
-        val panelTopPadding = with(density) {
-            guidePanelTopPaddingPx(
-                spotlight = spotlight,
-                canvasSize = canvasSize,
-                panelOnTop = page.panelOnTop,
-                pageIndex = pageIndex,
-            ).toDp()
-        }
-
-        Canvas(
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen },
-        ) {
-            drawRect(Color.Black.copy(alpha = 0.72f))
-            drawRoundRect(
-                color = Color.Transparent,
-                topLeft = Offset(spotlight.left, spotlight.top),
-                size = Size(spotlight.width, spotlight.height),
-                cornerRadius = CornerRadius(22.dp.toPx(), 22.dp.toPx()),
-                blendMode = BlendMode.Clear,
-            )
-        }
-
-        Text(
-            text = page.arrowText,
-            modifier = Modifier
-                .padding(
-                    start = with(density) { arrow.x.toDp() },
-                    top = with(density) { arrow.y.toDp() },
-                ),
-            style = if (page.arrowLarge) {
-                MaterialTheme.typography.displayLarge
-            } else {
-                MaterialTheme.typography.displaySmall
-            },
-            color = Color.White,
-        )
-
         OnboardingGuidePanel(
             page = page,
             pageIndex = pageIndex,
             pageCount = onboardingGuidePages.size,
             isLast = isLast,
             modifier = Modifier
-                .align(Alignment.TopCenter)
                 .padding(horizontal = 20.dp)
-                .padding(top = panelTopPadding),
+                .widthIn(max = 560.dp),
             onSkip = onFinish,
             onNext = {
                 if (isLast) {
@@ -7065,76 +7045,32 @@ private fun OnboardingGuideOverlay(onFinish: () -> Unit) {
 private data class OnboardingGuidePage(
     val title: String,
     val body: String,
-    val spotlight: (Size) -> Rect,
-    val arrowOffset: (Size) -> Offset,
-    val arrowText: String = "↓",
-    val panelOnTop: Boolean = false,
     val bodyStrong: Boolean = false,
-    val arrowLarge: Boolean = false,
 )
 
 private val onboardingGuidePages = listOf(
     OnboardingGuidePage(
         title = "自作タグを作成",
-        body = "＋を押すと、自分用のタグを作れます。保存するURLを用途ごとに整理できます。",
-        spotlight = { _ -> Rect(left = 42f, top = 320f, right = 231f, bottom = 441f) },
-        arrowOffset = { _ -> Offset(220f, 386f) },
-        arrowText = "↖",
+        body = "上部の＋を押すと、自分用のタグを作れます。保存するURLを用途ごとに整理できます。",
     ),
     OnboardingGuidePage(
         title = "タグを移動",
-        body = "タグを長押ししたまま左右へ動かすと、好きな順番に並び替えできます。",
-        spotlight = { size -> Rect(left = 252f, top = 329f, right = size.width - 28f, bottom = 450f) },
-        arrowOffset = { size -> Offset(size.width * 0.50f - 28f, 461f) },
-        arrowText = "↑",
+        body = "タグを長押ししたまま左右へ動かすと、好きな順番に並び替えできます。TalkBackではタグの操作メニューも利用できます。",
     ),
     OnboardingGuidePage(
         title = "共有タグ",
         body = "共有タグはサインイン後に使えます。招待されたタグのURL一覧だけを端末間で同期します。",
-        spotlight = { _ -> Rect(left = 42f, top = 548f, right = 231f, bottom = 660f) },
-        arrowOffset = { _ -> Offset(220f, 610f) },
-        arrowText = "↖",
     ),
     OnboardingGuidePage(
         title = "問い合わせ場所",
-        body = "共有タグクラウド画面から、不具合や改善点を送れます。",
-        spotlight = { size -> Rect(left = 42f, top = size.height - 740f, right = size.width - 42f, bottom = size.height - 614f) },
-        arrowOffset = { size -> Offset(size.width * 0.50f - 47f, size.height - 970f) },
-        panelOnTop = true,
-        arrowLarge = true,
+        body = "プロフィール画面から、不具合や改善点を送れます。送信内容を確認してから問い合わせできます。",
     ),
     OnboardingGuidePage(
-        title = "称賛のお気持ちも受け付けております！",
-        body = "あまり怒らないでね、、、",
-        spotlight = { size -> Rect(left = 42f, top = size.height - 740f, right = size.width - 42f, bottom = size.height - 614f) },
-        arrowOffset = { size -> Offset(size.width * 0.50f - 47f, size.height - 970f) },
-        panelOnTop = true,
+        title = "準備できました",
+        body = "詳しい操作は、ホーム右上のメニューから「使い方」をいつでも確認できます。",
         bodyStrong = true,
-        arrowLarge = true,
     ),
 )
-
-private fun guidePanelTopPaddingPx(
-    spotlight: Rect,
-    canvasSize: Size,
-    panelOnTop: Boolean,
-    pageIndex: Int,
-): Float {
-    val minimumTop = if (panelOnTop) 180f else 96f
-    val maxTop = (canvasSize.height * if (panelOnTop) 0.36f else 0.38f)
-        .coerceAtLeast(minimumTop)
-    val preferredTop = if (panelOnTop) {
-        spotlight.top - 760f
-    } else {
-        spotlight.bottom + 96f
-    }
-    val requestedOffset = when (pageIndex) {
-        0, 1, 2 -> 215f
-        3, 4 -> -248f
-        else -> 0f
-    }
-    return (preferredTop + requestedOffset).coerceIn(minimumTop, maxTop)
-}
 
 @Composable
 private fun OnboardingGuidePanel(

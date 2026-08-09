@@ -19,8 +19,9 @@ enum AppPalette {
     static let textSecondary = dynamic(light: 0x506176, dark: 0xAFC0D5)
     static let textMuted = dynamic(light: 0x6B798E, dark: 0x8EA1BA)
     static let primary = dynamic(light: 0x65B0FF, dark: 0x65B0FF)
-    static let primaryStrong = dynamic(light: 0x1F6FD1, dark: 0x8BC3FF)
-    static let primarySurface = dynamic(light: 0x22436B, dark: 0x143558)
+    static let onPrimary = dynamic(light: 0x07111F, dark: 0x07111F)
+    static let primaryStrong = dynamic(light: 0x0B5CAB, dark: 0xA9D1FF)
+    static let primarySurface = dynamic(light: 0xDCEBFA, dark: 0x143558)
     static let secondarySurface = dynamic(light: 0x144339, dark: 0x0E3B34)
     static let danger = dynamic(light: 0xB5261E, dark: 0xFF776A)
     static let dangerSurface = dynamic(light: 0x5B1B17, dark: 0x4B1714)
@@ -283,7 +284,7 @@ struct AppActionButton<Label: View>: View {
     private var foregroundColor: Color {
         switch tone {
         case .primary:
-            return AppPalette.textPrimary
+            return AppPalette.onPrimary
         case .secondary:
             return Color.white.opacity(0.95)
         case .danger:
@@ -1283,7 +1284,24 @@ struct ServiceFilterRow: View {
                             }
                         }
                     )
-                    .accessibilityHint("長押ししてドラッグすると並び替えできます")
+                    .accessibilityHint(localTag == nil ? "タップして絞り込みます" : "操作メニューから名前変更や並び替えもできます")
+                    .accessibilityActions {
+                        if let localTag {
+                            Button("タグ名を変更") {
+                                onRenameLocalTag(localTag)
+                            }
+                            if let currentIndex = orderedItems.firstIndex(of: item), currentIndex > 0 {
+                                Button("前へ移動") {
+                                    move(item, by: -1)
+                                }
+                            }
+                            if let currentIndex = orderedItems.firstIndex(of: item), currentIndex < orderedItems.count - 1 {
+                                Button("後ろへ移動") {
+                                    move(item, by: 1)
+                                }
+                            }
+                        }
+                    }
                     .onDrag {
                         draggingFilterToken = item.token
                         return NSItemProvider(object: item.token as NSString)
@@ -1360,6 +1378,15 @@ struct ServiceFilterRow: View {
             onReorderLocalTags(localTagIDs)
         }
     }
+
+    private func move(_ item: TopFilterItem, by offset: Int) {
+        var items = orderedItems
+        guard let currentIndex = items.firstIndex(of: item) else { return }
+        let targetIndex = currentIndex + offset
+        guard items.indices.contains(targetIndex) else { return }
+        items.swapAt(currentIndex, targetIndex)
+        handleReorder(items)
+    }
 }
 
 private struct TopFilterChipDropDelegate: DropDelegate {
@@ -1414,32 +1441,19 @@ struct FilterChipButton: View {
         Button {
             action?()
         } label: {
-            if label == "+" {
-                Text(label)
-                    .font(.system(size: 14, weight: .heavy, design: .rounded))
-                    .foregroundStyle(.clear)
-                    .padding(.horizontal, 26)
-                    .padding(.vertical, 11)
-                    .frame(minWidth: 54)
-                    .background(selected ? AppPalette.primarySurface : AppPalette.panelStrong, in: Capsule())
-                    .overlay {
-                        Text(label)
-                            .font(.system(size: 22, weight: .heavy, design: .rounded))
-                            .foregroundStyle(selected ? AppPalette.primaryStrong : Color.white.opacity(0.78))
-                    }
-            } else {
-                Text(label)
-                    .font(.system(size: 14, weight: .heavy, design: .rounded))
-                    .foregroundStyle(selected ? AppPalette.primaryStrong : Color.white.opacity(0.78))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 11)
-                    .frame(maxWidth: 190)
-                    .background(selected ? AppPalette.primarySurface : AppPalette.panelStrong, in: Capsule())
-            }
+            Text(label)
+                .font(.system(size: label == "+" ? 22 : 14, weight: .heavy, design: .rounded))
+                .foregroundStyle(selected ? AppPalette.primaryStrong : Color.white.opacity(0.92))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .padding(.horizontal, label == "+" ? 22 : 18)
+                .frame(minWidth: 54, minHeight: 48)
+                .frame(maxWidth: 190)
+                .background(selected ? AppPalette.primarySurface : AppPalette.panelStrong, in: Capsule())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(label == "+" ? "自作タグを追加" : label)
+        .accessibilityValue(selected ? "選択中" : "未選択")
     }
 }
 

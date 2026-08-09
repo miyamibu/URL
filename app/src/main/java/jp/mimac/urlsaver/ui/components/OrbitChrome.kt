@@ -103,10 +103,10 @@ fun OrbitFilterChip(
     val hasCustomLabelSize = labelFontSize != TextUnit.Unspecified
     Box(
         modifier = modifier
-            .widthIn(min = if (compact) 44.dp else 72.dp, max = 220.dp)
-            .height(44.dp)
+            .widthIn(min = if (compact) 48.dp else 72.dp, max = 220.dp)
+            .height(48.dp)
             .background(
-                color = if (selected) OrbitTokens.primarySoftSurface else OrbitTokens.panelSoft,
+                color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
                 shape = RoundedCornerShape(OrbitTokens.radiusChip),
             )
             .padding(
@@ -128,7 +128,7 @@ fun OrbitFilterChip(
             ),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            color = if (selected) MaterialTheme.colorScheme.primary else OrbitTokens.segmentedInactiveText,
+            color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
@@ -151,10 +151,10 @@ fun OrbitActionButton(
                 enabled = enabled,
                 shape = shape,
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = OrbitTokens.primary,
-                    contentColor = OrbitTokens.onPrimary,
-                    disabledContainerColor = OrbitTokens.primary.copy(alpha = 0.4f),
-                    disabledContentColor = OrbitTokens.onPrimary.copy(alpha = 0.7f),
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    disabledContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
+                    disabledContentColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f),
                 ),
                 contentPadding = contentPadding,
             ) {
@@ -174,10 +174,10 @@ fun OrbitActionButton(
                 shape = shape,
                 border = BorderStroke(1.dp, OrbitTokens.outlineStrong),
                 colors = ButtonDefaults.outlinedButtonColors(
-                    containerColor = OrbitTokens.panelSoft,
-                    contentColor = OrbitTokens.textPrimary,
-                    disabledContainerColor = OrbitTokens.panelSoft.copy(alpha = 0.55f),
-                    disabledContentColor = OrbitTokens.textPrimary.copy(alpha = 0.55f),
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
                 ),
                 contentPadding = contentPadding,
             ) {

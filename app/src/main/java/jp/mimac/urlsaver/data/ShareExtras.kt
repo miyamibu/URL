@@ -10,6 +10,7 @@ const val EXTRA_SHARE_BATCH_DUPLICATE_COUNT = "extra_share_batch_duplicate_count
 const val EXTRA_SHARE_BATCH_RESTORED_COUNT = "extra_share_batch_restored_count"
 const val EXTRA_SHARE_BATCH_FAILED_COUNT = "extra_share_batch_failed_count"
 const val EXTRA_MAIN_INTENT_EVENT_TOKEN = "extra_main_intent_event_token"
+const val EXTRA_OPEN_SHARED_TAG_CLOUD = "extra_open_shared_tag_cloud"
 const val EXTRA_TAG_IMPORT_TAG_ID = "extra_tag_import_tag_id"
 const val EXTRA_TAG_IMPORT_TAG_NAME = "extra_tag_import_tag_name"
 const val EXTRA_TAG_IMPORT_CREATED = "extra_tag_import_created"

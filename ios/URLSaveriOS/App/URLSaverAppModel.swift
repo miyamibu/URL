@@ -120,6 +120,7 @@ enum ManualTagImportPreparation: Equatable {
 
 enum ManualSaveOutcome: Equatable {
     case inputError(ShareSaveResult)
+    case limitError(String)
     case tagImportConfirmation(ManualTagImportPreview)
     case tagImportError(String)
     case saved(SaveResult)
@@ -584,6 +585,11 @@ final class URLSaverAppModel: ObservableObject {
             break
         }
 
+        if case .blocked(_, let message) = LimitChecker(entitlements: entitlements)
+            .checkCanSavePersonalURL(currentUsageSummary()) {
+            return .limitError(message)
+        }
+
         guard let saveResult = try? services.repository.saveFromManualInput(input, localTagIDs: Array(localTagIDs)) else {
             return .saved(SaveResult(result: .saveFailed))
         }
@@ -604,6 +610,8 @@ final class URLSaverAppModel: ObservableObject {
         switch await prepareManualSave(input: input, localTagIDs: localTagIDs) {
         case .inputError(let result):
             return result
+        case .limitError:
+            return .saveFailed
         case .saved(let saveResult):
             await finishPreparedManualSave(saveResult)
             return nil
@@ -612,6 +620,16 @@ final class URLSaverAppModel: ObservableObject {
         case .completed:
             return nil
         }
+    }
+
+    private func currentUsageSummary() -> UsageSummary {
+        UsageSummary(
+            personalURLCount: activeEntries.count + archivedEntries.count,
+            normalTagCount: localTags.count,
+            sharedTagCount: sharedTags.count,
+            sharedTagGroupCount: sharedTagGroups.count,
+            sharedTagUsages: []
+        )
     }
 
     func archive(entryID: Int64) async {
@@ -902,6 +920,11 @@ final class URLSaverAppModel: ObservableObject {
             pendingPromoCode = code
             enqueueNotification(AppNotification(message: "優待コードを読み込みました", actionLabel: nil, action: nil, autoDismissAfter: 3))
         case .save(let rawURL, let degradationNotice):
+            if case .blocked(_, let message) = LimitChecker(entitlements: entitlements)
+                .checkCanSavePersonalURL(currentUsageSummary()) {
+                enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 5))
+                return
+            }
             guard let saveResult = try? services.repository.saveFromResolvedURL(rawURL) else {
                 enqueueNotification(AppNotification(message: "保存できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
                 return
@@ -1272,6 +1295,7 @@ final class URLSaverAppModel: ObservableObject {
         content.title = "共有タグに新着があります"
         content.body = "\(tagNames)に新しいURLが\(count)件追加されました"
         content.sound = .default
+        content.userInfo = ["route": "shared-tag-cloud"]
         try? await UNUserNotificationCenter.current().add(
             UNNotificationRequest(
                 identifier: "shared-tag-update-\(UUID().uuidString)",

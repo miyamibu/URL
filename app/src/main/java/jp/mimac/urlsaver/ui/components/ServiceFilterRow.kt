@@ -28,6 +28,9 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -160,6 +163,16 @@ fun ServiceFilterRow(
         draggedPointerX = 0f
         draggedTouchOffsetX = 0f
         dragStartedTokens = emptyList()
+    }
+
+    fun publishReorder(updatedItems: List<TopFilterItem>) {
+        orderedMovableItems = updatedItems
+        val reorderedTokens = updatedItems.map { current -> current.token }
+        val reorderedServices = updatedItems
+            .filterIsInstance<TopFilterItem.Service>()
+            .map { current -> current.service }
+        onReorderTopFilters?.invoke(reorderedTokens)
+        onReorderServices?.invoke(reorderedServices)
     }
 
     fun settleDraggedItemOnRelease() {
@@ -309,6 +322,7 @@ fun ServiceFilterRow(
                     labelFontSize = 28.sp,
                     modifier = Modifier
                         .testTag("top_filter_create_local_tag")
+                        .semantics { contentDescription = "自作タグを追加" }
                         .clickable(enabled = !isDragging) { onCreateLocalTag() },
                 )
             }
@@ -343,6 +357,42 @@ fun ServiceFilterRow(
                     }
                 }
                 .zIndex(if (draggedState) 1f else 0f)
+                .semantics {
+                    contentDescription = when (item) {
+                        TopFilterItem.All -> filterLabelForService(ServiceType.ALL)
+                        is TopFilterItem.LocalTag -> "自作タグ ${item.label}"
+                        is TopFilterItem.Service -> filterLabelForService(item.service)
+                    }
+                    if (item is TopFilterItem.LocalTag) {
+                        customActions = buildList {
+                            if (localTag != null && onRenameLocalTag != null) {
+                                add(CustomAccessibilityAction("タグ名を変更") {
+                                    onRenameLocalTag(localTag)
+                                    true
+                                })
+                            }
+                            val currentIndex = orderedMovableItems.indexOfFirst { current -> current.token == item.token }
+                            if (canReorder && currentIndex > 0) {
+                                add(CustomAccessibilityAction("前へ移動") {
+                                    val updated = orderedMovableItems.toMutableList()
+                                    val moved = updated.removeAt(currentIndex)
+                                    updated.add(currentIndex - 1, moved)
+                                    publishReorder(updated)
+                                    true
+                                })
+                            }
+                            if (canReorder && currentIndex in 0 until orderedMovableItems.lastIndex) {
+                                add(CustomAccessibilityAction("後ろへ移動") {
+                                    val updated = orderedMovableItems.toMutableList()
+                                    val moved = updated.removeAt(currentIndex)
+                                    updated.add(currentIndex + 1, moved)
+                                    publishReorder(updated)
+                                    true
+                                })
+                            }
+                        }
+                    }
+                }
 
             OrbitFilterChip(
                 label = when (item) {

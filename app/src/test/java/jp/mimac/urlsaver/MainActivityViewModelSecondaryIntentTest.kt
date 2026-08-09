@@ -4,6 +4,7 @@ import android.content.Intent
 import jp.mimac.urlsaver.data.EXTRA_DEEP_LINK_INVALID
 import jp.mimac.urlsaver.data.EXTRA_DEEP_LINK_TAG_ID
 import jp.mimac.urlsaver.data.EXTRA_MAIN_INTENT_EVENT_TOKEN
+import jp.mimac.urlsaver.data.EXTRA_OPEN_SHARED_TAG_CLOUD
 import jp.mimac.urlsaver.data.EXTRA_PROMO_CODE
 import jp.mimac.urlsaver.data.EXTRA_PROMO_CODE_INVALID
 import jp.mimac.urlsaver.data.EXTRA_SHARED_TAG_INVITE_INVALID
@@ -158,6 +159,19 @@ class MainActivityViewModelSecondaryIntentTest {
 
         val event = viewModel.navigationEvents.first()
         assertEquals(MainNavigationEvent.NavigateToPromoCode("RNBM TEST CODE 1234"), event)
+    }
+
+    @Test
+    fun consumeDeepLinkIntent_sharedTagNotificationNavigatesToCloudAuth() = runTest {
+        val viewModel = MainActivityViewModel(FakeRepository())
+        val intent = Intent().apply {
+            putExtra(EXTRA_OPEN_SHARED_TAG_CLOUD, true)
+            putExtra(EXTRA_MAIN_INTENT_EVENT_TOKEN, "shared-tag-notification-test")
+        }
+
+        viewModel.consumeDeepLinkIntent(intent)
+
+        assertEquals(MainNavigationEvent.NavigateToCloudAuth, viewModel.navigationEvents.first())
     }
 
     @Test

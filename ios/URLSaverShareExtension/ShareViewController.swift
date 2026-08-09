@@ -4,10 +4,10 @@ import UniformTypeIdentifiers
 final class ShareViewController: UIViewController {
     private enum Layout {
         static let pickerBottomOffset: CGFloat = -19
-        static let resultBottomOffset: CGFloat = -152
+        static let resultBottomOffset: CGFloat = -32
         static let pickerTopInset: CGFloat = 19
         static let pickerHorizontalInset: CGFloat = 8
-        static let compactResultHeight: CGFloat = 420
+        static let compactResultHeight: CGFloat = 320
         static let minimumPickerHeight: CGFloat = 360
         static let maximumPickerHeight: CGFloat = 700
         static let maximumTagAreaHeight: CGFloat = 230
@@ -18,6 +18,7 @@ final class ShareViewController: UIViewController {
     private let doneButton = UIButton(type: .system)
     private let panelView = UIView()
     private let contentStack = UIStackView()
+    private let pickerScrollView = UIScrollView()
     private let pickerContainerView = UIView()
     private let pickerTitleLabel = UILabel()
     private let pickerMessageLabel = UILabel()
@@ -119,12 +120,16 @@ final class ShareViewController: UIViewController {
 
         pickerContainerView.translatesAutoresizingMaskIntoConstraints = false
         pickerContainerView.isHidden = true
+        pickerScrollView.translatesAutoresizingMaskIntoConstraints = false
+        pickerScrollView.alwaysBounceVertical = true
+        pickerScrollView.showsVerticalScrollIndicator = true
 
         pickerTitleLabel.translatesAutoresizingMaskIntoConstraints = false
         pickerTitleLabel.text = "保存先タグ"
         pickerTitleLabel.font = .preferredFont(forTextStyle: .largeTitle)
         pickerTitleLabel.adjustsFontForContentSizeCategory = true
         pickerTitleLabel.textAlignment = .left
+        pickerTitleLabel.numberOfLines = 0
 
         pickerMessageLabel.translatesAutoresizingMaskIntoConstraints = false
         pickerMessageLabel.numberOfLines = 0
@@ -152,7 +157,8 @@ final class ShareViewController: UIViewController {
 
         view.addSubview(panelView)
         panelView.addSubview(contentStack)
-        view.addSubview(pickerContainerView)
+        view.addSubview(pickerScrollView)
+        pickerScrollView.addSubview(pickerContainerView)
         pickerContainerView.addSubview(pickerTitleLabel)
         pickerContainerView.addSubview(pickerMessageLabel)
         pickerContainerView.addSubview(tagAreaView)
@@ -178,10 +184,14 @@ final class ShareViewController: UIViewController {
             contentStack.trailingAnchor.constraint(equalTo: panelView.layoutMarginsGuide.trailingAnchor),
             contentStack.topAnchor.constraint(equalTo: panelView.safeAreaLayoutGuide.topAnchor, constant: 18),
             pickerBottomConstraint!,
-            pickerContainerView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Layout.pickerHorizontalInset),
-            pickerContainerView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -Layout.pickerHorizontalInset),
-            pickerContainerView.topAnchor.constraint(equalTo: view.topAnchor, constant: Layout.pickerTopInset),
-            pickerContainerView.bottomAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.bottomAnchor, constant: Layout.pickerBottomOffset),
+            pickerScrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            pickerScrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            pickerScrollView.topAnchor.constraint(equalTo: view.topAnchor),
+            pickerScrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            pickerContainerView.leadingAnchor.constraint(equalTo: pickerScrollView.frameLayoutGuide.leadingAnchor, constant: Layout.pickerHorizontalInset),
+            pickerContainerView.trailingAnchor.constraint(equalTo: pickerScrollView.frameLayoutGuide.trailingAnchor, constant: -Layout.pickerHorizontalInset),
+            pickerContainerView.topAnchor.constraint(equalTo: pickerScrollView.contentLayoutGuide.topAnchor, constant: Layout.pickerTopInset),
+            pickerContainerView.bottomAnchor.constraint(equalTo: pickerScrollView.contentLayoutGuide.bottomAnchor, constant: Layout.pickerBottomOffset),
             pickerTitleLabel.leadingAnchor.constraint(equalTo: pickerContainerView.leadingAnchor),
             pickerTitleLabel.trailingAnchor.constraint(equalTo: pickerContainerView.trailingAnchor),
             pickerTitleLabel.topAnchor.constraint(equalTo: pickerContainerView.topAnchor),
@@ -192,15 +202,15 @@ final class ShareViewController: UIViewController {
             pickerActionsStack.trailingAnchor.constraint(equalTo: pickerContainerView.trailingAnchor),
             pickerActionsStack.topAnchor.constraint(equalTo: createTagButton.bottomAnchor, constant: 22),
             pickerActionsStack.bottomAnchor.constraint(equalTo: pickerContainerView.bottomAnchor),
-            pickerActionsStack.heightAnchor.constraint(equalToConstant: 58),
+            pickerActionsStack.heightAnchor.constraint(greaterThanOrEqualToConstant: 58),
             createTagButton.leadingAnchor.constraint(equalTo: pickerContainerView.leadingAnchor),
             createTagButton.trailingAnchor.constraint(equalTo: pickerContainerView.trailingAnchor),
             createTagButton.topAnchor.constraint(equalTo: createTagField.bottomAnchor, constant: 18),
-            createTagButton.heightAnchor.constraint(equalToConstant: 54),
+            createTagButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 54),
             createTagField.leadingAnchor.constraint(equalTo: pickerContainerView.leadingAnchor),
             createTagField.trailingAnchor.constraint(equalTo: pickerContainerView.trailingAnchor),
             createTagField.topAnchor.constraint(equalTo: tagAreaView.bottomAnchor, constant: 14),
-            createTagField.heightAnchor.constraint(equalToConstant: 58),
+            createTagField.heightAnchor.constraint(greaterThanOrEqualToConstant: 58),
             tagAreaView.leadingAnchor.constraint(equalTo: pickerContainerView.leadingAnchor),
             tagAreaView.trailingAnchor.constraint(equalTo: pickerContainerView.trailingAnchor),
             tagAreaView.topAnchor.constraint(equalTo: pickerMessageLabel.bottomAnchor, constant: 18),
@@ -248,7 +258,7 @@ final class ShareViewController: UIViewController {
                 statusLabel.leadingAnchor.constraint(greaterThanOrEqualTo: panelView.leadingAnchor, constant: 24),
                 statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: panelView.trailingAnchor, constant: -24),
                 statusLabel.topAnchor.constraint(greaterThanOrEqualTo: panelView.safeAreaLayoutGuide.topAnchor, constant: 24),
-                statusLabel.bottomAnchor.constraint(equalTo: doneButton.topAnchor, constant: -96),
+                statusLabel.bottomAnchor.constraint(lessThanOrEqualTo: doneButton.topAnchor, constant: -24),
             ]
             NSLayoutConstraint.activate(resultDirectConstraints)
             updatePreferredContentHeight(Layout.compactResultHeight)
@@ -444,6 +454,7 @@ final class ShareViewController: UIViewController {
         createTagField.resignFirstResponder()
 
         createTagButton.setTitle("＋", for: .normal)
+        createTagButton.accessibilityLabel = "自作タグを作成"
         createTagButton.titleLabel?.font = .preferredFont(forTextStyle: .title2)
         createTagButton.titleLabel?.adjustsFontForContentSizeCategory = true
         createTagButton.setContentHuggingPriority(.required, for: .vertical)

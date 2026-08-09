@@ -45,6 +45,9 @@ struct RootView: View {
     @State private var selectedBatchLocalTagIDs: Set<Int64> = []
     @State private var isMainSelectionModeActive = false
     @State private var selectedMainEntryIDs: Set<Int64> = []
+    @AppStorage("hasSeenOnboardingGuideV2") private var hasSeenOnboardingGuide = false
+    @AppStorage("pendingOpenSharedTagCloudFromNotification") private var pendingOpenSharedTagCloudFromNotification = false
+    @State private var onboardingGuidePageIndex = 0
 
     private var displayMode: EntryListDisplayMode {
         EntryListDisplayMode(rawValue: displayModeRaw) ?? .compact
@@ -221,7 +224,7 @@ struct RootView: View {
                         mainDisplayedEntries: mainDisplayedEntries,
                         showsPendingInviteBanner: showsPendingInviteBanner
                     )
-                    .overlay(alignment: .bottom) {
+                    .safeAreaInset(edge: .bottom, spacing: 0) {
                         if model.selectedTab == .main && selectedMainEntryIDs.isEmpty && !isShowingUsageGuide && !isShowingSearchBar && searchQuery.isEmpty {
                             BottomHomeActionBar(
                                 onOpenGroups: { model.selectedTab = .groups },
@@ -229,10 +232,8 @@ struct RootView: View {
                                 onOpenChatGpt: { isShowingChatGptSheet = true },
                                 onAddURL: { isShowingManualSheet = true },
                                 onOpenTags: { isShowingLocalTagManagementSheet = true },
-                                onOpenArchive: { model.selectedTab = .archive },
-                                bottomSafeAreaInset: proxy.safeAreaInsets.bottom
+                                onOpenArchive: { model.selectedTab = .archive }
                             )
-                            .offset(y: proxy.safeAreaInsets.bottom + 4)
                         }
                     }
                     .navigationDestination(for: Int64.self) { entryID in
@@ -241,12 +242,17 @@ struct RootView: View {
                 }
             }
             .task(id: searchQuery) {
-                guard !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !query.isEmpty else {
                     databaseSearchMatchIDs = []
                     return
                 }
                 databaseSearchMatchIDs = nil
-                databaseSearchMatchIDs = await model.searchActiveEntryIDs(query: searchQuery)
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                guard !Task.isCancelled else { return }
+                let result = await model.searchActiveEntryIDs(query: query)
+                guard !Task.isCancelled, searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == query else { return }
+                databaseSearchMatchIDs = result
             }
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
             .toolbar(.hidden, for: .navigationBar)
@@ -282,6 +288,33 @@ struct RootView: View {
             .onChange(of: selectedMainLocalTagID) { _, _ in
                 isMainSelectionModeActive = false
                 selectedMainEntryIDs = []
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .openSharedTagCloudFromNotification)) { _ in
+                openSharedTagCloudFromNotification()
+            }
+            .onAppear {
+                if pendingOpenSharedTagCloudFromNotification {
+                    openSharedTagCloudFromNotification()
+                }
+            }
+            .onChange(of: pendingOpenSharedTagCloudFromNotification) { _, shouldOpen in
+                if shouldOpen {
+                    openSharedTagCloudFromNotification()
+                }
+            }
+            .overlay {
+                if !hasSeenOnboardingGuide {
+                    OnboardingGuideOverlay(
+                        pageIndex: onboardingGuidePageIndex,
+                        onFinish: {
+                            hasSeenOnboardingGuide = true
+                            onboardingGuidePageIndex = 0
+                        },
+                        onNext: { onboardingGuidePageIndex = $0 }
+                    )
+                    .transition(.opacity)
+                    .zIndex(100)
+                }
             }
             .overlay(alignment: .bottom) {
                 if let notification = model.currentNotification {
@@ -515,6 +548,12 @@ struct RootView: View {
         return "「\(tag.name)」を削除します。URL自体は削除されません。"
     }
 
+    private func openSharedTagCloudFromNotification() {
+        pendingOpenSharedTagCloudFromNotification = false
+        model.selectedTab = .main
+        isShowingSharedTagCloudSheet = true
+    }
+
     private func toggleMainSelection(_ entryID: Int64) {
         if selectedMainEntryIDs.contains(entryID) {
             selectedMainEntryIDs.remove(entryID)
@@ -623,13 +662,10 @@ private struct MainScreen: View {
                     onCancelSelection()
                 }
             )
-            .popover(
-                isPresented: $isShowingMainMenu,
-                attachmentAnchor: .rect(.bounds),
-                arrowEdge: .top
-            ) {
+            .sheet(isPresented: $isShowingMainMenu) {
                 MainTopMenu(
                     displayMode: displayMode,
+                    onClose: { isShowingMainMenu = false },
                     onOpenProfile: {
                         isShowingMainMenu = false
                         onOpenSharedTagCloud()
@@ -651,8 +687,10 @@ private struct MainScreen: View {
                         onOpenPrivacyInfo()
                     }
                 )
+                .presentationDetents([.height(430)])
+                .presentationDragIndicator(.visible)
+                .presentationCornerRadius(28)
             }
-            .presentationCompactAdaptation(.popover)
 
             if isShowingUsageGuide {
                 UsageGuideView(onBack: {
@@ -786,7 +824,7 @@ private struct MainScreen: View {
                         }
                     }
                     .padding(.top, 10)
-                    .padding(.bottom, 80)
+                    .padding(.bottom, 16)
                     .frame(width: proxy.size.width)
                 }
             }
@@ -833,6 +871,7 @@ private struct MainScreen: View {
 
 private struct MainTopMenu: View {
     let displayMode: EntryListDisplayMode
+    let onClose: () -> Void
     let onOpenProfile: () -> Void
     let onToggleDisplayMode: () -> Void
     let onEnterSelectionMode: () -> Void
@@ -841,11 +880,22 @@ private struct MainTopMenu: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("メニュー")
-                .font(.system(size: 17, weight: .heavy, design: .rounded))
+            HStack {
+                Text("メニュー")
+                    .font(.system(size: 20, weight: .heavy, design: .rounded))
+                    .foregroundStyle(AppPalette.textPrimary)
+                Spacer()
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 16, weight: .bold))
+                        .frame(width: 48, height: 48)
+                        .background(AppPalette.surfaceSoft, in: Circle())
+                }
+                .buttonStyle(.plain)
                 .foregroundStyle(AppPalette.textPrimary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .accessibilityLabel("メニューを閉じる")
+            }
+            .padding(.leading, 12)
 
             menuItem("プロフィール", systemImage: "person.crop.circle", action: onOpenProfile)
             menuItem(
@@ -858,7 +908,7 @@ private struct MainTopMenu: View {
             menuItem("データの取り扱い", systemImage: "shield", action: onOpenPrivacyInfo)
         }
         .padding(8)
-        .frame(width: 260)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(AppPalette.surface)
     }
 
@@ -894,13 +944,12 @@ private struct BottomHomeActionBar: View {
     let onAddURL: () -> Void
     let onOpenTags: () -> Void
     let onOpenArchive: () -> Void
-    let bottomSafeAreaInset: CGFloat
 
     var body: some View {
-        ZStack(alignment: .top) {
+        ZStack(alignment: .bottom) {
             AppPalette.surface
-                .frame(height: 76 + bottomSafeAreaInset)
-                .frame(maxHeight: .infinity, alignment: .bottom)
+                .frame(height: 76)
+                .ignoresSafeArea(.container, edges: .bottom)
 
             HStack(alignment: .bottom, spacing: 8) {
                 bottomItem("グループ", systemImage: "person.3", action: onOpenGroups)
@@ -911,7 +960,7 @@ private struct BottomHomeActionBar: View {
                 bottomItem("アーカイブ", systemImage: "archivebox", action: onOpenArchive)
             }
             .padding(.horizontal, 12)
-            .padding(.bottom, 8 + bottomSafeAreaInset)
+            .padding(.bottom, 8)
             .frame(maxHeight: .infinity, alignment: .bottom)
 
             Button(action: onAddURL) {
@@ -921,7 +970,7 @@ private struct BottomHomeActionBar: View {
                     .frame(width: 76, height: 76)
                     .background(AppPalette.primary, in: Circle())
             }
-            .padding(.top, 2)
+            .padding(.bottom, 38)
             .accessibilityLabel("URLを追加")
 
             Button(action: onOpenChatGpt) {
@@ -940,13 +989,13 @@ private struct BottomHomeActionBar: View {
                 .shadow(color: Color.black.opacity(0.12), radius: 6, y: 2)
             }
             .buttonStyle(.plain)
-            .offset(x: -14, y: -52)
-            .frame(maxWidth: .infinity, alignment: .trailing)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+            .padding(.top, 8)
+            .padding(.trailing, 14)
             .accessibilityLabel("ChatGPT")
         }
-        .frame(height: 104 + bottomSafeAreaInset)
+        .frame(height: 156)
         .frame(maxWidth: .infinity)
-        .ignoresSafeArea(.container, edges: .bottom)
     }
 
     private func bottomItem(_ label: String, systemImage: String, action: @escaping () -> Void) -> some View {
@@ -1216,14 +1265,16 @@ private struct UsageGuideRow<Preview: View>: View {
 
     @ViewBuilder
     private var stackedLayout: some View {
-        HStack(alignment: .center, spacing: 10) {
-            rowLabel
-            rowIcon
-            rowText
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 10) {
+                rowLabel
+                rowIcon
+                rowText
+            }
+            preview
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.leading, 40)
         }
-        preview
-            .frame(maxWidth: .infinity, alignment: .trailing)
-            .padding(.leading, 40)
     }
 }
 
@@ -1269,7 +1320,7 @@ private struct GuideTagChipsPreview: View {
             Text("タグ").font(.system(size: 12, weight: .bold)).foregroundStyle(AppPalette.textPrimary)
             HStack(spacing: 6) {
                 MiniChip("旅行", background: Color(hex: 0xE5F6E7), foreground: Color(hex: 0x128A2E))
-                MiniChip("レシピ", background: Color(hex: 0xEAF2FF), foreground: AppPalette.primaryStrong)
+                MiniChip("レシピ", background: AppPalette.primarySurface, foreground: AppPalette.primaryStrong)
                 MiniChip("仕事", background: AppPalette.surfaceSoft, foreground: AppPalette.textSecondary)
                 MiniChip("+", background: AppPalette.surface, foreground: AppPalette.textPrimary)
             }
@@ -1293,7 +1344,7 @@ private struct GuideSearchPreview: View {
             .background(AppPalette.surfaceSoft.opacity(0.65), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             HStack(spacing: 6) {
                 MiniChip("旅行", background: Color(hex: 0xE5F6E7), foreground: Color(hex: 0x128A2E))
-                MiniChip("温泉", background: Color(hex: 0xEAF2FF), foreground: AppPalette.primaryStrong)
+                MiniChip("温泉", background: AppPalette.primarySurface, foreground: AppPalette.primaryStrong)
             }
         }
     }
@@ -1305,7 +1356,7 @@ private struct GuideRenameTagPreview: View {
             Text("ダブルタップ").font(.system(size: 12, weight: .bold)).foregroundStyle(AppPalette.textPrimary)
             HStack(spacing: 5) {
                 MiniChip("旅行", background: Color(hex: 0xE5F6E7), foreground: Color(hex: 0x128A2E))
-                MiniChip("レシピ", background: Color(hex: 0xEAF2FF), foreground: AppPalette.primaryStrong)
+                MiniChip("レシピ", background: AppPalette.primarySurface, foreground: AppPalette.primaryStrong)
                 Text("→").foregroundStyle(AppPalette.textSecondary)
                 Text("旅行")
                     .font(.system(size: 12, weight: .bold))
@@ -1377,7 +1428,7 @@ private struct GuideSharedTagsPreview: View {
             HStack(spacing: 6) {
                 MiniChip("家族旅行", background: Color(hex: 0xE5F6E7), foreground: Color(hex: 0x128A2E))
                 MiniChip("読みたい本", background: Color(hex: 0xF3E8FF), foreground: Color(hex: 0x7C3AED))
-                MiniChip("勉強会", background: Color(hex: 0xEAF2FF), foreground: AppPalette.primaryStrong)
+                MiniChip("勉強会", background: AppPalette.primarySurface, foreground: AppPalette.primaryStrong)
             }
         }
     }
@@ -1568,7 +1619,7 @@ private struct DetailedMiniURLCard: View {
                     .lineLimit(1)
                 HStack(spacing: 4) {
                     MiniChip("旅行", background: Color(hex: 0xE5F6E7), foreground: Color(hex: 0x128A2E))
-                    MiniChip("温泉", background: Color(hex: 0xEAF2FF), foreground: AppPalette.primaryStrong)
+                    MiniChip("温泉", background: AppPalette.primarySurface, foreground: AppPalette.primaryStrong)
                 }
             }
         }
@@ -1658,7 +1709,7 @@ private struct EntrySelectionBar: View {
                 .font(.system(size: 14, weight: .bold))
                 .lineLimit(1)
                 .padding(.horizontal, 10)
-                .frame(height: 36)
+                .frame(minHeight: 48)
                 .background(AppPalette.panelStrong, in: Capsule())
                 .foregroundStyle(Color.white.opacity(0.95))
         }
@@ -1677,7 +1728,7 @@ private struct EntrySelectionBar: View {
         Button(role: role, action: action) {
             Image(systemName: systemImage)
                 .font(.system(size: 17, weight: .heavy))
-                .frame(width: 38, height: 36)
+                .frame(width: 48, height: 48)
                 .background(AppPalette.panelStrong, in: Capsule())
                 .foregroundStyle(enabled ? (role == .destructive ? AppPalette.warning : Color.white.opacity(0.95)) : Color.white.opacity(0.35))
         }
@@ -1716,90 +1767,48 @@ private func buildMainShareSummary(
 struct OnboardingGuidePage: Sendable {
     let title: String
     let body: String
-    let spotlight: @Sendable (CGSize) -> CGRect
-    let arrow: @Sendable (CGRect) -> CGPoint
-    let arrowText: String
-    let panelOnTop: Bool
     let bodyFontSize: CGFloat
     let bodyFontDesign: Font.Design
     let bodyFontWeight: Font.Weight
-    let arrowYOffset: CGFloat
-    let panelYOffset: CGFloat
 
     init(
         title: String,
         body: String,
-        spotlight: @escaping @Sendable (CGSize) -> CGRect,
-        arrow: @escaping @Sendable (CGRect) -> CGPoint,
-        arrowText: String,
-        panelOnTop: Bool,
         bodyFontSize: CGFloat = 17,
         bodyFontDesign: Font.Design = .default,
-        bodyFontWeight: Font.Weight = .medium,
-        arrowYOffset: CGFloat = 0,
-        panelYOffset: CGFloat = 0
+        bodyFontWeight: Font.Weight = .medium
     ) {
         self.title = title
         self.body = body
-        self.spotlight = spotlight
-        self.arrow = arrow
-        self.arrowText = arrowText
-        self.panelOnTop = panelOnTop
         self.bodyFontSize = bodyFontSize
         self.bodyFontDesign = bodyFontDesign
         self.bodyFontWeight = bodyFontWeight
-        self.arrowYOffset = arrowYOffset
-        self.panelYOffset = panelYOffset
     }
 }
 
 let onboardingGuidePages: [OnboardingGuidePage] = [
     OnboardingGuidePage(
         title: "自作タグを作成",
-        body: "＋を押すと、自分用のタグを作れます。保存するURLを用途ごとに整理できます。",
-        spotlight: { _ in CGRect(x: 14, y: 106, width: 56, height: 40) },
-        arrow: { rect in CGPoint(x: rect.maxX + 22, y: rect.maxY - 18) },
-        arrowText: "↖",
-        panelOnTop: false
+        body: "上部の＋を押すと、自分用のタグを作れます。保存するURLを用途ごとに整理できます。"
     ),
     OnboardingGuidePage(
         title: "タグを移動",
-        body: "タグを長押ししたまま左右へ動かすと、好きな順番に並び替えできます。",
-        spotlight: { size in CGRect(x: 76, y: 106, width: max(size.width - 94, 160), height: 44) },
-        arrow: { rect in CGPoint(x: rect.midX, y: rect.maxY - 23) },
-        arrowText: "↑",
-        panelOnTop: false
+        body: "タグを長押ししたまま左右へ動かすと、好きな順番に並び替えできます。VoiceOverではタグの操作メニューも利用できます。"
     ),
     OnboardingGuidePage(
         title: "共有タグ",
-        body: "共有タグはサインイン後に使えます。招待されたタグのURL一覧だけを端末間で同期します。",
-        spotlight: { _ in CGRect(x: 14, y: 180, width: 56, height: 40) },
-        arrow: { rect in CGPoint(x: rect.maxX + 18, y: rect.maxY - 12) },
-        arrowText: "↖",
-        panelOnTop: false
+        body: "共有タグはサインイン後に使えます。招待されたタグのURL一覧だけを端末間で同期します。"
     ),
     OnboardingGuidePage(
         title: "問い合わせ場所",
-        body: "共有タグクラウド画面から、不具合や改善点を送れます。",
-        spotlight: { size in CGRect(x: 20, y: size.height - 268, width: max(size.width - 40, 160), height: 58) },
-        arrow: { rect in CGPoint(x: rect.midX, y: rect.minY - 54) },
-        arrowText: "↓",
-        panelOnTop: true,
-        arrowYOffset: 19,
-        panelYOffset: 76
+        body: "プロフィール画面から、不具合や改善点を送れます。送信内容を確認してから問い合わせできます。"
     ),
     OnboardingGuidePage(
-        title: "称賛のお気持ちも受け付けております！",
-        body: "あまり怒らないでね、、、",
-        spotlight: { size in CGRect(x: 20, y: size.height - 268, width: max(size.width - 40, 160), height: 58) },
-        arrow: { rect in CGPoint(x: rect.midX, y: rect.minY - 54) },
-        arrowText: "↓",
-        panelOnTop: true,
+        title: "準備できました",
+        body: "詳しい操作は、ホーム右上のメニューから「使い方」をいつでも確認できます。",
         bodyFontSize: 16,
         bodyFontDesign: .rounded,
-        bodyFontWeight: .heavy,
-        arrowYOffset: 19,
-        panelYOffset: 76
+        bodyFontWeight: .heavy
     ),
 ]
 
@@ -1809,30 +1818,13 @@ struct OnboardingGuideOverlay: View {
     let onNext: (Int) -> Void
 
     var body: some View {
-        GeometryReader { proxy in
-            let page = onboardingGuidePages[pageIndex]
-            let size = proxy.size
-            let spotlight = page.spotlight(size)
-            let baseArrow = page.arrow(spotlight)
-            let arrow = CGPoint(x: baseArrow.x, y: baseArrow.y + page.arrowYOffset)
-            let isLast = pageIndex == onboardingGuidePages.count - 1
+        let page = onboardingGuidePages[pageIndex]
+        let isLast = pageIndex == onboardingGuidePages.count - 1
+        ZStack {
+            Color.black.opacity(0.72)
+                .ignoresSafeArea()
 
-            ZStack {
-                Color.black.opacity(0.72)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .frame(width: spotlight.width, height: spotlight.height)
-                            .position(x: spotlight.midX, y: spotlight.midY)
-                            .blendMode(.destinationOut)
-                    }
-                    .compositingGroup()
-                    .ignoresSafeArea()
-
-                Text(page.arrowText)
-                    .font(.system(size: 44, weight: .heavy, design: .rounded))
-                    .foregroundStyle(.white)
-                    .position(arrow)
-
+            ScrollView {
                 OnboardingGuidePanel(
                     page: page,
                     pageIndex: pageIndex,
@@ -1850,36 +1842,13 @@ struct OnboardingGuideOverlay: View {
                     }
                 )
                 .padding(.horizontal, 20)
-                .frame(maxHeight: .infinity, alignment: guidePanelAlignment(for: spotlight, in: size, page: page))
-                .padding(.top, guidePanelTopPadding(for: spotlight, in: size, page: page) + page.panelYOffset)
+                .padding(.vertical, 32)
+                .frame(maxWidth: 560)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .accessibilityElement(children: .contain)
     }
-}
-
-private func guidePanelAlignment(
-    for spotlight: CGRect,
-    in size: CGSize,
-    page: OnboardingGuidePage
-) -> Alignment {
-    if page.panelOnTop {
-        return .top
-    }
-    return spotlight.midY < size.height * 0.42 ? .center : .top
-}
-
-private func guidePanelTopPadding(
-    for spotlight: CGRect,
-    in size: CGSize,
-    page: OnboardingGuidePage
-) -> CGFloat {
-    if page.panelOnTop {
-        let minimumTop: CGFloat = 42
-        let preferredTop = spotlight.maxY + 32
-        let maximumTop = max(minimumTop, size.height * 0.46)
-        return min(max(preferredTop, minimumTop), maximumTop)
-    }
-    return spotlight.midY < size.height * 0.42 ? 0 : min(spotlight.maxY + 42, size.height * 0.46)
 }
 
 private struct OnboardingGuidePanel: View {
@@ -3537,6 +3506,9 @@ private struct ManualInputSheet: View {
                         case .inputError(let error):
                             inputError = error
                             inputErrorMessage = nil
+                        case .limitError(let message):
+                            inputError = nil
+                            inputErrorMessage = message
                         case .tagImportError(let message):
                             inputError = nil
                             inputErrorMessage = message

@@ -39,6 +39,71 @@ def require_order(rel_path: str, first: str, second: str, reason: str) -> None:
 def main() -> int:
     checks = [
         lambda: require(
+            "ios/URLSaveriOS/UI/RootView.swift",
+            ".safeAreaInset(edge: .bottom, spacing: 0)",
+            "iPhone home bar must reserve layout space instead of obscuring the last card",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
+            "mainBottomBarReservedHeight",
+            "Android home content and bottom bar must share one measured reserved height",
+        ),
+        lambda: require(
+            "ios/URLSaveriOS/UI/RootView.swift",
+            "VStack(alignment: .leading, spacing: 12)",
+            "stacked usage-guide rows must remain one ViewThatFits candidate",
+        ),
+        lambda: require(
+            "ios/URLSaveriOS/UI/SharedTagCloudSheet.swift",
+            "追加購入は必要ありません",
+            "iPhone must not advertise paid checkout while universal Pro is active",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/SharedTagCloudScreens.kt",
+            "追加購入は必要ありません",
+            "Android must not advertise paid checkout while universal Pro is active",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/SharedTagCloudScreens.kt",
+            "!hasPromoAttemptResult",
+            "Android promo retry prevention must not disable a newly loaded code",
+        ),
+        lambda: require(
+            "ios/URLSaveriOS/UI/SharedTagCloudSheet.swift",
+            "!hasPromoAttemptResult",
+            "iPhone promo retry prevention must not disable a newly loaded code",
+        ),
+        lambda: require(
+            "ios/URLSaveriOS/UI/RootView.swift",
+            "Task.sleep(nanoseconds: 250_000_000)",
+            "iPhone search must debounce database scans",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
+            "delay(250)",
+            "Android search must debounce database scans",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
+            "has_seen_onboarding_v2",
+            "Android first-run guide must be reachable exactly once",
+        ),
+        lambda: require(
+            "ios/URLSaveriOS/UI/RootView.swift",
+            "hasSeenOnboardingGuideV2",
+            "iPhone first-run guide must be reachable exactly once",
+        ),
+        lambda: require(
+            "ios/URLSaveriOS/App/URLSaveriOSApp.swift",
+            'UserDefaults.standard.set(true, forKey: "pendingOpenSharedTagCloudFromNotification")',
+            "iPhone notification route must survive a cold launch until SwiftUI is ready",
+        ),
+        lambda: require(
+            "ios/URLSaveriOS/UI/RootView.swift",
+            '@AppStorage("pendingOpenSharedTagCloudFromNotification")',
+            "iPhone root must consume the persisted notification route",
+        ),
+        lambda: require(
             "docs/mobile-ui-regression-contract.md",
             "Local Tags On Cards",
             "single source of truth for card/tag regression behavior",

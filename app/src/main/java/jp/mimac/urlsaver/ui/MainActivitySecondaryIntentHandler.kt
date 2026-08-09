@@ -4,6 +4,7 @@ import android.content.Intent
 import jp.mimac.urlsaver.data.EXTRA_DEEP_LINK_INVALID
 import jp.mimac.urlsaver.data.EXTRA_DEEP_LINK_TAG_ID
 import jp.mimac.urlsaver.data.EXTRA_MAIN_INTENT_EVENT_TOKEN
+import jp.mimac.urlsaver.data.EXTRA_OPEN_SHARED_TAG_CLOUD
 import jp.mimac.urlsaver.data.EXTRA_PROMO_CODE
 import jp.mimac.urlsaver.data.EXTRA_PROMO_CODE_INVALID
 import jp.mimac.urlsaver.data.EXTRA_SHARED_TAG_INVITE_INVALID
@@ -83,7 +84,8 @@ internal class MainActivitySecondaryIntentHandler(
         val isInviteInvalid = intent.getBooleanExtra(EXTRA_SHARED_TAG_INVITE_INVALID, false)
         val promoCode = intent.getStringExtra(EXTRA_PROMO_CODE)?.takeIf { it.isNotBlank() }
         val isPromoInvalid = intent.getBooleanExtra(EXTRA_PROMO_CODE_INVALID, false)
-        if (!hasTagId && !isInvalid && inviteToken == null && !isInviteInvalid && promoCode == null && !isPromoInvalid) return
+        val opensSharedTagCloud = intent.getBooleanExtra(EXTRA_OPEN_SHARED_TAG_CLOUD, false)
+        if (!hasTagId && !isInvalid && inviteToken == null && !isInviteInvalid && promoCode == null && !isPromoInvalid && !opensSharedTagCloud) return
 
         val tagId = if (hasTagId) intent.getLongExtra(EXTRA_DEEP_LINK_TAG_ID, 0L) else null
         val signature = buildDeepLinkSignature(
@@ -96,6 +98,11 @@ internal class MainActivitySecondaryIntentHandler(
             isPromoInvalid = isPromoInvalid,
         )
         if (!consumedDeepLinkSignatures.add(signature)) return
+
+        if (opensSharedTagCloud) {
+            navigate(MainNavigationEvent.NavigateToCloudAuth)
+            return
+        }
 
         if (promoCode != null) {
             navigate(MainNavigationEvent.NavigateToPromoCode(promoCode))

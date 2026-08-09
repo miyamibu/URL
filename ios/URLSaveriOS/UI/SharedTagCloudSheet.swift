@@ -28,6 +28,7 @@ struct SharedTagCloudSheet: View {
     @State private var isShowingContactSheet = false
     @State private var promoCode = ""
     @State private var promoMessage: String?
+    @State private var hasPromoAttemptResult = false
     @State private var isRedeemingPromoCode = false
     @State private var googleOAuthURL: URL?
     @State private var pendingAppleNonce: String?
@@ -686,7 +687,7 @@ struct SharedTagCloudSheet: View {
 
             HStack(alignment: .top, spacing: 10) {
                 UsageMetricTile(
-                    title: "保存タグ",
+                    title: "保存URL",
                     valueText: "\(personalSavedURLCount)"
                 )
                 UsageMetricTile(
@@ -711,13 +712,13 @@ struct SharedTagCloudSheet: View {
                         let enabled = await model.requestSharedTagNotifications()
                         model.showProfileStatusMessage(
                             enabled
-                                ? "共有タグの新着通知を有効にしました"
+                                ? "同期時の共有タグ通知を有効にしました"
                                 : "通知は有効になりませんでした。iPhoneの設定から変更できます"
                         )
                         isWorking = false
                     }
                 } label: {
-                    Text("共有タグの新着通知を有効にする")
+                    Text("同期時の共有タグ通知を有効にする")
                 }
 
                 HStack(spacing: 10) {
@@ -792,7 +793,14 @@ struct SharedTagCloudSheet: View {
             Text("優待コード")
                 .font(.system(size: 18, weight: .heavy, design: .rounded))
                 .foregroundStyle(AppPalette.textPrimary)
-            TextField("", text: $promoCode)
+            TextField("", text: Binding(
+                get: { promoCode },
+                set: { newValue in
+                    promoCode = newValue
+                    promoMessage = nil
+                    hasPromoAttemptResult = false
+                }
+            ))
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .font(.system(size: 18, weight: .medium))
@@ -805,9 +813,6 @@ struct SharedTagCloudSheet: View {
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
                             .stroke(AppPalette.outlineSoft, lineWidth: 1.5)
                 )
-                .onChange(of: promoCode) { _, _ in
-                    promoMessage = nil
-                }
 
             AppActionButton(
                 tone: .primary,
@@ -832,43 +837,13 @@ struct SharedTagCloudSheet: View {
 
     private var paidCourseSection: some View {
         AppPanel {
-            Text("有料コース")
+            Text("Pro機能")
                 .font(.system(size: 20, weight: .heavy, design: .rounded))
                 .foregroundStyle(AppPalette.textPrimary)
 
-            Text("購入後はサーバー検証が完了したコースだけ反映されます。")
+            Text("現在はすべてのユーザーにPro機能を提供しています。追加購入は必要ありません。")
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(AppPalette.textSecondary)
-
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                if !model.entitlements.planType.isPaidCourse {
-                    paidCourseButton(title: "Standard 月額", plan: .standard, period: .monthly)
-                }
-                paidCourseButton(title: "Standard 年払い", plan: .standard, period: .yearly)
-                if !model.entitlements.planType.isPaidCourse {
-                    paidCourseButton(title: "Pro 月額", plan: .pro, period: .monthly)
-                }
-                paidCourseButton(title: "Pro 年払い", plan: .pro, period: .yearly)
-            }
-        }
-    }
-
-    private func paidCourseButton(title: String, plan: PlanType, period: BillingPeriod) -> some View {
-        AppActionButton(
-            tone: plan == .pro ? .primary : .secondary,
-            enabled: model.sharedTagCloudState.isSignedIn && !isWorking
-        ) {
-            guard !isWorking else { return }
-            isWorking = true
-            Task {
-                await model.purchasePaidCourse(planType: plan, billingPeriod: period)
-                isWorking = false
-            }
-        } label: {
-            Text(title)
-                .font(.system(size: 15, weight: .heavy, design: .rounded))
-                .lineLimit(2)
-                .minimumScaleFactor(0.82)
         }
     }
 
@@ -882,7 +857,7 @@ struct SharedTagCloudSheet: View {
     }
 
     private var canRedeemPromoCode: Bool {
-        !promoCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !promoCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !hasPromoAttemptResult
     }
 
     private var personalSavedURLCount: Int {
@@ -907,6 +882,7 @@ struct SharedTagCloudSheet: View {
         let code = promoCode.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !code.isEmpty, !isRedeemingPromoCode else { return }
         isRedeemingPromoCode = true
+        hasPromoAttemptResult = true
         Task {
             let result = await model.redeemPromoCode(code)
             await MainActor.run {
@@ -933,6 +909,7 @@ struct SharedTagCloudSheet: View {
         }
         promoCode = pendingCode
         promoMessage = "メールの優待コードを読み込みました"
+        hasPromoAttemptResult = false
         model.clearPendingPromoCode()
     }
 

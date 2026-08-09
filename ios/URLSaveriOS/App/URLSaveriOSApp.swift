@@ -2,6 +2,10 @@ import SwiftUI
 import UIKit
 import UserNotifications
 
+extension Notification.Name {
+    static let openSharedTagCloudFromNotification = Notification.Name("openSharedTagCloudFromNotification")
+}
+
 final class URLSaverNotificationDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     func application(
         _ application: UIApplication,
@@ -16,6 +20,19 @@ final class URLSaverNotificationDelegate: NSObject, UIApplicationDelegate, UNUse
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
         [.banner, .list, .sound]
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        guard response.notification.request.content.userInfo["route"] as? String == "shared-tag-cloud" else {
+            return
+        }
+        UserDefaults.standard.set(true, forKey: "pendingOpenSharedTagCloudFromNotification")
+        await MainActor.run {
+            NotificationCenter.default.post(name: .openSharedTagCloudFromNotification, object: nil)
+        }
     }
 }
 

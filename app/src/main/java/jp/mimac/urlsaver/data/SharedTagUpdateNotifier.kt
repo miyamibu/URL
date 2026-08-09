@@ -41,16 +41,20 @@ class AndroidSharedTagUpdateNotifier(
         } else {
             "${tagLabel}に新しいURLが${notice.newUrlCount}件追加されました"
         }
+        val notificationId = NOTIFICATION_ID_BASE +
+            ((notice.tagNames.joinToString("|").hashCode() and Int.MAX_VALUE) % 1_000)
         val pendingIntent = PendingIntent.getActivity(
             context,
-            0,
+            notificationId,
             Intent(context, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra(EXTRA_OPEN_SHARED_TAG_CLOUD, true)
+                putExtra(EXTRA_MAIN_INTENT_EVENT_TOKEN, "shared-tag-notification-$notificationId-${System.currentTimeMillis()}")
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification_rinbam)
             .setContentTitle("共有タグに新着があります")
             .setContentText(content)
             .setStyle(NotificationCompat.BigTextStyle().bigText(content))
@@ -58,7 +62,7 @@ class AndroidSharedTagUpdateNotifier(
             .setAutoCancel(true)
             .setOnlyAlertOnce(true)
             .build()
-        NotificationManagerCompat.from(context).notify(NOTIFICATION_ID, notification)
+        NotificationManagerCompat.from(context).notify(notificationId, notification)
     }
 
     private fun canPostNotifications(): Boolean {
@@ -83,6 +87,6 @@ class AndroidSharedTagUpdateNotifier(
 
     private companion object {
         const val CHANNEL_ID = "shared-tag-updates"
-        const val NOTIFICATION_ID = 4102
+        const val NOTIFICATION_ID_BASE = 4_100
     }
 }

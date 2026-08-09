@@ -1,9 +1,7 @@
 package jp.mimac.urlsaver.ui
 
 import android.Manifest
-import android.app.Activity
 import android.content.Context
-import android.content.ContextWrapper
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -87,13 +85,10 @@ import jp.mimac.urlsaver.data.ChatGptSyncResult
 import jp.mimac.urlsaver.data.PendingInviteRecord
 import jp.mimac.urlsaver.domain.SharedTagAccountDeletionResult
 import jp.mimac.urlsaver.domain.SharedTagAuthResult
-import jp.mimac.urlsaver.domain.BillingPeriod
 import jp.mimac.urlsaver.domain.FeatureEntitlements
-import jp.mimac.urlsaver.domain.PlanType
 import jp.mimac.urlsaver.domain.SharedTagInviteAcceptanceResult
 import jp.mimac.urlsaver.domain.SharedTagInvitePreviewResult
 import jp.mimac.urlsaver.domain.UsageSummary
-import jp.mimac.urlsaver.domain.isPaidCourse
 import jp.mimac.urlsaver.ui.theme.AppThemeMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -180,8 +175,8 @@ fun SharedTagCloudAuthScreen(
     var isSendingContact by remember { mutableStateOf(false) }
     var promoCode by remember { mutableStateOf(initialPromoCode.orEmpty()) }
     var promoMessage by remember { mutableStateOf<String?>(null) }
+    var hasPromoAttemptResult by remember { mutableStateOf(false) }
     var isRedeemingPromoCode by remember { mutableStateOf(false) }
-    var isPurchasing by remember { mutableStateOf(false) }
     var showAiTransparencySheet by remember { mutableStateOf(false) }
     var draftAvatarBase64 by remember { mutableStateOf<String?>(null) }
     val avatarBitmap = remember(draftAvatarBase64) { draftAvatarBase64.toImageBitmapOrNull() }
@@ -225,6 +220,7 @@ fun SharedTagCloudAuthScreen(
         if (!initialPromoCode.isNullOrBlank()) {
             promoCode = initialPromoCode
             promoMessage = "メールの優待コードを読み込みました"
+            hasPromoAttemptResult = false
         }
     }
 
@@ -285,6 +281,7 @@ fun SharedTagCloudAuthScreen(
     fun redeemPromoCode() {
         scope.launch {
             isRedeemingPromoCode = true
+            hasPromoAttemptResult = true
             promoMessage = when (val result = viewModel.redeemPromoCode(promoCode)) {
                 PromoCodeApplyResult.Success -> {
                     promoCode = ""
@@ -295,25 +292,6 @@ fun SharedTagCloudAuthScreen(
                 is PromoCodeApplyResult.Failure -> result.message
             }
             isRedeemingPromoCode = false
-        }
-    }
-
-    fun purchasePaidCourse(planType: PlanType, billingPeriod: BillingPeriod) {
-        val activity = context.findActivity()
-        if (activity == null) {
-            message = "購入画面を開けませんでした"
-            return
-        }
-        scope.launch {
-            isPurchasing = true
-            message = when (val result = viewModel.purchasePaidCourse(activity, planType, billingPeriod)) {
-                PaidCoursePurchaseUiResult.Started -> "購入画面を開きました"
-                PaidCoursePurchaseUiResult.AuthRequired -> "購入にはサインインが必要です"
-                PaidCoursePurchaseUiResult.ProductUnavailable -> "このコースは現在購入できません"
-                PaidCoursePurchaseUiResult.Unavailable -> "購入機能がこのビルドで利用できません"
-                is PaidCoursePurchaseUiResult.Failure -> result.message.ifBlank { "購入画面を開けませんでした" }
-            }
-            isPurchasing = false
         }
     }
 
@@ -573,20 +551,16 @@ fun SharedTagCloudAuthScreen(
                             Text("アカウント削除")
                         }
                     }
-                    PaidCourseSection(
-                        isEnabled = !isSubmitting && !isPurchasing,
-                        isPurchasing = isPurchasing,
-                        showMonthlyOptions = !entitlements.planType.isPaidCourse,
-                        onPurchase = ::purchasePaidCourse,
-                    )
+                    PaidCourseSection()
                     PromoCodeSection(
                         promoCode = promoCode,
                         promoMessage = promoMessage,
                         isRedeemingPromoCode = isRedeemingPromoCode,
-                        canRedeemPromoCode = viewModel.canApplyPromoCode(promoCode),
+                        canRedeemPromoCode = viewModel.canApplyPromoCode(promoCode) && !hasPromoAttemptResult,
                         onPromoCodeChange = {
                             promoCode = it
                             promoMessage = null
+                            hasPromoAttemptResult = false
                         },
                         onRedeemPromoCode = ::redeemPromoCode,
                     )
@@ -665,20 +639,16 @@ fun SharedTagCloudAuthScreen(
                         }
                     },
                 )
-                PaidCourseSection(
-                    isEnabled = !isSubmitting && !isPurchasing,
-                    isPurchasing = isPurchasing,
-                    showMonthlyOptions = !entitlements.planType.isPaidCourse,
-                    onPurchase = ::purchasePaidCourse,
-                )
+                PaidCourseSection()
                 PromoCodeSection(
                     promoCode = promoCode,
                     promoMessage = promoMessage,
                     isRedeemingPromoCode = isRedeemingPromoCode,
-                    canRedeemPromoCode = viewModel.canApplyPromoCode(promoCode),
+                    canRedeemPromoCode = viewModel.canApplyPromoCode(promoCode) && !hasPromoAttemptResult,
                     onPromoCodeChange = {
                         promoCode = it
                         promoMessage = null
+                        hasPromoAttemptResult = false
                     },
                     onRedeemPromoCode = ::redeemPromoCode,
                 )
@@ -1481,7 +1451,7 @@ private fun UsageSummaryCard(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             UsageMetricTile(
-                title = "保存タグ",
+                title = "保存URL",
                 body = usageSummary.personalUrlCount.toString(),
                 modifier = Modifier.weight(1f),
             )
@@ -1794,96 +1764,19 @@ private fun SharedTagAuthForm(
 
 @Composable
 private fun PaidCourseSection(
-    isEnabled: Boolean,
-    isPurchasing: Boolean,
-    showMonthlyOptions: Boolean,
-    onPurchase: (PlanType, BillingPeriod) -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            text = "有料コース",
+            text = "Pro機能",
             style = MaterialTheme.typography.titleMedium,
         )
-        if (showMonthlyOptions) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                PaidCourseButton(
-                    label = "Standard 月額",
-                    enabled = isEnabled,
-                    isPurchasing = isPurchasing,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onPurchase(PlanType.STANDARD, BillingPeriod.MONTHLY) },
-                )
-                PaidCourseButton(
-                    label = "Standard 年払い",
-                    enabled = isEnabled,
-                    isPurchasing = isPurchasing,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onPurchase(PlanType.STANDARD, BillingPeriod.YEARLY) },
-                )
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                PaidCourseButton(
-                    label = "Pro 月額",
-                    enabled = isEnabled,
-                    isPurchasing = isPurchasing,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onPurchase(PlanType.PRO, BillingPeriod.MONTHLY) },
-                )
-                PaidCourseButton(
-                    label = "Pro 年払い",
-                    enabled = isEnabled,
-                    isPurchasing = isPurchasing,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onPurchase(PlanType.PRO, BillingPeriod.YEARLY) },
-                )
-            }
-        } else {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                PaidCourseButton(
-                    label = "Standard 年払い",
-                    enabled = isEnabled,
-                    isPurchasing = isPurchasing,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onPurchase(PlanType.STANDARD, BillingPeriod.YEARLY) },
-                )
-                PaidCourseButton(
-                    label = "Pro 年払い",
-                    enabled = isEnabled,
-                    isPurchasing = isPurchasing,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onPurchase(PlanType.PRO, BillingPeriod.YEARLY) },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun PaidCourseButton(
-    label: String,
-    enabled: Boolean,
-    isPurchasing: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    OutlinedButton(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = modifier.height(56.dp),
-    ) {
-        Text(if (isPurchasing) "処理中" else label)
+        Text(
+            text = "現在はすべてのユーザーにPro機能を提供しています。追加購入は必要ありません。",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -1921,14 +1814,6 @@ private suspend fun readAvatarBytes(
             stream.readBytes()
         }
     }.getOrNull()
-}
-
-private tailrec fun Context.findActivity(): Activity? {
-    return when (this) {
-        is Activity -> this
-        is ContextWrapper -> baseContext.findActivity()
-        else -> null
-    }
 }
 
 private fun String?.toImageBitmapOrNull(): ImageBitmap? {

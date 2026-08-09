@@ -66,6 +66,10 @@
 	<array>
 		<string>jp.mimac.urlsaver.metadata.refresh</string>
 	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

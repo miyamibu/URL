@@ -12,6 +12,8 @@ import androidx.compose.ui.text.font.FontWeight
 private val lightColorPalette = lightColorScheme(
     primary = androidx.compose.ui.graphics.Color(0xFF1F6FD1),
     onPrimary = androidx.compose.ui.graphics.Color(0xFFFFFFFF),
+    primaryContainer = androidx.compose.ui.graphics.Color(0xFFDCEBFA),
+    onPrimaryContainer = androidx.compose.ui.graphics.Color(0xFF0B4D8A),
     secondary = androidx.compose.ui.graphics.Color(0xFF00695C),
     onSecondary = androidx.compose.ui.graphics.Color(0xFFFFFFFF),
     background = androidx.compose.ui.graphics.Color(0xFFF4F7FB),
@@ -28,6 +30,8 @@ private val lightColorPalette = lightColorScheme(
 private val darkColorPalette = darkColorScheme(
     primary = OrbitTokens.primary,
     onPrimary = OrbitTokens.onPrimary,
+    primaryContainer = androidx.compose.ui.graphics.Color(0xFF143558),
+    onPrimaryContainer = androidx.compose.ui.graphics.Color(0xFFA9D1FF),
     secondary = OrbitTokens.secondary,
     onSecondary = OrbitTokens.onSecondary,
     background = OrbitTokens.background,
