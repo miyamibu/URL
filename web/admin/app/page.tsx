@@ -559,16 +559,26 @@ export default function AdminPage() {
     if (failed) setError("許可された管理運用データの一部を取得できませんでした");
   }
 
-  async function updateSupport(requestId: string, supportStatus: SupportRequestRow["support_status"]) {
+  async function updateSupport(row: SupportRequestRow, supportStatus: SupportRequestRow["support_status"]) {
     if (!session) return;
+    if (supportStatus === row.support_status) return;
+    const labels: Record<SupportRequestRow["support_status"], string> = {
+      open: "未対応",
+      in_progress: "対応中",
+      resolved: "解決",
+      closed: "終了",
+    };
+    if (!highRiskReady || !window.confirm(
+      `受付 ${row.request_id} の対応状態を「${labels[row.support_status]}」から「${labels[supportStatus]}」へ変更しますか？\n\nこの操作は監査ログに記録されます。`,
+    )) return;
     const reason = requiredOperationReason();
     if (!reason) return;
-    const operationKey = `support:${requestId}:${supportStatus}:${reason}`;
+    const operationKey = `support:${row.id}:${supportStatus}:${reason}`;
     const operationId = operationIdFor(operationKey);
     const response = await fetch("/api/admin/support", {
       method: "PATCH",
       headers: { ...authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify({ id: requestId, supportStatus, reason, operationId }),
+      body: JSON.stringify({ id: row.id, supportStatus, reason, operationId }),
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -589,6 +599,11 @@ export default function AdminPage() {
 
   async function moderateReport(reportId: string, action: string) {
     if (!session) return;
+    const actionLabels: Record<string, string> = { review: "確認中", reject: "却下", close: "終了" };
+    const actionLabel = actionLabels[action] ?? action;
+    if (!highRiskReady || !window.confirm(
+      `通報 ${reportId} に「${actionLabel}」を適用しますか？\n\n対象と操作を確認してください。この操作は監査ログに記録されます。`,
+    )) return;
     const reason = requiredOperationReason();
     if (!reason) return;
     const operationKey = `moderation:${reportId}:${action}:${reason}`;
@@ -798,7 +813,10 @@ export default function AdminPage() {
   }
 
   async function revokeCode(id: string) {
-    if (!session || !window.confirm("この優待コードを取り消しますか？")) return;
+    const code = codes.find((row) => row.id === id);
+    if (!session || !highRiskReady || !window.confirm(
+      `優待コードを取り消しますか？\n\n対象: ${code?.target_email ?? "不明"}\nコードID: ${id}\nこの操作は元に戻せず、監査ログに記録されます。`,
+    )) return;
     const reason = requiredOperationReason();
     if (!reason) return;
     const operationKey = `promo-revoke:${id}:${reason}`;
@@ -864,7 +882,7 @@ export default function AdminPage() {
     return (
       <main className="shell narrow">
         <section className="panel">
-          <h1>URL Saver 管理</h1>
+          <h1>りんばむ 管理</h1>
           <p className="muted">優待コード管理には管理者アカウントでのサインインが必要です。</p>
           <form onSubmit={signIn} className="stack">
             <label>
@@ -887,7 +905,7 @@ export default function AdminPage() {
     <main className="shell">
       <header className="topbar">
         <div>
-          <p className="eyebrow">URL Saver Admin</p>
+          <p className="eyebrow">Rinbam Admin</p>
           <h1>管理運用</h1>
           <p className="muted" data-testid="admin-role">
             role: {adminRole ?? "管理者ロールを確認中"}
@@ -1026,17 +1044,17 @@ export default function AdminPage() {
                     <button
                       className="small secondary"
                       disabled={!highRiskReady || selectedUser.accountStatus === "active"}
-                      onClick={() => void manageUser("set_status", { accountStatus: "active" })}
+                      onClick={() => window.confirm(`ユーザーを有効化しますか？\n\n対象: ${selectedUser.email}\nユーザーID: ${selectedUser.id}`) && void manageUser("set_status", { accountStatus: "active" })}
                     >有効化</button>
                     <button
                       className="small danger"
                       disabled={!highRiskReady || selectedUser.accountStatus === "suspended"}
-                      onClick={() => window.confirm("このユーザーを停止しますか？") && void manageUser("set_status", { accountStatus: "suspended" })}
+                      onClick={() => window.confirm(`ユーザーを停止しますか？\n\n対象: ${selectedUser.email}\nユーザーID: ${selectedUser.id}\nこの操作は利用可否に影響し、監査ログに記録されます。`) && void manageUser("set_status", { accountStatus: "suspended" })}
                     >停止</button>
                     <button
                       className="small danger"
                       disabled={!highRiskReady || selectedUser.accountStatus === "banned"}
-                      onClick={() => window.confirm("このユーザーをBANしますか？") && void manageUser("set_status", { accountStatus: "banned" })}
+                      onClick={() => window.confirm(`ユーザーをBANしますか？\n\n対象: ${selectedUser.email}\nユーザーID: ${selectedUser.id}\nこの操作は利用可否に影響し、監査ログに記録されます。`) && void manageUser("set_status", { accountStatus: "banned" })}
                     >BAN</button>
                   </div>
                 </div>
@@ -1063,7 +1081,7 @@ export default function AdminPage() {
                   <button
                     className="small"
                     disabled={!highRiskReady}
-                    onClick={() => window.confirm(`${grantPlan}を付与しますか？`) && void manageUser("grant_entitlement", {
+                    onClick={() => window.confirm(`${grantPlan}を付与しますか？\n\n対象: ${selectedUser.email}\n有効日数: ${grantExpiresInDays === 0 ? "無期限" : `${grantExpiresInDays}日`}\nこの操作は監査ログに記録されます。`) && void manageUser("grant_entitlement", {
                       plan: grantPlan,
                       expiresInDays: grantExpiresInDays,
                     })}
@@ -1085,7 +1103,7 @@ export default function AdminPage() {
                           <button
                             className="small danger inlineAction"
                             disabled={!highRiskReady}
-                            onClick={() => window.confirm(`${grant.plan}を取り消しますか？`) && void manageUser("revoke_entitlement", { grantId: grant.id })}
+                            onClick={() => window.confirm(`${grant.plan}を取り消しますか？\n\n対象: ${selectedUser.email}\n権限ID: ${grant.id}\nこの操作は監査ログに記録されます。`) && void manageUser("revoke_entitlement", { grantId: grant.id })}
                           >取消</button>
                         )}
                       </td>
@@ -1304,7 +1322,12 @@ export default function AdminPage() {
                     <td>{deliveryEventText(row.delivery_event_type ?? row.delivery_status)}<br /><small>{row.delivery_error ?? "-"}</small></td>
                     <td>
                       {hasCapability("support.write") ? (
-                        <select value={row.support_status} onChange={(event) => updateSupport(row.id, event.target.value as SupportRequestRow["support_status"])}>
+                        <select
+                          aria-label={`受付 ${row.request_id} の対応状態`}
+                          value={row.support_status}
+                          disabled={!highRiskReady}
+                          onChange={(event) => void updateSupport(row, event.target.value as SupportRequestRow["support_status"])}
+                        >
                           <option value="open">未対応</option>
                           <option value="in_progress">対応中</option>
                           <option value="resolved">解決</option>
@@ -1337,9 +1360,9 @@ export default function AdminPage() {
                 <div className="operationActions">
                   <span className="chip">{report.status}</span>
                   {hasCapability("moderation.manage") && <>
-                    <button className="small secondary" onClick={() => moderateReport(report.id, "review")}>確認中</button>
-                    <button className="small danger" onClick={() => moderateReport(report.id, "reject")}>却下</button>
-                    <button className="small" onClick={() => moderateReport(report.id, "close")}>終了</button>
+                    <button className="small secondary" disabled={!highRiskReady || report.status === "closed"} onClick={() => void moderateReport(report.id, "review")}>確認中</button>
+                    <button className="small danger" disabled={!highRiskReady || report.status === "closed"} onClick={() => void moderateReport(report.id, "reject")}>却下</button>
+                    <button className="small" disabled={!highRiskReady || report.status === "closed"} onClick={() => void moderateReport(report.id, "close")}>終了</button>
                   </>}
                 </div>
               </article>

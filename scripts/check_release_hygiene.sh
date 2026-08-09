@@ -79,7 +79,7 @@ fi
 if [[ -f web/invite-link/vercel.json ]] \
   && grep -Fq '"source": "/auth/reset-password/:path*"' web/invite-link/vercel.json \
   && grep -Fq '"key": "Content-Security-Policy"' web/invite-link/vercel.json \
-  && grep -Fq 'sha256-RAh35s8ZX25KPMRobh7ugOpopFd2XiiFHjsEuQ8/k90=' web/invite-link/vercel.json \
+  && grep -Fq 'sha256-mZFTVPYRBk10/0WxDJKzaUNZaNNRTKSnAX3BuNRN6C8=' web/invite-link/vercel.json \
   && grep -Fq 'sha256-IkDFeozcg3Saa4fKYO3EhGCqzC67yl4xj9I6f8cINtI=' web/invite-link/vercel.json \
   && ! grep -Eq 'unsafe-inline|unsafe-eval' web/invite-link/vercel.json; then
   pass "reset-password route has a strict hash-based CSP"
