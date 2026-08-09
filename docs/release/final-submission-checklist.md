@@ -70,7 +70,7 @@ The repo-side cloud-enabled alignment is fixed. Google Play and App Store Connec
 |---|---|---|---|
 | Package name | DONE | `app/build.gradle.kts`: `applicationId = "jp.miyamibu.urlalbum"` | Keep stable. |
 | Version | DONE | `versionCode = 11`, `versionName = "1.0.11"` | Bump only for later releases. |
-| Target SDK | DONE | `targetSdk = 35` | Recheck at submission date. |
+| Target SDK | DONE | `targetSdk = 36` | Recheck at submission date. |
 | App name/listing copy | DONE | `docs/release/store-listing-draft.md` | Paste into Play Console after account setup. |
 | Privacy policy source | DONE | `web/invite-link/privacy/index.html` updated for cloud-enabled `1.0.11`. | Deploy and verify final public URL before entry. |
 | Privacy policy public URL | DONE_PUBLIC_VERIFIED | `./scripts/verify_public_web_release.sh` passed on 2026-06-29: `https://miyamibu.xyz/privacy/` returned HTTP 200, discloses Standard / Pro subscriptions, Google Play Billing, and StoreKit, and no longer contains stale no-real-billing wording. | Re-run verifier before changing store metadata or release mode. |

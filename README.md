@@ -96,8 +96,8 @@ SNS やメッセージで見つけた URL を後で見返したい人向けの�
 - AI / MCP の詳細契約は `docs/ai/` を参照してください。
 
 ## Build Prerequisites
-- Java 17（`./gradlew --version` で JVM 17 系を確認）
-- Android SDK Platform 35
+- Java 21（ルートの `.java-version` を正準とし、`./gradlew --version` で JVM 21 系を確認）
+- Android SDK Platform 36
 - Android SDK Build-Tools / Platform-Tools / Command-line Tools
 - `local.properties` の `sdk.dir` が有効であること
 - Instagram oEmbed 補助を使う場合のみ、`local.properties` に `instagram.oembed.access.token=<Meta access token>` を設定する
@@ -188,8 +188,8 @@ SNS やメッセージで見つけた URL を後で見返したい人向けの�
 - `connectedDebugAndroidTest` はローカル手動検証として実行し、結果を記録する
 
 ## Failure Triage
-- `JVM` が 17 以外: Java 17 を選択し、`./gradlew --version` で再確認する
-- SDK 関連エラー: `local.properties` の `sdk.dir` と SDK Platform 35 / Build-Tools を確認する
+- `JVM` が 21 以外: Java 21 を選択し、`./gradlew --version` で再確認する。SDK 36向けRobolectricテストはJava 17では失敗する。
+- SDK 関連エラー: `local.properties` の `sdk.dir` と SDK Platform 36 / Build-Tools を確認する
 - `connectedDebugAndroidTest` が失敗: 端末/AVD 接続状態を確認し、`adb devices` で認識を確認する
 - `No connected devices!`: 端末未接続またはエミュレータ未起動。接続後に再実行する
 - `assembleDebug` は成功するのに実機へ入らない:
