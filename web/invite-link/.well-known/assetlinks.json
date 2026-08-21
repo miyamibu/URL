@@ -5,7 +5,8 @@
       "namespace": "android_app",
       "package_name": "jp.miyamibu.urlalbum",
       "sha256_cert_fingerprints": [
-        "3C:CF:82:D6:7A:69:C8:F9:53:2B:EA:AA:4F:03:9D:E9:0B:7E:27:9F:36:80:7F:7E:2F:F6:B5:1B:23:04:80:11"
+        "3C:CF:82:D6:7A:69:C8:F9:53:2B:EA:AA:4F:03:9D:E9:0B:7E:27:9F:36:80:7F:7E:2F:F6:B5:1B:23:04:80:11",
+        "B5:32:96:30:49:71:7C:FB:4B:90:F6:61:4B:1F:6A:A8:CF:59:1B:B0:45:93:58:80:9F:E1:36:EA:0B:BB:26:1A"
       ]
     }
   }
