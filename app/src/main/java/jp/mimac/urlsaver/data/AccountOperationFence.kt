@@ -40,10 +40,6 @@ class AccountOperationFence(
         deletedAuthUserIds += normalized
     }
 
-    fun releaseAfterRemoteDeleteFailure(authUserId: String) {
-        deletedAuthUserIds -= authUserId.trim()
-    }
-
     private fun isBlocked(authUserId: String): Boolean {
         if (authUserId in deletedAuthUserIds) return true
         val pending = localAccountCleanupStore.pending.value ?: return false
