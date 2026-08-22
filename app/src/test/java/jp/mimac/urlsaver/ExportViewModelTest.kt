@@ -12,9 +12,11 @@ import jp.mimac.urlsaver.ui.ExportViewModel
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
@@ -23,6 +25,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import java.io.File
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ExportViewModelTest {
@@ -52,7 +55,8 @@ class ExportViewModelTest {
 
         viewModel.toggleChatGptTagSelection(2L)
         advanceUntilIdle()
-        staleArchiveDeferred.complete(archive("stale.zip", "snapshot-one"))
+        val staleArchive = archive("stale.zip", "snapshot-one")
+        staleArchiveDeferred.complete(staleArchive)
         advanceUntilIdle()
 
         val state = viewModel.chatGptUiState.value
@@ -63,6 +67,7 @@ class ExportViewModelTest {
         assertNull(state.preparedArchive)
         assertNull(state.archiveSuccessMessage)
         assertEquals(listOf(setOf(1L) to "snapshot-one"), repository.prepareRequests)
+        assertEquals(listOf(staleArchive), repository.releasedArchives)
     }
 
     @Test
@@ -83,7 +88,8 @@ class ExportViewModelTest {
         assertTrue(viewModel.chatGptUiState.value.isArchivePreparing)
 
         viewModel.setChatGptContentConfirmed(false)
-        staleArchiveDeferred.complete(archive("revoked.zip", "snapshot-one"))
+        val revokedArchive = archive("revoked.zip", "snapshot-one")
+        staleArchiveDeferred.complete(revokedArchive)
         advanceUntilIdle()
 
         val state = viewModel.chatGptUiState.value
@@ -91,6 +97,7 @@ class ExportViewModelTest {
         assertFalse(state.isArchivePreparing)
         assertNull(state.preparedArchive)
         assertNull(state.archiveSuccessMessage)
+        assertEquals(listOf(revokedArchive), repository.releasedArchives)
     }
 
     @Test
@@ -120,7 +127,8 @@ class ExportViewModelTest {
         assertEquals("snapshot-one", viewModel.chatGptUiState.value.preview?.snapshotToken)
         assertFalse(viewModel.chatGptUiState.value.isContentConfirmed)
 
-        staleArchiveDeferred.complete(archive("aba.zip", "snapshot-one"))
+        val abaArchive = archive("aba.zip", "snapshot-one")
+        staleArchiveDeferred.complete(abaArchive)
         advanceUntilIdle()
 
         val state = viewModel.chatGptUiState.value
@@ -128,6 +136,7 @@ class ExportViewModelTest {
         assertFalse(state.isContentConfirmed)
         assertNull(state.preparedArchive)
         assertNull(state.archiveSuccessMessage)
+        assertEquals(listOf(abaArchive), repository.releasedArchives)
     }
 
     @Test
@@ -220,10 +229,66 @@ class ExportViewModelTest {
         assertTrue(viewModel.chatGptUiState.value.archiveError.orEmpty().contains("確認欄"))
     }
 
+    @Test
+    fun chatGptRegenerationAndScreenDisposeReleaseEveryReplacedArchive() = runTest {
+        val repository = FakeExportRepository(
+            previews = mapOf(setOf(1L) to preview("snapshot", setOf(1L))),
+        )
+        val viewModel = ExportViewModel(repository)
+        viewModel.toggleChatGptTagSelection(1L)
+        advanceUntilIdle()
+        viewModel.setChatGptContentConfirmed(true)
+
+        viewModel.prepareChatGptExport()
+        advanceUntilIdle()
+        val firstArchive = requireNotNull(viewModel.chatGptUiState.value.preparedArchive)
+
+        viewModel.prepareChatGptExport()
+        advanceUntilIdle()
+        val secondArchive = requireNotNull(viewModel.chatGptUiState.value.preparedArchive)
+        assertTrue(firstArchive != secondArchive)
+        assertEquals(listOf(firstArchive), repository.releasedArchives)
+
+        viewModel.clearPreparedChatGptArchive()
+        assertNull(viewModel.chatGptUiState.value.preparedArchive)
+        assertEquals(listOf(firstArchive, secondArchive), repository.releasedArchives)
+    }
+
+    @Test
+    fun standardArchiveReleaseAndCancelledReturnAreBothReclaimed() = runTest {
+        val deferredArchive = CompletableDeferred<PreparedExportArchive>()
+        var prepareCount = 0
+        val repository = FakeExportRepository(
+            standardPrepareBlock = {
+                prepareCount += 1
+                if (prepareCount == 1) {
+                    archive("standard.zip", "standard")
+                } else {
+                    withContext(NonCancellable) { deferredArchive.await() }
+                }
+            },
+        )
+        val viewModel = ExportViewModel(repository)
+
+        val firstArchive = viewModel.prepareExport(ExportOutputFormat.ZIP).getOrThrow()
+        viewModel.releaseAllStandardPreparedArchives()
+        assertEquals(listOf(firstArchive), repository.releasedArchives)
+
+        val cancelledResult = async { viewModel.prepareExport(ExportOutputFormat.ZIP) }
+        runCurrent()
+        cancelledResult.cancel()
+        val lateArchive = archive("late-standard.zip", "late-standard")
+        deferredArchive.complete(lateArchive)
+        assertTrue(runCatching { cancelledResult.await() }.isFailure)
+        assertEquals(listOf(firstArchive, lateArchive), repository.releasedArchives)
+    }
+
     private fun archive(fileName: String, token: String): PreparedExportArchive {
+        val file = preparedFile(byteArrayOf(1))
         return PreparedExportArchive(
             fileName = fileName,
-            bytes = byteArrayOf(1),
+            file = file,
+            byteCount = file.length(),
             entryCount = 1,
             mimeType = ExportOutputFormat.ZIP.mimeType,
             chatGptPreview = preview(token, setOf(1L)),
@@ -233,10 +298,15 @@ class ExportViewModelTest {
     private class FakeExportRepository(
         private val previews: Map<Set<Long>, ChatGptExportPreview> = emptyMap(),
         private val previewBlock: (suspend (Set<Long>) -> ChatGptExportPreview)? = null,
+        private val standardPrepareBlock: suspend (ExportRequest) -> PreparedExportArchive = {
+            error("standard export is not used")
+        },
         private val prepareBlock: suspend (Set<Long>, String) -> PreparedExportArchive = { _, token ->
+            val file = preparedFile(byteArrayOf(1))
             PreparedExportArchive(
                 fileName = "prepared.zip",
-                bytes = byteArrayOf(1),
+                file = file,
+                byteCount = file.length(),
                 entryCount = 1,
                 mimeType = ExportOutputFormat.ZIP.mimeType,
                 chatGptPreview = preview(token, setOf(1L)),
@@ -249,13 +319,14 @@ class ExportViewModelTest {
         )
         private val tagsFlow = MutableStateFlow(tags)
         val prepareRequests = mutableListOf<Pair<Set<Long>, String>>()
+        val releasedArchives = mutableListOf<PreparedExportArchive>()
 
         override suspend fun loadAvailableTags(): List<ExportTagOption> = tags
 
         override fun observeAvailableTags(): Flow<List<ExportTagOption>> = tagsFlow
 
         override suspend fun prepareExport(request: ExportRequest): PreparedExportArchive {
-            error("standard export is not used")
+            return standardPrepareBlock(request)
         }
 
         override suspend fun loadChatGptExportPreview(selectedTagIds: Set<Long>): ChatGptExportPreview {
@@ -269,9 +340,21 @@ class ExportViewModelTest {
             prepareRequests += selectedTagIds to expectedSnapshotToken
             return prepareBlock(selectedTagIds, expectedSnapshotToken)
         }
+
+        override fun releasePreparedArchive(archive: PreparedExportArchive): Boolean {
+            releasedArchives += archive
+            return true
+        }
     }
 
     private companion object {
+        fun preparedFile(bytes: ByteArray): File {
+            return File.createTempFile("rinbam-export-view-model", ".tmp").apply {
+                writeBytes(bytes)
+                deleteOnExit()
+            }
+        }
+
         fun preview(token: String, selectedTagIds: Set<Long>): ChatGptExportPreview {
             return ChatGptExportPreview(
                 selectedTagNames = selectedTagIds.sorted().map { "tag-$it" },

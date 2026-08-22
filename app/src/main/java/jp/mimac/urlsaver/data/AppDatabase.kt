@@ -42,8 +42,10 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun aiTransparencyDao(): AiTransparencyDao
 
     companion object {
+        const val DATABASE_NAME = "url_saver.db"
+
         fun create(context: Context): AppDatabase {
-            return Room.databaseBuilder(context, AppDatabase::class.java, "url_saver.db")
+            return Room.databaseBuilder(context, AppDatabase::class.java, DATABASE_NAME)
                 .addMigrations(
                     MIGRATION_1_2,
                     MIGRATION_2_3,

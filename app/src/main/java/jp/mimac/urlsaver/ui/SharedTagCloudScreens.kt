@@ -143,7 +143,7 @@ fun SharedTagCloudAuthScreen(
     val profile by viewModel.profile.collectAsStateWithLifecycle()
     val usageSummary by viewModel.usageSummary.collectAsStateWithLifecycle()
     val pendingInvite by viewModel.pendingInvite.collectAsStateWithLifecycle()
-    val entitlements = viewModel.entitlements
+    val entitlements by viewModel.entitlements.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val chatGptSyncSettings by viewModel.chatGptSyncSettings.collectAsStateWithLifecycle()
     val chatGptSyncEligibility by viewModel.chatGptSyncEligibility.collectAsStateWithLifecycle()
@@ -714,6 +714,11 @@ private fun localCleanupStatusMessage(
     val pendingItems = buildList {
         if (result.aiDataPending) add("端末内AIデータ")
         if (result.sessionPending) add("ログイン情報")
+        if (result.syncWorkCancellationPending) add("共有タグ同期処理")
+        if (result.sharedDataCleanupPending) add("共有タグ同期データ")
+        if (result.pendingInviteCleanupPending) add("保留中の招待")
+        if (result.entitlementCleanupPending) add("利用権限キャッシュ")
+        if (result.personalLinkSettingsCleanupPending) add("ChatGPT連携設定")
     }
     val pendingLabel = pendingItems.joinToString("と").ifBlank { "端末内データ" }
     return "アカウントは削除済みです。${pendingLabel}の消去が完了していません。"

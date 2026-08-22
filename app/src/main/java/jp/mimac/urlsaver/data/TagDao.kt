@@ -465,6 +465,9 @@ interface TagDao {
     @Query("DELETE FROM tag_url_cross_refs WHERE authUserId = :authUserId")
     suspend fun deleteSyncedCrossRefsForUser(authUserId: String)
 
+    @Query("DELETE FROM tags WHERE authUserId = :authUserId AND scope = 'SYNCED'")
+    suspend fun deleteSyncedTagsForUser(authUserId: String)
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertCrossRef(ref: TagUrlCrossRef): Long
 

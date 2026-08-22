@@ -31,10 +31,11 @@ class SharedPreferencesPendingInviteStore(context: Context) : PendingInviteStore
     }
 
     override fun clear() {
-        preferences.edit()
+        val committed = preferences.edit()
             .remove(KEY_INVITE_TOKEN)
             .remove(KEY_SAVED_AT)
-            .apply()
+            .commit()
+        check(committed) { "Could not clear the pending shared-tag invite" }
     }
 
     private companion object {

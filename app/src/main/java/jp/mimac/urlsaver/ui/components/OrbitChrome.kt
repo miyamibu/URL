@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import jp.mimac.urlsaver.ui.theme.OrbitTokens
+import jp.mimac.urlsaver.ui.theme.selectableChipPalette
 
 enum class OrbitPanelTone {
     DEFAULT,
@@ -101,12 +102,13 @@ fun OrbitFilterChip(
     labelFontSize: TextUnit = TextUnit.Unspecified,
 ) {
     val hasCustomLabelSize = labelFontSize != TextUnit.Unspecified
+    val palette = selectableChipPalette(MaterialTheme.colorScheme, selected)
     Box(
         modifier = modifier
             .widthIn(min = if (compact) 44.dp else 72.dp, max = 220.dp)
             .height(44.dp)
             .background(
-                color = if (selected) OrbitTokens.primarySoftSurface else OrbitTokens.panelSoft,
+                color = palette.container,
                 shape = RoundedCornerShape(OrbitTokens.radiusChip),
             )
             .padding(
@@ -128,7 +130,7 @@ fun OrbitFilterChip(
             ),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            color = if (selected) MaterialTheme.colorScheme.primary else OrbitTokens.segmentedInactiveText,
+            color = palette.content,
         )
     }
 }

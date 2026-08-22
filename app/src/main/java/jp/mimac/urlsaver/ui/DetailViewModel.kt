@@ -190,10 +190,9 @@ class DetailViewModel(
         }
     }
 
-    fun deleteToPending(onPending: (Long) -> Unit) {
+    fun deleteToPending() {
         viewModelScope.launch {
-            val pendingUntil = repository.markPendingDelete(entryId) ?: return@launch
-            onPending(pendingUntil)
+            repository.markPendingDelete(entryId) ?: return@launch
             effectChannel.send(DetailEffect.NavigateBackAfterPendingDelete(entryId))
         }
     }

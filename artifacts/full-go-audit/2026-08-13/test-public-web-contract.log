@@ -1,0 +1,57 @@
+✔ ordinary implicit access token fragments are scrubbed and rejected before SDK initialization (5.363917ms)
+✔ tokenless reset visits remain explicit errors without rewriting the clean URL (1.139ms)
+✔ implicit recovery requires type and both tokens, uses a memory-only session, and initializes once (1.46875ms)
+✔ PKCE accepts code only and removes credentials before SDK initialization (1.144292ms)
+✔ invalid or expired structurally valid recovery is scrubbed and stays in the explicit error state (1.023583ms)
+✔ a non-recovery implicit fragment is rejected even when both tokens exist (0.81875ms)
+✔ SDK load timeout fails closed after scrubbing and ignores a late load (1.298875ms)
+✔ exchange timeout fails closed and a late session cannot reveal the form (2.035875ms)
+✔ setSession timeout fails closed and a late session cannot reveal the form (1.063416ms)
+✔ an updateUser exception always re-enables submit and returns to reissue guidance (1.124291ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 10
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 117.067333
+PASS reset route declares a CSP
+PASS reset CSP allows only self and pinned SDK host scripts
+PASS reset CSP allows self-hosted styles
+PASS reset CSP cannot drift through inline hashes or unsafe directives
+PASS reset page has no inline style block
+PASS reset page declares scripts explicitly
+PASS reset page has no inline executable script
+PASS reset SDK keeps SRI and anonymous CORS
+PASS reset rejects tokenless links before loading the SDK
+PASS reset accepts only recovery implicit fragments
+PASS reset requires both implicit recovery tokens
+PASS reset recovery session is memory-only
+PASS reset disables SDK URL auto-detection
+PASS reset removes recovery credentials after session establishment
+PASS reset shares one initialization promise
+PASS reset stylesheet exists
+PASS reset JavaScript exists
+PASS invite route declares a CSP
+PASS invite CSP uses self-hosted code
+PASS invite page has no inline style block
+PASS invite page declares scripts explicitly
+PASS invite page has no inline executable script
+PASS invite fallback contains https://apps.apple.com/app/id6771251450
+PASS invite fallback contains https://play.google.com/store/apps/details?id=jp.miyamibu.urlalbum
+PASS invite fallback contains 招待リンクをコピー
+PASS invite fallback contains このページに戻ります
+PASS invite page does not auto-open the app
+PASS public user-facing pages use the りんばむ brand
+PASS reset recovery runtime contract passes
+PASS reset route responds HTTP 200 locally
+PASS reset response carries exact CSP
+PASS reset rewrite serves the branded page
+PASS reset JavaScript asset responds
+PASS reset asset carries exact CSP
+PASS invite route responds HTTP 200 locally
+PASS invite response carries exact CSP
+PASS invite rewrite serves recovery controls
+PASS invite JavaScript asset is not shadowed by rewrite
+PASS public web contract verification

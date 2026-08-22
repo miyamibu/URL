@@ -12,7 +12,7 @@ import jp.mimac.urlsaver.ui.MAX_CHATGPT_ARCHIVE_BYTES
 import jp.mimac.urlsaver.ui.buildChatGptDirectShareIntent
 import jp.mimac.urlsaver.ui.cacheExportArchive
 import jp.mimac.urlsaver.ui.cachedExportFileNamesToPrune
-import jp.mimac.urlsaver.ui.isChatGptOneTapShareEnabled
+import jp.mimac.urlsaver.ui.copyPreparedExportArchive
 import jp.mimac.urlsaver.ui.isChatGptZipCreationEnabled
 import jp.mimac.urlsaver.ui.shouldFallbackToChatGptChooser
 import jp.mimac.urlsaver.ui.shouldShowSharedTagExportPreset
@@ -24,6 +24,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import java.io.File
+import java.io.ByteArrayOutputStream
+import java.io.RandomAccessFile
 import java.time.LocalDate
 import kotlinx.coroutines.runBlocking
 
@@ -111,42 +113,6 @@ class ExportScreenTest {
     }
 
     @Test
-    fun isChatGptOneTapShareEnabled_requiresSelectionAndReadyTarget() {
-        assertFalse(
-            isChatGptOneTapShareEnabled(
-                selectedTagCount = 0,
-                targetCount = 1,
-                isPreviewLoading = false,
-                isPreparingArchive = false,
-            ),
-        )
-        assertFalse(
-            isChatGptOneTapShareEnabled(
-                selectedTagCount = 1,
-                targetCount = 0,
-                isPreviewLoading = false,
-                isPreparingArchive = false,
-            ),
-        )
-        assertFalse(
-            isChatGptOneTapShareEnabled(
-                selectedTagCount = 1,
-                targetCount = 1,
-                isPreviewLoading = true,
-                isPreparingArchive = false,
-            ),
-        )
-        assertTrue(
-            isChatGptOneTapShareEnabled(
-                selectedTagCount = 2,
-                targetCount = 3,
-                isPreviewLoading = false,
-                isPreparingArchive = false,
-            ),
-        )
-    }
-
-    @Test
     fun shouldFallbackToChatGptChooser_onlySkipsChooserAfterDirectStart() {
         assertFalse(shouldFallbackToChatGptChooser(ChatGptDirectShareOutcome.STARTED))
         assertTrue(shouldFallbackToChatGptChooser(ChatGptDirectShareOutcome.ACTIVITY_NOT_FOUND))
@@ -157,12 +123,7 @@ class ExportScreenTest {
     @Test
     fun chatGptShareIntent_containsOnlyZipAttachmentAndReadGrant() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-        val archive = PreparedExportArchive(
-            fileName = "rinbam-chatgpt-test.zip",
-            bytes = byteArrayOf(1, 2, 3),
-            entryCount = 1,
-            mimeType = "application/zip",
-        )
+        val archive = preparedArchive("rinbam-chatgpt-test.zip", byteArrayOf(1, 2, 3))
         val uri = Uri.parse("content://${context.packageName}.fileprovider/exports/test.zip")
 
         val intent = buildChatGptDirectShareIntent(context, archive, uri)
@@ -181,12 +142,7 @@ class ExportScreenTest {
     @Test
     fun writeCachedExportArchive_writesBytesOffUiContract() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-        val archive = PreparedExportArchive(
-            fileName = "rinbam-chatgpt-test.zip",
-            bytes = byteArrayOf(9, 8, 7),
-            entryCount = 1,
-            mimeType = "application/zip",
-        )
+        val archive = preparedArchive("rinbam-chatgpt-test.zip", byteArrayOf(9, 8, 7))
 
         val targetFile = writeCachedExportArchive(context, archive)
         val copied = targetFile.readBytes()
@@ -196,11 +152,73 @@ class ExportScreenTest {
     }
 
     @Test
+    fun preparedArchive_streamCopyPreservesContentAndRejectsByteCountDrift() = runBlocking {
+        val archive = preparedArchive("rinbam-stream-copy.zip", byteArrayOf(4, 5, 6, 7))
+        val output = ByteArrayOutputStream()
+
+        copyPreparedExportArchive(archive, output)
+
+        assertEquals(listOf(4, 5, 6, 7), output.toByteArray().map { it.toInt() })
+        archive.file.appendBytes(byteArrayOf(8))
+        assertTrue(runCatching { copyPreparedExportArchive(archive, ByteArrayOutputStream()) }.isFailure)
+    }
+
+    @Test
+    fun cachePrune_neverRemovesCurrentFileBackedArchiveBeforeShare() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val exportRoot = File(context.cacheDir, "exports").apply { mkdirs() }
+        val sourceDirectory = File(exportRoot, "current-source-${System.nanoTime()}").apply { mkdirs() }
+        val sourceFile = File(sourceDirectory, "rinbam-current.zip").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+        val archive = PreparedExportArchive(
+            fileName = sourceFile.name,
+            file = sourceFile,
+            byteCount = sourceFile.length(),
+            entryCount = 1,
+            mimeType = "application/zip",
+        )
+        val overflowDirectories = (0 until 70).map { index ->
+            File(exportRoot, "overflow-${System.nanoTime()}-$index").apply {
+                mkdirs()
+                setLastModified(1L + index)
+            }
+        }
+
+        val sharedFile = writeCachedExportArchive(context, archive)
+
+        assertFalse(sourceFile.canonicalFile == sharedFile.canonicalFile)
+        assertEquals(sourceFile.readBytes().toList(), sharedFile.readBytes().toList())
+        assertTrue(sourceFile.isFile)
+        sharedFile.parentFile?.deleteRecursively()
+        overflowDirectories.forEach { it.deleteRecursively() }
+        sourceDirectory.deleteRecursively()
+        Unit
+    }
+
+    @Test
+    fun exportScreenOwnsNormalCancellationFailureAndDisposeCleanupPaths() {
+        val source = File("src/main/java/jp/mimac/urlsaver/ui/ExportScreen.kt").readText()
+
+        assertTrue(source.contains("pendingFileArchive?.let(viewModel::releaseStandardPreparedArchive)"))
+        assertTrue(source.contains("viewModel.releaseAllStandardPreparedArchives()"))
+        assertTrue(source.contains("viewModel.releaseStandardPreparedArchive(archive)"))
+        assertTrue(source.contains("viewModel.releasePreparedChatGptArchive(archive)"))
+        assertTrue(source.contains("viewModel.clearPreparedChatGptArchive()"))
+        assertTrue(source.contains("finally"))
+    }
+
+    @Test
     fun cacheExportArchive_rejectsOversizedChatGptArchive() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val oversizedFile = File.createTempFile("rinbam-chatgpt-too-large", ".zip").apply {
+            RandomAccessFile(this, "rw").use { output ->
+                output.setLength((MAX_CHATGPT_ARCHIVE_BYTES + 1).toLong())
+            }
+            deleteOnExit()
+        }
         val archive = PreparedExportArchive(
             fileName = "rinbam-chatgpt-too-large.zip",
-            bytes = ByteArray(MAX_CHATGPT_ARCHIVE_BYTES + 1),
+            file = oversizedFile,
+            byteCount = oversizedFile.length(),
             entryCount = 1,
             mimeType = "application/zip",
         )
@@ -212,6 +230,20 @@ class ExportScreenTest {
             failed = error.message?.contains("25 MiB") == true
         }
         assertTrue(failed)
+    }
+
+    private fun preparedArchive(fileName: String, bytes: ByteArray): PreparedExportArchive {
+        val file = File.createTempFile("rinbam-export-screen", ".tmp").apply {
+            writeBytes(bytes)
+            deleteOnExit()
+        }
+        return PreparedExportArchive(
+            fileName = fileName,
+            file = file,
+            byteCount = file.length(),
+            entryCount = 1,
+            mimeType = "application/zip",
+        )
     }
 
     @Test

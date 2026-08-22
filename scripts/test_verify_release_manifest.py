@@ -22,7 +22,7 @@ class ReleaseManifestTests(unittest.TestCase):
     def test_migration_head_is_latest_timestamp(self) -> None:
         self.assertEqual(
             verify_release_manifest.parse_migration_head(ROOT / "supabase/migrations"),
-            "20260804090000_default_all_users_to_pro.sql",
+            "20260822090000_account_deletion_idempotency.sql",
         )
 
     def test_stale_manifest_version_is_reported(self) -> None:

@@ -52,11 +52,22 @@ fetch_page() {
 
 privacy_html="$tmp_dir/privacy.html"
 account_html="$tmp_dir/account-deletion.html"
+reset_html="$tmp_dir/reset-password.html"
+reset_headers="$tmp_dir/reset-password.headers"
+invite_html="$tmp_dir/invite.html"
 assetlinks_json="$tmp_dir/assetlinks.json"
 aasa_json="$tmp_dir/apple-app-site-association"
 
 fetch_page "/privacy/" "$privacy_html"
 fetch_page "/account-deletion/" "$account_html"
+reset_status="$(curl -L -sS -H 'Cache-Control: no-cache' -H 'Pragma: no-cache' -D "$reset_headers" -o "$reset_html" -w '%{http_code}' "$BASE_URL/auth/reset-password")"
+if [[ "$reset_status" == "200" ]]; then
+  printf 'PASS /auth/reset-password HTTP 200\n'
+else
+  printf 'FAIL /auth/reset-password HTTP %s\n' "$reset_status"
+  failures=$((failures + 1))
+fi
+fetch_page "/invite/release-smoke-placeholder" "$invite_html"
 fetch_page "/.well-known/assetlinks.json" "$assetlinks_json"
 fetch_page "/.well-known/apple-app-site-association" "$aasa_json"
 
@@ -66,8 +77,26 @@ check_contains "$privacy_html" "StoreKit" "privacy discloses StoreKit"
 check_not_contains "$privacy_html" "本物の課金も行いません" "privacy has no stale no-real-billing sentence"
 check_not_contains "$privacy_html" "本物の課金、" "privacy has no stale no-real-billing summary"
 
-check_contains "$account_html" "URL Saver アカウント削除" "account deletion title"
+check_contains "$privacy_html" "りんばむ プライバシーポリシー" "privacy uses the user-facing brand"
+check_contains "$account_html" "りんばむ アカウント削除" "account deletion title"
 check_contains "$account_html" "共有タグクラウド" "account deletion cloud account wording"
+check_contains "$reset_html" "/auth/reset-password/reset-password.js" "reset uses external JavaScript"
+check_contains "$reset_html" "/auth/reset-password/styles.css" "reset uses external stylesheet"
+check_not_contains "$reset_html" "<style>" "reset has no inline style"
+check_contains "$invite_html" "招待リンクをコピー" "invite offers link copy recovery"
+check_contains "$invite_html" "https://apps.apple.com/app/id6771251450" "invite links to the configured App Store listing"
+check_contains "$invite_html" "https://play.google.com/store/apps/details?id=jp.miyamibu.urlalbum" "invite links to the configured Google Play listing"
+
+reset_csp="$(tr -d '\r' <"$reset_headers" | grep -i '^content-security-policy:' | tail -n 1 | sed 's/^[^:]*:[[:space:]]*//')"
+if [[ "$reset_csp" == *"script-src 'self' https://cdn.jsdelivr.net"* ]] \
+  && [[ "$reset_csp" == *"style-src 'self'"* ]] \
+  && [[ "$reset_csp" != *"unsafe-inline"* ]] \
+  && [[ "$reset_csp" != *"sha256-"* ]]; then
+  printf 'PASS reset response CSP matches externalized code\n'
+else
+  printf 'FAIL reset response CSP is missing or permits stale inline code\n'
+  failures=$((failures + 1))
+fi
 
 python3 - "$assetlinks_json" "$ANDROID_PACKAGE" <<'PY'
 import json

@@ -47,7 +47,8 @@ final class AppServices: @unchecked Sendable {
         self.repository = repository
         handoffStore = ShareHandoffStore()
         metadataCoordinator = MetadataCoordinator(repository: repository)
-        pendingInviteStore = PendingInviteStore()
+        let pendingInviteStore = PendingInviteStore()
+        self.pendingInviteStore = pendingInviteStore
         profileStore = UserProfileStore()
         let sharedTagStore: SharedTagStore
         do {
@@ -59,9 +60,18 @@ final class AppServices: @unchecked Sendable {
         let sharedTagSessionStore = SharedTagAuthSessionStore()
         let sharedTagConfig = SharedTagCloudConfig()
         let contactSupportConfig = ContactSupportConfig()
+        let entitlementCache = EntitlementGrantCache()
+        let accountCleanupStateStore = UserDefaultsSharedTagAccountLocalCleanupStateStore()
+        let accountDeletionRequestStore = UserDefaultsSharedTagAccountDeletionRequestStore()
+        let accountOperationGate = SharedTagAccountOperationGate(
+            cleanupStateStore: accountCleanupStateStore
+        )
+        let personalLinkSettingsStore = UserDefaultsChatGptPersonalLinkSettingsStore()
         entitlementService = EntitlementService(
             config: sharedTagConfig,
-            sessionStore: sharedTagSessionStore
+            sessionStore: sharedTagSessionStore,
+            cache: entitlementCache,
+            accountOperationGate: accountOperationGate
         )
         storePurchaseService = StoreKitPurchaseService(
             config: sharedTagConfig,
@@ -75,7 +85,14 @@ final class AppServices: @unchecked Sendable {
             config: sharedTagConfig,
             sessionStore: sharedTagSessionStore,
             store: sharedTagStore,
-            repository: repository
+            repository: repository,
+            clearEntitlementCache: { authUserID in
+                entitlementCache.clear(authUserID: authUserID)
+            },
+            cleanupStateStore: accountCleanupStateStore,
+            deletionRequestStore: accountDeletionRequestStore,
+            personalLinkSettingsStore: personalLinkSettingsStore,
+            accountOperationGate: accountOperationGate
         )
         sharedTagSyncExecutor = SharedTagSyncExecutor(driver: SharedTagCloudSyncDriver(service: sharedTagCloud))
         startupIssue = startupMessage.map {

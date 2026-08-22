@@ -12,6 +12,8 @@ import jp.mimac.urlsaver.domain.SharedTagSyncStatus
 import jp.mimac.urlsaver.domain.SHARED_TAG_NORMALIZATION_VERSION
 import jp.mimac.urlsaver.domain.UrlRules
 import jp.mimac.urlsaver.util.AppClock
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import java.time.Instant
 import java.util.UUID
@@ -25,24 +27,35 @@ class SharedTagSyncCoordinator(
     private val remoteDataSource: SharedTagSyncRemoteDataSource,
     private val clock: AppClock,
     private val metadataScheduler: MetadataScheduler,
+    private val accountOperationFence: AccountOperationFence = AccountOperationFence(),
     private val json: Json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
     },
 ) {
+    private val operationMutex = Mutex()
+
     suspend fun syncCurrentSession(): Boolean {
         val session = authSessionProvider.session.value ?: return true
         return syncForAuthUser(session.authUserId)
     }
 
-    suspend fun syncForAuthUser(authUserId: String): Boolean {
-        val normalizedAuthUserId = authUserId.trim()
-        if (normalizedAuthUserId.isEmpty()) return true
-        val session = authSessionProvider.session.value ?: return true
-        if (session.authUserId != normalizedAuthUserId) {
-            return true
+    suspend fun syncForAuthUser(authUserId: String): Boolean =
+        accountOperationFence.withAccountOperation(
+            authUserId = { authUserId },
+            blockedResult = { true },
+        ) {
+            syncForAuthUserWithinAccountOperation(authUserId)
         }
-        return syncSession(session)
+
+    internal suspend fun syncForAuthUserWithinAccountOperation(authUserId: String): Boolean = operationMutex.withLock {
+        val normalizedAuthUserId = authUserId.trim()
+        if (normalizedAuthUserId.isEmpty()) return@withLock true
+        val session = authSessionProvider.session.value ?: return@withLock true
+        if (session.authUserId != normalizedAuthUserId) {
+            return@withLock true
+        }
+        syncSession(session)
     }
 
     private suspend fun syncSession(session: SharedTagAuthSession): Boolean {
@@ -93,8 +106,25 @@ class SharedTagSyncCoordinator(
         }
     }
 
-    suspend fun ensureClientId(authUserId: String): String {
-        return ensureSyncState(authUserId).clientId
+    suspend fun ensureClientId(authUserId: String): String = operationMutex.withLock {
+        ensureSyncState(authUserId).clientId
+    }
+
+    suspend fun clearLocalStateForDeletedAccount(authUserId: String) = operationMutex.withLock {
+        val normalizedAuthUserId = authUserId.trim()
+        require(normalizedAuthUserId.isNotEmpty()) { "authUserId is required" }
+        database.withTransaction {
+            syncDao.deleteGroupMembersForUser(normalizedAuthUserId)
+            syncDao.deleteGroupTagsForUser(normalizedAuthUserId)
+            syncDao.deleteGroupsForUser(normalizedAuthUserId)
+            syncDao.deleteMembersForUser(normalizedAuthUserId)
+            tagDao.deleteSyncedCrossRefsForUser(normalizedAuthUserId)
+            tagDao.deleteSyncedTagsForUser(normalizedAuthUserId)
+            syncDao.deleteOutboxForUser(normalizedAuthUserId)
+            syncDao.deleteSyncStateForUser(normalizedAuthUserId)
+            urlEntryDao.recomputeSharedReferenceCounts()
+            urlEntryDao.deleteUnreferencedSharedOnlyEntries()
+        }
     }
 
     private suspend fun ensureSyncState(authUserId: String): SharedTagSyncStateEntity {

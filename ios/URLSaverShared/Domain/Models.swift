@@ -37,6 +37,30 @@ enum BillingPeriod: String, Codable, CaseIterable, Sendable {
     case yearly
 }
 
+struct PaidCoursePurchaseOption: Hashable, Sendable {
+    let planType: PlanType
+    let billingPeriod: BillingPeriod
+}
+
+func availablePaidCoursePurchaseOptions(currentPlan: PlanType) -> [PaidCoursePurchaseOption] {
+    switch currentPlan {
+    case .pro, .promoPro:
+        return []
+    case .standard:
+        return [
+            PaidCoursePurchaseOption(planType: .pro, billingPeriod: .monthly),
+            PaidCoursePurchaseOption(planType: .pro, billingPeriod: .yearly),
+        ]
+    case .free, .launchStandard:
+        return [
+            PaidCoursePurchaseOption(planType: .standard, billingPeriod: .monthly),
+            PaidCoursePurchaseOption(planType: .standard, billingPeriod: .yearly),
+            PaidCoursePurchaseOption(planType: .pro, billingPeriod: .monthly),
+            PaidCoursePurchaseOption(planType: .pro, billingPeriod: .yearly),
+        ]
+    }
+}
+
 enum StorePlatform: String, Codable, CaseIterable, Sendable {
     case googlePlay = "google_play"
     case appStore = "app_store"
@@ -416,7 +440,7 @@ private extension PlanType {
     var limitMessageLabel: String {
         switch self {
         case .free: return "無料プラン"
-        case .launchStandard: return "ローンチ版"
+        case .launchStandard: return "現在のプラン"
         case .standard: return "Standardプラン"
         case .pro: return "Proプラン"
         case .promoPro: return "優待Pro"
@@ -519,6 +543,7 @@ enum ShareSaveResult: String, Codable, Sendable {
     case inputTooLarge = "INPUT_TOO_LARGE"
     case invalidURL = "INVALID_URL"
     case noURLFound = "NO_URL_FOUND"
+    case personalURLLimitReached = "PERSONAL_URL_LIMIT_REACHED"
 }
 
 enum ShareDegradationNotice: String, Codable, Sendable {

@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import csv
 from collections import Counter
+from datetime import datetime, time, timezone
 from pathlib import Path
 from xml.etree import ElementTree as ET
 from zipfile import ZipFile
@@ -40,6 +41,33 @@ EXPECTED_COLUMNS = [
 ]
 
 SPREADSHEET_NS = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+
+ALLOWED_STATUS_CODES = {
+    "BLOCKED_EXTERNAL",
+    "DEFERRED",
+    "LOCAL_ONLY",
+    "PARTIAL",
+    "PASS",
+    "REMOVED",
+}
+
+GATE_ORDER = [
+    "android_device",
+    "iphone_device",
+    "distribution_signing",
+    "supabase_auth",
+    "store_console",
+    "resend_live",
+    "public_web",
+    "public_privacy",
+    "render_media",
+    "design_required",
+    "production_data",
+    "backup_restore",
+]
+ALLOWED_GATES = set(GATE_ORDER)
+STATUSES_REQUIRING_NO_GATE = {"PASS", "REMOVED"}
+STATUSES_REQUIRING_GATE = {"BLOCKED_EXTERNAL", "DEFERRED", "LOCAL_ONLY", "PARTIAL"}
 
 
 def read_csv_rows(path: Path) -> list[list[str]]:
@@ -86,92 +114,100 @@ def row_dicts(table: list[list[str]]) -> list[dict[str, str]]:
     return [dict(zip(header, row)) for row in table[1:]]
 
 
+def parse_gates(row: dict[str, str]) -> list[str]:
+    value = row.get("remaining_gate", "").strip()
+    if not value or value == "none":
+        return []
+    return [gate.strip() for gate in value.split(";") if gate.strip()]
+
+
+def validate_table_shape(table: list[list[str]]) -> list[str]:
+    errors: list[str] = []
+    for line_number, row in enumerate(table, start=1):
+        if len(row) != len(EXPECTED_COLUMNS):
+            errors.append(
+                f"CSV line {line_number} has {len(row)} columns; expected {len(EXPECTED_COLUMNS)}"
+            )
+    return errors
+
+
+def validate_story_semantics(
+    rows: list[dict[str, str]],
+    *,
+    as_of: datetime,
+    max_pass_age_days: int | None,
+) -> list[str]:
+    errors: list[str] = []
+    for row in rows:
+        story_id = row.get("story_id", "<missing>")
+        status_code = row.get("status_code", "").strip()
+        gates = parse_gates(row)
+
+        if status_code not in ALLOWED_STATUS_CODES:
+            errors.append(f"{story_id}: unsupported status_code {status_code!r}")
+        unknown_gates = sorted(set(gates) - ALLOWED_GATES)
+        if unknown_gates:
+            errors.append(f"{story_id}: unsupported remaining_gate values {unknown_gates}")
+        duplicate_gates = sorted({gate for gate in gates if gates.count(gate) > 1})
+        if duplicate_gates:
+            errors.append(f"{story_id}: duplicate remaining_gate values {duplicate_gates}")
+        if status_code in STATUSES_REQUIRING_NO_GATE and gates:
+            errors.append(
+                f"{story_id}: {status_code} cannot retain remaining gates {gates}; "
+                "use a gated status until those checks are complete"
+            )
+        if status_code in STATUSES_REQUIRING_GATE and not gates:
+            errors.append(f"{story_id}: {status_code} requires at least one concrete remaining gate")
+
+        for required_column in [
+            "feature",
+            "acceptance_criteria",
+            "validation_method",
+            "status",
+            "status_code",
+            "remaining_gate",
+            "retest_result",
+            "last_updated",
+        ]:
+            if not row.get(required_column, "").strip():
+                errors.append(f"{story_id}: missing required evidence column {required_column}")
+
+        raw_updated = row.get("last_updated", "").strip()
+        try:
+            updated = datetime.strptime(raw_updated, "%Y-%m-%d %H:%M:%S %z")
+        except ValueError:
+            errors.append(
+                f"{story_id}: invalid last_updated {raw_updated!r}; expected YYYY-MM-DD HH:MM:SS +ZZZZ"
+            )
+            continue
+        if updated > as_of:
+            errors.append(f"{story_id}: last_updated {raw_updated!r} is after --as-of")
+        if max_pass_age_days is not None and status_code == "PASS":
+            age_days = (as_of - updated).total_seconds() / 86_400
+            if age_days > max_pass_age_days:
+                errors.append(
+                    f"{story_id}: PASS evidence is {age_days:.1f} days old; "
+                    f"maximum is {max_pass_age_days} days"
+                )
+
+        if status_code == "PASS" and "PASS" not in row.get("retest_result", "").upper():
+            errors.append(f"{story_id}: PASS requires a PASS retest_result")
+        if status_code in STATUSES_REQUIRING_GATE:
+            documented = row.get("documented_errors", "").strip()
+            if not documented or documented in {"なし", "N/A", "none"}:
+                errors.append(f"{story_id}: {status_code} requires a documented unresolved reason")
+    return errors
+
+
 def row_text(row: dict[str, str], *columns: str) -> str:
     return "".join(row.get(column, "") for column in columns)
 
 
 def expected_gate_rows(rows: list[dict[str, str]]) -> list[list[str]]:
-    def physical_android(row: dict[str, str]) -> bool:
-        value = row.get("android_device_result", "")
-        return bool(value) and ("未実機" in value or "NOT VERIFIED" in value)
-
-    def physical_iphone(row: dict[str, str]) -> bool:
-        value = row.get("iphone_device_result", "")
-        return bool(value) and ("未実機" in value or "NOT VERIFIED" in value)
-
-    def supabase_or_auth(row: dict[str, str]) -> bool:
-        if row.get("story_id") == "ES-002":
-            return False
-        text = row_text(row, "documented_errors", "retest_result", "notes")
-        return any(
-            marker in text
-            for marker in ["Supabase", "auth", "Auth", "live RPC", "本番メール", "live auth"]
-        )
-
-    def store_or_public(row: dict[str, str]) -> bool:
-        text = row_text(row, "documented_errors", "fix_status", "retest_result", "notes")
-        return any(
-            marker in text
-            for marker in ["Play Console", "App Store", "store console", "public privacy", "公開", "ストア"]
-        )
-
-    def resend_live(row: dict[str, str]) -> bool:
-        text = row_text(row, "documented_errors", "retest_result", "notes")
-        return any(marker in text for marker in ["Resend live", "live Resend", "Resend API"])
-
-    def connected_android(row: dict[str, str]) -> bool:
-        text = row_text(row, "documented_errors", "first_test_result", "retest_result")
-        if "connectedDebugAndroidTestはurlsaverParityApi35 AVDでPASS" in text:
-            return False
-        if "connectedDebugAndroidTest 成功" in text:
-            return False
-        return "connectedDebugAndroidTest" in text and any(
-            marker in text
-            for marker in ["未実行", "未検証", "CONNECTED_TEST_GAP", "connected instrumentation gap"]
-        )
-
-    if "remaining_gate" in rows[0]:
-        gate_names = [
-            "physical_android",
-            "physical_iphone",
-            "render_media",
-            "supabase_auth",
-            "store_console",
-            "resend_live",
-            "public_web",
-            "design_required",
-        ]
-        output: list[list[str]] = [["remaining_gate", "count", "story_ids"]]
-        for gate_name in gate_names:
-            story_ids = []
-            for row in rows:
-                if row.get("story_id") == "ES-001":
-                    continue
-                gates_for_row = {
-                    gate.strip()
-                    for gate in row.get("remaining_gate", "").split(";")
-                    if gate.strip() and gate.strip() != "none"
-                }
-                if gate_name in gates_for_row:
-                    story_ids.append(row["story_id"])
-            output.append([gate_name, str(len(story_ids)), ",".join(story_ids)])
-        return output
-
-    gates = [
-        ("physical_Android", physical_android),
-        ("physical_iPhone", physical_iphone),
-        ("supabase_or_auth_live", supabase_or_auth),
-        ("store_or_public_console", store_or_public),
-        ("resend_live", resend_live),
-        ("connected_android_instrumentation", connected_android),
-    ]
+    active_gates = {gate for row in rows for gate in parse_gates(row)}
     output: list[list[str]] = [["remaining_gate", "count", "story_ids"]]
-    for gate_name, predicate in gates:
-        story_ids = [
-            row["story_id"]
-            for row in rows
-            if row.get("story_id") != "ES-001" and predicate(row)
-        ]
+    for gate_name in [gate for gate in GATE_ORDER if gate in active_gates]:
+        story_ids = [row["story_id"] for row in rows if gate_name in parse_gates(row)]
         output.append([gate_name, str(len(story_ids)), ",".join(story_ids)])
     return output
 
@@ -206,12 +242,31 @@ def main() -> int:
         type=Path,
         help="Path to the canonical story tracker XLSX.",
     )
+    parser.add_argument(
+        "--as-of",
+        type=datetime.fromisoformat,
+        help="Evidence cutoff as ISO-8601 date/time. Defaults to the current UTC time.",
+    )
+    parser.add_argument(
+        "--max-pass-age-days",
+        type=int,
+        help="Fail when PASS evidence is older than this many days.",
+    )
     args = parser.parse_args()
+
+    if args.max_pass_age_days is not None and args.max_pass_age_days < 0:
+        raise SystemExit("FAIL --max-pass-age-days must be non-negative")
+    as_of = args.as_of or datetime.now(timezone.utc)
+    if as_of.tzinfo is None:
+        as_of = datetime.combine(as_of.date(), time.max, tzinfo=timezone.utc)
 
     csv_table = read_csv_rows(args.csv)
     if not csv_table:
         raise SystemExit("FAIL CSV is empty")
     assert_equal("CSV header", csv_table[0], EXPECTED_COLUMNS)
+    shape_errors = validate_table_shape(csv_table)
+    if shape_errors:
+        raise SystemExit("FAIL CSV shape:\n- " + "\n- ".join(shape_errors))
 
     rows = row_dicts(csv_table)
     story_ids = [row["story_id"] for row in rows]
@@ -220,6 +275,13 @@ def main() -> int:
     assert_equal("duplicate story IDs", duplicate_ids, [])
     missing_ids = [index + 2 for index, story_id in enumerate(story_ids) if not story_id]
     assert_equal("missing story IDs", missing_ids, [])
+    semantic_errors = validate_story_semantics(
+        rows,
+        as_of=as_of,
+        max_pass_age_days=args.max_pass_age_days,
+    )
+    if semantic_errors:
+        raise SystemExit("FAIL story semantics:\n- " + "\n- ".join(semantic_errors))
 
     with ZipFile(args.xlsx) as workbook:
         broken_member = workbook.testzip()

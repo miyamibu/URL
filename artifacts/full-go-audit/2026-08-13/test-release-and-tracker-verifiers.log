@@ -1,0 +1,17 @@
+....E
+======================================================================
+ERROR: test_verify_canonical_story_tracker (unittest.loader._FailedTest.test_verify_canonical_story_tracker)
+----------------------------------------------------------------------
+ImportError: Failed to import test module: test_verify_canonical_story_tracker
+Traceback (most recent call last):
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/unittest/loader.py", line 137, in loadTestsFromName
+    module = __import__(module_name)
+  File "/Users/mimac/Desktop/りんばむ/scripts/test_verify_canonical_story_tracker.py", line 14, in <module>
+    import sync_canonical_story_tracker as sync_tracker
+ModuleNotFoundError: No module named 'sync_canonical_story_tracker'
+
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.016s
+
+FAILED (errors=1)

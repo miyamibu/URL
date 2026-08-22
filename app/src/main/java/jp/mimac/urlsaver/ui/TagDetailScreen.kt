@@ -1016,7 +1016,7 @@ private fun inviteShareText(inviteUrl: String): String {
     val token = runCatching { Uri.parse(inviteUrl).lastPathSegment.orEmpty() }.getOrDefault("")
     if (token.isBlank()) return inviteUrl
     return """
-        URL Saverの共有タグに参加:
+        りんばむの共有タグに参加:
         $inviteUrl
 
         開けない場合:

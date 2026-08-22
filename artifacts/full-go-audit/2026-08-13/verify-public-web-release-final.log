@@ -1,0 +1,24 @@
+PASS /privacy/ HTTP 200
+PASS /account-deletion/ HTTP 200
+PASS /auth/reset-password HTTP 200
+PASS /invite/release-smoke-placeholder HTTP 200
+PASS /.well-known/assetlinks.json HTTP 200
+PASS /.well-known/apple-app-site-association HTTP 200
+PASS privacy discloses paid plans
+PASS privacy discloses Google Play Billing
+PASS privacy discloses StoreKit
+PASS privacy has no stale no-real-billing sentence
+PASS privacy has no stale no-real-billing summary
+PASS privacy uses the user-facing brand
+PASS account deletion title
+PASS account deletion cloud account wording
+PASS reset uses external JavaScript
+PASS reset uses external stylesheet
+PASS reset has no inline style
+PASS invite offers link copy recovery
+PASS invite links to the configured App Store listing
+PASS invite links to the configured Google Play listing
+PASS reset response CSP matches externalized code
+PASS assetlinks includes jp.miyamibu.urlalbum
+PASS AASA includes 8R3B5675ZJ.com.mibu.codebridge.ios
+PASS public web release verification

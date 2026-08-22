@@ -1,7 +1,7 @@
 # Final Store Submission Checklist
 
 ## Date
-2026-06-28 historical submission log; current source re-baseline added 2026-07-09.
+2026-06-28 historical submission log; current source re-baseline added 2026-07-09; public-state recheck added 2026-08-13.
 
 ## Goal
 この文書の下部に残る `1.0.11` の表は、2026-06-27/28 の Google Play / App Store 提出時点の履歴ログとして扱う。現在の repo source はmanifestと実ソースで照合し、この履歴ログだけでは次回提出可否を判断しない。
@@ -9,14 +9,30 @@
 ## Current source snapshot (manifest-backed)
 - Android: `jp.miyamibu.urlalbum`, `versionName=1.0.17`, `versionCode=21`
 - iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.17`, `build=19`; share extension `com.mibu.codebridge.ios.share`
-- Supabase migration head: `20260804090000_default_all_users_to_pro.sql`
+- Supabase migration head: `20260822090000_account_deletion_idempotency.sql`
 - Machine-readable source: `docs/release/release-manifest.json`.
 - The dated provider and store records below are historical evidence and do not become current proof without a fresh recheck.
 - Current release/ops readiness tracker: `docs/release/launch-go-checklist.md`.
-- Current source gate remains `NO_GO_INTERNAL` for final submission. The 2026-07-18 manual ChatGPT handoff implementation, docs, tests, Release builds, pre-transfer confirmation, and disclosure source review are historical/local evidence; the physical-iPhone-to-ChatGPT-composer proof is not current-source proof. The hamburger-menu source change is integrated into `main`; Android physical E2E is not verified; Android AAB is unsigned; listed production deployment evidence is recorded below, while iOS distribution signing, store console state, sandbox purchase, OpenAI submission, production secrets, and full launch GO remain external/unverified.
+- Current repo-local checks and public-Web contracts are tracked independently from release approval. Current status is `NO_GO_INTERNAL / BLOCKED_EXTERNAL`: the shared working tree is dirty/unfrozen with active untracked source; Google Play Data safety contradicts the cloud-enabled signed Android v21 candidate; and the App Store description advertises cloud/sync/invite features disabled in the matching signed local-only iOS 1.0.17 (19) archive. The archive rebuts the earlier Apple privacy Major—`データの収集なし` is not presently shown to contradict that binary. Current-source physical-device/visual proof, sandbox purchase, production Auth/backup, and full launch GO remain separate gates.
 - AI-safe export, manual ChatGPT handoff, and MCP source contracts are tracked separately under `docs/ai/`. Manual handoff is local ZIP + OS share with no question/API/OAuth; those local docs do not mean production MCP deployment, production OAuth registration, OpenAI submission, store submission, production secret entry, or store/live recheck is complete.
 - The `1.0.11` store submission, public URL, screenshot, signing, and console rows below are historical evidence, not current proof for the manifest-backed source.
 - Rows below that say `DONE` are historical `1.0.11` evidence unless the row explicitly names a current repo gate. Do not use them as `LAUNCH_GO` evidence without re-running the manual launch checklist.
+
+## Current Public And Console Boundary (2026-08-13 JST)
+
+| Item | Current evidence | Status / next action |
+|---|---|---|
+| Android source baseline | `app/build.gradle.kts` declares `compileSdk=36`, `targetSdk=36`, `versionCode=21`, `versionName=1.0.17`. | `SOURCE_VERIFIED`. This does not prove the version/target SDK of the artifact currently served by Google Play or clear any future Console deadline/compatibility notice. Read the active artifact and current policy notice in Play Console before release approval. |
+| iOS public version and archive | Official App Store URL directly shows `1.0.17` (July 28, 7.2 MB). Matching signed archive is version `1.0.17`, build `19`, canonical bundle/Team, shared-tag cloud disabled, and Supabase/contact-support configuration empty. | `PUBLIC_VERSION_AND_ARCHIVE_VERIFIED / APP_PRIVACY_MAJOR_REBUTTED`. The product description's cloud/sync/invite claims remain a confirmed listing Major. |
+| Store declaration/listing | Google Play publicly/Step 5 says no data is collected while the signed Android v21 candidate is cloud-enabled; C0's authenticated Console read found Step 2 collect/share `Yes`, shared Web browsing history, account creation `does not allow`, and deletion unanswered. App Store's local-only archive supports its privacy label but not its cloud-enabled product copy. | `GOOGLE_DATA_SAFETY_CONFIRMED_MAJOR / APP_STORE_LISTING_CONFIRMED_MAJOR / BLOCKED_EXTERNAL`. Play Console is readable but unchanged. Correct Google form and App Store feature copy (or replace the iOS binary), then capture post-change public evidence. |
+| iOS localization | Current source declares Japanese; signed archive has `CFBundleDevelopmentRegion=en`, no `CFBundleLocalizations`, and no `.lproj`; public page reports `EN 英語`. | `CONFIRMED_MINOR`. Public display matches the archive. Produce/inspect a corrected archive before changing Store localization expectations. |
+| Public Web | Vercel deployment `dpl_52Tc5XaiiLeV9F1EkxTLPXssqRmq` serves `https://miyamibu.xyz`; `scripts/verify_public_web_release.sh` passes for privacy, deletion, reset, invite, asset links, and AASA. | `PUBLIC_CONTRACT_PASS`; this does not close Store console or signed-binary gates. |
+| Android App Links syntax and package | The live `assetlinks.json` is HTTP 200/valid JSON and contains `jp.miyamibu.urlalbum`; the current public verifier passes. | `PUBLIC_FILE_PASS`. The certificate fingerprint has not been matched to the current Play App Signing certificate in an authenticated console, so end-to-end App Links remains `BLOCKED_EXTERNAL`. |
+| iOS Universal Links | The live AASA is valid and contains `8R3B5675ZJ.com.mibu.codebridge.ios`; the public verifier passes. | `PUBLIC_FILE_PASS`; recheck if Team ID or bundle ID changes. |
+| Admin Web | Deployment `dpl_AhovWHbFyK6sVi7TQGSWi7i7CfCA` serves `https://rinbamu-admin.vercel.app`; unauthenticated release verifier passes. | Public/auth-boundary contract only; authenticated administrator workflows remain unverified here. |
+| Usage guide | Sites version `appgver_5acdb626a92081918fb169698267b802`, deployment `appgdep_6a7aa4f9a7f481918f9c27634538b7ff`, source commit `ef3a02bce618c95b96d9ec263064c1e4bc3b0537`, status `succeeded`. Current nested HEAD is `dde36e2c253376c01843aa859fddb65d9602374a`. | The deployed content is tied to `ef3a02…`; source correspondence for the one-commit-later nested HEAD is unverified. Not Store approval evidence. |
+
+The Google Play `targetSdk=36` source value, the currently published artifact's manifest, and any Console target-API deadline/compatibility notice are three different facts. Only the source value was read from the repository in this phase; the latter two require authenticated Console evidence and must not be inferred from source.
 
 ## Current-main / Production Deployment Evidence (2026-07-26)
 
@@ -37,7 +53,7 @@ The following records are a dated provider-state capture made while the applicat
 | provider deployment/source revision correspondence | Provider deployment/function state is recorded above, but independent confirmation that Vercel, Railway, Supabase, and `web/invite-link` artifacts correspond to the repository HEAD is still required. |
 | production MCP/OAuth registration | Requires owner-controlled provider console and secrets. |
 | OpenAI submission | External / unverified; requires owner submission. |
-| Store console state | External / unverified for the current source; App Store / Play Console action remains owner-controlled. |
+| Store console state | Play Data safety was read through C0 and is internally contradictory; no value was changed/saved. App Store Connect forms were not opened. Both actions remain owner-controlled. |
 | Physical-device final verification | External / unverified for the current source. |
 | Sandbox purchase | External / unverified. |
 | production secret投入 | Secrets must stay outside repo/chat. |
@@ -171,7 +187,7 @@ The repo-side cloud-enabled alignment is fixed. Google Play and App Store Connec
 | Android signed installable release APK | NEEDS_USER_ACTION | `app/build/outputs/apk/release/app-release-unsigned.apk` is unsigned; release deliverable is AAB. | Sign AAB with upload key; produce signed APK only if needed for side validation. |
 | Physical device final verification | NEEDS_USER_ACTION | Not run because physical-device install requires explicit approval. | Approve device install if physical validation is required before submission. |
 
-## Submission Readiness Verdict
-Submitted to both stores.
+## Historical Submission Readiness Verdict (2026-06-28)
+The following paragraph records the historical `1.0.11` submission only; it is not the current 2026-08-13 verdict.
 
 Google Play production release `11 (1.0.11)` is in review. App Store Connect iOS `1.0.11 (11)` is `審査待ち` under submission ID `428bdf26-5233-47e2-89a2-c3925f32994b`. Public account-deletion, privacy, and `.well-known` verification pass as of 2026-06-29. Remaining risks are reviewer feedback, Play 16 KB memory page size compliance warning for future enforcement, Play App Signing SHA-256 replacement for final App Links, and any reviewer-requested test-account details.

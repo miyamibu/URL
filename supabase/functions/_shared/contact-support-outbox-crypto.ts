@@ -78,7 +78,7 @@ export function validateEncryptionSecret(secret: string): void {
   decodeEncryptionKey(secret);
 }
 
-async function importEncryptionKey(
+function importEncryptionKey(
   secret: string,
   usages: KeyUsage[],
 ): Promise<CryptoKey> {

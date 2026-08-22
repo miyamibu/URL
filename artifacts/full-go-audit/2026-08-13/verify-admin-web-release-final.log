@@ -1,0 +1,9 @@
+PASS / HTTP 200 (管理画面の識別文言を確認)
+PASS /api/admin/audit HTTP 401 (認証要求を確認)
+PASS /api/admin/support HTTP 401 (認証要求を確認)
+PASS /api/admin/moderation HTTP 401 (認証要求を確認)
+PASS /api/admin/promo-codes HTTP 401 (認証要求を確認)
+PASS /api/admin/users HTTP 401 (認証要求を確認)
+PASS /api/admin/users/00000000-0000-0000-0000-000000000000 HTTP 401 (認証要求を確認)
+PASS /api/mcp HTTP 404 (MCP無効を確認)
+PASS admin web release verification

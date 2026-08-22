@@ -232,11 +232,17 @@ interface SharedTagSyncDao {
     @Query("DELETE FROM shared_tag_sync_outbox WHERE state = 'COMPLETED' AND authUserId = :authUserId")
     suspend fun deleteCompletedOutbox(authUserId: String)
 
+    @Query("DELETE FROM shared_tag_sync_outbox WHERE authUserId = :authUserId")
+    suspend fun deleteOutboxForUser(authUserId: String)
+
     @Query("SELECT * FROM shared_tag_sync_state WHERE authUserId = :authUserId LIMIT 1")
     suspend fun findSyncState(authUserId: String): SharedTagSyncStateEntity?
 
     @Upsert
     suspend fun upsertSyncState(entity: SharedTagSyncStateEntity)
+
+    @Query("DELETE FROM shared_tag_sync_state WHERE authUserId = :authUserId")
+    suspend fun deleteSyncStateForUser(authUserId: String)
 
     @Query("SELECT * FROM shared_tag_sync_state WHERE authUserId = :authUserId LIMIT 1")
     fun observeSyncState(authUserId: String): Flow<SharedTagSyncStateEntity?>

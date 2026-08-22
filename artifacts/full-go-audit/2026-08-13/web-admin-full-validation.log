@@ -1,0 +1,85 @@
+found 0 vulnerabilities
+
+> typecheck
+> tsc --noEmit
+
+
+> lint
+> eslint .
+
+
+> test
+> node --test lib/*.test.mjs
+
+✔ ../app/api/admin/audit/route.ts keeps authentication and authorization guards (10.401958ms)
+✔ ../app/api/admin/moderation/route.ts keeps authentication and authorization guards (0.79975ms)
+✔ ../app/api/admin/support/route.ts keeps authentication and authorization guards (1.96925ms)
+✔ ../app/api/admin/promo-codes/route.ts keeps authentication and authorization guards (0.806958ms)
+✔ ../app/api/admin/promo-codes/send/route.ts keeps authentication and authorization guards (1.316083ms)
+✔ ../app/api/admin/promo-codes/[id]/revoke/route.ts keeps authentication and authorization guards (1.177875ms)
+✔ ../app/api/admin/users/route.ts keeps authentication and authorization guards (1.066166ms)
+✔ ../app/api/admin/users/[id]/route.ts keeps authentication and authorization guards (1.265ms)
+✔ roles without high-risk capabilities remain denied by the route capability policy (0.796125ms)
+✔ Supabase mfa/totp AMR is accepted as a fresh AAL2 step-up (4.12675ms)
+✔ legacy totp is accepted while unrelated MFA cannot satisfy the TOTP policy (0.474375ms)
+✔ malformed AMR and weak assurance context fail closed (0.393166ms)
+✔ role capabilities keep read-only access meaningful without write permission (0.340041ms)
+✔ only the last scheduled search starts after the debounce window (53.127834ms)
+✔ in-flight requests are aborted and stale results cannot update state (43.5305ms)
+✔ JSON null and arrays fail closed as non-object request bodies (73.875042ms)
+✔ malformed JSON is rejected before route field validation (0.421292ms)
+✔ declared and streamed bodies cannot exceed the request limit (1.012042ms)
+✔ valid JSON objects are returned without changing their fields (1.558208ms)
+ℹ tests 19
+ℹ suites 0
+ℹ pass 19
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 351.355375
+
+> build
+> next build
+
+   ▲ Next.js 15.5.22
+   - Environments: .env.local
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully in 2.6s
+   Linting and checking validity of types ...
+   Collecting page data ...
+   Generating static pages (0/15) ...
+   Generating static pages (3/15) 
+   Generating static pages (7/15) 
+   Generating static pages (11/15) 
+ ✓ Generating static pages (15/15)
+   Finalizing page optimization ...
+   Collecting build traces ...
+
+Route (app)                                   Size  First Load JS
+┌ ○ /                                      56.1 kB         159 kB
+├ ○ /_not-found                              996 B         103 kB
+├ ƒ /.well-known/oauth-protected-resource    153 B         103 kB
+├ ƒ /api/admin/audit                         153 B         103 kB
+├ ƒ /api/admin/me                            153 B         103 kB
+├ ƒ /api/admin/moderation                    153 B         103 kB
+├ ƒ /api/admin/promo-codes                   153 B         103 kB
+├ ƒ /api/admin/promo-codes/[id]/delivery     153 B         103 kB
+├ ƒ /api/admin/promo-codes/[id]/revoke       153 B         103 kB
+├ ƒ /api/admin/promo-codes/send              153 B         103 kB
+├ ƒ /api/admin/support                       153 B         103 kB
+├ ƒ /api/admin/users                         153 B         103 kB
+├ ƒ /api/admin/users/[id]                    153 B         103 kB
+├ ƒ /api/mcp                                 153 B         103 kB
+├ ƒ /api/webhooks/resend                     153 B         103 kB
+└ ○ /icon.svg                                  0 B            0 B
++ First Load JS shared by all               102 kB
+  ├ chunks/255-3d881dfa8c72bc56.js         46.3 kB
+  ├ chunks/4bd1b696-c023c6e3521b1417.js    54.2 kB
+  └ other shared chunks (total)            1.93 kB
+
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+

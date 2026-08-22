@@ -65,7 +65,7 @@ internal object ShareReceiverEntrypointRouter {
         if (!isInviteUri(uri)) return null
         val token = when {
             uri.scheme == "urlsaver" -> uri.pathSegments.singleOrNull()
-            uri.scheme == "http" || uri.scheme == "https" -> {
+            uri.scheme?.equals("https", ignoreCase = true) == true -> {
                 uri.pathSegments.takeIf { it.firstOrNull() == "invite" }?.drop(1)?.singleOrNull()
             }
             else -> null
@@ -76,17 +76,22 @@ internal object ShareReceiverEntrypointRouter {
     private fun isInviteUri(uri: android.net.Uri?): Boolean {
         uri ?: return false
         return (uri.scheme == "urlsaver" && uri.host == "invite") ||
-            ((uri.scheme == "http" || uri.scheme == "https") && uri.pathSegments.firstOrNull() == "invite")
+            (isCanonicalHttpsUri(uri) && isCanonicalWebInvitePath(uri))
     }
 
     private fun parsePromoCode(uri: android.net.Uri?): String? {
         uri ?: return null
         if (!isPromoUri(uri)) return null
-        val codeFromQuery = uri.getQueryParameter("code")
+        val queryParameterNames = uri.getQueryParameterNames()
+        if ("code" in queryParameterNames) {
+            return uri.getQueryParameter("code")
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+        }
         val codeFromFragment = uri.fragment
             ?.substringAfter("code=", missingDelimiterValue = "")
             ?.substringBefore("&")
-        return (codeFromQuery ?: codeFromFragment)
+        return codeFromFragment
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
     }
@@ -94,6 +99,70 @@ internal object ShareReceiverEntrypointRouter {
     private fun isPromoUri(uri: android.net.Uri?): Boolean {
         uri ?: return false
         return (uri.scheme == "urlsaver" && uri.host == "promo") ||
-            ((uri.scheme == "http" || uri.scheme == "https") && uri.pathSegments.firstOrNull() == "promo")
+            (isCanonicalHttpsUri(uri) && uri.encodedPath == "/promo")
+    }
+
+    private fun isCanonicalWebInvitePath(uri: android.net.Uri): Boolean {
+        val encodedPath = uri.encodedPath ?: return false
+        if (encodedPath == "/invite" || encodedPath == "/invite/") return true
+        return encodedPath.startsWith("/invite/") &&
+            uri.pathSegments.firstOrNull() == "invite" &&
+            uri.pathSegments.drop(1).singleOrNull() != null
+    }
+
+    internal fun isCanonicalHttpsUri(
+        uri: android.net.Uri,
+        baseUrl: String = BuildConfig.INVITE_LINK_BASE_URL,
+    ): Boolean {
+        if (uri.scheme?.equals("https", ignoreCase = true) != true) return false
+        val incomingHost = uri.host ?: return false
+        if (!isCanonicalHost(incomingHost)) return false
+        if (hasExplicitUserInfoOrPort(uri)) return false
+        if (hasAmbiguousWebPath(uri)) return false
+        val expectedHost = canonicalHttpsHost(baseUrl) ?: return false
+        return expectedHost.equals(incomingHost, ignoreCase = true)
+    }
+
+    private fun canonicalHttpsHost(baseUrl: String): String? {
+        val parsed = runCatching { android.net.Uri.parse(baseUrl) }.getOrNull() ?: return null
+        if (parsed.scheme?.equals("https", ignoreCase = true) != true) return null
+        if (hasExplicitUserInfoOrPort(parsed)) return null
+        val host = parsed.host?.takeIf { it.isNotBlank() } ?: return null
+        if (!isCanonicalHost(host)) return null
+        return host
+    }
+
+    private fun isCanonicalHost(host: String): Boolean {
+        if (host.isBlank() || host.endsWith(".")) return false
+        return host.split('.').all { label ->
+            label.isNotEmpty() &&
+                !label.startsWith("-", ignoreCase = true) &&
+                !label.endsWith("-", ignoreCase = true) &&
+                !label.startsWith("xn--", ignoreCase = true) &&
+                label.all { character ->
+                    character in 'a'..'z' ||
+                        character in 'A'..'Z' ||
+                        character in '0'..'9' ||
+                        character == '-'
+                }
+        }
+    }
+
+    private fun hasExplicitUserInfoOrPort(uri: android.net.Uri): Boolean {
+        if (uri.userInfo != null || uri.port != -1) return true
+        val hostAndPort = uri.encodedAuthority
+            ?.substringAfterLast('@')
+            ?: return false
+        return hostAndPort.contains(':')
+    }
+
+    private fun hasAmbiguousWebPath(uri: android.net.Uri): Boolean {
+        val encodedPath = uri.encodedPath.orEmpty()
+        val normalizedPath = encodedPath.lowercase()
+        return normalizedPath.contains("%2f") ||
+            normalizedPath.contains("%5c") ||
+            encodedPath.contains('\\') ||
+            uri.path.orEmpty().contains('\\') ||
+            encodedPath.contains("//")
     }
 }

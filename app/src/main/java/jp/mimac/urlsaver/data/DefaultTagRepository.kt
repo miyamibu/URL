@@ -64,7 +64,10 @@ class DefaultTagRepository(
     private val remoteConfig: SharedTagSyncRemoteConfig,
     private val usageSummaryDataSource: UsageSummaryDataSource,
     private val aiLocalDataClearer: AiLocalDataClearer,
+    private val accountLinkedLocalDataCleaner: AccountLinkedLocalDataCleaner = NoopAccountLinkedLocalDataCleaner,
     private val localAccountCleanupStore: LocalAccountCleanupStore = NoopLocalAccountCleanupStore,
+    private val accountDeletionRequestStore: AccountDeletionRequestStore = NoopAccountDeletionRequestStore,
+    private val accountOperationFence: AccountOperationFence = AccountOperationFence(localAccountCleanupStore),
     private val json: Json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
@@ -186,7 +189,12 @@ class DefaultTagRepository(
         return createLocalTag(normalized)
     }
 
-    override suspend fun createSyncedTagWithResult(name: String): CreateTagResult {
+    override suspend fun createSyncedTagWithResult(name: String): CreateTagResult =
+        withAccountOperation(blockedResult = { CreateTagResult.Failed }) {
+            createSyncedTagWithResultWithinFence(name)
+        }
+
+    private suspend fun createSyncedTagWithResultWithinFence(name: String): CreateTagResult {
         val normalized = normalizeSharedTagName(name)
         if (validateSharedTagName(normalized) != null) {
             return CreateTagResult.InvalidName
@@ -227,7 +235,12 @@ class DefaultTagRepository(
         }
     }
 
-    override suspend fun deleteTag(tagId: Long) {
+    override suspend fun deleteTag(tagId: Long) =
+        withAccountOperation(blockedResult = { Unit }) {
+            deleteTagWithinFence(tagId)
+        }
+
+    private suspend fun deleteTagWithinFence(tagId: Long) {
         val tag = tagDao.findTagById(tagId) ?: return
         if (tag.scope == SharedTagScope.LOCAL_ONLY) {
             tagDao.deleteTag(tagId)
@@ -237,6 +250,7 @@ class DefaultTagRepository(
         val session = currentSyncSessionOrNull() ?: return
         val remoteTagId = tag.remoteTagId ?: return
         val now = clock.nowEpochMillis()
+        val clientId = syncCoordinator.ensureClientId(session.authUserId)
         database.withTransaction {
             tagDao.upsertTags(
                 listOf(
@@ -251,7 +265,7 @@ class DefaultTagRepository(
                 session = session,
                 operation = SharedTagSyncOperation(
                     opId = UUID.randomUUID().toString(),
-                    clientId = syncCoordinator.ensureClientId(session.authUserId),
+                    clientId = clientId,
                     type = SharedTagSyncOperationType.DELETE_TAG,
                     submittedAt = now,
                     tagId = remoteTagId,
@@ -265,7 +279,12 @@ class DefaultTagRepository(
         assignTagWithResult(tagId, entryId)
     }
 
-    override suspend fun assignTagWithResult(tagId: Long, entryId: Long): AssignTagResult {
+    override suspend fun assignTagWithResult(tagId: Long, entryId: Long): AssignTagResult =
+        withAccountOperation(blockedResult = { AssignTagResult.Failed }) {
+            assignTagWithResultWithinFence(tagId, entryId)
+        }
+
+    private suspend fun assignTagWithResultWithinFence(tagId: Long, entryId: Long): AssignTagResult {
         val tag = tagDao.findTagById(tagId) ?: return AssignTagResult.Failed
         val now = clock.nowEpochMillis()
         if (tag.scope == SharedTagScope.LOCAL_ONLY) {
@@ -291,6 +310,7 @@ class DefaultTagRepository(
 
         val remoteUrlId = existingRef?.remoteUrlId ?: UUID.randomUUID().toString()
         val canSyncRemote = remoteConfig.isConfigured
+        val clientId = if (canSyncRemote) syncCoordinator.ensureClientId(session.authUserId) else null
         database.withTransaction {
             val upserted = TagUrlCrossRef(
                 tagId = tagId,
@@ -314,7 +334,7 @@ class DefaultTagRepository(
                     session = session,
                     operation = SharedTagSyncOperation(
                         opId = UUID.randomUUID().toString(),
-                        clientId = syncCoordinator.ensureClientId(session.authUserId),
+                        clientId = requireNotNull(clientId),
                         type = SharedTagSyncOperationType.ADD_URL_TO_TAG,
                         submittedAt = now,
                         tagId = remoteTagId,
@@ -332,7 +352,12 @@ class DefaultTagRepository(
         return AssignTagResult.Success
     }
 
-    override suspend fun removeTag(tagId: Long, entryId: Long) {
+    override suspend fun removeTag(tagId: Long, entryId: Long) =
+        withAccountOperation(blockedResult = { Unit }) {
+            removeTagWithinFence(tagId, entryId)
+        }
+
+    private suspend fun removeTagWithinFence(tagId: Long, entryId: Long) {
         val tag = tagDao.findTagById(tagId) ?: return
         if (tag.scope == SharedTagScope.LOCAL_ONLY) {
             tagDao.deleteCrossRef(tagId = tagId, entryId = entryId)
@@ -345,6 +370,7 @@ class DefaultTagRepository(
         val normalizedUrl = ref.normalizedUrl ?: urlEntryDao.findById(entryId)?.normalizedUrl ?: return
         val now = clock.nowEpochMillis()
         val canSyncRemote = remoteConfig.isConfigured
+        val clientId = if (canSyncRemote) syncCoordinator.ensureClientId(session.authUserId) else null
         database.withTransaction {
             tagDao.updateCrossRefDeletion(
                 tagId = tagId,
@@ -358,7 +384,7 @@ class DefaultTagRepository(
                     session = session,
                     operation = SharedTagSyncOperation(
                         opId = UUID.randomUUID().toString(),
-                        clientId = syncCoordinator.ensureClientId(session.authUserId),
+                        clientId = requireNotNull(clientId),
                         type = SharedTagSyncOperationType.REMOVE_URL_FROM_TAG,
                         submittedAt = now,
                         tagId = remoteTagId,
@@ -435,7 +461,7 @@ class DefaultTagRepository(
                 duplicateSkipped = 0,
                 failed = 0,
                 cancelled = true,
-                message = "ローンチ版の保存上限に達しました。不要なURLを整理してから追加してください。",
+                message = "現在のプランの保存上限に達しました。不要なURLを整理してから追加してください。",
             )
         }
 
@@ -506,7 +532,12 @@ class DefaultTagRepository(
         return result
     }
 
-    override suspend fun migrateLocalTagToCloud(tagId: Long): MigrateSharedTagResult {
+    override suspend fun migrateLocalTagToCloud(tagId: Long): MigrateSharedTagResult =
+        withAccountOperation(blockedResult = { MigrateSharedTagResult.NotEligible }) {
+            migrateLocalTagToCloudWithinFence(tagId)
+        }
+
+    private suspend fun migrateLocalTagToCloudWithinFence(tagId: Long): MigrateSharedTagResult {
         val session = currentSyncSessionOrNull() ?: return MigrateSharedTagResult.NotEligible
         val tag = tagDao.findTagById(tagId) ?: return MigrateSharedTagResult.NotEligible
         if (tag.scope != SharedTagScope.LOCAL_ONLY) return MigrateSharedTagResult.NotEligible
@@ -594,22 +625,32 @@ class DefaultTagRepository(
         return MigrateSharedTagResult.Success
     }
 
-    override suspend fun triggerSync(): Boolean {
-        val session = currentSyncSessionOrNull() ?: return false
-        return syncNowOrSchedule(session.authUserId)
+    override suspend fun triggerSync(): Boolean = withAccountOperation(blockedResult = { false }) {
+        val session = currentSyncSessionOrNull() ?: return@withAccountOperation false
+        syncNowOrSchedule(session.authUserId)
     }
 
-    override suspend fun triggerSyncIfStale(minIntervalMillis: Long): Boolean {
-        val session = currentSyncSessionOrNull() ?: return false
-        val now = clock.nowEpochMillis()
-        val lastPulledAt = syncDao.findSyncState(session.authUserId)?.lastPulledAt
-        if (lastPulledAt != null && now - lastPulledAt < minIntervalMillis) {
-            return false
+    override suspend fun triggerSyncIfStale(minIntervalMillis: Long): Boolean =
+        withAccountOperation(blockedResult = { false }) {
+            val session = currentSyncSessionOrNull() ?: return@withAccountOperation false
+            val now = clock.nowEpochMillis()
+            val lastPulledAt = syncDao.findSyncState(session.authUserId)?.lastPulledAt
+            if (lastPulledAt != null && now - lastPulledAt < minIntervalMillis) {
+                return@withAccountOperation false
+            }
+            syncNowOrSchedule(session.authUserId)
         }
-        return syncNowOrSchedule(session.authUserId)
-    }
 
-    override suspend fun signIn(email: String, password: String): SharedTagAuthResult {
+    override suspend fun signIn(email: String, password: String): SharedTagAuthResult =
+        accountOperationFence.withExclusiveOperation {
+            if (localAccountCleanupStore.pending.value != null) {
+                SharedTagAuthResult.Failure(ACCOUNT_CLEANUP_IN_PROGRESS_MESSAGE)
+            } else {
+                signInWithinFence(email, password)
+            }
+        }
+
+    private suspend fun signInWithinFence(email: String, password: String): SharedTagAuthResult {
         if (!remoteConfig.isConfigured) {
             return SharedTagAuthResult.Failure("クラウド共有はまだ設定されていません")
         }
@@ -637,7 +678,16 @@ class DefaultTagRepository(
         }.getOrNull()
     }
 
-    override suspend fun handleOAuthCallback(callbackUrl: String): SharedTagAuthResult {
+    override suspend fun handleOAuthCallback(callbackUrl: String): SharedTagAuthResult =
+        accountOperationFence.withExclusiveOperation {
+            if (localAccountCleanupStore.pending.value != null) {
+                SharedTagAuthResult.Failure(ACCOUNT_CLEANUP_IN_PROGRESS_MESSAGE)
+            } else {
+                handleOAuthCallbackWithinFence(callbackUrl)
+            }
+        }
+
+    private suspend fun handleOAuthCallbackWithinFence(callbackUrl: String): SharedTagAuthResult {
         if (!remoteConfig.isConfigured) {
             return SharedTagAuthResult.Failure("クラウド共有はまだ設定されていません")
         }
@@ -655,7 +705,16 @@ class DefaultTagRepository(
         }
     }
 
-    override suspend fun signUp(email: String, password: String): SharedTagAuthResult {
+    override suspend fun signUp(email: String, password: String): SharedTagAuthResult =
+        accountOperationFence.withExclusiveOperation {
+            if (localAccountCleanupStore.pending.value != null) {
+                SharedTagAuthResult.Failure(ACCOUNT_CLEANUP_IN_PROGRESS_MESSAGE)
+            } else {
+                signUpWithinFence(email, password)
+            }
+        }
+
+    private suspend fun signUpWithinFence(email: String, password: String): SharedTagAuthResult {
         if (!remoteConfig.isConfigured) {
             return SharedTagAuthResult.Failure("クラウド共有はまだ設定されていません")
         }
@@ -698,14 +757,113 @@ class DefaultTagRepository(
     }
 
     override suspend fun signOut() {
-        authSessionProvider.updateSession(null)
+        accountOperationFence.withExclusiveOperation {
+            authSessionProvider.updateSession(null)
+        }
     }
 
-    override suspend fun deleteAccount(): SharedTagAccountDeletionResult {
+    override suspend fun deleteAccount(): SharedTagAccountDeletionResult =
+        accountOperationFence.withExclusiveOperation { deleteAccountLocked() }
+
+    private suspend fun deleteAccountLocked(): SharedTagAccountDeletionResult {
         localAccountCleanupStore.pending.value?.let { pending ->
-            return clearLocalAccountData(pending)
+            val retryResult = clearLocalAccountData(pending)
+            if (retryResult == SharedTagAccountDeletionResult.Success) {
+                accountDeletionRequestStore.clear()
+            }
+            return retryResult
         }
-        val session = currentSyncSessionOrNull() ?: return SharedTagAccountDeletionResult.AuthRequired
+        val session = currentSyncSessionOrNull()
+        val pendingRequest = accountDeletionRequestStore.pending
+        if (pendingRequest != null) {
+            return convergePendingAccountDeletion(pendingRequest, session)
+        }
+        if (session == null) {
+            return SharedTagAccountDeletionResult.AuthRequired
+        }
+        val grant = runCatching {
+            remoteDataSource.createAccountDeletionRequest(session)
+        }.getOrElse { failure ->
+            if (failure is UnsupportedOperationException) {
+                return legacyDeleteAccountLocked(session)
+            }
+            return SharedTagAccountDeletionResult.Failure(
+                deletionFailureMessage(failure),
+            )
+        }
+        // Persist the durable recovery record BEFORE the remote call. If the
+        // process dies at any later point — including right after the server
+        // committed but before any local marker exists — the next launch
+        // converges via the recorded request instead of repeating or stalling.
+        accountDeletionRequestStore.save(
+            AccountDeletionRequestRecord(
+                authUserId = session.authUserId,
+                requestId = grant.requestId,
+                token = grant.token,
+            )
+        )
+        val remoteError = runCatching {
+            remoteDataSource.deleteAccountWithRequest(session, grant.requestId)
+        }.exceptionOrNull()
+        if (remoteError != null) {
+            // The record is intentionally kept: a lost response after a server
+            // commit is resolved by convergence on the next attempt.
+            val message = remoteError.message.orEmpty()
+            return if (message.contains("owner_transfer_required", ignoreCase = true)) {
+                SharedTagAccountDeletionResult.OwnerTransferRequired
+            } else {
+                SharedTagAccountDeletionResult.Failure(
+                    message.ifBlank { "アカウントを削除できませんでした" },
+                )
+            }
+        }
+        return finishRemoteAccountDeletion(session.authUserId)
+    }
+
+    private suspend fun convergePendingAccountDeletion(
+        record: AccountDeletionRequestRecord,
+        session: SharedTagAuthSession?,
+    ): SharedTagAccountDeletionResult {
+        val usableSession = session?.takeIf { it.authUserId == record.authUserId }
+        if (usableSession != null) {
+            // Replaying the same request id is safe: a committed deletion keeps
+            // returning the identical successful result.
+            val remoteError = runCatching {
+                remoteDataSource.deleteAccountWithRequest(usableSession, record.requestId)
+            }.exceptionOrNull()
+            if (remoteError == null) {
+                return finishRemoteAccountDeletion(record.authUserId)
+            }
+            val message = remoteError.message.orEmpty()
+            if (message.contains("owner_transfer_required", ignoreCase = true)) {
+                return SharedTagAccountDeletionResult.OwnerTransferRequired
+            }
+            // Fall through to the status query for the definitive outcome; the
+            // server may have committed before the failure.
+        }
+        val statusResult = runCatching {
+            remoteDataSource.accountDeletionStatus(record.requestId, record.token)
+        }
+        val statusFailure = statusResult.exceptionOrNull()
+        if (statusFailure != null) {
+            return SharedTagAccountDeletionResult.Failure(
+                deletionFailureMessage(statusFailure).let { message ->
+                    if (message == "アカウントを削除できませんでした") "アカウント削除の状態を確認できませんでした" else message
+                },
+            )
+        }
+        val status = statusResult.getOrThrow()
+        if (status.isCompleted) {
+            return finishRemoteAccountDeletion(record.authUserId)
+        }
+        // pending / not_found / unknown: the server never confirmed deletion, so
+        // repeating it blindly here would not be safe without a live session.
+        return SharedTagAccountDeletionResult.Failure("アカウント削除が完了していません。サインイン後にもう一度お試しください")
+    }
+
+    private suspend fun legacyDeleteAccountLocked(
+        session: SharedTagAuthSession,
+    ): SharedTagAccountDeletionResult {
         val remoteError = runCatching {
             remoteDataSource.deleteAccount(session)
         }.exceptionOrNull()
@@ -719,60 +877,132 @@ class DefaultTagRepository(
                 )
             }
         }
-        localAccountCleanupStore.save(aiDataPending = true, sessionPending = true)
-        return clearLocalAccountData(
-            LocalAccountCleanupMarker(
-                aiDataPending = true,
-                sessionPending = true,
-            ),
-        )
+        return finishRemoteAccountDeletion(session.authUserId)
     }
 
-    override suspend fun retryLocalAccountCleanup(): SharedTagAccountDeletionResult {
-        val pending = localAccountCleanupStore.pending.value ?: LocalAccountCleanupMarker(
+    private suspend fun finishRemoteAccountDeletion(
+        authUserId: String,
+    ): SharedTagAccountDeletionResult {
+        accountOperationFence.markRemoteAccountDeleted(authUserId)
+        val marker = LocalAccountCleanupMarker(
             aiDataPending = true,
-            sessionPending = authSessionProvider.session.value != null,
+            sessionPending = true,
+            syncWorkCancellationPending = true,
+            sharedDataCleanupPending = true,
+            pendingInviteCleanupPending = false,
+            entitlementCleanupPending = true,
+            personalLinkSettingsCleanupPending = true,
+            authUserId = authUserId,
         )
-        return clearLocalAccountData(pending)
+        localAccountCleanupStore.save(marker)
+        val result = clearLocalAccountData(marker)
+        if (result == SharedTagAccountDeletionResult.Success) {
+            accountDeletionRequestStore.clear()
+        }
+        return result
     }
+
+    private fun deletionFailureMessage(failure: Throwable): String =
+        failure.message?.takeIf { it.isNotBlank() } ?: "アカウントを削除できませんでした"
+
+    override suspend fun retryLocalAccountCleanup(): SharedTagAccountDeletionResult =
+        accountOperationFence.withExclusiveOperation {
+            val pending = localAccountCleanupStore.pending.value
+                ?: return@withExclusiveOperation SharedTagAccountDeletionResult.Success
+            pending.authUserId?.let(accountOperationFence::markRemoteAccountDeleted)
+            val result = clearLocalAccountData(pending)
+            if (result == SharedTagAccountDeletionResult.Success) {
+                accountDeletionRequestStore.clear()
+            }
+            result
+        }
 
     private suspend fun clearLocalAccountData(
         initialPending: LocalAccountCleanupMarker,
     ): SharedTagAccountDeletionResult {
-        var aiDataPending = initialPending.aiDataPending
-        var sessionPending = initialPending.sessionPending
-        localAccountCleanupStore.save(aiDataPending, sessionPending)
+        var pending = initialPending
 
-        if (aiDataPending && runCatching {
-                aiLocalDataClearer.clearLocalAiData()
-            }.isSuccess
-        ) {
-            aiDataPending = false
-            localAccountCleanupStore.save(aiDataPending, sessionPending)
-        }
-
-        if (sessionPending && authSessionProvider.session.value == null) {
-            sessionPending = false
-            localAccountCleanupStore.save(aiDataPending, sessionPending)
-        } else if (sessionPending && runCatching {
+        if (pending.sessionPending && authSessionProvider.session.value == null) {
+            pending = pending.copy(sessionPending = false)
+            localAccountCleanupStore.save(pending)
+        } else if (pending.sessionPending && runCatching {
                 authSessionProvider.updateSession(null)
             }.isSuccess
         ) {
-            sessionPending = false
-            localAccountCleanupStore.save(aiDataPending, sessionPending)
+            pending = pending.copy(sessionPending = false)
+            localAccountCleanupStore.save(pending)
         }
 
-        return if (!aiDataPending && !sessionPending) {
+        if (!pending.sessionPending && pending.syncWorkCancellationPending && runCatching {
+                accountLinkedLocalDataCleaner.cancelSharedTagSyncWork(requireNotNull(pending.authUserId))
+            }.isSuccess
+        ) {
+            pending = pending.copy(syncWorkCancellationPending = false)
+            localAccountCleanupStore.save(pending)
+        }
+
+        if (pending.aiDataPending && runCatching {
+                aiLocalDataClearer.clearLocalAiData()
+            }.isSuccess
+        ) {
+            pending = pending.copy(aiDataPending = false)
+            localAccountCleanupStore.save(pending)
+        }
+
+        val cleanupAuthUserId = pending.authUserId?.takeIf { it.isNotBlank() }
+        val canClearAccountData = !pending.sessionPending &&
+            !pending.syncWorkCancellationPending &&
+            cleanupAuthUserId != null
+        if (canClearAccountData && pending.sharedDataCleanupPending && runCatching {
+                accountLinkedLocalDataCleaner.clearSharedTagData(requireNotNull(cleanupAuthUserId))
+            }.isSuccess
+        ) {
+            pending = pending.copy(sharedDataCleanupPending = false)
+            localAccountCleanupStore.save(pending)
+        }
+        if (pending.pendingInviteCleanupPending) {
+            // Legacy markers cannot prove ownership of the global pending invite record.
+            // Resolve the obsolete stage without deleting that user intent.
+            pending = pending.copy(pendingInviteCleanupPending = false)
+            localAccountCleanupStore.save(pending)
+        }
+        if (canClearAccountData && pending.entitlementCleanupPending && runCatching {
+                accountLinkedLocalDataCleaner.clearEntitlementCache(requireNotNull(cleanupAuthUserId))
+            }.isSuccess
+        ) {
+            pending = pending.copy(entitlementCleanupPending = false)
+            localAccountCleanupStore.save(pending)
+        }
+        if (canClearAccountData && pending.personalLinkSettingsCleanupPending && runCatching {
+                accountLinkedLocalDataCleaner.clearChatGptPersonalLinkSettings(requireNotNull(cleanupAuthUserId))
+            }.isSuccess
+        ) {
+            pending = pending.copy(personalLinkSettingsCleanupPending = false)
+            localAccountCleanupStore.save(pending)
+        }
+
+        return if (!pending.requiresCleanup) {
+            localAccountCleanupStore.clear()
             SharedTagAccountDeletionResult.Success
         } else {
             SharedTagAccountDeletionResult.LocalCleanupRequired(
-                aiDataPending = aiDataPending,
-                sessionPending = sessionPending,
+                aiDataPending = pending.aiDataPending,
+                sessionPending = pending.sessionPending,
+                syncWorkCancellationPending = pending.syncWorkCancellationPending,
+                sharedDataCleanupPending = pending.sharedDataCleanupPending,
+                pendingInviteCleanupPending = pending.pendingInviteCleanupPending,
+                entitlementCleanupPending = pending.entitlementCleanupPending,
+                personalLinkSettingsCleanupPending = pending.personalLinkSettingsCleanupPending,
             )
         }
     }
 
-    override suspend fun createInviteLink(tagId: Long): SharedTagInviteCreationResult {
+    override suspend fun createInviteLink(tagId: Long): SharedTagInviteCreationResult =
+        withAccountOperation(blockedResult = { SharedTagInviteCreationResult.AuthRequired }) {
+            createInviteLinkWithinFence(tagId)
+        }
+
+    private suspend fun createInviteLinkWithinFence(tagId: Long): SharedTagInviteCreationResult {
         val session = currentSyncSessionOrNull() ?: return SharedTagInviteCreationResult.AuthRequired
         val tag = tagDao.findTagById(tagId) ?: return SharedTagInviteCreationResult.NotSharedTag
         if (tag.scope != SharedTagScope.SYNCED || tag.remoteTagId.isNullOrBlank()) {
@@ -805,7 +1035,12 @@ class DefaultTagRepository(
         return createGroupWithResult(name) == CreateSharedTagGroupResult.Success
     }
 
-    override suspend fun createGroupWithResult(name: String): CreateSharedTagGroupResult {
+    override suspend fun createGroupWithResult(name: String): CreateSharedTagGroupResult =
+        withAccountOperation(blockedResult = { CreateSharedTagGroupResult.AuthRequired }) {
+            createGroupWithResultWithinFence(name)
+        }
+
+    private suspend fun createGroupWithResultWithinFence(name: String): CreateSharedTagGroupResult {
         val normalized = normalizeSharedTagName(name)
         if (validateSharedTagName(normalized) != null) return CreateSharedTagGroupResult.InvalidName
         val session = currentSyncSessionOrNull() ?: return CreateSharedTagGroupResult.AuthRequired
@@ -823,7 +1058,12 @@ class DefaultTagRepository(
         }
     }
 
-    override suspend fun addTagToGroup(groupId: Long, tagId: Long): Boolean {
+    override suspend fun addTagToGroup(groupId: Long, tagId: Long): Boolean =
+        withAccountOperation(blockedResult = { false }) {
+            addTagToGroupWithinFence(groupId, tagId)
+        }
+
+    private suspend fun addTagToGroupWithinFence(groupId: Long, tagId: Long): Boolean {
         val session = currentSyncSessionOrNull() ?: return false
         val tag = tagDao.findTagById(tagId) ?: return false
         val remoteTagId = tag.remoteTagId ?: return false
@@ -835,7 +1075,12 @@ class DefaultTagRepository(
         }.getOrDefault(false)
     }
 
-    override suspend fun removeTagFromGroup(groupId: Long, tagId: Long): Boolean {
+    override suspend fun removeTagFromGroup(groupId: Long, tagId: Long): Boolean =
+        withAccountOperation(blockedResult = { false }) {
+            removeTagFromGroupWithinFence(groupId, tagId)
+        }
+
+    private suspend fun removeTagFromGroupWithinFence(groupId: Long, tagId: Long): Boolean {
         val session = currentSyncSessionOrNull() ?: return false
         val tag = tagDao.findTagById(tagId) ?: return false
         val remoteTagId = tag.remoteTagId ?: return false
@@ -848,6 +1093,14 @@ class DefaultTagRepository(
     }
 
     override suspend fun createGroupInviteLink(
+        groupId: Long,
+        role: String,
+    ): SharedTagGroupInviteCreationResult =
+        withAccountOperation(blockedResult = { SharedTagGroupInviteCreationResult.AuthRequired }) {
+            createGroupInviteLinkWithinFence(groupId, role)
+        }
+
+    private suspend fun createGroupInviteLinkWithinFence(
         groupId: Long,
         role: String,
     ): SharedTagGroupInviteCreationResult {
@@ -922,7 +1175,12 @@ class DefaultTagRepository(
         }
     }
 
-    override suspend fun syncSharedProfileDisplayName(displayName: String): Boolean {
+    override suspend fun syncSharedProfileDisplayName(displayName: String): Boolean =
+        withAccountOperation(blockedResult = { false }) {
+            syncSharedProfileDisplayNameWithinFence(displayName)
+        }
+
+    private suspend fun syncSharedProfileDisplayNameWithinFence(displayName: String): Boolean {
         val session = currentSyncSessionOrNull() ?: return false
         return runCatching {
             remoteDataSource.upsertSharedProfile(session, displayName.trim().take(40))
@@ -932,6 +1190,15 @@ class DefaultTagRepository(
     }
 
     private suspend fun mutateGroup(
+        groupId: Long,
+        block: suspend (SharedTagAuthSession, String) -> Any?,
+    ): SharedTagGroupMutationResult = withAccountOperation(
+        blockedResult = { SharedTagGroupMutationResult.AuthRequired },
+    ) {
+        mutateGroupWithinFence(groupId, block)
+    }
+
+    private suspend fun mutateGroupWithinFence(
         groupId: Long,
         block: suspend (SharedTagAuthSession, String) -> Any?,
     ): SharedTagGroupMutationResult {
@@ -984,7 +1251,12 @@ class DefaultTagRepository(
         }
     }
 
-    override suspend fun acceptInvite(inviteToken: String): SharedTagInviteAcceptanceResult {
+    override suspend fun acceptInvite(inviteToken: String): SharedTagInviteAcceptanceResult =
+        withAccountOperation(blockedResult = { SharedTagInviteAcceptanceResult.AuthRequired }) {
+            acceptInviteWithinFence(inviteToken)
+        }
+
+    private suspend fun acceptInviteWithinFence(inviteToken: String): SharedTagInviteAcceptanceResult {
         val session = currentSyncSessionOrNull() ?: return SharedTagInviteAcceptanceResult.AuthRequired
         val token = inviteToken.trim()
         if (token.isBlank()) return SharedTagInviteAcceptanceResult.InvalidInvite
@@ -1013,6 +1285,14 @@ class DefaultTagRepository(
     }
 
     override suspend fun transferOwnership(
+        tagId: Long,
+        newOwnerUserId: String,
+    ): SharedTagOwnershipTransferResult =
+        withAccountOperation(blockedResult = { SharedTagOwnershipTransferResult.AuthRequired }) {
+            transferOwnershipWithinFence(tagId, newOwnerUserId)
+        }
+
+    private suspend fun transferOwnershipWithinFence(
         tagId: Long,
         newOwnerUserId: String,
     ): SharedTagOwnershipTransferResult {
@@ -1065,7 +1345,12 @@ class DefaultTagRepository(
         }
     }
 
-    override suspend fun removeMember(tagId: Long, userId: String): Boolean {
+    override suspend fun removeMember(tagId: Long, userId: String): Boolean =
+        withAccountOperation(blockedResult = { false }) {
+            removeMemberWithinFence(tagId, userId)
+        }
+
+    private suspend fun removeMemberWithinFence(tagId: Long, userId: String): Boolean {
         val session = currentSyncSessionOrNull() ?: return false
         if (userId == session.authUserId) return false
         val tag = tagDao.findTagById(tagId) ?: return false
@@ -1080,6 +1365,7 @@ class DefaultTagRepository(
         if (targetMember.status != SharedTagMemberStatus.ACTIVE) return false
 
         val now = clock.nowEpochMillis()
+        val clientId = syncCoordinator.ensureClientId(session.authUserId)
         database.withTransaction {
             syncDao.upsertMembers(
                 listOf(
@@ -1101,7 +1387,7 @@ class DefaultTagRepository(
                 session = session,
                 operation = SharedTagSyncOperation(
                     opId = UUID.randomUUID().toString(),
-                    clientId = syncCoordinator.ensureClientId(session.authUserId),
+                    clientId = clientId,
                     type = SharedTagSyncOperationType.REMOVE_MEMBER,
                     submittedAt = now,
                     tagId = remoteTagId,
@@ -1113,7 +1399,12 @@ class DefaultTagRepository(
         return true
     }
 
-    override suspend fun leaveSharedTag(tagId: Long): Boolean {
+    override suspend fun leaveSharedTag(tagId: Long): Boolean =
+        withAccountOperation(blockedResult = { false }) {
+            leaveSharedTagWithinFence(tagId)
+        }
+
+    private suspend fun leaveSharedTagWithinFence(tagId: Long): Boolean {
         val session = currentSyncSessionOrNull() ?: return false
         val tag = tagDao.findTagById(tagId) ?: return false
         val remoteTagId = tag.remoteTagId ?: return false
@@ -1124,6 +1415,7 @@ class DefaultTagRepository(
         if (currentMember.status != SharedTagMemberStatus.ACTIVE) return false
 
         val now = clock.nowEpochMillis()
+        val clientId = syncCoordinator.ensureClientId(session.authUserId)
         database.withTransaction {
             syncDao.upsertMembers(
                 listOf(
@@ -1146,7 +1438,7 @@ class DefaultTagRepository(
                 session = session,
                 operation = SharedTagSyncOperation(
                     opId = UUID.randomUUID().toString(),
-                    clientId = syncCoordinator.ensureClientId(session.authUserId),
+                    clientId = clientId,
                     type = SharedTagSyncOperationType.REMOVE_MEMBER,
                     submittedAt = now,
                     tagId = remoteTagId,
@@ -1282,12 +1574,21 @@ class DefaultTagRepository(
     }
 
     private suspend fun syncNowOrSchedule(authUserId: String): Boolean {
-        val success = syncCoordinator.syncForAuthUser(authUserId)
+        val success = syncCoordinator.syncForAuthUserWithinAccountOperation(authUserId)
         if (!success) {
             scheduleSync(authUserId)
         }
         return success
     }
+
+    private suspend fun <T> withAccountOperation(
+        blockedResult: () -> T,
+        operation: suspend () -> T,
+    ): T = accountOperationFence.withAccountOperation(
+        authUserId = { authSessionProvider.session.value?.authUserId },
+        blockedResult = blockedResult,
+        operation = operation,
+    )
 
     private fun currentSyncSessionOrNull(): SharedTagAuthSession? {
         val session = authSessionProvider.session.value ?: return null
@@ -1319,6 +1620,11 @@ class DefaultTagRepository(
             return "$baseUrl/invite/$inviteToken"
         }
         return "urlsaver://invite/$inviteToken"
+    }
+
+    private companion object {
+        const val ACCOUNT_CLEANUP_IN_PROGRESS_MESSAGE =
+            "アカウント削除後の端末内データ消去を完了してから、もう一度お試しください"
     }
 
     private suspend fun countProspectiveImportedEntries(payload: TagSharePayload): Int {

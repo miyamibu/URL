@@ -21,10 +21,11 @@ enum AppPalette {
     static let primary = dynamic(light: 0x65B0FF, dark: 0x65B0FF)
     static let primaryStrong = dynamic(light: 0x1F6FD1, dark: 0x8BC3FF)
     static let primarySurface = dynamic(light: 0x22436B, dark: 0x143558)
+    static let selectedSurface = dynamic(light: 0xF2F7FF, dark: 0x173A5E)
     static let secondarySurface = dynamic(light: 0x144339, dark: 0x0E3B34)
     static let danger = dynamic(light: 0xB5261E, dark: 0xFF776A)
     static let dangerSurface = dynamic(light: 0x5B1B17, dark: 0x4B1714)
-    static let warning = dynamic(light: 0xE66A57, dark: 0xFF8F7F)
+    static let warning = dynamic(light: 0x9B2C20, dark: 0xFF8F7F)
     static let webAccent = Color(red: 52 / 255, green: 199 / 255, blue: 89 / 255)
     static let youtubeAccent = Color(red: 1, green: 59 / 255, blue: 48 / 255)
     static let instagramAccent = Color(red: 228 / 255, green: 64 / 255, blue: 95 / 255)
@@ -371,11 +372,13 @@ struct EntryCardView: View {
 
                             if visibleLocalTagNames.isEmpty {
                                 HStack(spacing: 10) {
-                                    Text(entryCardHeaderFallbackText(for: entry))
-                                        .font(.system(.body).weight(.medium))
-                                        .foregroundStyle(AppPalette.textSecondary)
-                                        .lineLimit(2)
-                                        .fixedSize(horizontal: false, vertical: true)
+                                    if let headerText = entryCardDistinctHeaderText(for: entry) {
+                                        Text(headerText)
+                                            .font(.system(.body).weight(.medium))
+                                            .foregroundStyle(AppPalette.textSecondary)
+                                            .lineLimit(2)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
 
                                     if entry.contentContext != .standard {
                                         Text(contentContextLabel(for: entry.contentContext))
@@ -475,7 +478,7 @@ private struct EntryLocalTagFlow: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
                     .frame(maxWidth: 150)
-                    .background(AppPalette.primarySurface, in: Capsule())
+                    .background(AppPalette.selectedSurface, in: Capsule())
                     .overlay(
                         Capsule()
                             .stroke(AppPalette.primaryStrong.opacity(0.45), lineWidth: 1)
@@ -567,6 +570,16 @@ private func entryCardHeaderFallbackText(for entry: URLRecord) -> String {
     return serviceLabel(for: entry)
 }
 
+func entryCardDistinctHeaderText(for entry: URLRecord) -> String? {
+    let header = entryCardHeaderFallbackText(for: entry).trimmingCharacters(in: .whitespacesAndNewlines)
+    let title = preferredDisplayTitle(for: entry).trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !header.isEmpty,
+          header.compare(title, options: [.caseInsensitive, .diacriticInsensitive]) != .orderedSame else {
+        return nil
+    }
+    return header
+}
+
 func entryCardVisibleLocalTagNames(_ localTagNames: [String]) -> [String] {
     localTagNames
         .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -586,7 +599,9 @@ func entryCardAccessibilityLabel(for entry: URLRecord, localTagNames: [String] =
     var parts = [preferredDisplayTitle(for: entry)]
     let visibleLocalTagNames = entryCardVisibleLocalTagNames(localTagNames)
     if visibleLocalTagNames.isEmpty {
-        parts.append(entryCardHeaderFallbackText(for: entry))
+        if let headerText = entryCardDistinctHeaderText(for: entry) {
+            parts.append(headerText)
+        }
     } else {
         parts.append("自作タグ: \(visibleLocalTagNames.joined(separator: ", "))")
     }
@@ -1421,25 +1436,34 @@ struct FilterChipButton: View {
                     .padding(.horizontal, 26)
                     .padding(.vertical, 11)
                     .frame(minWidth: 54)
-                    .background(selected ? AppPalette.primarySurface : AppPalette.panelStrong, in: Capsule())
+                    .background(selected ? AppPalette.selectedSurface : AppPalette.panelStrong, in: Capsule())
                     .overlay {
                         Text(label)
                             .font(.system(size: 22, weight: .heavy, design: .rounded))
                             .foregroundStyle(selected ? AppPalette.primaryStrong : Color.white.opacity(0.78))
                     }
             } else {
-                Text(label)
-                    .font(.system(size: 14, weight: .heavy, design: .rounded))
-                    .foregroundStyle(selected ? AppPalette.primaryStrong : Color.white.opacity(0.78))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 11)
-                    .frame(maxWidth: 190)
-                    .background(selected ? AppPalette.primarySurface : AppPalette.panelStrong, in: Capsule())
+                HStack(spacing: 6) {
+                    if selected {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 12, weight: .heavy))
+                            .accessibilityHidden(true)
+                    }
+                    Text(label)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                .font(.system(size: 14, weight: .heavy, design: .rounded))
+                .foregroundStyle(selected ? AppPalette.primaryStrong : Color.white.opacity(0.78))
+                .padding(.horizontal, 18)
+                .padding(.vertical, 11)
+                .frame(maxWidth: 190)
+                .background(selected ? AppPalette.selectedSurface : AppPalette.panelStrong, in: Capsule())
             }
         }
         .buttonStyle(.plain)
+        .accessibilityValue(selected ? "選択中" : "未選択")
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 

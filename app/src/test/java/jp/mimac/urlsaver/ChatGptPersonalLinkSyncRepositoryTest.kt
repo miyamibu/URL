@@ -10,6 +10,8 @@ import jp.mimac.urlsaver.data.ChatGptPersonalLinkSyncOperation
 import jp.mimac.urlsaver.data.ChatGptPersonalLinkSyncRepository
 import jp.mimac.urlsaver.data.ChatGptPersonalLinkSyncSettings
 import jp.mimac.urlsaver.data.ChatGptPersonalLinkSyncSettingsStore
+import jp.mimac.urlsaver.data.ChatGptSyncResult
+import jp.mimac.urlsaver.data.SharedPreferencesChatGptPersonalLinkSyncSettingsStore
 import jp.mimac.urlsaver.data.SharedTagAuthSession
 import jp.mimac.urlsaver.data.SharedTagAuthSessionProvider
 import jp.mimac.urlsaver.data.TagEntity
@@ -23,8 +25,11 @@ import jp.mimac.urlsaver.domain.SharedTagScope
 import jp.mimac.urlsaver.domain.SharedTagSyncStatus
 import jp.mimac.urlsaver.ui.ChatGptSyncPendingAction
 import jp.mimac.urlsaver.ui.chatGptSyncConfirmationBody
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -133,7 +138,7 @@ class ChatGptPersonalLinkSyncRepositoryTest {
         val operation = remote.operations.single()
         assertEquals("https://example.com/chatgpt-active", operation.url)
         assertEquals(null, operation.extractedText)
-        assertFalse(settingsStore.snapshot().contentFetchEnabled)
+        assertFalse(settingsStore.snapshot("user-a").contentFetchEnabled)
     }
 
     @Test
@@ -172,6 +177,72 @@ class ChatGptPersonalLinkSyncRepositoryTest {
         assertTrue(body.contains("今回の送信なし"))
     }
 
+    @Test
+    fun settings_areScopedAcrossSignOutUserSwitchAndSameUserRelogin() = runBlocking {
+        authProvider.updateSession(SharedTagAuthSession(authUserId = "user-a", accessToken = "token-a"))
+        repository.setEnabled(enabled = true, contentFetchEnabled = false)
+        val userALastSync = settingsStore.snapshot("user-a").lastSyncedAt
+
+        authProvider.updateSession(null)
+        assertFalse(repository.settings.first().enabled)
+
+        authProvider.updateSession(SharedTagAuthSession(authUserId = "user-b", accessToken = "token-b"))
+        assertFalse(repository.settings.first().enabled)
+        assertEquals(null, repository.settings.first().lastSyncedAt)
+
+        authProvider.updateSession(SharedTagAuthSession(authUserId = "user-a", accessToken = "token-a-2"))
+        assertTrue(repository.settings.first().enabled)
+        assertEquals(userALastSync, repository.settings.first().lastSyncedAt)
+    }
+
+    @Test
+    fun legacyOwnerlessEnabledPreference_failsClosedForEverySignedInUser() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.getSharedPreferences("chatgpt_personal_link_sync", Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean("enabled", true)
+            .putLong("last_synced_at", 99L)
+            .commit()
+        val store = SharedPreferencesChatGptPersonalLinkSyncSettingsStore(context)
+
+        assertEquals(ChatGptPersonalLinkSyncSettings(), store.snapshot("new-user"))
+        assertEquals(ChatGptPersonalLinkSyncSettings(), store.snapshot(null))
+    }
+
+    @Test
+    fun inFlightSyncCompletionAfterUserSwitch_neverWritesOldOrNewUserResult() = runBlocking {
+        authProvider.updateSession(SharedTagAuthSession(authUserId = "user-a", accessToken = "token-a"))
+        insertEntry("https://example.com/in-flight-user-switch")
+        val operationStarted = CompletableDeferred<Unit>()
+        val allowCompletion = CompletableDeferred<Unit>()
+        remote.beforeApplyReturn = {
+            operationStarted.complete(Unit)
+            allowCompletion.await()
+        }
+
+        val operation = async { repository.setEnabled(enabled = true, contentFetchEnabled = false) }
+        operationStarted.await()
+        authProvider.updateSession(SharedTagAuthSession(authUserId = "user-b", accessToken = "token-b"))
+        allowCompletion.complete(Unit)
+
+        assertEquals(ChatGptSyncResult.AuthRequired, operation.await())
+        assertEquals(null, settingsStore.snapshot("user-a").lastSyncedAt)
+        assertEquals(ChatGptPersonalLinkSyncSettings(), settingsStore.snapshot("user-b"))
+    }
+
+    @Test
+    fun deletionCleanup_clearsOnlyTargetAccountSettingsAndPreservesSavedUrls() = runBlocking {
+        val entryId = insertEntry("https://example.com/settings-cleanup-preserves-url")
+        settingsStore.setEnabled("user-a", enabled = true, contentFetchEnabled = false)
+        settingsStore.setEnabled("user-b", enabled = true, contentFetchEnabled = false)
+
+        settingsStore.clear("user-a")
+
+        assertEquals(ChatGptPersonalLinkSyncSettings(), settingsStore.snapshot("user-a"))
+        assertTrue(settingsStore.snapshot("user-b").enabled)
+        assertEquals(entryId, db.urlEntryDao().findById(entryId)?.id)
+    }
+
     private suspend fun insertEntry(
         normalizedUrl: String,
         recordState: RecordState = RecordState.ACTIVE,
@@ -206,26 +277,41 @@ class ChatGptPersonalLinkSyncRepositoryTest {
     }
 
     private class FakeSettingsStore : ChatGptPersonalLinkSyncSettingsStore {
-        private val state = MutableStateFlow(ChatGptPersonalLinkSyncSettings())
-        override val settings: StateFlow<ChatGptPersonalLinkSyncSettings> = state
+        private val values = mutableMapOf<String, ChatGptPersonalLinkSyncSettings>()
+        private val revisionState = MutableStateFlow(0L)
+        override val revision: StateFlow<Long> = revisionState
 
-        override fun snapshot(): ChatGptPersonalLinkSyncSettings = state.value
+        override fun snapshot(authUserId: String?): ChatGptPersonalLinkSyncSettings =
+            authUserId?.let(values::get) ?: ChatGptPersonalLinkSyncSettings()
 
-        override fun setEnabled(enabled: Boolean, contentFetchEnabled: Boolean) {
-            state.value = state.value.copy(enabled = enabled, contentFetchEnabled = enabled && contentFetchEnabled)
+        override fun setEnabled(authUserId: String, enabled: Boolean, contentFetchEnabled: Boolean) {
+            values[authUserId] = snapshot(authUserId).copy(
+                enabled = enabled,
+                contentFetchEnabled = enabled && contentFetchEnabled,
+                lastErrorMessage = null,
+            )
+            revisionState.value += 1L
         }
 
-        override fun markSyncSuccess(syncedAt: Long) {
-            state.value = state.value.copy(lastSyncedAt = syncedAt, lastErrorMessage = null)
+        override fun markSyncSuccess(authUserId: String, syncedAt: Long) {
+            values[authUserId] = snapshot(authUserId).copy(lastSyncedAt = syncedAt, lastErrorMessage = null)
+            revisionState.value += 1L
         }
 
-        override fun markSyncFailure(message: String) {
-            state.value = state.value.copy(lastErrorMessage = message)
+        override fun markSyncFailure(authUserId: String, message: String) {
+            values[authUserId] = snapshot(authUserId).copy(lastErrorMessage = message)
+            revisionState.value += 1L
+        }
+
+        override fun clear(authUserId: String) {
+            values.remove(authUserId)
+            revisionState.value += 1L
         }
     }
 
     private class FakeRemoteDataSource : ChatGptPersonalLinkRemoteDataSource {
         val operations = mutableListOf<ChatGptPersonalLinkSyncOperation>()
+        var beforeApplyReturn: suspend () -> Unit = {}
 
         override suspend fun setSyncEnabled(
             session: SharedTagAuthSession,
@@ -238,6 +324,7 @@ class ChatGptPersonalLinkSyncRepositoryTest {
             operations: List<ChatGptPersonalLinkSyncOperation>,
         ): ApplyPersonalLinkOpsResponse {
             this.operations += operations
+            beforeApplyReturn()
             return ApplyPersonalLinkOpsResponse(status = "ok", appliedCount = operations.size)
         }
     }

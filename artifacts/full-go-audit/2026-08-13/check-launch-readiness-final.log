@@ -1,0 +1,121 @@
+FAIL working tree is dirty; freeze and classify all changes before launch
+FAIL current branch is 'codex/full-go-mobile-s1-20260811'; integrate the release candidate into main before launch
+OK current main matches origin/main
+app/src/main/java/jp/mimac/urlsaver/FirstRunOnboardingStore.kt
+app/src/main/java/jp/mimac/urlsaver/ShareReceiverViewModel.kt
+app/src/main/java/jp/mimac/urlsaver/ui/theme/AccessiblePalettes.kt
+scripts/reset-password-recovery.test.mjs
+scripts/serve_public_web_preview.py
+scripts/sync_canonical_story_tracker.py
+scripts/test_public_web_browser.sh
+scripts/test_public_web_contract.py
+scripts/test_verify_canonical_story_tracker.py
+scripts/verify_web_ui_contrast.py
+web/admin/app/icon.svg
+web/invite-link/auth/reset-password/reset-password.js
+web/invite-link/auth/reset-password/styles.css
+web/invite-link/invite/invite.css
+web/invite-link/invite/invite.js
+FAIL active source files are untracked
+OK found docs/release/repo-go-evidence.md
+OK found docs/release/launch-status-model.md
+OK found docs/release/launch-go-checklist.md
+OK found docs/release/release-manifest.json
+OK found docs/release/manual-qa-matrix.md
+OK found docs/release/staging-deploy-checklist.md
+OK found docs/release/android-internal-testing-checklist.md
+OK found docs/release/ios-testflight-checklist.md
+OK found docs/release/privacy-policy-and-store-disclosure-checklist.md
+OK found docs/release/production-secrets-and-flags.md
+OK found docs/release/rollback-plan.md
+OK found docs/ai/mcp-staging-smoke-test.md
+OK found docs/ai/openai-apps-developer-mode-test-plan.md
+OK found docs/ai/openai-submission-readiness.md
+OK found scripts/smoke_mcp_staging.sh
+OK found scripts/check_release_hygiene.sh
+OK found scripts/verify_release_manifest.py
+OK found scripts/run_deno_tests.sh
+OK found scripts/verify_supabase_local.sh
+OK found scripts/create_clean_review_archive.sh
+FAIL repo-go evidence does not record Final status: REPO_GO
+OK REPO_GO evidence is dated today
+OK no placeholder migration blocks fresh replay
+OK all manifest screenshot references exist
+OK no review archive in repo root
+OK no .env.production file
+OK no invalid citation marker
+OK no tracked forbidden release artifacts
+OK local-only xcconfig keeps shared tag cloud disabled
+OK local-only xcconfig contains no Supabase values
+OK iOS privacy manifest is valid and has required-reason entries or no detected covered API usage: ios/URLSaveriOS/PrivacyInfo.xcprivacy
+OK iOS privacy manifest is valid and has required-reason entries or no detected covered API usage: ios/URLSaverShareExtension/PrivacyInfo.xcprivacy
+✔ ordinary implicit access token fragments are scrubbed and rejected before SDK initialization (7.38625ms)
+✔ tokenless reset visits remain explicit errors without rewriting the clean URL (1.284084ms)
+✔ implicit recovery requires type and both tokens, uses a memory-only session, and initializes once (1.197666ms)
+✔ PKCE accepts code only and removes credentials before SDK initialization (0.853084ms)
+✔ invalid or expired structurally valid recovery is scrubbed and stays in the explicit error state (0.915ms)
+✔ a non-recovery implicit fragment is rejected even when both tokens exist (0.675083ms)
+✔ SDK load timeout fails closed after scrubbing and ignores a late load (1.311625ms)
+✔ exchange timeout fails closed and a late session cannot reveal the form (1.620959ms)
+✔ setSession timeout fails closed and a late session cannot reveal the form (0.856125ms)
+✔ an updateUser exception always re-enables submit and returns to reissue guidance (1.047833ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 10
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 116.279583
+PASS reset route declares a CSP
+PASS reset CSP allows only self and pinned SDK host scripts
+PASS reset CSP allows self-hosted styles
+PASS reset CSP cannot drift through inline hashes or unsafe directives
+PASS reset page has no inline style block
+PASS reset page declares scripts explicitly
+PASS reset page has no inline executable script
+PASS reset SDK keeps SRI and anonymous CORS
+PASS reset rejects tokenless links before loading the SDK
+PASS reset accepts only recovery implicit fragments
+PASS reset requires both implicit recovery tokens
+PASS reset recovery session is memory-only
+PASS reset disables SDK URL auto-detection
+PASS reset removes recovery credentials after session establishment
+PASS reset shares one initialization promise
+PASS reset stylesheet exists
+PASS reset JavaScript exists
+PASS invite route declares a CSP
+PASS invite CSP uses self-hosted code
+PASS invite page has no inline style block
+PASS invite page declares scripts explicitly
+PASS invite page has no inline executable script
+PASS invite fallback contains https://apps.apple.com/app/id6771251450
+PASS invite fallback contains https://play.google.com/store/apps/details?id=jp.miyamibu.urlalbum
+PASS invite fallback contains 招待リンクをコピー
+PASS invite fallback contains このページに戻ります
+PASS invite page does not auto-open the app
+PASS public user-facing pages use the りんばむ brand
+PASS reset recovery runtime contract passes
+PASS reset route responds HTTP 200 locally
+PASS reset response carries exact CSP
+PASS reset rewrite serves the branded page
+PASS reset JavaScript asset responds
+PASS reset asset carries exact CSP
+PASS invite route responds HTTP 200 locally
+PASS invite response carries exact CSP
+PASS invite rewrite serves recovery controls
+PASS invite JavaScript asset is not shadowed by rewrite
+PASS public web contract verification
+OK public reset/invite pages have matching strict CSP, recovery paths, and local responses
+OK canonical Android applicationId is configured
+OK release ADS_ENABLED=false is configured
+OK release source has no Google Mobile Ads dependency or type reference
+OK release manifest removes debug/ad-only declarations
+OK release manifest matches Android/iOS sources, migration head, and release documents
+OK release manifest matches Android/iOS sources, migration head, and current release docs
+OK machine-readable release manifest exists
+OK current release readiness checklist exists
+OK release hygiene checks passed
+OK MCP contract checks passed
+Mobile UI contract check passed.
+NO_GO_INTERNAL launch readiness failures=4

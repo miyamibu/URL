@@ -147,12 +147,44 @@ struct SharedTagAuthSession: Codable, Equatable, Sendable {
     let userEmail: String?
 }
 
-struct SharedTagAccountLocalCleanupState: Equatable, Sendable {
-    let aiDataCleanupPending: Bool
-    let signOutCleanupPending: Bool
+struct SharedTagAccountLocalCleanupState: Codable, Equatable, Sendable {
+    var authUserID: String?
+    var aiDataCleanupPending: Bool
+    var signOutCleanupPending: Bool
+    var syncCancellationCleanupPending: Bool
+    var sharedDataCleanupPending: Bool
+    var pendingInviteCleanupPending: Bool
+    var entitlementCleanupPending: Bool
+    var personalLinkSettingsCleanupPending: Bool
+
+    init(
+        authUserID: String? = nil,
+        aiDataCleanupPending: Bool,
+        signOutCleanupPending: Bool,
+        syncCancellationCleanupPending: Bool = false,
+        sharedDataCleanupPending: Bool = false,
+        pendingInviteCleanupPending: Bool = false,
+        entitlementCleanupPending: Bool = false,
+        personalLinkSettingsCleanupPending: Bool = false
+    ) {
+        self.authUserID = authUserID
+        self.aiDataCleanupPending = aiDataCleanupPending
+        self.signOutCleanupPending = signOutCleanupPending
+        self.syncCancellationCleanupPending = syncCancellationCleanupPending
+        self.sharedDataCleanupPending = sharedDataCleanupPending
+        self.pendingInviteCleanupPending = pendingInviteCleanupPending
+        self.entitlementCleanupPending = entitlementCleanupPending
+        self.personalLinkSettingsCleanupPending = personalLinkSettingsCleanupPending
+    }
 
     var requiresCleanup: Bool {
-        aiDataCleanupPending || signOutCleanupPending
+        aiDataCleanupPending ||
+            signOutCleanupPending ||
+            syncCancellationCleanupPending ||
+            sharedDataCleanupPending ||
+            pendingInviteCleanupPending ||
+            entitlementCleanupPending ||
+            personalLinkSettingsCleanupPending
     }
 }
 
@@ -186,4 +218,36 @@ enum SharedTagInvitePreviewResult: Equatable, Sendable {
 enum SharedInviteType: String, Codable, Equatable, Sendable {
     case tag
     case group
+}
+
+/// Durable record of an in-flight remote account deletion. Persisted BEFORE the
+/// remote delete call so a process loss after the server committed can still
+/// converge through the status query without repeating remote deletion
+/// (S1-REMOTE-MARKER-006).
+struct SharedTagAccountDeletionRequestRecord: Codable, Equatable, Sendable {
+    var authUserID: String
+    var requestID: String
+    var token: String
+
+    enum CodingKeys: String, CodingKey {
+        case authUserID = "auth_user_id"
+        case requestID = "request_id"
+        case token
+    }
+}
+
+struct SharedTagAccountDeletionRequestGrant: Decodable, Sendable {
+    let requestID: String
+    let token: String
+
+    enum CodingKeys: String, CodingKey {
+        case requestID = "request_id"
+        case token
+    }
+}
+
+struct SharedTagAccountDeletionRemoteStatus: Decodable, Sendable {
+    let status: String
+
+    var isCompleted: Bool { status == "completed" }
 }

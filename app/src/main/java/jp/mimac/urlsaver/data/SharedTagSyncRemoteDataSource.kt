@@ -13,14 +13,16 @@ import jp.mimac.urlsaver.domain.TransferSharedTagOwnershipResponse
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
-interface SharedTagSyncRemoteDataSource {
-    suspend fun applyOps(
+interface SharedTagSyncRemoteDataSource {    suspend fun applyOps(
         session: SharedTagAuthSession,
         operations: List<SharedTagSyncOperation>,
     ): ApplySharedTagOpsResponse
@@ -107,6 +109,45 @@ interface SharedTagSyncRemoteDataSource {
     suspend fun deleteAccount(
         session: SharedTagAuthSession,
     )
+
+    /**
+     * Idempotent account-deletion protocol (server migration 20260822090000).
+     * Implementations backed by a request-aware server override these; the
+     * defaults keep the legacy direct-delete behavior for request-unaware
+     * servers and existing test fakes.
+     */
+    suspend fun createAccountDeletionRequest(
+        session: SharedTagAuthSession,
+    ): AccountDeletionRequestGrant =
+        throw UnsupportedOperationException("account deletion request protocol is not supported")
+
+    suspend fun deleteAccountWithRequest(
+        session: SharedTagAuthSession,
+        requestId: String,
+    ) {
+        deleteAccount(session)
+    }
+
+    suspend fun accountDeletionStatus(
+        requestId: String,
+        token: String,
+    ): AccountDeletionRemoteStatus =
+        throw UnsupportedOperationException("account deletion request protocol is not supported")
+}
+
+data class AccountDeletionRequestGrant(
+    val requestId: String,
+    val token: String,
+)
+
+data class AccountDeletionRemoteStatus(
+    val status: String,
+) {
+    val isCompleted: Boolean
+        get() = status.equals("completed", ignoreCase = true)
+
+    val isPending: Boolean
+        get() = status.equals("pending", ignoreCase = true)
 }
 
 data class SharedTagSyncRemoteConfig(
@@ -401,6 +442,60 @@ class SupabaseSharedTagSyncRemoteDataSource(
                 requestBody = "{}",
             )
         }
+    }
+
+    override suspend fun createAccountDeletionRequest(
+        session: SharedTagAuthSession,
+    ): AccountDeletionRequestGrant {
+        val response = withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/create_account_deletion_request",
+                session = session,
+                requestBody = "{}",
+            )
+        }
+        val payload = json.parseToJsonElement(response).jsonObject
+        return AccountDeletionRequestGrant(
+            requestId = payload["request_id"]?.jsonPrimitive?.contentOrNull
+                ?: throw IOException("deletion request response is missing request_id"),
+            token = payload["token"]?.jsonPrimitive?.contentOrNull
+                ?: throw IOException("deletion request response is missing token"),
+        )
+    }
+
+    override suspend fun deleteAccountWithRequest(
+        session: SharedTagAuthSession,
+        requestId: String,
+    ) {
+        withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/delete_my_account",
+                session = session,
+                requestBody = json.encodeToString(mapOf("p_request_id" to requestId)),
+            )
+        }
+    }
+
+    override suspend fun accountDeletionStatus(
+        requestId: String,
+        token: String,
+    ): AccountDeletionRemoteStatus {
+        val response = withContext(Dispatchers.IO) {
+            executeRpc(
+                path = "/rest/v1/rpc/get_account_deletion_status",
+                session = null,
+                requestBody = json.encodeToString(
+                    mapOf(
+                        "p_request_id" to requestId,
+                        "p_token" to token,
+                    ),
+                ),
+                allowRefresh = false,
+            )
+        }
+        val status = json.parseToJsonElement(response)
+            .jsonObject["status"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        return AccountDeletionRemoteStatus(status.ifBlank { "not_found" })
     }
 
     private suspend fun executeRpc(

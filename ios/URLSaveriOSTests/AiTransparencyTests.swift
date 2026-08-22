@@ -369,6 +369,7 @@ final class AiTransparencyTests: XCTestCase {
             firstResult,
             .localCleanupRequired(
                 SharedTagAccountLocalCleanupState(
+                    authUserID: "ai-test-user",
                     aiDataCleanupPending: true,
                     signOutCleanupPending: false
                 )
@@ -380,7 +381,11 @@ final class AiTransparencyTests: XCTestCase {
         XCTAssertNil(try sessionStore.load())
         XCTAssertEqual(
             cleanupStateStore.load(),
-            SharedTagAccountLocalCleanupState(aiDataCleanupPending: true, signOutCleanupPending: false)
+            SharedTagAccountLocalCleanupState(
+                authUserID: "ai-test-user",
+                aiDataCleanupPending: true,
+                signOutCleanupPending: false
+            )
         )
         XCTAssertEqual(AiTransparencyDeletionURLProtocol.deleteAccountRequestCount, 1)
 
@@ -400,10 +405,14 @@ final class AiTransparencyTests: XCTestCase {
         )
         XCTAssertEqual(
             regeneratedService.localAccountCleanupState,
-            SharedTagAccountLocalCleanupState(aiDataCleanupPending: true, signOutCleanupPending: false)
+            SharedTagAccountLocalCleanupState(
+                authUserID: "ai-test-user",
+                aiDataCleanupPending: true,
+                signOutCleanupPending: false
+            )
         )
 
-        let retryResult = regeneratedService.retryLocalAccountCleanup()
+        let retryResult = await regeneratedService.retryLocalAccountCleanup()
 
         XCTAssertEqual(retryResult, .success)
         XCTAssertNil(try repository.loadAiReceipt(receiptID: fixture.receipt.receiptID))
@@ -411,6 +420,550 @@ final class AiTransparencyTests: XCTestCase {
         XCTAssertNil(try repository.loadAiDiffProposal(proposalID: fixture.proposal.proposalID))
         XCTAssertNil(try sessionStore.load())
         XCTAssertNil(cleanupStateStore.load())
+        XCTAssertEqual(AiTransparencyDeletionURLProtocol.deleteAccountRequestCount, 1)
+    }
+
+    func testAccountDeletionRequestProtocolPersistsRecordAndPassesServerIssuedRequestID() async throws {
+        URLProtocol.registerClass(AiTransparencyDeletionURLProtocol.self)
+        defer { URLProtocol.unregisterClass(AiTransparencyDeletionURLProtocol.self) }
+        AiTransparencyDeletionURLProtocol.resetDeleteAccountRequestCount()
+
+        let cleanupStateStore = InMemorySharedTagAccountLocalCleanupStateStore()
+        let requestStore = InMemorySharedTagAccountDeletionRequestStore()
+        let (service, sessionStore) = try makeAccountDeletionService(
+            host: "ai-delete-success.test",
+            clearSharedTagData: { _ in
+                struct ForcedStageFailure: Error {}
+                throw ForcedStageFailure()
+            },
+            cleanupStateStore: cleanupStateStore,
+            deletionRequestStore: requestStore
+        )
+
+        let result = await service.deleteAccount()
+
+        guard case .localCleanupRequired = result else {
+            XCTFail("stage failure must retain localCleanupRequired: \(result)")
+            return
+        }
+        XCTAssertEqual(AiTransparencyDeletionURLProtocol.createDeletionRequestCount, 1)
+        XCTAssertEqual(AiTransparencyDeletionURLProtocol.deleteAccountRequestCount, 1)
+        let body = try XCTUnwrap(AiTransparencyDeletionURLProtocol.lastDeleteRequestBody)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(json["p_request_id"] as? String, "test-request-id")
+        let storedRecord = try XCTUnwrap(requestStore.load())
+        XCTAssertEqual(storedRecord.requestID, "test-request-id")
+        XCTAssertEqual(storedRecord.token, "test-status-token")
+        XCTAssertEqual(storedRecord.authUserID, "ai-test-user")
+        // Cleanup already signed the committed-deletion account out; only the
+        // failed shared-data stage keeps its durable marker and request record.
+        XCTAssertNil(try sessionStore.load())
+    }
+
+    func testAccountDeletionCrashWindowWithoutSessionConvergesViaCompletedStatus() async throws {
+        URLProtocol.registerClass(AiTransparencyDeletionURLProtocol.self)
+        defer { URLProtocol.unregisterClass(AiTransparencyDeletionURLProtocol.self) }
+        AiTransparencyDeletionURLProtocol.resetDeleteAccountRequestCount()
+
+        let requestStore = InMemorySharedTagAccountDeletionRequestStore()
+        try requestStore.save(
+            SharedTagAccountDeletionRequestRecord(
+                authUserID: "ai-test-user",
+                requestID: "orphan-rid",
+                token: "orphan-token"
+            )
+        )
+        AiTransparencyDeletionURLProtocol.setStatusResponseOverride(
+            #"{"status":"completed","user_id":"ai-test-user"}"#
+        )
+        let clearedUsers = LockedUserCollector()
+        let (service, sessionStore) = try makeAccountDeletionService(
+            host: "ai-delete-success.test",
+            clearSharedTagData: { userID in
+                clearedUsers.append(userID)
+            },
+            deletionRequestStore: requestStore,
+            seedSession: false
+        )
+
+        let result = await service.deleteAccount()
+
+        XCTAssertEqual(result, .success)
+        XCTAssertEqual(AiTransparencyDeletionURLProtocol.deleteAccountRequestCount, 0)
+        XCTAssertEqual(AiTransparencyDeletionURLProtocol.createDeletionRequestCount, 0)
+        XCTAssertEqual(AiTransparencyDeletionURLProtocol.statusQueryCount, 1)
+        XCTAssertEqual(clearedUsers.values, ["ai-test-user"])
+        XCTAssertNil(try sessionStore.load())
+        XCTAssertNil(requestStore.load())
+    }
+
+    func testAccountDeletionPendingStatusWithoutSessionStallsWithoutRepeatingRemote() async throws {
+        URLProtocol.registerClass(AiTransparencyDeletionURLProtocol.self)
+        defer { URLProtocol.unregisterClass(AiTransparencyDeletionURLProtocol.self) }
+        AiTransparencyDeletionURLProtocol.resetDeleteAccountRequestCount()
+
+        let requestStore = InMemorySharedTagAccountDeletionRequestStore()
+        try requestStore.save(
+            SharedTagAccountDeletionRequestRecord(
+                authUserID: "ai-test-user",
+                requestID: "pending-rid",
+                token: "pending-token"
+            )
+        )
+        AiTransparencyDeletionURLProtocol.setStatusResponseOverride(#"{"status":"pending"}"#)
+        let (service, _) = try makeAccountDeletionService(
+            host: "ai-delete-success.test",
+            deletionRequestStore: requestStore,
+            seedSession: false
+        )
+
+        let result = await service.deleteAccount()
+
+        guard case .failure = result else {
+            XCTFail("pending status without a session must stall fail-closed: \(result)")
+            return
+        }
+        XCTAssertEqual(AiTransparencyDeletionURLProtocol.deleteAccountRequestCount, 0)
+        XCTAssertEqual(AiTransparencyDeletionURLProtocol.statusQueryCount, 1)
+        XCTAssertEqual(requestStore.load()?.requestID, "pending-rid")
+    }
+
+    func testAccountDeletionLostResponseWithLiveSessionReplaysSameRequestOnce() async throws {
+        URLProtocol.registerClass(AiTransparencyDeletionURLProtocol.self)
+        defer { URLProtocol.unregisterClass(AiTransparencyDeletionURLProtocol.self) }
+        AiTransparencyDeletionURLProtocol.resetDeleteAccountRequestCount()
+
+        let requestStore = InMemorySharedTagAccountDeletionRequestStore()
+        try requestStore.save(
+            SharedTagAccountDeletionRequestRecord(
+                authUserID: "ai-test-user",
+                requestID: "replay-rid",
+                token: "replay-token"
+            )
+        )
+        let (service, _) = try makeAccountDeletionService(
+            host: "ai-delete-success.test",
+            deletionRequestStore: requestStore
+        )
+
+        let result = await service.deleteAccount()
+
+        XCTAssertEqual(result, .success)
+        XCTAssertEqual(AiTransparencyDeletionURLProtocol.deleteAccountRequestCount, 1)
+        XCTAssertEqual(AiTransparencyDeletionURLProtocol.createDeletionRequestCount, 0)
+        XCTAssertEqual(AiTransparencyDeletionURLProtocol.statusQueryCount, 0)
+        let body = try XCTUnwrap(AiTransparencyDeletionURLProtocol.lastDeleteRequestBody)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(json["p_request_id"] as? String, "replay-rid")
+        XCTAssertNil(requestStore.load())
+    }
+
+    func testAccountDeletionOwnerTransferRequiredKeepsRequestForRetry() async throws {
+        URLProtocol.registerClass(AiTransparencyDeletionURLProtocol.self)
+        defer { URLProtocol.unregisterClass(AiTransparencyDeletionURLProtocol.self) }
+        AiTransparencyDeletionURLProtocol.resetDeleteAccountRequestCount()
+        AiTransparencyDeletionURLProtocol.setFailDeleteWithOwnerTransfer(true)
+
+        let requestStore = InMemorySharedTagAccountDeletionRequestStore()
+        let (service, sessionStore) = try makeAccountDeletionService(
+            host: "ai-delete-success.test",
+            deletionRequestStore: requestStore
+        )
+
+        let result = await service.deleteAccount()
+
+        XCTAssertEqual(result, .ownerTransferRequired)
+        XCTAssertEqual(AiTransparencyDeletionURLProtocol.createDeletionRequestCount, 1)
+        XCTAssertEqual(requestStore.load()?.authUserID, "ai-test-user")
+        XCTAssertNotNil(try sessionStore.load())
+    }
+
+    func testAccountDeletionTracksEachAccountLinkedCleanupFailureAndRetriesLocally() async throws {
+        URLProtocol.registerClass(AiTransparencyDeletionURLProtocol.self)
+        defer { URLProtocol.unregisterClass(AiTransparencyDeletionURLProtocol.self) }
+        AiTransparencyDeletionURLProtocol.resetDeleteAccountRequestCount()
+        let sharedDataCleanup = FailOnceAccountCleanupAction()
+        let entitlementCleanup = FailOnceAccountCleanupAction()
+        let personalLinkSettingsCleanup = FailOnceAccountCleanupAction()
+        let cleanupStateStore = InMemorySharedTagAccountLocalCleanupStateStore()
+        let (service, _) = try makeAccountDeletionService(
+            host: "ai-delete-success.test",
+            clearSharedTagData: { _ in try sharedDataCleanup.run() },
+            clearEntitlementCache: { _ in try entitlementCleanup.run() },
+            clearPersonalLinkSettings: { _ in try personalLinkSettingsCleanup.run() },
+            cleanupStateStore: cleanupStateStore
+        )
+
+        let firstResult = await service.deleteAccount()
+
+        XCTAssertEqual(
+            firstResult,
+            .localCleanupRequired(
+                SharedTagAccountLocalCleanupState(
+                    authUserID: "ai-test-user",
+                    aiDataCleanupPending: false,
+                    signOutCleanupPending: false,
+                    syncCancellationCleanupPending: false,
+                    sharedDataCleanupPending: true,
+                    pendingInviteCleanupPending: false,
+                    entitlementCleanupPending: true,
+                    personalLinkSettingsCleanupPending: true
+                )
+            )
+        )
+        XCTAssertEqual(sharedDataCleanup.callCount, 1)
+        XCTAssertEqual(entitlementCleanup.callCount, 1)
+        XCTAssertEqual(personalLinkSettingsCleanup.callCount, 1)
+
+        let retryResult = await service.retryLocalAccountCleanup()
+
+        XCTAssertEqual(retryResult, .success)
+        XCTAssertNil(cleanupStateStore.load())
+        XCTAssertEqual(sharedDataCleanup.callCount, 2)
+        XCTAssertEqual(entitlementCleanup.callCount, 2)
+        XCTAssertEqual(personalLinkSettingsCleanup.callCount, 2)
+        XCTAssertEqual(AiTransparencyDeletionURLProtocol.deleteAccountRequestCount, 1)
+    }
+
+    func testAccountDeletionSyncCancellationFailureBlocksDataCleanupUntilRetry() async throws {
+        URLProtocol.registerClass(AiTransparencyDeletionURLProtocol.self)
+        defer { URLProtocol.unregisterClass(AiTransparencyDeletionURLProtocol.self) }
+        AiTransparencyDeletionURLProtocol.resetDeleteAccountRequestCount()
+        let cancellation = FailOnceAccountCleanupAction()
+        let sharedDataCleanup = CountingAccountCleanupAction()
+        let cleanupStateStore = InMemorySharedTagAccountLocalCleanupStateStore()
+        let (service, _) = try makeAccountDeletionService(
+            host: "ai-delete-success.test",
+            clearSharedTagData: { _ in sharedDataCleanup.run() },
+            cancelInFlightSync: { try cancellation.run() },
+            cleanupStateStore: cleanupStateStore
+        )
+
+        let firstResult = await service.deleteAccount()
+
+        guard case .localCleanupRequired(let firstState) = firstResult else {
+            XCTFail("sync cancellation failure must remain retryable: \(firstResult)")
+            return
+        }
+        XCTAssertTrue(firstState.syncCancellationCleanupPending)
+        XCTAssertTrue(firstState.sharedDataCleanupPending)
+        XCTAssertEqual(sharedDataCleanup.callCount, 0)
+        XCTAssertEqual(cancellation.callCount, 1)
+
+        let retryResult = await service.retryLocalAccountCleanup()
+        XCTAssertEqual(retryResult, .success)
+        XCTAssertEqual(cancellation.callCount, 2)
+        XCTAssertEqual(sharedDataCleanup.callCount, 1)
+        XCTAssertEqual(AiTransparencyDeletionURLProtocol.deleteAccountRequestCount, 1)
+    }
+
+    func testAccountDeletionSessionFailureDoesNotStartAccountDataCleanup() async throws {
+        URLProtocol.registerClass(AiTransparencyDeletionURLProtocol.self)
+        defer { URLProtocol.unregisterClass(AiTransparencyDeletionURLProtocol.self) }
+        AiTransparencyDeletionURLProtocol.resetDeleteAccountRequestCount()
+        let authStorage = FailOnceClearAuthStorage()
+        let cancellation = CountingAccountCleanupAction()
+        let sharedDataCleanup = CountingAccountCleanupAction()
+        let cleanupStateStore = InMemorySharedTagAccountLocalCleanupStateStore()
+        let (service, sessionStore) = try makeAccountDeletionService(
+            host: "ai-delete-success.test",
+            authStorage: authStorage,
+            clearSharedTagData: { _ in sharedDataCleanup.run() },
+            cancelInFlightSync: { cancellation.run() },
+            cleanupStateStore: cleanupStateStore
+        )
+
+        let firstResult = await service.deleteAccount()
+
+        guard case .localCleanupRequired(let firstState) = firstResult else {
+            XCTFail("session cleanup failure must remain retryable: \(firstResult)")
+            return
+        }
+        XCTAssertTrue(firstState.signOutCleanupPending)
+        XCTAssertTrue(firstState.syncCancellationCleanupPending)
+        XCTAssertTrue(firstState.sharedDataCleanupPending)
+        XCTAssertNotNil(try sessionStore.load())
+        XCTAssertEqual(cancellation.callCount, 0)
+        XCTAssertEqual(sharedDataCleanup.callCount, 0)
+
+        let retryResult = await service.retryLocalAccountCleanup()
+        XCTAssertEqual(retryResult, .success)
+        XCTAssertNil(try sessionStore.load())
+        XCTAssertEqual(cancellation.callCount, 1)
+        XCTAssertEqual(sharedDataCleanup.callCount, 1)
+        XCTAssertEqual(AiTransparencyDeletionURLProtocol.deleteAccountRequestCount, 1)
+    }
+
+    func testAccountDeletionCleanupMarkerPersistsAllStagesAndAuthUserID() {
+        let suiteName = "AccountDeletionCleanupMarker-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let keyPrefix = "account.cleanup.\(UUID().uuidString)"
+        let marker = SharedTagAccountLocalCleanupState(
+            authUserID: "deleted-user",
+            aiDataCleanupPending: true,
+            signOutCleanupPending: true,
+            syncCancellationCleanupPending: true,
+            sharedDataCleanupPending: true,
+            pendingInviteCleanupPending: true,
+            entitlementCleanupPending: true,
+            personalLinkSettingsCleanupPending: true
+        )
+        UserDefaultsSharedTagAccountLocalCleanupStateStore(
+            userDefaults: defaults,
+            keyPrefix: keyPrefix
+        ).save(marker)
+
+        let recreated = UserDefaultsSharedTagAccountLocalCleanupStateStore(
+            userDefaults: defaults,
+            keyPrefix: keyPrefix
+        )
+        var expectedMarker = marker
+        expectedMarker.pendingInviteCleanupPending = false
+        XCTAssertEqual(recreated.load(), expectedMarker)
+
+        recreated.clear()
+        XCTAssertNil(recreated.load())
+    }
+
+    func testAccountDeletionCleanupMarkerMigratesTornLegacyKeysFailClosedIntoOneBlob() throws {
+        let suiteName = "AccountDeletionLegacyMarker-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let keyPrefix = "account.cleanup.\(UUID().uuidString)"
+        // Simulate process loss before the old leading marker key was written.
+        defaults.set("legacy-user", forKey: "\(keyPrefix).auth_user_id")
+        defaults.set(false, forKey: "\(keyPrefix).ai_data_pending")
+        defaults.set(true, forKey: "\(keyPrefix).pending_invite_pending")
+
+        let store = UserDefaultsSharedTagAccountLocalCleanupStateStore(
+            userDefaults: defaults,
+            keyPrefix: keyPrefix
+        )
+        let migrated = try XCTUnwrap(store.load())
+
+        XCTAssertEqual(migrated.authUserID, "legacy-user")
+        XCTAssertFalse(migrated.aiDataCleanupPending)
+        XCTAssertTrue(migrated.signOutCleanupPending)
+        XCTAssertTrue(migrated.syncCancellationCleanupPending)
+        XCTAssertTrue(migrated.sharedDataCleanupPending)
+        XCTAssertFalse(migrated.pendingInviteCleanupPending)
+        XCTAssertTrue(migrated.entitlementCleanupPending)
+        XCTAssertTrue(migrated.personalLinkSettingsCleanupPending)
+        XCTAssertNotNil(defaults.data(forKey: "\(keyPrefix).state.v2"))
+        XCTAssertNil(defaults.object(forKey: "\(keyPrefix).pending"))
+        XCTAssertEqual(
+            UserDefaultsSharedTagAccountLocalCleanupStateStore(
+                userDefaults: defaults,
+                keyPrefix: keyPrefix
+            ).load(),
+            migrated
+        )
+    }
+
+    func testAccountDeletionCleanupMarkerCorruptBlobRemainsFailClosedAcrossRecreation() throws {
+        let suiteName = "AccountDeletionCorruptMarker-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let keyPrefix = "account.cleanup.\(UUID().uuidString)"
+        defaults.set(Data([0x00]), forKey: "\(keyPrefix).state.v2")
+
+        let first = UserDefaultsSharedTagAccountLocalCleanupStateStore(
+            userDefaults: defaults,
+            keyPrefix: keyPrefix
+        )
+        let state = try XCTUnwrap(first.load())
+
+        XCTAssertNil(state.authUserID)
+        XCTAssertTrue(state.aiDataCleanupPending)
+        XCTAssertTrue(state.signOutCleanupPending)
+        XCTAssertTrue(state.syncCancellationCleanupPending)
+        XCTAssertTrue(state.sharedDataCleanupPending)
+        XCTAssertFalse(state.pendingInviteCleanupPending)
+        XCTAssertTrue(state.entitlementCleanupPending)
+        XCTAssertTrue(state.personalLinkSettingsCleanupPending)
+        let regeneratedBlob = try XCTUnwrap(defaults.data(forKey: "\(keyPrefix).state.v2"))
+        XCTAssertEqual(
+            try JSONDecoder().decode(SharedTagAccountLocalCleanupState.self, from: regeneratedBlob),
+            state
+        )
+        XCTAssertEqual(
+            UserDefaultsSharedTagAccountLocalCleanupStateStore(
+                userDefaults: defaults,
+                keyPrefix: keyPrefix
+            ).load(),
+            state
+        )
+    }
+
+    func testAccountDeletionCleanupMarkerConcurrentSavesNeverProduceTornState() throws {
+        let suiteName = "AccountDeletionConcurrentMarker-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let keyPrefix = "account.cleanup.\(UUID().uuidString)"
+        let firstStore = UserDefaultsSharedTagAccountLocalCleanupStateStore(
+            userDefaults: defaults,
+            keyPrefix: keyPrefix
+        )
+        let secondStore = UserDefaultsSharedTagAccountLocalCleanupStateStore(
+            userDefaults: defaults,
+            keyPrefix: keyPrefix
+        )
+        let first = SharedTagAccountLocalCleanupState(
+            authUserID: "user-a",
+            aiDataCleanupPending: true,
+            signOutCleanupPending: false,
+            sharedDataCleanupPending: true
+        )
+        let second = SharedTagAccountLocalCleanupState(
+            authUserID: "user-b",
+            aiDataCleanupPending: false,
+            signOutCleanupPending: true,
+            entitlementCleanupPending: true,
+            personalLinkSettingsCleanupPending: true
+        )
+
+        DispatchQueue.concurrentPerform(iterations: 100) { index in
+            if index.isMultiple(of: 2) {
+                firstStore.save(first)
+            } else {
+                secondStore.save(second)
+            }
+        }
+
+        let loaded = try XCTUnwrap(
+            UserDefaultsSharedTagAccountLocalCleanupStateStore(
+                userDefaults: defaults,
+                keyPrefix: keyPrefix
+            ).load()
+        )
+        XCTAssertTrue(loaded == first || loaded == second)
+    }
+
+    func testPersonalLinkSettingsAreAccountScopedLegacyOwnerlessFailsClosedAndDeletionIsTargeted() throws {
+        let suiteName = "PersonalLinkSettingsScope-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(true, forKey: "chatgpt_personal_link_sync.enabled")
+        let store = UserDefaultsChatGptPersonalLinkSettingsStore(
+            userDefaults: defaults,
+            keyPrefix: "personal-link.\(UUID().uuidString)"
+        )
+
+        XCTAssertEqual(store.snapshot(authUserID: nil), ChatGptPersonalLinkLocalSettings())
+        XCTAssertEqual(store.snapshot(authUserID: "legacy-new-user"), ChatGptPersonalLinkLocalSettings())
+        store.setEnabled(authUserID: "user-a", enabled: true)
+        store.markSyncSuccess(authUserID: "user-a", at: Date(timeIntervalSince1970: 123))
+        XCTAssertTrue(store.snapshot(authUserID: "user-a").enabled)
+        XCTAssertFalse(store.snapshot(authUserID: "user-b").enabled)
+
+        store.setEnabled(authUserID: "user-b", enabled: true)
+        store.clear(authUserID: "user-a")
+
+        XCTAssertEqual(store.snapshot(authUserID: "user-a"), ChatGptPersonalLinkLocalSettings())
+        XCTAssertTrue(store.snapshot(authUserID: "user-b").enabled)
+    }
+
+    func testPersonalLinkSettingsFollowSessionScopeSurviveSignOutAndDeleteOnlyTargetAccount() async throws {
+        URLProtocol.registerClass(AiTransparencyDeletionURLProtocol.self)
+        defer { URLProtocol.unregisterClass(AiTransparencyDeletionURLProtocol.self) }
+        AiTransparencyDeletionURLProtocol.resetDeleteAccountRequestCount()
+        let suiteName = "PersonalLinkSettingsLifecycle-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let settingsStore = UserDefaultsChatGptPersonalLinkSettingsStore(
+            userDefaults: defaults,
+            keyPrefix: "personal-link.\(UUID().uuidString)"
+        )
+        let savedURL = try saveEntry("https://example.com/personal-link-account-scope")
+        let (service, sessionStore) = try makeAccountDeletionService(
+            host: "ai-delete-success.test",
+            personalLinkSettingsStore: settingsStore
+        )
+        settingsStore.setEnabled(authUserID: "ai-test-user", enabled: true)
+
+        try await service.signOut()
+        try sessionStore.save(
+            SharedTagAuthSession(
+                authUserID: "user-b",
+                accessToken: "user-b-token",
+                refreshToken: nil,
+                userEmail: "user-b@example.com"
+            )
+        )
+        XCTAssertFalse(service.chatGptPersonalLinkLocalSettings().enabled)
+        settingsStore.setEnabled(authUserID: "user-b", enabled: true)
+        try await service.signOut()
+        try sessionStore.save(
+            SharedTagAuthSession(
+                authUserID: "ai-test-user",
+                accessToken: "ai-test-access-token",
+                refreshToken: nil,
+                userEmail: "ai-test@example.com"
+            )
+        )
+        XCTAssertTrue(service.chatGptPersonalLinkLocalSettings().enabled)
+
+        let deletionResult = await service.deleteAccount()
+
+        XCTAssertEqual(deletionResult, .success)
+        XCTAssertEqual(settingsStore.snapshot(authUserID: "ai-test-user"), ChatGptPersonalLinkLocalSettings())
+        XCTAssertTrue(settingsStore.snapshot(authUserID: "user-b").enabled)
+        XCTAssertNotNil(try repository.loadEntry(id: savedURL.id))
+        XCTAssertEqual(AiTransparencyDeletionURLProtocol.deleteAccountRequestCount, 1)
+    }
+
+    func testAccountOperationGateWaitsForStartedWorkThenBlocksDeletedAccountWork() async throws {
+        let cleanupStore = InMemorySharedTagAccountLocalCleanupStateStore()
+        let gate = SharedTagAccountOperationGate(cleanupStateStore: cleanupStore)
+        let operationStarted = AsyncTestLatch()
+        let allowOperationToFinish = AsyncTestLatch()
+        let deletionEntered = AsyncTestLatch()
+
+        let operation = Task {
+            await gate.withAccountOperation(authUserID: "user-a", blocked: "blocked") {
+                await operationStarted.signal()
+                await allowOperationToFinish.wait()
+                return "completed"
+            }
+        }
+        await operationStarted.wait()
+        let deletion = Task {
+            await gate.withExclusiveOperation {
+                await deletionEntered.signal()
+                gate.markRemoteAccountDeleted(authUserID: "user-a")
+                return "deleted"
+            }
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        let didEnterDeletionEarly = await deletionEntered.isSignaled
+        XCTAssertFalse(didEnterDeletionEarly)
+
+        await allowOperationToFinish.signal()
+        let operationResult = await operation.value
+        let deletionResult = await deletion.value
+        XCTAssertEqual(operationResult, "completed")
+        XCTAssertEqual(deletionResult, "deleted")
+        let lateResult = await gate.withAccountOperation(
+            authUserID: "user-a",
+            blocked: "blocked",
+            operation: { "unexpected" }
+        )
+        XCTAssertEqual(lateResult, "blocked")
+    }
+
+    func testAccountDeletionPreservesUnboundPendingInviteIntent() async throws {
+        URLProtocol.registerClass(AiTransparencyDeletionURLProtocol.self)
+        defer { URLProtocol.unregisterClass(AiTransparencyDeletionURLProtocol.self) }
+        AiTransparencyDeletionURLProtocol.resetDeleteAccountRequestCount()
+        let pendingInviteStore = PendingInviteStore(storage: AiTransparencyPendingInviteStorage())
+        try pendingInviteStore.save(inviteToken: "unbound-invite", now: Date(timeIntervalSince1970: 100))
+        let (service, _) = try makeAccountDeletionService(host: "ai-delete-success.test")
+
+        let deletionResult = await service.deleteAccount()
+        XCTAssertEqual(deletionResult, .success)
+
+        XCTAssertEqual(try pendingInviteStore.load()?.inviteToken, "unbound-invite")
         XCTAssertEqual(AiTransparencyDeletionURLProtocol.deleteAccountRequestCount, 1)
     }
 
@@ -455,21 +1008,32 @@ final class AiTransparencyTests: XCTestCase {
     private func makeAccountDeletionService(
         host: String,
         clearLocalAiData: (@Sendable () throws -> Void)? = nil,
-        cleanupStateStore: (any SharedTagAccountLocalCleanupStateStore)? = nil
+        authStorage: (any SharedTagAuthSecureStorage)? = nil,
+        clearSharedTagData: @escaping @Sendable (String) throws -> Void = { _ in },
+        clearEntitlementCache: @escaping @Sendable (String) throws -> Void = { _ in },
+        clearPersonalLinkSettings: (@Sendable (String) throws -> Void)? = nil,
+        cancelInFlightSync: @escaping @Sendable () async throws -> Void = {},
+        cleanupStateStore: (any SharedTagAccountLocalCleanupStateStore)? = nil,
+        deletionRequestStore: (any SharedTagAccountDeletionRequestStore)? = nil,
+        personalLinkSettingsStore: (any ChatGptPersonalLinkSettingsStore)? = nil,
+        seedSession: Bool = true
     ) throws -> (
         service: SharedTagCloudService,
         sessionStore: SharedTagAuthSessionStore
     ) {
-        let sessionStore = SharedTagAuthSessionStore(storage: AiTransparencyAuthStorage())
-        try sessionStore.save(
-            SharedTagAuthSession(
-                authUserID: "ai-test-user",
-                accessToken: "ai-test-access-token",
-                refreshToken: nil,
-                userEmail: "ai-test@example.com"
+        let sessionStore = SharedTagAuthSessionStore(storage: authStorage ?? AiTransparencyAuthStorage())
+        if seedSession {
+            try sessionStore.save(
+                SharedTagAuthSession(
+                    authUserID: "ai-test-user",
+                    accessToken: "ai-test-access-token",
+                    refreshToken: nil,
+                    userEmail: "ai-test@example.com"
+                )
             )
-        )
+        }
         let store = try SharedTagStore(database: repository.database)
+        let resolvedDeletionRequestStore = deletionRequestStore ?? InMemorySharedTagAccountDeletionRequestStore()
         let service = SharedTagCloudService(
             config: SharedTagCloudConfig(
                 enabled: true,
@@ -480,7 +1044,13 @@ final class AiTransparencyTests: XCTestCase {
             store: store,
             repository: repository,
             clearLocalAiData: clearLocalAiData,
-            cleanupStateStore: cleanupStateStore
+            clearSharedTagData: clearSharedTagData,
+            clearEntitlementCache: clearEntitlementCache,
+            clearPersonalLinkSettings: clearPersonalLinkSettings,
+            cancelInFlightSync: cancelInFlightSync,
+            cleanupStateStore: cleanupStateStore,
+            deletionRequestStore: resolvedDeletionRequestStore,
+            personalLinkSettingsStore: personalLinkSettingsStore
         )
         return (service, sessionStore)
     }
@@ -492,6 +1062,49 @@ final class AiTransparencyTests: XCTestCase {
 }
 
 private final class AiTransparencyAuthStorage: SharedTagAuthSecureStorage, @unchecked Sendable {
+    private let lock = NSLock()
+    private var payload: Data?
+
+    func load() throws -> Data? {
+        lock.lock()
+        defer { lock.unlock() }
+        return payload
+    }
+
+    func save(_ data: Data) throws {
+        lock.lock()
+        payload = data
+        lock.unlock()
+    }
+
+    func clear() throws {
+        lock.lock()
+        payload = nil
+        lock.unlock()
+    }
+}
+
+private actor AsyncTestLatch {
+    private(set) var isSignaled = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        if isSignaled { return }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func signal() {
+        guard !isSignaled else { return }
+        isSignaled = true
+        let pendingWaiters = waiters
+        waiters.removeAll()
+        pendingWaiters.forEach { $0.resume() }
+    }
+}
+
+private final class AiTransparencyPendingInviteStorage: PendingInviteSecureStorage, @unchecked Sendable {
     private let lock = NSLock()
     private var payload: Data?
 
@@ -537,9 +1150,43 @@ private final class InMemorySharedTagAccountLocalCleanupStateStore: @unchecked S
     }
 }
 
+private final class InMemorySharedTagAccountDeletionRequestStore: @unchecked Sendable, SharedTagAccountDeletionRequestStore {
+    private let lock = NSLock()
+    private var record: SharedTagAccountDeletionRequestRecord?
+
+    func load() -> SharedTagAccountDeletionRequestRecord? {
+        lock.lock()
+        defer { lock.unlock() }
+        return record
+    }
+
+    func save(_ record: SharedTagAccountDeletionRequestRecord) throws {
+        lock.lock()
+        self.record = record
+        lock.unlock()
+    }
+
+    func clear() throws {
+        lock.lock()
+        self.record = nil
+        lock.unlock()
+    }
+}
+
 private final class AiTransparencyDeletionURLProtocol: URLProtocol, @unchecked Sendable {
     private static let requestCountLock = NSLock()
     nonisolated(unsafe) private static var storedDeleteAccountRequestCount = 0
+    nonisolated(unsafe) private static var storedCreateDeletionRequestCount = 0
+    nonisolated(unsafe) private static var storedStatusQueryCount = 0
+    nonisolated(unsafe) private static var storedLastDeleteRequestBody: Data?
+    nonisolated(unsafe) private static var storedStatusResponseOverride: String?
+    nonisolated(unsafe) private static var storedFailDeleteWithOwnerTransfer = false
+
+    static func setFailDeleteWithOwnerTransfer(_ value: Bool) {
+        requestCountLock.lock()
+        storedFailDeleteWithOwnerTransfer = value
+        requestCountLock.unlock()
+    }
 
     static var deleteAccountRequestCount: Int {
         requestCountLock.lock()
@@ -547,9 +1194,38 @@ private final class AiTransparencyDeletionURLProtocol: URLProtocol, @unchecked S
         return storedDeleteAccountRequestCount
     }
 
+    static var createDeletionRequestCount: Int {
+        requestCountLock.lock()
+        defer { requestCountLock.unlock() }
+        return storedCreateDeletionRequestCount
+    }
+
+    static var statusQueryCount: Int {
+        requestCountLock.lock()
+        defer { requestCountLock.unlock() }
+        return storedStatusQueryCount
+    }
+
+    static var lastDeleteRequestBody: Data? {
+        requestCountLock.lock()
+        defer { requestCountLock.unlock() }
+        return storedLastDeleteRequestBody
+    }
+
+    static func setStatusResponseOverride(_ value: String?) {
+        requestCountLock.lock()
+        storedStatusResponseOverride = value
+        requestCountLock.unlock()
+    }
+
     static func resetDeleteAccountRequestCount() {
         requestCountLock.lock()
         storedDeleteAccountRequestCount = 0
+        storedCreateDeletionRequestCount = 0
+        storedStatusQueryCount = 0
+        storedLastDeleteRequestBody = nil
+        storedStatusResponseOverride = nil
+        storedFailDeleteWithOwnerTransfer = false
         requestCountLock.unlock()
     }
 
@@ -566,12 +1242,43 @@ private final class AiTransparencyDeletionURLProtocol: URLProtocol, @unchecked S
             client?.urlProtocol(self, didFailWithError: URLError(.badURL))
             return
         }
-        if url.path == "/rest/v1/rpc/delete_my_account" {
+        var responseBody = "{}"
+        switch url.path {
+        case "/rest/v1/rpc/delete_my_account":
             Self.requestCountLock.lock()
             Self.storedDeleteAccountRequestCount += 1
+            Self.storedLastDeleteRequestBody = request.httpBodyStream.map(Self.data(from:)) ?? request.httpBody
+            let failOwnerTransfer = Self.storedFailDeleteWithOwnerTransfer
             Self.requestCountLock.unlock()
+            if failOwnerTransfer {
+                let ownerTransferResponse = HTTPURLResponse(
+                    url: url,
+                    statusCode: 400,
+                    httpVersion: nil,
+                    headerFields: ["Content-Type": "application/json"]
+                )!
+                client?.urlProtocol(self, didReceive: ownerTransferResponse, cacheStoragePolicy: .notAllowed)
+                client?.urlProtocol(self, didLoad: Data(#"{"message":"owner_transfer_required"}"#.utf8))
+                client?.urlProtocolDidFinishLoading(self)
+                return
+            }
+        case "/rest/v1/rpc/create_account_deletion_request":
+            Self.requestCountLock.lock()
+            Self.storedCreateDeletionRequestCount += 1
+            Self.requestCountLock.unlock()
+            responseBody = #"{"request_id":"test-request-id","token":"test-status-token"}"#
+        case "/rest/v1/rpc/get_account_deletion_status":
+            Self.requestCountLock.lock()
+            Self.storedStatusQueryCount += 1
+            responseBody = Self.storedStatusResponseOverride ?? #"{"status":"completed","user_id":"ai-test-user"}"#
+            Self.requestCountLock.unlock()
+        default:
+            break
         }
-        let statusCode = url.host == "ai-delete-failure.test" ? 500 : 200
+        // Only the deletion RPC honors the failure host; request/status RPCs
+        // must succeed so tests exercise the full idempotent protocol.
+        let isDeletePath = url.path == "/rest/v1/rpc/delete_my_account"
+        let statusCode = isDeletePath && url.host == "ai-delete-failure.test" ? 500 : 200
         let response = HTTPURLResponse(
             url: url,
             statusCode: statusCode,
@@ -579,15 +1286,108 @@ private final class AiTransparencyDeletionURLProtocol: URLProtocol, @unchecked S
             headerFields: ["Content-Type": "application/json"]
         )!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: Data("{}".utf8))
+        client?.urlProtocol(self, didLoad: Data(responseBody.utf8))
         client?.urlProtocolDidFinishLoading(self)
+    }
+
+    private static func data(from stream: InputStream) -> Data {
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        let bufferSize = 4096
+        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
+        defer { buffer.deallocate() }
+        while stream.hasBytesAvailable {
+            let read = stream.read(buffer, maxLength: bufferSize)
+            if read <= 0 { break }
+            data.append(buffer, count: read)
+        }
+        return data
     }
 
     override func stopLoading() {}
 }
 
+private final class LockedUserCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var users: [String] = []
+
+    func append(_ user: String) {
+        lock.lock()
+        users.append(user)
+        lock.unlock()
+    }
+
+    var values: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return users
+    }
+}
+
 private enum AiTransparencyInjectedTestError: Error {
     case localAiCleanupFailed
+    case accountCleanupFailed
+    case sessionCleanupFailed
+}
+
+private final class FailOnceAccountCleanupAction: @unchecked Sendable {
+    private let lock = NSLock()
+    private var shouldFail = true
+    private(set) var callCount = 0
+
+    func run() throws {
+        lock.lock()
+        callCount += 1
+        let fail = shouldFail
+        shouldFail = false
+        lock.unlock()
+        if fail {
+            throw AiTransparencyInjectedTestError.accountCleanupFailed
+        }
+    }
+}
+
+private final class CountingAccountCleanupAction: @unchecked Sendable {
+    private let lock = NSLock()
+    private(set) var callCount = 0
+
+    func run() {
+        lock.lock()
+        callCount += 1
+        lock.unlock()
+    }
+}
+
+private final class FailOnceClearAuthStorage: SharedTagAuthSecureStorage, @unchecked Sendable {
+    private let lock = NSLock()
+    private var payload: Data?
+    private var shouldFailClear = true
+
+    func load() throws -> Data? {
+        lock.lock()
+        defer { lock.unlock() }
+        return payload
+    }
+
+    func save(_ data: Data) throws {
+        lock.lock()
+        payload = data
+        lock.unlock()
+    }
+
+    func clear() throws {
+        lock.lock()
+        let fail = shouldFailClear
+        shouldFailClear = false
+        if !fail {
+            payload = nil
+        }
+        lock.unlock()
+        if fail {
+            throw AiTransparencyInjectedTestError.sessionCleanupFailed
+        }
+    }
 }
 
 private final class FailOnceAiDataClearer: @unchecked Sendable {

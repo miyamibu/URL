@@ -864,7 +864,7 @@ export default function AdminPage() {
     return (
       <main className="shell narrow">
         <section className="panel">
-          <h1>URL Saver 管理</h1>
+          <h1>りんばむ 管理</h1>
           <p className="muted">優待コード管理には管理者アカウントでのサインインが必要です。</p>
           <form onSubmit={signIn} className="stack">
             <label>
@@ -887,7 +887,7 @@ export default function AdminPage() {
     <main className="shell">
       <header className="topbar">
         <div>
-          <p className="eyebrow">URL Saver Admin</p>
+          <p className="eyebrow">りんばむ 管理</p>
           <h1>管理運用</h1>
           <p className="muted" data-testid="admin-role">
             role: {adminRole ?? "管理者ロールを確認中"}

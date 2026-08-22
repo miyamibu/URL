@@ -1,7 +1,7 @@
-# URL Saver / りんばむ
+# りんばむ
 
 共有された URL を「あとで開き直す」ために保存する Android / iOS アプリと、公開Web・Supabase連携・運用ドキュメントを含むリポジトリです。
-Phase 1a/1b の URL 保存契約をコア不変条件として守りつつ、承認済みの検索・タグ・コレクション・共有タグ・AI-friendly export・課金/権限まわりの後続機能も現在機能として扱います。
+Phase 1a/1b の URL 保存契約をコア不変条件として守りつつ、承認済みの検索・自作タグ・共有タグ・AI-friendly export・課金/権限まわりの後続機能も現在機能として扱います。Collection / UserLabel は既存DB・migration・旧出力の互換性だけを保つ退役済み要素です。
 
 ## Target User
 SNS やメッセージで見つけた URL を後で見返したい人向けの、軽量な「あとで開く」保存アプリです。
@@ -17,7 +17,7 @@ SNS やメッセージで見つけた URL を後で見返したい人向けの�
 - `userTitle` は `fetchedTitle` より優先
 - 一覧カードタップは詳細遷移のみ (直接外部起動しない)
 - Main の active 一覧は右スワイプでアーカイブ、左スワイプで削除猶予 + Undo
-- 検索・タグ・コレクション・共有タグは承認済みの現在機能。ただし `normalizedUrl` / `openUrl` / duplicate 契約は変更しない
+- 検索・自作タグ・共有タグは承認済みの現在機能。保存画面の「保存先タグ」は自作タグの選択を指し、退役済みCollectionを指さない。`normalizedUrl` / `openUrl` / duplicate 契約は変更しない
 - `ACTION_SEND_MULTIPLE` は複数 URL を順次保存し、集計結果を通知する
 
 ## Metadata Content Contract (Current)
@@ -96,8 +96,9 @@ SNS やメッセージで見つけた URL を後で見返したい人向けの�
 - AI / MCP の詳細契約は `docs/ai/` を参照してください。
 
 ## Build Prerequisites
-- Java 17（`./gradlew --version` で JVM 17 系を確認）
-- Android SDK Platform 35
+- Java 21（`./gradlew --version` の Launcher JVM / Daemon JVM が 21 系であることを確認）
+  - AndroidソースのJava/Kotlin bytecode targetは互換性のため17のままで、Gradle/AGPを実行するJDK 21とは別です。
+- Android SDK Platform 36（`compileSdk = 36` / `targetSdk = 36`）
 - Android SDK Build-Tools / Platform-Tools / Command-line Tools
 - `local.properties` の `sdk.dir` が有効であること
 - Instagram oEmbed 補助を使う場合のみ、`local.properties` に `instagram.oembed.access.token=<Meta access token>` を設定する
@@ -188,8 +189,8 @@ SNS やメッセージで見つけた URL を後で見返したい人向けの�
 - `connectedDebugAndroidTest` はローカル手動検証として実行し、結果を記録する
 
 ## Failure Triage
-- `JVM` が 17 以外: Java 17 を選択し、`./gradlew --version` で再確認する
-- SDK 関連エラー: `local.properties` の `sdk.dir` と SDK Platform 35 / Build-Tools を確認する
+- Launcher JVM / Daemon JVM が 21 以外: JDK 21 を選択し、`./gradlew --version` で再確認する。Java/Kotlinのbytecode target 17は変更しない
+- SDK 関連エラー: `local.properties` の `sdk.dir` と SDK Platform 36 / Build-Tools を確認する
 - `connectedDebugAndroidTest` が失敗: 端末/AVD 接続状態を確認し、`adb devices` で認識を確認する
 - `No connected devices!`: 端末未接続またはエミュレータ未起動。接続後に再実行する
 - `assembleDebug` は成功するのに実機へ入らない:

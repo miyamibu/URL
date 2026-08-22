@@ -1,0 +1,63 @@
+Check supabase/functions/store-entitlement-reconciliation/index.test.ts
+Check supabase/functions/contact-support-resend-webhook/index.test.ts
+Check supabase/functions/store-notification-receiver/index.test.ts
+Check supabase/functions/contact-support-outbox/index.test.ts
+Check supabase/functions/verify-store-purchase/index.test.ts
+Check supabase/functions/contact-support/index.test.ts
+running 10 tests from ./supabase/functions/store-entitlement-reconciliation/index.test.ts
+reconciliation event ids are UUID-only, deduplicated, and bounded ... ok (0ms)
+reconciliation rejects missing or wrong secret before Supabase access ... ok (2ms)
+reconciliation replays only event ids through the dedicated RPC ... ok (1ms)
+Google active reconciliation hashes and binds the temporary token before lookup ... ok (1ms)
+Google active reconciliation fails before the Store API on a hash mismatch ... ok (0ms)
+Apple active reconciliation verifies current state and applies the normalized snapshot ... ok (0ms)
+Apple Server API lookup verifies response identity and selects the newest bound transaction ... ok (0ms)
+Apple subscription status mapping revokes expired retry and preserves only valid grace time ... ok (0ms)
+Apple Server API JWT uses ES256 identity claims and a bounded expiration ... ok (33ms)
+reconciliation bindings reject mixed provider payloads and raw token is not normalized into output ... ok (0ms)
+running 4 tests from ./supabase/functions/contact-support-resend-webhook/index.test.ts
+webhook event mapping covers supported Resend statuses ... ok (7ms)
+delivery status rank does not allow a later lower state ... ok (0ms)
+webhook body size is capped ... ok (2ms)
+provider error text is bounded ... ok (0ms)
+running 13 tests from ./supabase/functions/store-notification-receiver/index.test.ts
+Apple notification adapter verifies app identity and maps renewal ... ok (0ms)
+Apple notification adapter fails closed without user binding ... ok (0ms)
+Apple notification adapter fails closed when environment binding is absent ... ok (0ms)
+Apple refund and billing mappings do not invent a regrant ... ok (0ms)
+Google RTDN validates OIDC claims, package, product, and token binding ... ok (4ms)
+Google paused and on-hold authoritative states revoke the grant ... ok (1ms)
+Google canceled state preserves only until authoritative expiry ... ok (0ms)
+Google RTDN requires the configured Pub/Sub service account identity ... ok (0ms)
+Google subscription adapter fails closed without Play credentials, API, or product binding ... ok (1ms)
+Google RTDN revoke and full refund are the only notification-only grant removals ... ok (0ms)
+Google provider test notification is non-grant and contains no token ... ok (0ms)
+Google RTDN rejects issuer and package mismatches before DB RPC ... ok (0ms)
+Google receiver rejects a non-canonical configured package ... ok (0ms)
+running 6 tests from ./supabase/functions/contact-support-outbox/index.test.ts
+worker request parser keeps the batch limit bounded ... ok (5ms)
+outbox payload parser rejects oversized or incompatible payloads ... ok (0ms)
+worker authorization requires the dedicated worker secret ... ok (1ms)
+worker route rejects a body above the hard limit ... ok (3ms)
+Resend success without a message id is not a success ... ok (0ms)
+worker fails the claimed row when Resend omits its message id ... ok (3ms)
+running 5 tests from ./supabase/functions/verify-store-purchase/index.test.ts
+Apple root certificate manifest matches its recorded SHA-256 values ... ok (1ms)
+purchase policy helpers reject unknown products and bind strings ... ok (0ms)
+verified purchase completion uses one RPC write boundary ... ok (1ms)
+malformed App Store JWS fails closed without granting ...
+------- post-test output -------
+verify-store-purchase failed store_verification_failed
+----- post-test output end -----
+malformed App Store JWS fails closed without granting ... ok (3ms)
+request normalization does not accept a missing purchase token ... ok (0ms)
+running 6 tests from ./supabase/functions/contact-support/index.test.ts
+rate-limit identifiers use HMAC-SHA256 ... ok (5ms)
+contact request ignores client authentication claims ... ok (0ms)
+idempotency header takes precedence and validation keeps bounds ... ok (0ms)
+contact acceptance response is 202 with accepted status and UUID ... ok (1ms)
+contact request body size is capped before JSON processing ... ok (0ms)
+outbox payload is encrypted and decryptable with a stable hash ... ok (1ms)
+
+ok | 44 passed | 0 failed (815ms)
+

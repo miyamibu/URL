@@ -119,6 +119,132 @@ final class SharedTagStoreTests: XCTestCase {
         XCTAssertNil(try repository.loadEntry(id: 1))
     }
 
+    func testClearLocalSharedStateForAccountPreservesLocalRecordsAndOtherAccountCache() throws {
+        let localResult = try repository.saveFromManualInput("https://example.com/local-kept")
+        let localEntryID = try XCTUnwrap(localResult.entryID)
+        _ = try repository.saveMemo(entryID: localEntryID, rawMemo: "keep this memo")
+        XCTAssertTrue(try repository.archive(entryID: localEntryID))
+        try store.applySnapshot(
+            authUserID: "user-a",
+            snapshot: PullSharedTagSnapshotResponse(
+                pulledAt: "2026-08-21T01:00:00Z",
+                normalizationVersion: 1,
+                tags: [
+                    RemoteSharedTag(
+                        id: "tag-a",
+                        name: "user-a-tag",
+                        createdAt: "2026-08-21T00:00:00Z",
+                        updatedAt: "2026-08-21T00:30:00Z",
+                        deletedAt: nil
+                    )
+                ],
+                members: [],
+                urls: [
+                    RemoteSharedTagURL(
+                        id: "url-a-only",
+                        tagID: "tag-a",
+                        rawURL: "https://example.com/user-a-only",
+                        normalizedURL: "https://example.com/user-a-only",
+                        deletedAt: nil
+                    ),
+                    RemoteSharedTagURL(
+                        id: "url-a-local",
+                        tagID: "tag-a",
+                        rawURL: "https://example.com/local-kept",
+                        normalizedURL: "https://example.com/local-kept",
+                        deletedAt: nil
+                    ),
+                ]
+            )
+        )
+        try store.applySnapshot(
+            authUserID: "user-b",
+            snapshot: PullSharedTagSnapshotResponse(
+                pulledAt: "2026-08-21T02:00:00Z",
+                normalizationVersion: 1,
+                tags: [
+                    RemoteSharedTag(
+                        id: "tag-b",
+                        name: "user-b-tag",
+                        createdAt: "2026-08-21T00:00:00Z",
+                        updatedAt: "2026-08-21T00:30:00Z",
+                        deletedAt: nil
+                    )
+                ],
+                members: [],
+                urls: [
+                    RemoteSharedTagURL(
+                        id: "url-b-only",
+                        tagID: "tag-b",
+                        rawURL: "https://example.com/user-b-only",
+                        normalizedURL: "https://example.com/user-b-only",
+                        deletedAt: nil
+                    ),
+                    RemoteSharedTagURL(
+                        id: "url-b-local",
+                        tagID: "tag-b",
+                        rawURL: "https://example.com/local-kept",
+                        normalizedURL: "https://example.com/local-kept",
+                        deletedAt: nil
+                    ),
+                ]
+            )
+        )
+
+        try store.clearLocalSharedState(authUserID: "user-a")
+
+        XCTAssertTrue(try store.loadVisibleTags(authUserID: "user-a").isEmpty)
+        XCTAssertEqual(try store.loadVisibleTags(authUserID: "user-b").map(\.name), ["user-b-tag"])
+        let records = try repository.loadChatGptPersonalLinkSnapshot()
+        XCTAssertFalse(records.contains { $0.normalizedURL == "https://example.com/user-a-only" })
+        let userBOnly = try XCTUnwrap(records.first { $0.normalizedURL == "https://example.com/user-b-only" })
+        XCTAssertEqual(userBOnly.localProvenanceCount, 0)
+        XCTAssertEqual(userBOnly.sharedReferenceCount, 1)
+        let localKept = try XCTUnwrap(repository.loadEntry(id: localEntryID))
+        XCTAssertEqual(localKept.localProvenanceCount, 1)
+        XCTAssertEqual(localKept.sharedReferenceCount, 1)
+        XCTAssertEqual(localKept.memo, "keep this memo")
+        XCTAssertEqual(localKept.recordState, .archived)
+    }
+
+    func testNormalSignOutClearsSessionWithoutDeletingSharedCache() async throws {
+        try store.applySnapshot(
+            authUserID: "sign-out-user",
+            snapshot: makeSnapshot(
+                pulledAt: "2026-08-21T03:00:00Z",
+                tagID: "sign-out-tag",
+                tagName: "sign-out-cache",
+                urlID: "sign-out-url",
+                normalizedURL: "https://example.com/sign-out-cache"
+            )
+        )
+        let sessionStore = SharedTagAuthSessionStore(storage: SignOutTestAuthStorage())
+        try sessionStore.save(
+            SharedTagAuthSession(
+                authUserID: "sign-out-user",
+                accessToken: "access-token",
+                refreshToken: nil,
+                userEmail: nil
+            )
+        )
+        let service = SharedTagCloudService(
+            config: SharedTagCloudConfig(enabled: false, supabaseURL: "", anonKey: ""),
+            sessionStore: sessionStore,
+            store: store,
+            repository: repository
+        )
+
+        try await service.signOut()
+
+        XCTAssertNil(try sessionStore.load())
+        XCTAssertEqual(try store.loadVisibleTags(authUserID: "sign-out-user").map(\.name), ["sign-out-cache"])
+        XCTAssertNotNil(
+            try repository.loadChatGptPersonalLinkSnapshot().first {
+                $0.normalizedURL == "https://example.com/sign-out-cache"
+            }
+        )
+    }
+
     func testLoadVisibleTagsForEntryAndEntryIDsForTag() throws {
         let local = try repository.saveFromResolvedURL("https://example.com/shared-article")
         XCTAssertEqual(local.entryID, 1)
@@ -285,5 +411,28 @@ final class SharedTagStoreTests: XCTestCase {
                 )
             ]
         )
+    }
+}
+
+private final class SignOutTestAuthStorage: SharedTagAuthSecureStorage, @unchecked Sendable {
+    private let lock = NSLock()
+    private var payload: Data?
+
+    func load() throws -> Data? {
+        lock.lock()
+        defer { lock.unlock() }
+        return payload
+    }
+
+    func save(_ data: Data) throws {
+        lock.lock()
+        payload = data
+        lock.unlock()
+    }
+
+    func clear() throws {
+        lock.lock()
+        payload = nil
+        lock.unlock()
     }
 }

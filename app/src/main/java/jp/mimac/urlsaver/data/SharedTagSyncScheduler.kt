@@ -6,11 +6,14 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
+import androidx.work.await
 import androidx.work.workDataOf
 import java.util.concurrent.TimeUnit
 
 interface SharedTagSyncScheduler {
     fun enqueue(authUserId: String)
+
+    suspend fun cancel(authUserId: String)
 
     companion object {
         const val KEY_AUTH_USER_ID = "shared_tag_sync_auth_user_id"
@@ -42,5 +45,9 @@ class WorkManagerSharedTagSyncScheduler(
         )
     }
 
-    private fun uniqueWorkName(authUserId: String): String = "shared-tag-sync:$authUserId"
+    override suspend fun cancel(authUserId: String) {
+        workManager.cancelUniqueWork(uniqueWorkName(authUserId)).await()
+    }
+
+    internal fun uniqueWorkName(authUserId: String): String = "shared-tag-sync:$authUserId"
 }

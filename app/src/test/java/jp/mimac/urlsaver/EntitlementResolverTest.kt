@@ -317,6 +317,118 @@ class EntitlementResolverTest {
         assertEquals(listOf(grant), loaded)
     }
 
+    @Test
+    fun entitlementRepository_sessionClearedDuringFetchDoesNotRepopulateDeletedAccountCache() = runTest {
+        val sessionProvider = FakeSessionProvider(
+            SharedTagAuthSession(
+                authUserId = "deleted-user",
+                accessToken = "access-token",
+            ),
+        )
+        var saveCallCount = 0
+        val store = object : EntitlementGrantStore {
+            override suspend fun loadLastKnownGrants(
+                authUserId: String,
+                currentTimeMillis: Long,
+            ): List<EntitlementGrant> = emptyList()
+
+            override suspend fun saveLastKnownGrants(
+                authUserId: String,
+                grants: List<EntitlementGrant>,
+                fetchedAtMillis: Long,
+            ) {
+                saveCallCount += 1
+            }
+
+            override fun cachedGrantsSnapshot(
+                authUserId: String?,
+                currentTimeMillis: Long,
+            ): List<EntitlementGrant> = emptyList()
+
+            override suspend fun clearLastKnownGrants(authUserId: String) = Unit
+        }
+        val repository = EntitlementGrantRepository(
+            authSessionProvider = sessionProvider,
+            remoteDataSource = object : EntitlementGrantRemoteDataSource {
+                override suspend fun fetchGrants(session: SharedTagAuthSession): List<EntitlementGrant> {
+                    sessionProvider.updateSession(null)
+                    return listOf(
+                        EntitlementGrant(
+                            planType = PlanType.PRO,
+                            source = EntitlementSource.ADMIN_GRANT,
+                            startsAt = 0L,
+                        ),
+                    )
+                }
+
+                override suspend fun redeemPromoCode(
+                    session: SharedTagAuthSession,
+                    code: String,
+                ): List<EntitlementGrant> = emptyList()
+            },
+            grantStore = store,
+            clock = FixedClock(now = 5_000L),
+        )
+
+        assertEquals(emptyList<EntitlementGrant>(), repository.refreshForCurrentSession())
+        assertEquals(0, saveCallCount)
+    }
+
+    @Test
+    fun entitlementRepository_fetchFailureAfterUserSwitchNeverReturnsOldUserCache() = runTest {
+        val userAGrant = EntitlementGrant(
+            planType = PlanType.PROMO_PRO,
+            source = EntitlementSource.ADMIN_GRANT,
+            startsAt = 0L,
+        )
+        val sessionProvider = FakeSessionProvider(
+            SharedTagAuthSession(authUserId = "user-a", accessToken = "token-a"),
+        )
+        var cacheLoadCount = 0
+        val repository = EntitlementGrantRepository(
+            authSessionProvider = sessionProvider,
+            remoteDataSource = object : EntitlementGrantRemoteDataSource {
+                override suspend fun fetchGrants(session: SharedTagAuthSession): List<EntitlementGrant> {
+                    sessionProvider.updateSession(
+                        SharedTagAuthSession(authUserId = "user-b", accessToken = "token-b"),
+                    )
+                    throw IOException("offline")
+                }
+
+                override suspend fun redeemPromoCode(
+                    session: SharedTagAuthSession,
+                    code: String,
+                ): List<EntitlementGrant> = emptyList()
+            },
+            grantStore = object : EntitlementGrantStore {
+                override suspend fun loadLastKnownGrants(
+                    authUserId: String,
+                    currentTimeMillis: Long,
+                ): List<EntitlementGrant> {
+                    cacheLoadCount += 1
+                    return listOf(userAGrant)
+                }
+
+                override suspend fun saveLastKnownGrants(
+                    authUserId: String,
+                    grants: List<EntitlementGrant>,
+                    fetchedAtMillis: Long,
+                ) = Unit
+
+                override fun cachedGrantsSnapshot(
+                    authUserId: String?,
+                    currentTimeMillis: Long,
+                ): List<EntitlementGrant> = emptyList()
+
+                override suspend fun clearLastKnownGrants(authUserId: String) = Unit
+            },
+            clock = FixedClock(now = 5_000L),
+        )
+
+        assertEquals(emptyList<EntitlementGrant>(), repository.refreshForCurrentSession())
+        assertEquals(0, cacheLoadCount)
+    }
+
     private class FakeSessionProvider(
         session: SharedTagAuthSession?,
     ) : SharedTagAuthSessionProvider {
@@ -346,6 +458,8 @@ class EntitlementResolverTest {
             authUserId: String?,
             currentTimeMillis: Long,
         ): List<EntitlementGrant> = grants
+
+        override suspend fun clearLastKnownGrants(authUserId: String) = Unit
     }
 
     private class FixedClock(

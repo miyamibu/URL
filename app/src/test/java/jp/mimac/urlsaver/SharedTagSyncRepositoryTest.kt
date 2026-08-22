@@ -13,6 +13,8 @@ import jp.mimac.urlsaver.data.SharedTagAuthRemoteResult
 import jp.mimac.urlsaver.data.SharedTagAuthSession
 import jp.mimac.urlsaver.data.SharedTagAuthSessionProvider
 import jp.mimac.urlsaver.data.SharedTagSyncCoordinator
+import jp.mimac.urlsaver.data.SharedTagSyncOutboxEntity
+import jp.mimac.urlsaver.data.SharedTagSyncStateEntity
 import jp.mimac.urlsaver.data.SharedTagSyncRemoteConfig
 import jp.mimac.urlsaver.data.SharedTagSyncRemoteDataSource
 import jp.mimac.urlsaver.data.TagEntity
@@ -364,7 +366,135 @@ class SharedTagSyncRepositoryTest {
         assertTrue(db.urlEntryDao().observeActiveEntries().first().isEmpty())
     }
 
-    private suspend fun insertEntry(url: String): Long {
+    @Test
+    fun clearLocalStateForDeletedAccount_isUserScopedAndPreservesLocalDataAndOtherUsers() = runBlocking {
+        val tagA = db.tagDao().insertTag(
+            TagEntity(
+                name = "user-a-shared",
+                createdAt = 1L,
+                scope = SharedTagScope.SYNCED,
+                authUserId = USER_A,
+                remoteTagId = "remote-a",
+                syncStatus = SharedTagSyncStatus.SYNCED,
+            ),
+        )
+        val tagB = db.tagDao().insertTag(
+            TagEntity(
+                name = "user-b-shared",
+                createdAt = 2L,
+                scope = SharedTagScope.SYNCED,
+                authUserId = USER_B,
+                remoteTagId = "remote-b",
+                syncStatus = SharedTagSyncStatus.SYNCED,
+            ),
+        )
+        val localTag = db.tagDao().insertTag(TagEntity(name = "local-tag", createdAt = 3L))
+        val sharedOnlyA = insertEntry(
+            url = "https://example.com/shared-only-a",
+            localProvenanceCount = 0,
+            sharedReferenceCount = 1,
+        )
+        val sharedOnlyB = insertEntry(
+            url = "https://example.com/shared-only-b",
+            localProvenanceCount = 0,
+            sharedReferenceCount = 1,
+        )
+        val localSaved = insertEntry(
+            url = "https://example.com/local-saved",
+            localProvenanceCount = 1,
+            sharedReferenceCount = 2,
+            memo = "keep this memo",
+            recordState = RecordState.ARCHIVED,
+        )
+        db.tagDao().upsertCrossRefs(
+            listOf(
+                TagUrlCrossRef(
+                    tagId = tagA,
+                    entryId = sharedOnlyA,
+                    scope = SharedTagScope.SYNCED,
+                    authUserId = USER_A,
+                    remoteUrlId = "url-a-only",
+                    deletedAt = null,
+                ),
+                TagUrlCrossRef(
+                    tagId = tagA,
+                    entryId = localSaved,
+                    scope = SharedTagScope.SYNCED,
+                    authUserId = USER_A,
+                    remoteUrlId = "url-a-local",
+                    deletedAt = null,
+                ),
+                TagUrlCrossRef(
+                    tagId = tagB,
+                    entryId = sharedOnlyB,
+                    scope = SharedTagScope.SYNCED,
+                    authUserId = USER_B,
+                    remoteUrlId = "url-b-only",
+                    deletedAt = null,
+                ),
+                TagUrlCrossRef(
+                    tagId = tagB,
+                    entryId = localSaved,
+                    scope = SharedTagScope.SYNCED,
+                    authUserId = USER_B,
+                    remoteUrlId = "url-b-local",
+                    deletedAt = null,
+                ),
+                TagUrlCrossRef(tagId = localTag, entryId = localSaved),
+            ),
+        )
+        db.sharedTagSyncDao().upsertSyncState(SharedTagSyncStateEntity(USER_A, "client-a"))
+        db.sharedTagSyncDao().upsertSyncState(SharedTagSyncStateEntity(USER_B, "client-b"))
+        db.sharedTagSyncDao().upsertOutbox(
+            SharedTagSyncOutboxEntity(
+                opId = "op-a",
+                clientId = "client-a",
+                authUserId = USER_A,
+                operationType = jp.mimac.urlsaver.domain.SharedTagSyncOperationType.CREATE_TAG,
+                payloadJson = "{}",
+                createdAt = 1L,
+                updatedAt = 1L,
+            ),
+        )
+        db.sharedTagSyncDao().upsertOutbox(
+            SharedTagSyncOutboxEntity(
+                opId = "op-b",
+                clientId = "client-b",
+                authUserId = USER_B,
+                operationType = jp.mimac.urlsaver.domain.SharedTagSyncOperationType.CREATE_TAG,
+                payloadJson = "{}",
+                createdAt = 2L,
+                updatedAt = 2L,
+            ),
+        )
+
+        coordinator.clearLocalStateForDeletedAccount(USER_A)
+
+        assertEquals(null, db.tagDao().findTagById(tagA))
+        assertNotNull(db.tagDao().findTagById(tagB))
+        assertNotNull(db.tagDao().findTagById(localTag))
+        assertEquals(null, db.sharedTagSyncDao().findSyncState(USER_A))
+        assertNotNull(db.sharedTagSyncDao().findSyncState(USER_B))
+        assertTrue(db.sharedTagSyncDao().getOutboxForUser(USER_A).isEmpty())
+        assertEquals(1, db.sharedTagSyncDao().getOutboxForUser(USER_B).size)
+        assertEquals(null, db.urlEntryDao().findById(sharedOnlyA))
+        assertEquals(1, db.urlEntryDao().findById(sharedOnlyB)?.sharedReferenceCount)
+        val preservedLocal = db.urlEntryDao().findById(localSaved)
+        assertNotNull(preservedLocal)
+        assertEquals(1, preservedLocal?.localProvenanceCount)
+        assertEquals(1, preservedLocal?.sharedReferenceCount)
+        assertEquals("keep this memo", preservedLocal?.memo)
+        assertEquals(RecordState.ARCHIVED, preservedLocal?.recordState)
+        assertNotNull(db.tagDao().findCrossRef(localTag, localSaved))
+    }
+
+    private suspend fun insertEntry(
+        url: String,
+        localProvenanceCount: Int = 1,
+        sharedReferenceCount: Int = 0,
+        memo: String = "",
+        recordState: RecordState = RecordState.ACTIVE,
+    ): Long {
         return db.urlEntryDao().insert(
             UrlEntryEntity(
                 originalUrl = url,
@@ -375,8 +505,11 @@ class SharedTagSyncRepositoryTest {
                 rawSourceHost = "example.com",
                 serviceType = ServiceType.WEB,
                 contentContext = ContentContext.STANDARD,
+                memo = memo,
+                localProvenanceCount = localProvenanceCount,
+                sharedReferenceCount = sharedReferenceCount,
                 metadataState = MetadataState.PENDING,
-                recordState = RecordState.ACTIVE,
+                recordState = recordState,
                 createdAt = clock.now,
                 updatedAt = clock.now,
             ),

@@ -1,0 +1,18 @@
+# Gitleaks allowlist for values that are public by design.
+#
+# Supabase "publishable" client keys (prefix `sb_publishable_`) replace the
+# classic anon public key and are intentionally embedded in shipped clients
+# and public web pages. Authorization is enforced server-side via RLS, so a
+# publishable key is not a secret. Secret service-role keys use the
+# `sb_secret_` prefix and remain detected.
+title = "rinbam public-by-design allowlist"
+
+[extend]
+useDefault = true
+
+[allowlists.publishable_supabase_keys]
+description = "Supabase publishable (anon) client keys embedded in public clients"
+regexTarget = "match"
+regexes = [
+  '''sb_publishable_[A-Za-z0-9_-]{20,}''',
+]

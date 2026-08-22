@@ -7,7 +7,7 @@ Prepare Android internal testing without Codex uploading to Play Console.
 
 - Android: `jp.miyamibu.urlalbum`, `versionName=1.0.17`, `versionCode=21`
 - iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.17`, `build=19`; share extension `com.mibu.codebridge.ios.share`
-- Supabase migration head: `20260804090000_default_all_users_to_pro.sql`
+- Supabase migration head: `20260822090000_account_deletion_idempotency.sql`
 
 ## Version and Identity
 

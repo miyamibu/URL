@@ -6,6 +6,9 @@ import jp.mimac.urlsaver.domain.RecordState
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 
+const val PENDING_DELETE_STAGING_WINDOW_MILLIS = 24L * 60L * 60L * 1000L
+const val PENDING_DELETE_UNDO_WINDOW_MILLIS = 5_000L
+
 interface MainListRepository {
     fun observeActiveEntries(): Flow<List<UrlEntryEntity>>
     fun observeLocalTagEntryRefs(): Flow<List<LocalTagEntryRef>> = flowOf(emptyList())
@@ -19,7 +22,25 @@ interface MainListRepository {
     ): SaveResult = saveFromManualInput(input)
 
     suspend fun archive(entryId: Long): Boolean
-    suspend fun markPendingDelete(entryId: Long, gracePeriodMillis: Long = 5000): Long?
+    suspend fun archiveEntries(entryIds: Collection<Long>): Set<Long> = buildSet {
+        entryIds.distinct().forEach { entryId ->
+            if (archive(entryId)) add(entryId)
+        }
+    }
+    suspend fun markPendingDelete(
+        entryId: Long,
+        gracePeriodMillis: Long = PENDING_DELETE_STAGING_WINDOW_MILLIS,
+    ): Long?
+    suspend fun markPendingDeleteEntries(
+        entryIds: Collection<Long>,
+        gracePeriodMillis: Long = PENDING_DELETE_STAGING_WINDOW_MILLIS,
+    ): Map<Long, Long> = buildMap {
+        entryIds.distinct().forEach { entryId ->
+            markPendingDelete(entryId, gracePeriodMillis)?.let { pendingUntil ->
+                put(entryId, pendingUntil)
+            }
+        }
+    }
 }
 
 interface UrlRepository : MainListRepository {
@@ -31,6 +52,11 @@ interface UrlRepository : MainListRepository {
     suspend fun unarchive(entryId: Long): Boolean
     suspend fun finalizePendingDelete(entryId: Long)
     suspend fun cleanupExpiredPendingDeletes()
+    suspend fun restoreProvisionalPendingDeletes() = Unit
+    suspend fun startPendingDeleteUndoWindow(
+        entryIds: Collection<Long>,
+        gracePeriodMillis: Long = PENDING_DELETE_UNDO_WINDOW_MILLIS,
+    ): Map<Long, Long> = emptyMap()
     suspend fun restore(entryId: Long): Boolean
 
     suspend fun saveUserTitle(entryId: Long, rawTitle: String): SaveTitleResult

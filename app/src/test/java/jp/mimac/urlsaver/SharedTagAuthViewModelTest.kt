@@ -130,7 +130,16 @@ class SharedTagAuthViewModelTest {
     @Test
     fun localCleanupPending_restoresWhenViewModelIsRecreated() {
         val store = InMemoryLocalAccountCleanupStore().apply {
-            save(aiDataPending = true, sessionPending = false)
+            save(
+                LocalAccountCleanupMarker(
+                    aiDataPending = true,
+                    sessionPending = false,
+                    sharedDataCleanupPending = true,
+                    entitlementCleanupPending = true,
+                    personalLinkSettingsCleanupPending = true,
+                    authUserId = "deleted-user",
+                ),
+            )
         }
 
         fun createViewModel() = SharedTagAuthViewModel(
@@ -146,6 +155,9 @@ class SharedTagAuthViewModelTest {
         val expected = SharedTagAccountDeletionResult.LocalCleanupRequired(
             aiDataPending = true,
             sessionPending = false,
+            sharedDataCleanupPending = true,
+            entitlementCleanupPending = true,
+            personalLinkSettingsCleanupPending = true,
         )
         assertEquals(expected, firstViewModel.localAccountCleanupPending.value)
         assertEquals(expected, recreatedViewModel.localAccountCleanupPending.value)
@@ -178,12 +190,8 @@ private class InMemoryLocalAccountCleanupStore : LocalAccountCleanupStore {
     private val state = MutableStateFlow<LocalAccountCleanupMarker?>(null)
     override val pending: StateFlow<LocalAccountCleanupMarker?> = state
 
-    override fun save(aiDataPending: Boolean, sessionPending: Boolean) {
-        state.value = if (aiDataPending || sessionPending) {
-            LocalAccountCleanupMarker(aiDataPending, sessionPending)
-        } else {
-            null
-        }
+    override fun save(marker: LocalAccountCleanupMarker) {
+        state.value = marker.takeIf(LocalAccountCleanupMarker::requiresCleanup)
     }
 
     override fun clear() {
@@ -232,6 +240,8 @@ private class FakeEntitlementGrantStore : EntitlementGrantStore {
         authUserId: String?,
         currentTimeMillis: Long,
     ): List<EntitlementGrant> = emptyList()
+
+    override suspend fun clearLastKnownGrants(authUserId: String) = Unit
 }
 
 private class FakeSessionProvider(

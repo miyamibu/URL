@@ -34,6 +34,7 @@ import jp.mimac.urlsaver.domain.UserProfile
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -59,19 +60,28 @@ class SharedTagAuthViewModel(
 ) : ViewModel() {
 
     private var lastBillingRefreshUserId: String? = null
+    private val _entitlements = MutableStateFlow(tagRepository.featureEntitlements())
+    val entitlements: StateFlow<FeatureEntitlements> = _entitlements.asStateFlow()
 
     init {
         val sessionProvider = authSessionProvider
         val billingService = googlePlayBillingService
-        if (sessionProvider != null && billingService != null) {
+        if (sessionProvider != null) {
             viewModelScope.launch {
                 sessionProvider.session.collect { session ->
                     val userId = session?.authUserId
+                    _entitlements.value = tagRepository.featureEntitlements()
                     if (userId == null) {
                         lastBillingRefreshUserId = null
-                    } else if (lastBillingRefreshUserId != userId) {
-                        val refreshed = runCatching { billingService.processCurrentPurchases() }.isSuccess
-                        if (refreshed) lastBillingRefreshUserId = userId
+                    } else {
+                        entitlementGrantRepository.refreshForCurrentSession()
+                        if (sessionProvider.session.value?.authUserId == userId) {
+                            _entitlements.value = tagRepository.featureEntitlements()
+                        }
+                        if (billingService != null && lastBillingRefreshUserId != userId) {
+                            val refreshed = runCatching { billingService.processCurrentPurchases() }.isSuccess
+                            if (refreshed) lastBillingRefreshUserId = userId
+                        }
                     }
                 }
             }
@@ -101,7 +111,6 @@ class SharedTagAuthViewModel(
                 sharedTagUsages = emptyList(),
             ),
         )
-    val entitlements: FeatureEntitlements = tagRepository.featureEntitlements()
     val chatGptSyncSettings: StateFlow<ChatGptPersonalLinkSyncSettings> =
         (chatGptPersonalLinkSyncRepository?.settings ?: flowOf(ChatGptPersonalLinkSyncSettings()))
             .stateIn(
@@ -126,6 +135,11 @@ class SharedTagAuthViewModel(
                     SharedTagAccountDeletionResult.LocalCleanupRequired(
                         aiDataPending = it.aiDataPending,
                         sessionPending = it.sessionPending,
+                        syncWorkCancellationPending = it.syncWorkCancellationPending,
+                        sharedDataCleanupPending = it.sharedDataCleanupPending,
+                        pendingInviteCleanupPending = it.pendingInviteCleanupPending,
+                        entitlementCleanupPending = it.entitlementCleanupPending,
+                        personalLinkSettingsCleanupPending = it.personalLinkSettingsCleanupPending,
                     )
                 }
             }
@@ -136,6 +150,11 @@ class SharedTagAuthViewModel(
                     SharedTagAccountDeletionResult.LocalCleanupRequired(
                         aiDataPending = it.aiDataPending,
                         sessionPending = it.sessionPending,
+                        syncWorkCancellationPending = it.syncWorkCancellationPending,
+                        sharedDataCleanupPending = it.sharedDataCleanupPending,
+                        pendingInviteCleanupPending = it.pendingInviteCleanupPending,
+                        entitlementCleanupPending = it.entitlementCleanupPending,
+                        personalLinkSettingsCleanupPending = it.personalLinkSettingsCleanupPending,
                     )
                 },
             )
@@ -146,13 +165,19 @@ class SharedTagAuthViewModel(
 
     suspend fun signIn(email: String, password: String): SharedTagAuthResult {
         val result = tagRepository.signIn(email, password)
-        if (result is SharedTagAuthResult.Success) refreshPendingInvite()
+        if (result is SharedTagAuthResult.Success) {
+            refreshPendingInvite()
+            refreshEntitlementsForCurrentSession()
+        }
         return result
     }
 
     suspend fun signUp(email: String, password: String): SharedTagAuthResult {
         val result = tagRepository.signUp(email, password)
-        if (result is SharedTagAuthResult.Success) refreshPendingInvite()
+        if (result is SharedTagAuthResult.Success) {
+            refreshPendingInvite()
+            refreshEntitlementsForCurrentSession()
+        }
         return result
     }
 
@@ -170,6 +195,7 @@ class SharedTagAuthViewModel(
 
     suspend fun signOut() {
         tagRepository.signOut()
+        _entitlements.value = tagRepository.featureEntitlements()
     }
 
     fun refreshPendingInvite() {
@@ -195,11 +221,15 @@ class SharedTagAuthViewModel(
     }
 
     suspend fun deleteAccount(): SharedTagAccountDeletionResult {
-        return tagRepository.deleteAccount()
+        return tagRepository.deleteAccount().also {
+            _entitlements.value = tagRepository.featureEntitlements()
+        }
     }
 
     suspend fun retryLocalAccountCleanup(): SharedTagAccountDeletionResult {
-        return tagRepository.retryLocalAccountCleanup()
+        return tagRepository.retryLocalAccountCleanup().also {
+            _entitlements.value = tagRepository.featureEntitlements()
+        }
     }
 
     suspend fun saveDisplayName(displayName: String) {
@@ -223,10 +253,22 @@ class SharedTagAuthViewModel(
 
     suspend fun redeemPromoCode(code: String): PromoCodeApplyResult {
         return when (val result = entitlementGrantRepository.redeemPromoCode(code)) {
-            is PromoCodeRedemptionResult.Success -> PromoCodeApplyResult.Success
+            is PromoCodeRedemptionResult.Success -> {
+                _entitlements.value = tagRepository.featureEntitlements()
+                PromoCodeApplyResult.Success
+            }
             PromoCodeRedemptionResult.InvalidCode -> PromoCodeApplyResult.InvalidCode
             PromoCodeRedemptionResult.AuthRequired -> PromoCodeApplyResult.AuthRequired
             is PromoCodeRedemptionResult.Failure -> PromoCodeApplyResult.Failure(result.message)
+        }
+    }
+
+    private suspend fun refreshEntitlementsForCurrentSession() {
+        val expectedAuthUserId = authSessionProvider?.session?.value?.authUserId
+        _entitlements.value = tagRepository.featureEntitlements()
+        entitlementGrantRepository.refreshForCurrentSession()
+        if (authSessionProvider == null || authSessionProvider.session.value?.authUserId == expectedAuthUserId) {
+            _entitlements.value = tagRepository.featureEntitlements()
         }
     }
 

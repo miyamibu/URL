@@ -47,7 +47,7 @@ check_admin_page() {
     return
   fi
 
-  if grep -Fq 'URL Saver 管理' "$output"; then
+  if grep -Fq 'りんばむ 管理' "$output"; then
     printf 'PASS %s HTTP 200 (管理画面の識別文言を確認)\n' "$path"
   else
     printf 'FAIL %s HTTP 200 (管理画面の識別文言がありません)\n' "$path"

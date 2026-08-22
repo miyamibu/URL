@@ -713,7 +713,9 @@ private struct SharedTagSyncRemoteDataSource {
             session: session,
             body: ApplySharedTagOpsPayload(payload: operations)
         )
-        return try makeSharedTagCloudDecoder().decode(ApplySharedTagOpsResponse.self, from: data)
+        let response = try makeSharedTagCloudDecoder().decode(ApplySharedTagOpsResponse.self, from: data)
+        try response.validate(expectedOperationIDs: operations.map(\.opID))
+        return response
     }
 
     func createInvite(
@@ -868,6 +870,36 @@ private struct SharedTagSyncRemoteDataSource {
             session: session,
             body: EmptyPayload()
         )
+    }
+
+    func deleteAccount(session: SharedTagAuthSession, requestID: String) async throws {
+        _ = try await executeRPC(
+            path: "/rest/v1/rpc/delete_my_account",
+            session: session,
+            body: AccountDeletionRequestBody(pRequestID: requestID)
+        )
+    }
+
+    func createAccountDeletionRequest(
+        session: SharedTagAuthSession
+    ) async throws -> SharedTagAccountDeletionRequestGrant {
+        let data = try await executeRPC(
+            path: "/rest/v1/rpc/create_account_deletion_request",
+            session: session,
+            body: EmptyPayload()
+        )
+        return try makeSharedTagCloudDecoder().decode(SharedTagAccountDeletionRequestGrant.self, from: data)
+    }
+
+    func accountDeletionStatus(
+        requestID: String,
+        token: String
+    ) async throws -> SharedTagAccountDeletionRemoteStatus {
+        let data = try await executeUnauthenticatedRPC(
+            path: "/rest/v1/rpc/get_account_deletion_status",
+            body: AccountDeletionStatusBody(pRequestID: requestID, pToken: token)
+        )
+        return try makeSharedTagCloudDecoder().decode(SharedTagAccountDeletionRemoteStatus.self, from: data)
     }
 
     func setChatGptPersonalLinkSync(
@@ -1036,11 +1068,14 @@ final class EntitlementGrantCache: @unchecked Sendable {
 
     private let userDefaults: UserDefaults
     private let key: String
+    private let invalidatedUsersKey: String
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
     private let cacheTTL: TimeInterval
-    private let lock = NSLock()
     private var snapshot: Snapshot?
+    private var invalidatedAuthUserIDs: Set<String> = []
+
+    private static let processLock = NSLock()
 
     init(
         userDefaults: UserDefaults = .standard,
@@ -1049,6 +1084,7 @@ final class EntitlementGrantCache: @unchecked Sendable {
     ) {
         self.userDefaults = userDefaults
         self.key = key
+        invalidatedUsersKey = "\(key).invalidated_auth_user_ids"
         self.cacheTTL = cacheTTL
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -1059,8 +1095,10 @@ final class EntitlementGrantCache: @unchecked Sendable {
     }
 
     func load(authUserID: String, now: Date) -> [EntitlementGrant] {
-        lock.lock()
-        defer { lock.unlock() }
+        Self.processLock.lock()
+        defer { Self.processLock.unlock() }
+        refreshInvalidatedUsersLocked()
+        guard !invalidatedAuthUserIDs.contains(authUserID) else { return [] }
         if let snapshot, snapshot.isValid(authUserID: authUserID, now: now, cacheTTL: cacheTTL) {
             return snapshot.grants
         }
@@ -1073,23 +1111,54 @@ final class EntitlementGrantCache: @unchecked Sendable {
         return loaded.isValid(authUserID: authUserID, now: now, cacheTTL: cacheTTL) ? loaded.grants : []
     }
 
-    func save(authUserID: String, grants: [EntitlementGrant], fetchedAt: Date) {
-        lock.lock()
-        defer { lock.unlock() }
+    @discardableResult
+    func save(authUserID: String, grants: [EntitlementGrant], fetchedAt: Date) -> Bool {
+        Self.processLock.lock()
+        defer { Self.processLock.unlock() }
+        refreshInvalidatedUsersLocked()
+        guard !invalidatedAuthUserIDs.contains(authUserID) else { return false }
         let saved = Snapshot(authUserID: authUserID, fetchedAt: fetchedAt, grants: grants)
-        if let data = try? encoder.encode(saved) {
-            userDefaults.set(data, forKey: key)
-        }
+        guard let data = try? encoder.encode(saved) else { return false }
+        userDefaults.set(data, forKey: key)
         snapshot = saved
+        return true
     }
 
     func cachedSnapshot(authUserID: String?, now: Date) -> [EntitlementGrant] {
         guard let authUserID else { return [] }
-        lock.lock()
-        defer { lock.unlock() }
+        Self.processLock.lock()
+        defer { Self.processLock.unlock() }
+        refreshInvalidatedUsersLocked()
+        guard !invalidatedAuthUserIDs.contains(authUserID) else { return [] }
         return snapshot?.isValid(authUserID: authUserID, now: now, cacheTTL: cacheTTL) == true
             ? snapshot?.grants ?? []
             : []
+    }
+
+    func clear(authUserID: String) {
+        Self.processLock.lock()
+        defer { Self.processLock.unlock() }
+        refreshInvalidatedUsersLocked()
+        invalidatedAuthUserIDs.insert(authUserID)
+        if let data = try? encoder.encode(invalidatedAuthUserIDs.sorted()) {
+            userDefaults.set(data, forKey: invalidatedUsersKey)
+        }
+        let persistedSnapshot = userDefaults.data(forKey: key)
+            .flatMap { try? decoder.decode(Snapshot.self, from: $0) }
+        if snapshot?.authUserID == authUserID || persistedSnapshot?.authUserID == authUserID {
+            userDefaults.removeObject(forKey: key)
+        }
+        if snapshot?.authUserID == authUserID {
+            snapshot = nil
+        }
+    }
+
+    private func refreshInvalidatedUsersLocked() {
+        let persisted = userDefaults.data(forKey: invalidatedUsersKey)
+            .flatMap { try? decoder.decode([String].self, from: $0) }
+            .map(Set.init)
+            ?? []
+        invalidatedAuthUserIDs.formUnion(persisted)
     }
 
     struct Snapshot: Codable, Equatable, Sendable {
@@ -1245,14 +1314,17 @@ final class EntitlementService: @unchecked Sendable {
     private let sessionStore: SharedTagAuthSessionStore
     private let remoteDataSource: EntitlementGrantRemoteDataSource
     private let cache: EntitlementGrantCache
+    private let accountOperationGate: SharedTagAccountOperationGate
 
     init(
         config: SharedTagCloudConfig,
         sessionStore: SharedTagAuthSessionStore,
-        cache: EntitlementGrantCache = EntitlementGrantCache()
+        cache: EntitlementGrantCache = EntitlementGrantCache(),
+        accountOperationGate: SharedTagAccountOperationGate = SharedTagAccountOperationGate()
     ) {
         self.sessionStore = sessionStore
         self.cache = cache
+        self.accountOperationGate = accountOperationGate
         let authRemoteDataSource = SharedTagAuthRemoteDataSource(config: config)
         self.remoteDataSource = EntitlementGrantRemoteDataSource(
             config: config,
@@ -1268,6 +1340,10 @@ final class EntitlementService: @unchecked Sendable {
         return EntitlementResolver(grantsProvider: { grants }).resolve(at: now)
     }
 
+    func clearCachedGrants(authUserID: String) {
+        cache.clear(authUserID: authUserID)
+    }
+
     @discardableResult
     func refreshForCurrentSession(now: Date = Date()) async -> FeatureEntitlements {
         guard let session = try? sessionStore.load() else {
@@ -1275,7 +1351,12 @@ final class EntitlementService: @unchecked Sendable {
                 grantsProvider: { BuildVariantEntitlementOverrides.grants(at: now) }
             ).resolve(at: now)
         }
-        let grants = await fetchOrLoadCachedGrants(session: session, now: now)
+        let grants: [EntitlementGrant] = await accountOperationGate.withAccountOperation(
+            authUserID: session.authUserID,
+            blocked: []
+        ) { [self] in
+            await fetchOrLoadCachedGrants(session: session, now: now)
+        }
         return EntitlementResolver(
             grantsProvider: { grants + BuildVariantEntitlementOverrides.grants(at: now) }
         ).resolve(at: now)
@@ -1290,20 +1371,38 @@ final class EntitlementService: @unchecked Sendable {
         guard let session = try? sessionStore.load() else {
             throw SharedTagCloudError.authRequired
         }
-        let remoteGrants = try await remoteDataSource.redeemPromoCode(session: session, code: trimmedCode)
-        cache.save(authUserID: session.authUserID, grants: remoteGrants, fetchedAt: now)
-        return EntitlementResolver(
-            grantsProvider: { remoteGrants + BuildVariantEntitlementOverrides.grants(at: now) }
-        ).resolve(at: now)
+        return try await accountOperationGate.withThrowingAccountOperation(
+            authUserID: session.authUserID
+        ) { [self] in
+            let remoteGrants = try await remoteDataSource.redeemPromoCode(session: session, code: trimmedCode)
+            guard (try? sessionStore.load())?.authUserID == session.authUserID,
+                  cache.save(authUserID: session.authUserID, grants: remoteGrants, fetchedAt: now) else {
+                throw SharedTagCloudError.authRequired
+            }
+            return EntitlementResolver(
+                grantsProvider: { remoteGrants + BuildVariantEntitlementOverrides.grants(at: now) }
+            ).resolve(at: now)
+        }
     }
 
     private func fetchOrLoadCachedGrants(session: SharedTagAuthSession, now: Date) async -> [EntitlementGrant] {
         do {
             let remoteGrants = try await remoteDataSource.fetchGrants(session: session)
-            cache.save(authUserID: session.authUserID, grants: remoteGrants, fetchedAt: now)
+            guard (try? sessionStore.load())?.authUserID == session.authUserID else {
+                return []
+            }
+            guard cache.save(authUserID: session.authUserID, grants: remoteGrants, fetchedAt: now),
+                  (try? sessionStore.load())?.authUserID == session.authUserID else {
+                return []
+            }
             return remoteGrants
         } catch {
-            return cache.load(authUserID: session.authUserID, now: now)
+            guard !(error is CancellationError),
+                  (try? sessionStore.load())?.authUserID == session.authUserID else {
+                return []
+            }
+            let cached = cache.load(authUserID: session.authUserID, now: now)
+            return (try? sessionStore.load())?.authUserID == session.authUserID ? cached : []
         }
     }
 }
@@ -1839,21 +1938,13 @@ final class SharedTagStore: @unchecked Sendable {
                 )
             }
 
-            try database.execute(
-                "UPDATE url_entries SET shared_reference_count = 0 WHERE shared_reference_count != 0;",
-                binds: []
-            )
-
             let grouped = Dictionary(grouping: activeURLs, by: \.normalizedURL)
             for (normalizedURL, urls) in grouped {
                 guard let sample = urls.first else { continue }
-                let count = urls.count
-                let entryID = try ensureEntry(rawURL: sample.rawURL, normalizedURL: normalizedURL)
-                try database.execute(
-                    "UPDATE url_entries SET shared_reference_count = ? WHERE id = ?;",
-                    binds: [sql(count), sql(entryID)]
-                )
+                _ = try ensureEntry(rawURL: sample.rawURL, normalizedURL: normalizedURL)
             }
+
+            try recomputeSharedReferenceCounts()
 
             try database.execute(
                 "DELETE FROM url_entries WHERE local_provenance_count = 0 AND shared_reference_count = 0;",
@@ -1889,6 +1980,47 @@ final class SharedTagStore: @unchecked Sendable {
             try database.execute("UPDATE url_entries SET shared_reference_count = 0 WHERE shared_reference_count != 0;", binds: [])
             try database.execute("DELETE FROM url_entries WHERE local_provenance_count = 0 AND shared_reference_count = 0;", binds: [])
         }
+    }
+
+    func clearLocalSharedState(authUserID: String) throws {
+        let normalizedAuthUserID = authUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedAuthUserID.isEmpty else {
+            throw SharedTagCloudError.message("削除対象のアカウント識別子がありません")
+        }
+        try database.transaction {
+            let binds = [sql(normalizedAuthUserID)]
+            try database.execute("DELETE FROM shared_tag_members WHERE auth_user_id = ?;", binds: binds)
+            try database.execute("DELETE FROM shared_tag_group_members WHERE auth_user_id = ?;", binds: binds)
+            try database.execute("DELETE FROM shared_tag_group_tags WHERE auth_user_id = ?;", binds: binds)
+            try database.execute("DELETE FROM shared_tag_groups WHERE auth_user_id = ?;", binds: binds)
+            try database.execute("DELETE FROM shared_tag_urls WHERE auth_user_id = ?;", binds: binds)
+            try database.execute("DELETE FROM shared_tags WHERE auth_user_id = ?;", binds: binds)
+            try database.execute("DELETE FROM shared_tag_sync_state WHERE auth_user_id = ?;", binds: binds)
+            try recomputeSharedReferenceCounts()
+            try database.execute(
+                "DELETE FROM url_entries WHERE local_provenance_count = 0 AND shared_reference_count = 0;",
+                binds: []
+            )
+        }
+    }
+
+    private func recomputeSharedReferenceCounts() throws {
+        try database.execute(
+            """
+            UPDATE url_entries
+            SET shared_reference_count = (
+                SELECT COUNT(*)
+                FROM shared_tag_urls AS shared_url
+                INNER JOIN shared_tags AS shared_tag
+                    ON shared_tag.auth_user_id = shared_url.auth_user_id
+                   AND shared_tag.remote_tag_id = shared_url.tag_remote_id
+                WHERE shared_url.normalized_url = url_entries.normalized_url
+                  AND shared_url.deleted_at IS NULL
+                  AND shared_tag.deleted_at IS NULL
+            );
+            """,
+            binds: []
+        )
     }
 
     private func ensureEntry(rawURL: String, normalizedURL: String) throws -> Int64 {
@@ -2055,58 +2187,434 @@ protocol SharedTagAccountLocalCleanupStateStore: Sendable {
     func clear()
 }
 
+protocol SharedTagAccountDeletionRequestStore: Sendable {
+    func load() -> SharedTagAccountDeletionRequestRecord?
+    func save(_ record: SharedTagAccountDeletionRequestRecord) throws
+    func clear() throws
+}
+
+final class UserDefaultsSharedTagAccountDeletionRequestStore: @unchecked Sendable, SharedTagAccountDeletionRequestStore {
+    private let userDefaults: UserDefaults
+    private let recordKey: String
+    private let lock = NSLock()
+    private let encoder = JSONEncoder()
+    private let decoder = JSONDecoder()
+
+    init(
+        userDefaults: UserDefaults = .standard,
+        key: String = "jp.mimac.urlsaver.shared_tag.account_deletion_request.v1"
+    ) {
+        self.userDefaults = userDefaults
+        self.recordKey = key
+    }
+
+    func load() -> SharedTagAccountDeletionRequestRecord? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let data = userDefaults.data(forKey: recordKey) else { return nil }
+        // A corrupt blob cannot prove anything about the remote state; report no
+        // record and keep the data untouched so deletion falls back to the
+        // fail-closed session-based paths.
+        return try? decoder.decode(SharedTagAccountDeletionRequestRecord.self, from: data)
+    }
+
+    func save(_ record: SharedTagAccountDeletionRequestRecord) throws {
+        let data = try encoder.encode(record)
+        lock.lock()
+        defer { lock.unlock() }
+        userDefaults.set(data, forKey: recordKey)
+    }
+
+    func clear() throws {
+        lock.lock()
+        defer { lock.unlock() }
+        userDefaults.removeObject(forKey: recordKey)
+    }
+}
+
 final class UserDefaultsSharedTagAccountLocalCleanupStateStore: @unchecked Sendable, SharedTagAccountLocalCleanupStateStore {
     private let userDefaults: UserDefaults
-    private let markerKey: String
-    private let aiDataCleanupPendingKey: String
-    private let signOutCleanupPendingKey: String
+    private let stateBlobKey: String
+    private let legacyMarkerKey: String
+    private let legacyAuthUserIDKey: String
+    private let legacyAiDataCleanupPendingKey: String
+    private let legacySignOutCleanupPendingKey: String
+    private let legacySyncCancellationCleanupPendingKey: String
+    private let legacySharedDataCleanupPendingKey: String
+    private let legacyPendingInviteCleanupPendingKey: String
+    private let legacyEntitlementCleanupPendingKey: String
+    private let lock = NSLock()
+    private let encoder = JSONEncoder()
+    private let decoder = JSONDecoder()
 
     init(
         userDefaults: UserDefaults = .standard,
         keyPrefix: String = "jp.mimac.urlsaver.shared_tag.account_local_cleanup"
     ) {
         self.userDefaults = userDefaults
-        markerKey = "\(keyPrefix).pending"
-        aiDataCleanupPendingKey = "\(keyPrefix).ai_data_pending"
-        signOutCleanupPendingKey = "\(keyPrefix).sign_out_pending"
+        stateBlobKey = "\(keyPrefix).state.v2"
+        legacyMarkerKey = "\(keyPrefix).pending"
+        legacyAuthUserIDKey = "\(keyPrefix).auth_user_id"
+        legacyAiDataCleanupPendingKey = "\(keyPrefix).ai_data_pending"
+        legacySignOutCleanupPendingKey = "\(keyPrefix).sign_out_pending"
+        legacySyncCancellationCleanupPendingKey = "\(keyPrefix).sync_cancellation_pending"
+        legacySharedDataCleanupPendingKey = "\(keyPrefix).shared_data_pending"
+        legacyPendingInviteCleanupPendingKey = "\(keyPrefix).pending_invite_pending"
+        legacyEntitlementCleanupPendingKey = "\(keyPrefix).entitlement_pending"
     }
 
     func load() -> SharedTagAccountLocalCleanupState? {
-        guard userDefaults.bool(forKey: markerKey) else { return nil }
-        return SharedTagAccountLocalCleanupState(
-            aiDataCleanupPending: userDefaults.object(forKey: aiDataCleanupPendingKey) == nil
-                || userDefaults.bool(forKey: aiDataCleanupPendingKey),
-            signOutCleanupPending: userDefaults.object(forKey: signOutCleanupPendingKey) == nil
-                || userDefaults.bool(forKey: signOutCleanupPendingKey)
+        lock.lock()
+        defer { lock.unlock() }
+        if let blob = userDefaults.data(forKey: stateBlobKey) {
+            guard let decoded = try? decoder.decode(SharedTagAccountLocalCleanupState.self, from: blob) else {
+                persistLocked(Self.corruptFailClosedState)
+                return Self.corruptFailClosedState
+            }
+            let state = normalized(decoded)
+            return state.requiresCleanup ? state : nil
+        }
+        guard hasAnyLegacyState else { return nil }
+
+        // Old versions wrote each stage independently. Missing stage keys may be a torn write,
+        // so migration keeps every account-owned stage pending. The global pending invite has no
+        // authenticated owner and is deliberately preserved instead of being deleted here.
+        let migrated = normalized(
+            SharedTagAccountLocalCleanupState(
+                authUserID: userDefaults.string(forKey: legacyAuthUserIDKey),
+                aiDataCleanupPending: legacyPending(legacyAiDataCleanupPendingKey),
+                signOutCleanupPending: legacyPending(legacySignOutCleanupPendingKey),
+                syncCancellationCleanupPending: legacyPending(legacySyncCancellationCleanupPendingKey),
+                sharedDataCleanupPending: legacyPending(legacySharedDataCleanupPendingKey),
+                pendingInviteCleanupPending: false,
+                entitlementCleanupPending: legacyPending(legacyEntitlementCleanupPendingKey),
+                personalLinkSettingsCleanupPending: true
+            )
         )
+        persistLocked(migrated)
+        return migrated
     }
 
     func save(_ state: SharedTagAccountLocalCleanupState) {
-        userDefaults.set(state.aiDataCleanupPending, forKey: aiDataCleanupPendingKey)
-        userDefaults.set(state.signOutCleanupPending, forKey: signOutCleanupPendingKey)
-        userDefaults.set(true, forKey: markerKey)
+        lock.lock()
+        defer { lock.unlock() }
+        let state = normalized(state)
+        guard state.requiresCleanup else {
+            clearLocked()
+            return
+        }
+        persistLocked(state)
     }
 
     func clear() {
-        userDefaults.removeObject(forKey: markerKey)
-        userDefaults.removeObject(forKey: aiDataCleanupPendingKey)
-        userDefaults.removeObject(forKey: signOutCleanupPendingKey)
+        lock.lock()
+        defer { lock.unlock() }
+        clearLocked()
+    }
+
+    private func normalized(_ state: SharedTagAccountLocalCleanupState) -> SharedTagAccountLocalCleanupState {
+        var state = state
+        state.authUserID = state.authUserID?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nonEmpty
+        state.pendingInviteCleanupPending = false
+        return state
+    }
+
+    private func legacyPending(_ key: String) -> Bool {
+        userDefaults.object(forKey: key) == nil || userDefaults.bool(forKey: key)
+    }
+
+    private var hasAnyLegacyState: Bool {
+        [
+            legacyMarkerKey,
+            legacyAuthUserIDKey,
+            legacyAiDataCleanupPendingKey,
+            legacySignOutCleanupPendingKey,
+            legacySyncCancellationCleanupPendingKey,
+            legacySharedDataCleanupPendingKey,
+            legacyPendingInviteCleanupPendingKey,
+            legacyEntitlementCleanupPendingKey,
+        ].contains { userDefaults.object(forKey: $0) != nil }
+    }
+
+    private func persistLocked(_ state: SharedTagAccountLocalCleanupState) {
+        if let data = try? encoder.encode(state) {
+            userDefaults.set(data, forKey: stateBlobKey)
+        } else {
+            // The state currently contains only Codable scalar fields. Should encoding ever fail,
+            // retain an explicit corrupt marker so a restart fails closed instead of losing cleanup.
+            userDefaults.set(Data([0]), forKey: stateBlobKey)
+        }
+        clearLegacyLocked()
+    }
+
+    private func clearLocked() {
+        userDefaults.removeObject(forKey: stateBlobKey)
+        clearLegacyLocked()
+    }
+
+    private func clearLegacyLocked() {
+        userDefaults.removeObject(forKey: legacyMarkerKey)
+        userDefaults.removeObject(forKey: legacyAuthUserIDKey)
+        userDefaults.removeObject(forKey: legacyAiDataCleanupPendingKey)
+        userDefaults.removeObject(forKey: legacySignOutCleanupPendingKey)
+        userDefaults.removeObject(forKey: legacySyncCancellationCleanupPendingKey)
+        userDefaults.removeObject(forKey: legacySharedDataCleanupPendingKey)
+        userDefaults.removeObject(forKey: legacyPendingInviteCleanupPendingKey)
+        userDefaults.removeObject(forKey: legacyEntitlementCleanupPendingKey)
+    }
+
+    private static let corruptFailClosedState = SharedTagAccountLocalCleanupState(
+        authUserID: nil,
+        aiDataCleanupPending: true,
+        signOutCleanupPending: true,
+        syncCancellationCleanupPending: true,
+        sharedDataCleanupPending: true,
+        pendingInviteCleanupPending: false,
+        entitlementCleanupPending: true,
+        personalLinkSettingsCleanupPending: true
+    )
+}
+
+private actor SharedTagAsyncMutex {
+    private var isLocked = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func acquire() async {
+        if !isLocked {
+            isLocked = true
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func release() {
+        if waiters.isEmpty {
+            isLocked = false
+        } else {
+            waiters.removeFirst().resume()
+        }
+    }
+}
+
+final class SharedTagAccountOperationGate: @unchecked Sendable {
+    private let mutex = SharedTagAsyncMutex()
+    private let cleanupStateStore: (any SharedTagAccountLocalCleanupStateStore)?
+    private let deletedUsersLock = NSLock()
+    private var deletedAuthUserIDs: Set<String> = []
+
+    init(cleanupStateStore: (any SharedTagAccountLocalCleanupStateStore)? = nil) {
+        self.cleanupStateStore = cleanupStateStore
+    }
+
+    func withAccountOperation<T: Sendable>(
+        authUserID: String?,
+        blocked: T,
+        operation: @escaping @Sendable () async -> T
+    ) async -> T {
+        await mutex.acquire()
+        if isBlocked(authUserID: authUserID) {
+            await mutex.release()
+            return blocked
+        }
+        let result = await operation()
+        await mutex.release()
+        return result
+    }
+
+    func withThrowingAccountOperation<T: Sendable>(
+        authUserID: String?,
+        operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        await mutex.acquire()
+        if isBlocked(authUserID: authUserID) {
+            await mutex.release()
+            throw SharedTagCloudError.authRequired
+        }
+        do {
+            let result = try await operation()
+            await mutex.release()
+            return result
+        } catch {
+            await mutex.release()
+            throw error
+        }
+    }
+
+    func withExclusiveOperation<T: Sendable>(
+        operation: @escaping @Sendable () async -> T
+    ) async -> T {
+        await mutex.acquire()
+        let result = await operation()
+        await mutex.release()
+        return result
+    }
+
+    func withThrowingExclusiveOperation<T: Sendable>(
+        operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        await mutex.acquire()
+        do {
+            let result = try await operation()
+            await mutex.release()
+            return result
+        } catch {
+            await mutex.release()
+            throw error
+        }
+    }
+
+    func markRemoteAccountDeleted(authUserID: String) {
+        let normalized = authUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return }
+        deletedUsersLock.lock()
+        deletedAuthUserIDs.insert(normalized)
+        deletedUsersLock.unlock()
+    }
+
+    private func isBlocked(authUserID: String?) -> Bool {
+        guard let normalized = authUserID?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nonEmpty else { return false }
+        deletedUsersLock.lock()
+        let deleted = deletedAuthUserIDs.contains(normalized)
+        deletedUsersLock.unlock()
+        if deleted { return true }
+        guard let state = cleanupStateStore?.load(), state.requiresCleanup else { return false }
+        guard let pendingUserID = state.authUserID?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty else {
+            return true
+        }
+        return pendingUserID == normalized
+    }
+}
+
+struct ChatGptPersonalLinkLocalSettings: Codable, Equatable, Sendable {
+    var enabled = false
+    var contentFetchEnabled = false
+    var lastSyncedAt: Date?
+    var lastErrorMessage: String?
+}
+
+protocol ChatGptPersonalLinkSettingsStore: Sendable {
+    func snapshot(authUserID: String?) -> ChatGptPersonalLinkLocalSettings
+    func setEnabled(authUserID: String, enabled: Bool)
+    func markSyncSuccess(authUserID: String, at date: Date)
+    func markSyncFailure(authUserID: String, message: String)
+    func clear(authUserID: String)
+}
+
+final class UserDefaultsChatGptPersonalLinkSettingsStore: @unchecked Sendable, ChatGptPersonalLinkSettingsStore {
+    private let userDefaults: UserDefaults
+    private let keyPrefix: String
+    private let lock = NSLock()
+    private let encoder = JSONEncoder()
+    private let decoder = JSONDecoder()
+
+    init(
+        userDefaults: UserDefaults = .standard,
+        keyPrefix: String = "chatgpt_personal_link_sync.account"
+    ) {
+        self.userDefaults = userDefaults
+        self.keyPrefix = keyPrefix
+        encoder.dateEncodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .iso8601
+    }
+
+    func snapshot(authUserID: String?) -> ChatGptPersonalLinkLocalSettings {
+        guard let key = scopedKey(authUserID: authUserID) else { return ChatGptPersonalLinkLocalSettings() }
+        lock.lock()
+        defer { lock.unlock() }
+        guard let data = userDefaults.data(forKey: key),
+              let settings = try? decoder.decode(ChatGptPersonalLinkLocalSettings.self, from: data) else {
+            // Legacy ownerless keys are intentionally ignored so another account never inherits them.
+            return ChatGptPersonalLinkLocalSettings()
+        }
+        return settings
+    }
+
+    func setEnabled(authUserID: String, enabled: Bool) {
+        mutate(authUserID: authUserID) { settings in
+            settings.enabled = enabled
+            settings.contentFetchEnabled = false
+            settings.lastErrorMessage = nil
+        }
+    }
+
+    func markSyncSuccess(authUserID: String, at date: Date) {
+        mutate(authUserID: authUserID) { settings in
+            settings.lastSyncedAt = date
+            settings.lastErrorMessage = nil
+        }
+    }
+
+    func markSyncFailure(authUserID: String, message: String) {
+        mutate(authUserID: authUserID) { settings in
+            settings.lastErrorMessage = String(message.prefix(240))
+        }
+    }
+
+    func clear(authUserID: String) {
+        guard let key = scopedKey(authUserID: authUserID) else { return }
+        lock.lock()
+        userDefaults.removeObject(forKey: key)
+        lock.unlock()
+    }
+
+    private func mutate(authUserID: String, mutation: (inout ChatGptPersonalLinkLocalSettings) -> Void) {
+        guard let key = scopedKey(authUserID: authUserID) else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        var settings = userDefaults.data(forKey: key)
+            .flatMap { try? decoder.decode(ChatGptPersonalLinkLocalSettings.self, from: $0) }
+            ?? ChatGptPersonalLinkLocalSettings()
+        mutation(&settings)
+        if let data = try? encoder.encode(settings) {
+            userDefaults.set(data, forKey: key)
+        }
+    }
+
+    private func scopedKey(authUserID: String?) -> String? {
+        guard let normalized = authUserID?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nonEmpty else { return nil }
+        let digest = SHA256.hash(data: Data(normalized.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return "\(keyPrefix).\(digest)"
     }
 }
 
 private actor SharedTagSyncFlight {
     private var task: Task<Bool, Never>?
+    private var generation: UInt64 = 0
 
     func run(operation: @escaping @Sendable () async -> Bool) async -> Bool {
         if let task {
             return await task.value
         }
 
+        generation &+= 1
+        let currentGeneration = generation
         let task = Task { await operation() }
         self.task = task
         let result = await task.value
-        self.task = nil
+        if generation == currentGeneration {
+            self.task = nil
+        }
         return result
+    }
+
+    func cancelAndWait() async {
+        guard let task else { return }
+        let currentGeneration = generation
+        task.cancel()
+        _ = await task.value
+        if generation == currentGeneration {
+            self.task = nil
+        }
     }
 }
 
@@ -2118,7 +2626,14 @@ final class SharedTagCloudService: @unchecked Sendable {
     private let store: SharedTagStore
     private let repository: URLRepository
     private let clearLocalAiData: @Sendable () throws -> Void
+    private let clearSharedTagData: @Sendable (String) throws -> Void
+    private let clearEntitlementCache: @Sendable (String) throws -> Void
+    private let clearPersonalLinkSettings: @Sendable (String) throws -> Void
+    private let cancelInFlightSyncOverride: (@Sendable () async throws -> Void)?
     private let localCleanupStateStore: any SharedTagAccountLocalCleanupStateStore
+    private let deletionRequestStore: any SharedTagAccountDeletionRequestStore
+    private let personalLinkSettingsStore: any ChatGptPersonalLinkSettingsStore
+    private let accountOperationGate: SharedTagAccountOperationGate
     private let syncFlight = SharedTagSyncFlight()
 
     init(
@@ -2127,7 +2642,14 @@ final class SharedTagCloudService: @unchecked Sendable {
         store: SharedTagStore,
         repository: URLRepository,
         clearLocalAiData: (@Sendable () throws -> Void)? = nil,
-        cleanupStateStore: (any SharedTagAccountLocalCleanupStateStore)? = nil
+        clearSharedTagData: (@Sendable (String) throws -> Void)? = nil,
+        clearEntitlementCache: (@Sendable (String) throws -> Void)? = nil,
+        clearPersonalLinkSettings: (@Sendable (String) throws -> Void)? = nil,
+        cancelInFlightSync: (@Sendable () async throws -> Void)? = nil,
+        cleanupStateStore: (any SharedTagAccountLocalCleanupStateStore)? = nil,
+        deletionRequestStore: (any SharedTagAccountDeletionRequestStore)? = nil,
+        personalLinkSettingsStore: (any ChatGptPersonalLinkSettingsStore)? = nil,
+        accountOperationGate: SharedTagAccountOperationGate? = nil
     ) {
         self.config = config
         self.sessionStore = sessionStore
@@ -2136,7 +2658,26 @@ final class SharedTagCloudService: @unchecked Sendable {
         self.clearLocalAiData = clearLocalAiData ?? {
             try repository.clearLocalAiData()
         }
-        self.localCleanupStateStore = cleanupStateStore ?? UserDefaultsSharedTagAccountLocalCleanupStateStore()
+        self.clearSharedTagData = clearSharedTagData ?? { authUserID in
+            try store.clearLocalSharedState(authUserID: authUserID)
+        }
+        let fallbackEntitlementCache = EntitlementGrantCache()
+        self.clearEntitlementCache = clearEntitlementCache ?? { authUserID in
+            fallbackEntitlementCache.clear(authUserID: authUserID)
+        }
+        self.cancelInFlightSyncOverride = cancelInFlightSync
+        let resolvedCleanupStateStore = cleanupStateStore ?? UserDefaultsSharedTagAccountLocalCleanupStateStore()
+        self.localCleanupStateStore = resolvedCleanupStateStore
+        let resolvedDeletionRequestStore = deletionRequestStore ?? UserDefaultsSharedTagAccountDeletionRequestStore()
+        self.deletionRequestStore = resolvedDeletionRequestStore
+        let resolvedPersonalLinkSettingsStore = personalLinkSettingsStore ?? UserDefaultsChatGptPersonalLinkSettingsStore()
+        self.personalLinkSettingsStore = resolvedPersonalLinkSettingsStore
+        self.clearPersonalLinkSettings = clearPersonalLinkSettings ?? { authUserID in
+            resolvedPersonalLinkSettingsStore.clear(authUserID: authUserID)
+        }
+        self.accountOperationGate = accountOperationGate ?? SharedTagAccountOperationGate(
+            cleanupStateStore: resolvedCleanupStateStore
+        )
         self.authRemoteDataSource = SharedTagAuthRemoteDataSource(config: config)
         self.syncRemoteDataSource = SharedTagSyncRemoteDataSource(
             config: config,
@@ -2229,6 +2770,13 @@ final class SharedTagCloudService: @unchecked Sendable {
     }
 
     func handleOAuthCallback(url: URL) async -> SharedTagAuthResult {
+        await accountOperationGate.withExclusiveOperation { [self] in
+            await handleOAuthCallbackWithinAccountOperation(url: url)
+        }
+    }
+
+    private func handleOAuthCallbackWithinAccountOperation(url: URL) async -> SharedTagAuthResult {
+        guard localAccountCleanupState == nil else { return .failure(Self.cleanupInProgressMessage) }
         guard config.isConfigured else {
             return .failure("共有タグクラウドの設定がありません")
         }
@@ -2248,6 +2796,16 @@ final class SharedTagCloudService: @unchecked Sendable {
     }
 
     func signInWithAppleIDToken(idToken: String, nonce: String) async -> SharedTagAuthResult {
+        await accountOperationGate.withExclusiveOperation { [self] in
+            await signInWithAppleIDTokenWithinAccountOperation(idToken: idToken, nonce: nonce)
+        }
+    }
+
+    private func signInWithAppleIDTokenWithinAccountOperation(
+        idToken: String,
+        nonce: String
+    ) async -> SharedTagAuthResult {
+        guard localAccountCleanupState == nil else { return .failure(Self.cleanupInProgressMessage) }
         guard config.isConfigured else {
             return .failure("共有タグクラウドの設定がありません")
         }
@@ -2267,6 +2825,13 @@ final class SharedTagCloudService: @unchecked Sendable {
     }
 
     func signIn(email: String, password: String) async -> SharedTagAuthResult {
+        await accountOperationGate.withExclusiveOperation { [self] in
+            await signInWithinAccountOperation(email: email, password: password)
+        }
+    }
+
+    private func signInWithinAccountOperation(email: String, password: String) async -> SharedTagAuthResult {
+        guard localAccountCleanupState == nil else { return .failure(Self.cleanupInProgressMessage) }
         guard config.isConfigured else {
             return .failure("共有タグクラウドの設定がありません")
         }
@@ -2286,6 +2851,13 @@ final class SharedTagCloudService: @unchecked Sendable {
     }
 
     func signUp(email: String, password: String) async -> SharedTagAuthResult {
+        await accountOperationGate.withExclusiveOperation { [self] in
+            await signUpWithinAccountOperation(email: email, password: password)
+        }
+    }
+
+    private func signUpWithinAccountOperation(email: String, password: String) async -> SharedTagAuthResult {
+        guard localAccountCleanupState == nil else { return .failure(Self.cleanupInProgressMessage) }
         guard config.isConfigured else {
             return .failure("共有タグクラウドの設定がありません")
         }
@@ -2332,43 +2904,62 @@ final class SharedTagCloudService: @unchecked Sendable {
         }
     }
 
-    func signOut() throws {
-        var firstError: Error?
-        do {
-            try sessionStore.clear()
-        } catch {
-            firstError = error
+    func signOut() async throws {
+        try await accountOperationGate.withThrowingExclusiveOperation { [self] in
+            try signOutWithinAccountOperation()
         }
-        do {
-            try store.clearLocalSharedState()
-        } catch {
-            if firstError == nil {
-                firstError = error
-            }
-        }
-        if let firstError {
-            throw firstError
-        }
+    }
+
+    private func signOutWithinAccountOperation() throws {
+        try sessionStore.clear()
+    }
+
+    func chatGptPersonalLinkLocalSettings() -> ChatGptPersonalLinkLocalSettings {
+        personalLinkSettingsStore.snapshot(authUserID: (try? sessionStore.load())?.authUserID)
     }
 
     func setChatGptPersonalLinkSync(enabled: Bool) async throws -> ChatGptPersonalLinkSyncResult {
         guard config.isPersonalLinkSyncConfigured else { throw SharedTagCloudError.featureDisabled }
         guard let session = try? sessionStore.load() else { throw SharedTagCloudError.authRequired }
-        try await syncRemoteDataSource.setChatGptPersonalLinkSync(
-            session: session,
-            enabled: enabled,
-            contentFetchEnabled: false
-        )
-        if enabled {
-            return try await syncChatGptPersonalLinks()
+        return try await accountOperationGate.withThrowingAccountOperation(
+            authUserID: session.authUserID
+        ) { [self] in
+            try await setChatGptPersonalLinkSyncWithinAccountOperation(enabled: enabled, session: session)
         }
-        let eligibility = try chatGptPersonalLinkEligibility()
-        return ChatGptPersonalLinkSyncResult(
-            attemptedCount: 0,
-            appliedCount: 0,
-            excludedCount: eligibility.excludedCount,
-            exclusionReasons: eligibility.exclusionReasons
-        )
+    }
+
+    private func setChatGptPersonalLinkSyncWithinAccountOperation(
+        enabled: Bool,
+        session: SharedTagAuthSession
+    ) async throws -> ChatGptPersonalLinkSyncResult {
+        do {
+            try await syncRemoteDataSource.setChatGptPersonalLinkSync(
+                session: session,
+                enabled: enabled,
+                contentFetchEnabled: false
+            )
+            guard isCurrentSession(session) else { throw SharedTagCloudError.authRequired }
+            personalLinkSettingsStore.setEnabled(authUserID: session.authUserID, enabled: enabled)
+            if enabled {
+                return try await syncChatGptPersonalLinksWithinAccountOperation(session: session)
+            }
+            let eligibility = try chatGptPersonalLinkEligibility()
+            personalLinkSettingsStore.markSyncSuccess(authUserID: session.authUserID, at: Date())
+            return ChatGptPersonalLinkSyncResult(
+                attemptedCount: 0,
+                appliedCount: 0,
+                excludedCount: eligibility.excludedCount,
+                exclusionReasons: eligibility.exclusionReasons
+            )
+        } catch {
+            if isCurrentSession(session), !(error is CancellationError) {
+                personalLinkSettingsStore.markSyncFailure(
+                    authUserID: session.authUserID,
+                    message: Self.safePersonalLinkSyncFailureMessage
+                )
+            }
+            throw error
+        }
     }
 
     func chatGptPersonalLinkEligibility() throws -> ChatGptPersonalLinkEligibility {
@@ -2397,6 +2988,27 @@ final class SharedTagCloudService: @unchecked Sendable {
     func syncChatGptPersonalLinks() async throws -> ChatGptPersonalLinkSyncResult {
         guard config.isPersonalLinkSyncConfigured else { throw SharedTagCloudError.featureDisabled }
         guard let session = try? sessionStore.load() else { throw SharedTagCloudError.authRequired }
+        return try await accountOperationGate.withThrowingAccountOperation(
+            authUserID: session.authUserID
+        ) { [self] in
+            do {
+                return try await syncChatGptPersonalLinksWithinAccountOperation(session: session)
+            } catch {
+                if isCurrentSession(session), !(error is CancellationError) {
+                    personalLinkSettingsStore.markSyncFailure(
+                        authUserID: session.authUserID,
+                        message: Self.safePersonalLinkSyncFailureMessage
+                    )
+                }
+                throw error
+            }
+        }
+    }
+
+    private func syncChatGptPersonalLinksWithinAccountOperation(
+        session: SharedTagAuthSession
+    ) async throws -> ChatGptPersonalLinkSyncResult {
+        guard isCurrentSession(session) else { throw SharedTagCloudError.authRequired }
         let records = try repository.loadChatGptPersonalLinkSnapshot()
         var eligibleRecords: [URLRecord] = []
         var exclusionReasons: [String: Int] = [:]
@@ -2417,6 +3029,7 @@ final class SharedTagCloudService: @unchecked Sendable {
             )
         }
         guard !operations.isEmpty else {
+            personalLinkSettingsStore.markSyncSuccess(authUserID: session.authUserID, at: Date())
             return ChatGptPersonalLinkSyncResult(
                 attemptedCount: 0,
                 appliedCount: 0,
@@ -2428,9 +3041,11 @@ final class SharedTagCloudService: @unchecked Sendable {
             session: session,
             operations: operations
         )
+        guard isCurrentSession(session) else { throw SharedTagCloudError.authRequired }
         let appliedCount = response.results.isEmpty
             ? min(response.appliedCount, operations.count)
             : response.results.filter { $0.status == "ok" || $0.status == "skipped" }.count
+        personalLinkSettingsStore.markSyncSuccess(authUserID: session.authUserID, at: Date())
         return ChatGptPersonalLinkSyncResult(
             attemptedCount: operations.count,
             appliedCount: appliedCount,
@@ -2462,6 +3077,16 @@ final class SharedTagCloudService: @unchecked Sendable {
     }
 
     func syncCurrentSession() async -> Bool {
+        let authUserID = (try? sessionStore.load())?.authUserID
+        return await accountOperationGate.withAccountOperation(
+            authUserID: authUserID,
+            blocked: false
+        ) { [self] in
+            await syncCurrentSessionWithinAccountOperation()
+        }
+    }
+
+    private func syncCurrentSessionWithinAccountOperation() async -> Bool {
         await syncFlight.run { [self] in
             await self.performSyncCurrentSession()
         }
@@ -2485,6 +3110,16 @@ final class SharedTagCloudService: @unchecked Sendable {
     }
 
     func createTag(name: String) async -> SharedTagMutationResult {
+        let authUserID = (try? sessionStore.load())?.authUserID
+        return await accountOperationGate.withAccountOperation(
+            authUserID: authUserID,
+            blocked: .authRequired
+        ) { [self] in
+            await createTagWithinAccountOperation(name: name)
+        }
+    }
+
+    private func createTagWithinAccountOperation(name: String) async -> SharedTagMutationResult {
         let normalizedName = Self.normalizeTagName(name)
         guard !normalizedName.isEmpty else {
             return .failure("共有タグ名を入力してください")
@@ -2515,6 +3150,16 @@ final class SharedTagCloudService: @unchecked Sendable {
     }
 
     func createGroup(name: String) async -> SharedTagMutationResult {
+        let authUserID = (try? sessionStore.load())?.authUserID
+        return await accountOperationGate.withAccountOperation(
+            authUserID: authUserID,
+            blocked: .authRequired
+        ) { [self] in
+            await createGroupWithinAccountOperation(name: name)
+        }
+    }
+
+    private func createGroupWithinAccountOperation(name: String) async -> SharedTagMutationResult {
         let normalizedName = Self.normalizeTagName(name)
         guard !normalizedName.isEmpty else {
             return .failure("グループ名を入力してください")
@@ -2537,6 +3182,19 @@ final class SharedTagCloudService: @unchecked Sendable {
     }
 
     func addTagToGroup(remoteGroupID: String, remoteTagID: String) async -> SharedTagMutationResult {
+        let authUserID = (try? sessionStore.load())?.authUserID
+        return await accountOperationGate.withAccountOperation(
+            authUserID: authUserID,
+            blocked: .authRequired
+        ) { [self] in
+            await addTagToGroupWithinAccountOperation(remoteGroupID: remoteGroupID, remoteTagID: remoteTagID)
+        }
+    }
+
+    private func addTagToGroupWithinAccountOperation(
+        remoteGroupID: String,
+        remoteTagID: String
+    ) async -> SharedTagMutationResult {
         guard let session = try? sessionStore.load() else {
             return .authRequired
         }
@@ -2556,6 +3214,19 @@ final class SharedTagCloudService: @unchecked Sendable {
     }
 
     func removeTagFromGroup(remoteGroupID: String, remoteTagID: String) async -> SharedTagMutationResult {
+        let authUserID = (try? sessionStore.load())?.authUserID
+        return await accountOperationGate.withAccountOperation(
+            authUserID: authUserID,
+            blocked: .authRequired
+        ) { [self] in
+            await removeTagFromGroupWithinAccountOperation(remoteGroupID: remoteGroupID, remoteTagID: remoteTagID)
+        }
+    }
+
+    private func removeTagFromGroupWithinAccountOperation(
+        remoteGroupID: String,
+        remoteTagID: String
+    ) async -> SharedTagMutationResult {
         guard let session = try? sessionStore.load() else {
             return .authRequired
         }
@@ -2575,6 +3246,19 @@ final class SharedTagCloudService: @unchecked Sendable {
     }
 
     func renameGroup(remoteGroupID: String, name: String) async -> SharedTagMutationResult {
+        let authUserID = (try? sessionStore.load())?.authUserID
+        return await accountOperationGate.withAccountOperation(
+            authUserID: authUserID,
+            blocked: .authRequired
+        ) { [self] in
+            await renameGroupWithinAccountOperation(remoteGroupID: remoteGroupID, name: name)
+        }
+    }
+
+    private func renameGroupWithinAccountOperation(
+        remoteGroupID: String,
+        name: String
+    ) async -> SharedTagMutationResult {
         let normalizedName = Self.normalizeTagName(name)
         guard !normalizedName.isEmpty else {
             return .failure("グループ名を入力してください")
@@ -2594,6 +3278,16 @@ final class SharedTagCloudService: @unchecked Sendable {
     }
 
     func deleteGroup(remoteGroupID: String) async -> SharedTagMutationResult {
+        let authUserID = (try? sessionStore.load())?.authUserID
+        return await accountOperationGate.withAccountOperation(
+            authUserID: authUserID,
+            blocked: .authRequired
+        ) { [self] in
+            await deleteGroupWithinAccountOperation(remoteGroupID: remoteGroupID)
+        }
+    }
+
+    private func deleteGroupWithinAccountOperation(remoteGroupID: String) async -> SharedTagMutationResult {
         guard let session = try? sessionStore.load() else {
             return .authRequired
         }
@@ -2609,6 +3303,24 @@ final class SharedTagCloudService: @unchecked Sendable {
     }
 
     func changeGroupMemberRole(remoteGroupID: String, userID: String, role: SharedTagMemberRole) async -> SharedTagMutationResult {
+        let authUserID = (try? sessionStore.load())?.authUserID
+        return await accountOperationGate.withAccountOperation(
+            authUserID: authUserID,
+            blocked: .authRequired
+        ) { [self] in
+            await changeGroupMemberRoleWithinAccountOperation(
+                remoteGroupID: remoteGroupID,
+                userID: userID,
+                role: role
+            )
+        }
+    }
+
+    private func changeGroupMemberRoleWithinAccountOperation(
+        remoteGroupID: String,
+        userID: String,
+        role: SharedTagMemberRole
+    ) async -> SharedTagMutationResult {
         guard let session = try? sessionStore.load() else {
             return .authRequired
         }
@@ -2629,6 +3341,22 @@ final class SharedTagCloudService: @unchecked Sendable {
     }
 
     func transferGroupOwnership(remoteGroupID: String, newOwnerUserID: String) async -> SharedTagMutationResult {
+        let authUserID = (try? sessionStore.load())?.authUserID
+        return await accountOperationGate.withAccountOperation(
+            authUserID: authUserID,
+            blocked: .authRequired
+        ) { [self] in
+            await transferGroupOwnershipWithinAccountOperation(
+                remoteGroupID: remoteGroupID,
+                newOwnerUserID: newOwnerUserID
+            )
+        }
+    }
+
+    private func transferGroupOwnershipWithinAccountOperation(
+        remoteGroupID: String,
+        newOwnerUserID: String
+    ) async -> SharedTagMutationResult {
         guard let session = try? sessionStore.load() else {
             return .authRequired
         }
@@ -2648,6 +3376,19 @@ final class SharedTagCloudService: @unchecked Sendable {
     }
 
     func removeGroupMember(remoteGroupID: String, userID: String) async -> SharedTagMutationResult {
+        let authUserID = (try? sessionStore.load())?.authUserID
+        return await accountOperationGate.withAccountOperation(
+            authUserID: authUserID,
+            blocked: .authRequired
+        ) { [self] in
+            await removeGroupMemberWithinAccountOperation(remoteGroupID: remoteGroupID, userID: userID)
+        }
+    }
+
+    private func removeGroupMemberWithinAccountOperation(
+        remoteGroupID: String,
+        userID: String
+    ) async -> SharedTagMutationResult {
         guard let session = try? sessionStore.load() else {
             return .authRequired
         }
@@ -2663,6 +3404,16 @@ final class SharedTagCloudService: @unchecked Sendable {
     }
 
     func upsertSharedProfile(displayName: String) async {
+        let authUserID = (try? sessionStore.load())?.authUserID
+        await accountOperationGate.withAccountOperation(
+            authUserID: authUserID,
+            blocked: ()
+        ) { [self] in
+            await upsertSharedProfileWithinAccountOperation(displayName: displayName)
+        }
+    }
+
+    private func upsertSharedProfileWithinAccountOperation(displayName: String) async {
         guard let session = try? sessionStore.load() else { return }
         try? await syncRemoteDataSource.upsertSharedProfile(
             session: session,
@@ -2671,6 +3422,19 @@ final class SharedTagCloudService: @unchecked Sendable {
     }
 
     func renameTag(remoteTagID: String, name: String) async -> SharedTagMutationResult {
+        let authUserID = (try? sessionStore.load())?.authUserID
+        return await accountOperationGate.withAccountOperation(
+            authUserID: authUserID,
+            blocked: .authRequired
+        ) { [self] in
+            await renameTagWithinAccountOperation(remoteTagID: remoteTagID, name: name)
+        }
+    }
+
+    private func renameTagWithinAccountOperation(
+        remoteTagID: String,
+        name: String
+    ) async -> SharedTagMutationResult {
         let normalizedName = Self.normalizeTagName(name)
         guard !normalizedName.isEmpty else {
             return .failure("共有タグ名を入力してください")
@@ -2707,6 +3471,16 @@ final class SharedTagCloudService: @unchecked Sendable {
     }
 
     func deleteTag(remoteTagID: String) async -> SharedTagMutationResult {
+        let authUserID = (try? sessionStore.load())?.authUserID
+        return await accountOperationGate.withAccountOperation(
+            authUserID: authUserID,
+            blocked: .authRequired
+        ) { [self] in
+            await deleteTagWithinAccountOperation(remoteTagID: remoteTagID)
+        }
+    }
+
+    private func deleteTagWithinAccountOperation(remoteTagID: String) async -> SharedTagMutationResult {
         guard let session = try? sessionStore.load() else {
             return .authRequired
         }
@@ -2735,6 +3509,16 @@ final class SharedTagCloudService: @unchecked Sendable {
     }
 
     func leaveTag(remoteTagID: String) async -> SharedTagMutationResult {
+        let authUserID = (try? sessionStore.load())?.authUserID
+        return await accountOperationGate.withAccountOperation(
+            authUserID: authUserID,
+            blocked: .authRequired
+        ) { [self] in
+            await leaveTagWithinAccountOperation(remoteTagID: remoteTagID)
+        }
+    }
+
+    private func leaveTagWithinAccountOperation(remoteTagID: String) async -> SharedTagMutationResult {
         guard let session = try? sessionStore.load() else {
             return .authRequired
         }
@@ -2767,6 +3551,22 @@ final class SharedTagCloudService: @unchecked Sendable {
     }
 
     func transferOwnership(remoteTagID: String, newOwnerUserID: String) async -> SharedTagMutationResult {
+        let authUserID = (try? sessionStore.load())?.authUserID
+        return await accountOperationGate.withAccountOperation(
+            authUserID: authUserID,
+            blocked: .authRequired
+        ) { [self] in
+            await transferOwnershipWithinAccountOperation(
+                remoteTagID: remoteTagID,
+                newOwnerUserID: newOwnerUserID
+            )
+        }
+    }
+
+    private func transferOwnershipWithinAccountOperation(
+        remoteTagID: String,
+        newOwnerUserID: String
+    ) async -> SharedTagMutationResult {
         guard let session = try? sessionStore.load() else {
             return .authRequired
         }
@@ -2802,6 +3602,19 @@ final class SharedTagCloudService: @unchecked Sendable {
     }
 
     func assignEntry(remoteTagID: String, entryID: Int64) async -> SharedTagMutationResult {
+        let authUserID = (try? sessionStore.load())?.authUserID
+        return await accountOperationGate.withAccountOperation(
+            authUserID: authUserID,
+            blocked: .authRequired
+        ) { [self] in
+            await assignEntryWithinAccountOperation(remoteTagID: remoteTagID, entryID: entryID)
+        }
+    }
+
+    private func assignEntryWithinAccountOperation(
+        remoteTagID: String,
+        entryID: Int64
+    ) async -> SharedTagMutationResult {
         guard let session = try? sessionStore.load() else {
             return .authRequired
         }
@@ -2837,6 +3650,19 @@ final class SharedTagCloudService: @unchecked Sendable {
     }
 
     func removeEntry(remoteTagID: String, entryID: Int64) async -> SharedTagMutationResult {
+        let authUserID = (try? sessionStore.load())?.authUserID
+        return await accountOperationGate.withAccountOperation(
+            authUserID: authUserID,
+            blocked: .authRequired
+        ) { [self] in
+            await removeEntryWithinAccountOperation(remoteTagID: remoteTagID, entryID: entryID)
+        }
+    }
+
+    private func removeEntryWithinAccountOperation(
+        remoteTagID: String,
+        entryID: Int64
+    ) async -> SharedTagMutationResult {
         guard let session = try? sessionStore.load() else {
             return .authRequired
         }
@@ -2869,6 +3695,16 @@ final class SharedTagCloudService: @unchecked Sendable {
     }
 
     func createInvite(remoteTagID: String) async -> SharedTagInviteCreationResult {
+        let authUserID = (try? sessionStore.load())?.authUserID
+        return await accountOperationGate.withAccountOperation(
+            authUserID: authUserID,
+            blocked: .authRequired
+        ) { [self] in
+            await createInviteWithinAccountOperation(remoteTagID: remoteTagID)
+        }
+    }
+
+    private func createInviteWithinAccountOperation(remoteTagID: String) async -> SharedTagInviteCreationResult {
         guard config.isConfigured else {
             return .failure("共有タグクラウドの設定がありません")
         }
@@ -2902,6 +3738,19 @@ final class SharedTagCloudService: @unchecked Sendable {
     }
 
     func createGroupInvite(remoteGroupID: String, role: SharedTagMemberRole) async -> SharedTagInviteCreationResult {
+        let authUserID = (try? sessionStore.load())?.authUserID
+        return await accountOperationGate.withAccountOperation(
+            authUserID: authUserID,
+            blocked: .authRequired
+        ) { [self] in
+            await createGroupInviteWithinAccountOperation(remoteGroupID: remoteGroupID, role: role)
+        }
+    }
+
+    private func createGroupInviteWithinAccountOperation(
+        remoteGroupID: String,
+        role: SharedTagMemberRole
+    ) async -> SharedTagInviteCreationResult {
         guard config.isConfigured else {
             return .failure("共有タグクラウドの設定がありません")
         }
@@ -2970,6 +3819,16 @@ final class SharedTagCloudService: @unchecked Sendable {
     }
 
     func acceptInvite(inviteToken: String) async -> SharedTagInviteAcceptanceResult {
+        let authUserID = (try? sessionStore.load())?.authUserID
+        return await accountOperationGate.withAccountOperation(
+            authUserID: authUserID,
+            blocked: .authRequired
+        ) { [self] in
+            await acceptInviteWithinAccountOperation(inviteToken: inviteToken)
+        }
+    }
+
+    private func acceptInviteWithinAccountOperation(inviteToken: String) async -> SharedTagInviteAcceptanceResult {
         guard config.isConfigured else {
             return .failure("共有タグクラウドの設定がありません")
         }
@@ -2978,7 +3837,7 @@ final class SharedTagCloudService: @unchecked Sendable {
         }
         do {
             let response = try await syncRemoteDataSource.acceptInvite(session: session, inviteToken: inviteToken)
-            _ = await syncCurrentSession()
+            _ = await syncCurrentSessionWithinAccountOperation()
             let inviteType = SharedInviteType(rawValue: response.inviteType) ?? .tag
             return .accepted(
                 displayName: response.groupName ?? response.tagName ?? "共有招待",
@@ -3004,18 +3863,45 @@ final class SharedTagCloudService: @unchecked Sendable {
     }
 
     func deleteAccount() async -> SharedTagAccountDeletionResult {
+        await accountOperationGate.withExclusiveOperation { [self] in
+            await deleteAccountWithinAccountOperation()
+        }
+    }
+
+    private func deleteAccountWithinAccountOperation() async -> SharedTagAccountDeletionResult {
         if let pendingState = localAccountCleanupState {
-            return .localCleanupRequired(pendingState)
+            _ = pendingState
+            let retryResult = await performLocalAccountCleanup()
+            if case .success = retryResult {
+                try? deletionRequestStore.clear()
+            }
+            return retryResult
         }
         guard config.isConfigured else {
             return .failure("共有タグクラウドの設定がありません")
+        }
+        if let pendingRequest = deletionRequestStore.load() {
+            return await convergePendingAccountDeletion(pendingRequest)
         }
         guard let session = try? sessionStore.load() else {
             return .authRequired
         }
         do {
-            try await syncRemoteDataSource.deleteAccount(session: session)
+            // Request-aware idempotent protocol: persist the durable record
+            // BEFORE the remote call so a process loss after the server commits
+            // converges via the recorded request instead of repeating or stalling.
+            let grant = try await syncRemoteDataSource.createAccountDeletionRequest(session: session)
+            try deletionRequestStore.save(
+                SharedTagAccountDeletionRequestRecord(
+                    authUserID: session.authUserID,
+                    requestID: grant.requestID,
+                    token: grant.token
+                )
+            )
+            try await syncRemoteDataSource.deleteAccount(session: session, requestID: grant.requestID)
         } catch let error as SharedTagCloudError {
+            // The record is intentionally kept: a lost response after a server
+            // commit is resolved by convergence on the next attempt.
             switch error {
             case .authRequired:
                 return .authRequired
@@ -3035,43 +3921,159 @@ final class SharedTagCloudService: @unchecked Sendable {
             }
             return .failure(error.localizedDescription)
         }
+        return await finishRemoteAccountDeletion(authUserID: session.authUserID)
+    }
+
+    private func convergePendingAccountDeletion(
+        _ record: SharedTagAccountDeletionRequestRecord
+    ) async -> SharedTagAccountDeletionResult {
+        let currentSession = try? sessionStore.load()
+        if let currentSession, currentSession.authUserID == record.authUserID {
+            do {
+                // Replaying the same request id is safe: a committed deletion
+                // keeps returning the identical successful result.
+                try await syncRemoteDataSource.deleteAccount(
+                    session: currentSession,
+                    requestID: record.requestID
+                )
+                return await finishRemoteAccountDeletion(authUserID: record.authUserID)
+            } catch let error as SharedTagCloudError {
+                switch error {
+                case .ownerTransferRequired:
+                    return .ownerTransferRequired
+                case .httpStatus(_, let message) where message.contains("owner_transfer_required"):
+                    return .ownerTransferRequired
+                default:
+                    break
+                }
+            } catch {
+                // Fall through to the status query for the definitive outcome;
+                // the server may have committed before this failure.
+            }
+        }
+        do {
+            let status = try await syncRemoteDataSource.accountDeletionStatus(
+                requestID: record.requestID,
+                token: record.token
+            )
+            if status.isCompleted {
+                return await finishRemoteAccountDeletion(authUserID: record.authUserID)
+            }
+            return .failure("アカウント削除が完了していません。サインイン後にもう一度お試しください")
+        } catch {
+            return .failure("アカウント削除の状態を確認できませんでした")
+        }
+    }
+
+    private func finishRemoteAccountDeletion(
+        authUserID: String
+    ) async -> SharedTagAccountDeletionResult {
+        // This closes the in-process interval before the durable marker is written. A process
+        // crash in this server-success-to-marker interval converges through the durable
+        // deletion request on the next launch; an auth failure must not be reclassified as
+        // successful deletion.
+        accountOperationGate.markRemoteAccountDeleted(authUserID: authUserID)
         localCleanupStateStore.save(
             SharedTagAccountLocalCleanupState(
+                authUserID: authUserID,
                 aiDataCleanupPending: true,
-                signOutCleanupPending: true
+                signOutCleanupPending: true,
+                syncCancellationCleanupPending: true,
+                sharedDataCleanupPending: true,
+                pendingInviteCleanupPending: false,
+                entitlementCleanupPending: true,
+                personalLinkSettingsCleanupPending: true
             )
         )
-        return performLocalAccountCleanup()
+        let result = await performLocalAccountCleanup()
+        if case .success = result {
+            try? deletionRequestStore.clear()
+        }
+        return result
     }
 
-    func retryLocalAccountCleanup() -> SharedTagAccountDeletionResult {
-        performLocalAccountCleanup()
+    func retryLocalAccountCleanup() async -> SharedTagAccountDeletionResult {
+        await accountOperationGate.withExclusiveOperation { [self] in
+            if let authUserID = localCleanupStateStore.load()?.authUserID {
+                accountOperationGate.markRemoteAccountDeleted(authUserID: authUserID)
+            }
+            let result = await performLocalAccountCleanup()
+            if case .success = result {
+                try? deletionRequestStore.clear()
+            }
+            return result
+        }
     }
 
-    private func performLocalAccountCleanup() -> SharedTagAccountDeletionResult {
+    private func performLocalAccountCleanup() async -> SharedTagAccountDeletionResult {
         guard var state = localCleanupStateStore.load() else { return .success }
+        if state.signOutCleanupPending {
+            do {
+                try signOutWithinAccountOperation()
+                state.signOutCleanupPending = false
+                localCleanupStateStore.save(state)
+            } catch {
+                // session marker remains pending; account-linked data is not removed yet.
+            }
+        }
         if state.aiDataCleanupPending {
             do {
                 try clearLocalAiData()
-                state = SharedTagAccountLocalCleanupState(
-                    aiDataCleanupPending: false,
-                    signOutCleanupPending: state.signOutCleanupPending
-                )
+                state.aiDataCleanupPending = false
                 localCleanupStateStore.save(state)
             } catch {
-                // 保留AIデータ清掃待ちのmarker。signOutは独立して続行する。
+                // AI cleanup is independent from account-linked shared state cleanup.
             }
         }
-        if state.signOutCleanupPending {
+        if !state.signOutCleanupPending && state.syncCancellationCleanupPending {
             do {
-                try signOut()
-                state = SharedTagAccountLocalCleanupState(
-                    aiDataCleanupPending: state.aiDataCleanupPending,
-                    signOutCleanupPending: false
-                )
+                if let cancelInFlightSyncOverride {
+                    try await cancelInFlightSyncOverride()
+                } else {
+                    await syncFlight.cancelAndWait()
+                }
+                state.syncCancellationCleanupPending = false
                 localCleanupStateStore.save(state)
             } catch {
-                // 保留中の項目だけをmarkerに残す。
+                // In-flight sync must be quiescent before shared cache removal.
+            }
+        }
+        let normalizedAuthUserID = state.authUserID?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let canClearAccountData = state.signOutCleanupPending == false
+            && state.syncCancellationCleanupPending == false
+            && normalizedAuthUserID?.isEmpty == false
+        if canClearAccountData, state.sharedDataCleanupPending, let normalizedAuthUserID {
+            do {
+                try clearSharedTagData(normalizedAuthUserID)
+                state.sharedDataCleanupPending = false
+                localCleanupStateStore.save(state)
+            } catch {
+                // The exact account-scoped shared cache stage remains retryable.
+            }
+        }
+        if state.pendingInviteCleanupPending {
+            // Legacy markers cannot prove ownership of the global pending invite. Resolve the
+            // obsolete stage without deleting an unauthenticated or another account's intent.
+            state.pendingInviteCleanupPending = false
+            localCleanupStateStore.save(state)
+        }
+        if canClearAccountData, state.entitlementCleanupPending, let normalizedAuthUserID {
+            do {
+                try clearEntitlementCache(normalizedAuthUserID)
+                state.entitlementCleanupPending = false
+                localCleanupStateStore.save(state)
+            } catch {
+                // The exact account-scoped entitlement cache remains retryable.
+            }
+        }
+        if canClearAccountData, state.personalLinkSettingsCleanupPending, let normalizedAuthUserID {
+            do {
+                try clearPersonalLinkSettings(normalizedAuthUserID)
+                state.personalLinkSettingsCleanupPending = false
+                localCleanupStateStore.save(state)
+            } catch {
+                // The exact account-scoped personal-link setting remains retryable.
             }
         }
         guard state.requiresCleanup else {
@@ -3092,6 +4094,10 @@ final class SharedTagCloudService: @unchecked Sendable {
         }.value
     }
 
+    private func isCurrentSession(_ session: SharedTagAuthSession) -> Bool {
+        (try? sessionStore.load())?.authUserID == session.authUserID
+    }
+
     private static func normalizeTagName(_ value: String) -> String {
         value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -3099,9 +4105,30 @@ final class SharedTagCloudService: @unchecked Sendable {
     private static func currentSubmittedAt() -> Int64 {
         Int64(Date().timeIntervalSince1970 * 1_000)
     }
+
+    private static let safePersonalLinkSyncFailureMessage = "ChatGPT連携の同期に失敗しました。再試行してください。"
+    private static let cleanupInProgressMessage = "アカウント削除後の端末内データ消去を完了してから再試行してください"
 }
 
 private struct EmptyPayload: Encodable {}
+
+private struct AccountDeletionRequestBody: Encodable {
+    let pRequestID: String
+
+    enum CodingKeys: String, CodingKey {
+        case pRequestID = "p_request_id"
+    }
+}
+
+private struct AccountDeletionStatusBody: Encodable {
+    let pRequestID: String
+    let pToken: String
+
+    enum CodingKeys: String, CodingKey {
+        case pRequestID = "p_request_id"
+        case pToken = "p_token"
+    }
+}
 
 private struct ApplySharedTagOpsPayload: Encodable {
     let payload: [SharedTagSyncOperation]
@@ -3490,11 +4517,25 @@ private enum SharedTagSyncOperationType: String, Encodable {
     case removeMember = "remove_member"
 }
 
-private struct ApplySharedTagOpsResponse: Decodable {
+struct ApplySharedTagOpsResponse: Decodable {
     let results: [SharedTagOpApplyResult]
+
+    func validate(expectedOperationIDs: [String]) throws {
+        let expectedIDs = Set(expectedOperationIDs)
+        let responseIDs = results.map(\.opID)
+        guard expectedOperationIDs.count == expectedIDs.count,
+              responseIDs.count == Set(responseIDs).count,
+              responseIDs.count == expectedOperationIDs.count,
+              Set(responseIDs) == expectedIDs else {
+            throw SharedTagCloudError.message("共有タグの変更結果を確認できませんでした。もう一度お試しください。")
+        }
+        guard results.allSatisfy({ $0.status == "applied" || $0.status == "no_op" }) else {
+            throw SharedTagCloudError.message("共有タグの変更はサーバーに受け付けられませんでした。権限と最新状態を確認してください。")
+        }
+    }
 }
 
-private struct SharedTagOpApplyResult: Decodable {
+struct SharedTagOpApplyResult: Decodable {
     let opID: String
     let status: String
     let tagID: String?
@@ -3776,6 +4817,10 @@ func parseSupabaseISO8601Date(_ value: String) -> Date? {
 }
 
 private extension String {
+    var nonEmpty: String? {
+        isEmpty ? nil : self
+    }
+
     func trimmingTrailingSlashes() -> String {
         var value = self
         while value.hasSuffix("/") {

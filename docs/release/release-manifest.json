@@ -18,7 +18,7 @@
   },
   "supabase": {
     "migrationDirectory": "supabase/migrations",
-    "migrationHead": "20260804090000_default_all_users_to_pro.sql"
+    "migrationHead": "20260822090000_account_deletion_idempotency.sql"
   },
   "currentDocumentation": [
     "docs/release/repo-go-evidence.md",

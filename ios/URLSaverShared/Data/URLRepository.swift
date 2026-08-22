@@ -7,16 +7,28 @@ struct ChatGptExportLocalSnapshot: Sendable {
     let localTagAssignments: [Int64: Set<Int64>]
 }
 
+struct StandardExportLocalSnapshot: Sendable {
+    let entries: [URLRecord]
+    let localTags: [LocalTagSummary]
+    let localTagAssignments: [Int64: Set<Int64>]
+}
+
 final class URLRepository: @unchecked Sendable {
     let database: SQLiteDatabase
+    private let personalURLLimit: Int
 
-    init(databaseURL: URL = SharedContainer.databaseURL()) throws {
+    init(
+        databaseURL: URL = SharedContainer.databaseURL(),
+        personalURLLimit: Int = ProPlan.limits.personalURLLimit
+    ) throws {
         database = try SQLiteDatabase(databaseURL: databaseURL)
+        self.personalURLLimit = personalURLLimit
         try migrateIfNeeded()
     }
 
     private init(unavailableDatabase: SQLiteDatabase) {
         database = unavailableDatabase
+        personalURLLimit = ProPlan.limits.personalURLLimit
     }
 
     static func unavailable(databaseURL: URL, message: String) -> URLRepository {
@@ -98,6 +110,16 @@ final class URLRepository: @unchecked Sendable {
                 created_at DESC
             """
         )
+    }
+
+    func loadStandardExportLocalSnapshot() throws -> StandardExportLocalSnapshot {
+        try database.transaction {
+            StandardExportLocalSnapshot(
+                entries: try loadExportSnapshot(),
+                localTags: try loadLocalTags(),
+                localTagAssignments: try loadLocalTagAssignments()
+            )
+        }
     }
 
     func loadChatGptPersonalLinkSnapshot() throws -> [URLRecord] {
@@ -404,7 +426,7 @@ final class URLRepository: @unchecked Sendable {
                 } else {
                     merged += 1
                 }
-            case .batchProcessed, .inputTooLarge, .invalidURL, .noURLFound, .saveFailed:
+            case .batchProcessed, .inputTooLarge, .invalidURL, .noURLFound, .saveFailed, .personalURLLimitReached:
                 failed += 1
             }
         }
@@ -505,6 +527,30 @@ final class URLRepository: @unchecked Sendable {
         return true
     }
 
+    func archive(entryIDs: Set<Int64>) throws -> Set<Int64> {
+        guard !entryIDs.isEmpty else { return [] }
+        return try database.transaction {
+            let eligibleIDs = try loadMutationEligibleEntryIDs(
+                requestedIDs: entryIDs,
+                allowedStates: [.active]
+            )
+            guard !eligibleIDs.isEmpty else { return [] }
+            let now = Date().timeIntervalSince1970
+            try execute(
+                """
+                UPDATE url_entries
+                SET record_state = 'ARCHIVED',
+                    archived_at = ?,
+                    pending_deletion_until = NULL,
+                    updated_at = ?
+                WHERE id IN (\(sqlIDList(eligibleIDs)));
+                """,
+                binds: [sql(now), sql(now)]
+            )
+            return eligibleIDs
+        }
+    }
+
     func unarchive(entryID: Int64) throws -> Bool {
         guard let entry = try loadEntry(id: entryID), entry.recordState == .archived else {
             return false
@@ -535,38 +581,121 @@ final class URLRepository: @unchecked Sendable {
             """
             UPDATE url_entries
             SET record_state = 'PENDING_DELETE',
-                pending_deletion_until = ?,
+                pending_deletion_until = NULL,
                 updated_at = ?
             WHERE id = ?;
             """,
-            binds: [sql(pendingUntil.timeIntervalSince1970), sql(now.timeIntervalSince1970), sql(entryID)]
+            binds: [sql(now.timeIntervalSince1970), sql(entryID)]
         )
         return pendingUntil
     }
 
-    func finalizePendingDelete(entryID: Int64, now: Date = Date()) throws {
-        guard let entry = try loadEntry(id: entryID),
-              entry.recordState == .pendingDelete,
-              let due = entry.pendingDeletionUntil,
-              due <= now else {
-            return
-        }
-        if entry.sharedReferenceCount > 0 {
+    func markPendingDelete(entryIDs: Set<Int64>, gracePeriod: TimeInterval = 5) throws -> [Int64: Date] {
+        guard !entryIDs.isEmpty else { return [:] }
+        return try database.transaction {
+            let eligibleIDs = try loadMutationEligibleEntryIDs(
+                requestedIDs: entryIDs,
+                allowedStates: [.active, .archived]
+            )
+            guard !eligibleIDs.isEmpty else { return [:] }
+
+            let now = Date()
+            let pendingUntil = now.addingTimeInterval(gracePeriod)
             try execute(
                 """
                 UPDATE url_entries
-                SET local_provenance_count = 0,
-                    record_state = 'ACTIVE',
+                SET record_state = 'PENDING_DELETE',
                     pending_deletion_until = NULL,
-                    archived_at = NULL,
+                    archived_at = CASE
+                        WHEN record_state = 'ARCHIVED' THEN COALESCE(archived_at, ?)
+                        ELSE NULL
+                    END,
                     updated_at = ?
-                WHERE id = ?;
+                WHERE id IN (\(sqlIDList(eligibleIDs)));
                 """,
-                binds: [sql(now.timeIntervalSince1970), sql(entryID)]
+                binds: [
+                    sql(now.timeIntervalSince1970),
+                    sql(now.timeIntervalSince1970),
+                ]
             )
-            return
+            return Dictionary(uniqueKeysWithValues: eligibleIDs.map { ($0, pendingUntil) })
         }
-        try execute("DELETE FROM url_entries WHERE id = ?;", binds: [sql(entryID)])
+    }
+
+    func startPendingDeleteUndoWindow(
+        entryIDs: Set<Int64>,
+        gracePeriod: TimeInterval = 5,
+        now: Date = Date()
+    ) throws -> [Int64: Date] {
+        guard !entryIDs.isEmpty else { return [:] }
+        return try database.transaction {
+            let pendingIDs = try loadMutationEligibleEntryIDs(
+                requestedIDs: entryIDs,
+                allowedStates: [.pendingDelete]
+            )
+            guard !pendingIDs.isEmpty else { return [:] }
+            let pendingUntil = now.addingTimeInterval(gracePeriod)
+            try execute(
+                """
+                UPDATE url_entries
+                SET pending_deletion_until = ?,
+                    updated_at = ?
+                WHERE id IN (\(sqlIDList(pendingIDs)))
+                  AND record_state = 'PENDING_DELETE';
+                """,
+                binds: [sql(pendingUntil.timeIntervalSince1970), sql(now.timeIntervalSince1970)]
+            )
+            return Dictionary(uniqueKeysWithValues: pendingIDs.map { ($0, pendingUntil) })
+        }
+    }
+
+    func restoreProvisionalPendingDeletes(now: Date = Date()) throws {
+        try execute(
+            """
+            UPDATE url_entries
+            SET record_state = CASE WHEN archived_at IS NULL THEN 'ACTIVE' ELSE 'ARCHIVED' END,
+                pending_deletion_until = NULL,
+                updated_at = ?
+            WHERE record_state = 'PENDING_DELETE'
+              AND pending_deletion_until IS NULL;
+            """,
+            binds: [sql(now.timeIntervalSince1970)]
+        )
+    }
+
+    func finalizePendingDelete(entryID: Int64, now: Date = Date()) throws {
+        let promotedSharedEntry = try executeChanges(
+            """
+            UPDATE url_entries
+            SET local_provenance_count = 0,
+                record_state = 'ACTIVE',
+                pending_deletion_until = NULL,
+                archived_at = NULL,
+                updated_at = ?
+            WHERE id = ?
+              AND record_state = 'PENDING_DELETE'
+              AND pending_deletion_until IS NOT NULL
+              AND pending_deletion_until <= ?
+              AND shared_reference_count > 0;
+            """,
+            binds: [
+                sql(now.timeIntervalSince1970),
+                sql(entryID),
+                sql(now.timeIntervalSince1970),
+            ]
+        )
+        guard promotedSharedEntry == 0 else { return }
+        _ = try executeChanges(
+            """
+            DELETE FROM url_entries
+            WHERE id = ?
+              AND record_state = 'PENDING_DELETE'
+              AND pending_deletion_until IS NOT NULL
+              AND pending_deletion_until <= ?
+              AND shared_reference_count = 0;
+            """,
+            binds: [sql(entryID), sql(now.timeIntervalSince1970)]
+        )
     }
 
     func cleanupExpiredPendingDeletes(now: Date = Date()) throws {
@@ -584,29 +713,28 @@ final class URLRepository: @unchecked Sendable {
     }
 
     func restore(entryID: Int64) throws -> Bool {
-        guard let entry = try loadEntry(id: entryID),
-              entry.recordState == .pendingDelete || entry.recordState == .archived else {
-            return false
-        }
         let now = Date()
-        let restoreToArchived = entry.recordState == .pendingDelete && entry.archivedAt != nil
-        try execute(
+        return try executeChanges(
             """
             UPDATE url_entries
-            SET record_state = ?,
+            SET record_state = CASE
+                    WHEN record_state = 'PENDING_DELETE' AND archived_at IS NOT NULL THEN 'ARCHIVED'
+                    ELSE 'ACTIVE'
+                END,
                 pending_deletion_until = NULL,
-                archived_at = ?,
+                archived_at = CASE
+                    WHEN record_state = 'PENDING_DELETE' AND archived_at IS NOT NULL THEN archived_at
+                    ELSE NULL
+                END,
                 updated_at = ?
-            WHERE id = ?;
+            WHERE id = ?
+              AND record_state IN ('PENDING_DELETE', 'ARCHIVED');
             """,
             binds: [
-                sql(restoreToArchived ? RecordState.archived.rawValue : RecordState.active.rawValue),
-                sql(restoreToArchived ? entry.archivedAt?.timeIntervalSince1970 : nil),
                 sql(now.timeIntervalSince1970),
                 sql(entryID)
             ]
-        )
-        return true
+        ) == 1
     }
 
     func saveUserTitle(entryID: Int64, rawTitle: String) throws -> (success: Bool, oldTitle: String?, tooLong: Bool) {
@@ -740,6 +868,10 @@ final class URLRepository: @unchecked Sendable {
             return try saveExistingEntry(existing, initialMemo: memoForNewEntry)
         }
 
+        guard try canCreatePersonalEntry() else {
+            return SaveResult(result: .personalURLLimitReached)
+        }
+
         let now = Date()
         let insertSQL = """
         INSERT INTO url_entries (
@@ -805,6 +937,10 @@ final class URLRepository: @unchecked Sendable {
             return try saveExistingEntry(existing, initialMemo: nil)
         }
 
+        guard try canCreatePersonalEntry() else {
+            return SaveResult(result: .personalURLLimitReached)
+        }
+
         let now = Date()
         let insertSQL = """
         INSERT INTO url_entries (
@@ -868,6 +1004,9 @@ final class URLRepository: @unchecked Sendable {
 
     private func saveExistingEntry(_ existing: URLRecord, initialMemo: String?) throws -> SaveResult {
         if existing.localProvenanceCount == 0 {
+            guard try canCreatePersonalEntry() else {
+                return SaveResult(result: .personalURLLimitReached)
+            }
             let now = Date()
             if let initialMemo {
                 let memoForRestore = normalizeInitialMemo(initialMemo)
@@ -996,9 +1135,49 @@ final class URLRepository: @unchecked Sendable {
             for tagID in Set(localTagIDs) {
                 _ = try assignLocalTag(entryID: entryID, tagID: tagID)
             }
-        case .batchProcessed, .inputTooLarge, .invalidURL, .noURLFound, .saveFailed:
+        case .batchProcessed, .inputTooLarge, .invalidURL, .noURLFound, .saveFailed, .personalURLLimitReached:
             return
         }
+    }
+
+    private func canCreatePersonalEntry() throws -> Bool {
+        let currentCount = try database.fetchOne(
+            sql: """
+            SELECT COUNT(*)
+            FROM url_entries
+            WHERE local_provenance_count > 0
+              AND record_state IN ('ACTIVE', 'ARCHIVED');
+            """
+        ) { statement in
+            Int(sqlite3_column_int(statement, 0))
+        } ?? 0
+        return currentCount < personalURLLimit
+    }
+
+    private func loadMutationEligibleEntryIDs(
+        requestedIDs: Set<Int64>,
+        allowedStates: Set<RecordState>
+    ) throws -> Set<Int64> {
+        guard !requestedIDs.isEmpty, !allowedStates.isEmpty else { return [] }
+        let states = allowedStates
+            .map { "'\($0.rawValue)'" }
+            .sorted()
+            .joined(separator: ",")
+        let ids = try database.fetchMany(
+            sql: """
+            SELECT id
+            FROM url_entries
+            WHERE id IN (\(sqlIDList(requestedIDs)))
+              AND record_state IN (\(states));
+            """
+        ) { statement in
+            sqlite3_column_int64(statement, 0)
+        }
+        return Set(ids)
+    }
+
+    private func sqlIDList(_ ids: Set<Int64>) -> String {
+        ids.sorted().map(String.init).joined(separator: ",")
     }
 
     private func hasLocalTagAssignment(entryID: Int64, tagID: Int64) throws -> Bool {
@@ -1327,6 +1506,10 @@ final class URLRepository: @unchecked Sendable {
 
     private func execute(_ sql: String, binds: [SQLiteValue]) throws {
         try database.execute(sql, binds: binds)
+    }
+
+    private func executeChanges(_ sql: String, binds: [SQLiteValue]) throws -> Int {
+        try database.executeChanges(sql, binds: binds)
     }
 
     private func executeBatch(_ sql: String) throws {

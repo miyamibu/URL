@@ -70,6 +70,17 @@ final class SQLiteDatabase: @unchecked Sendable {
         }
     }
 
+    func executeChanges(_ sql: String, binds: [SQLiteValue] = []) throws -> Int {
+        try lock.withLock {
+            try ensureAvailable()
+            let statement = try prepare(sql: sql)
+            defer { sqlite3_finalize(statement) }
+            try bind(binds, to: statement)
+            try stepUntilDone(statement)
+            return Int(sqlite3_changes(db))
+        }
+    }
+
     func insert(_ sql: String, binds: [SQLiteValue] = []) throws -> Int64 {
         try lock.withLock {
             try ensureAvailable()

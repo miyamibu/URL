@@ -1,0 +1,1155 @@
+[
+  {
+    "nodeId": "102",
+    "ignored": false,
+    "role": {
+      "type": "internalRole",
+      "value": "RootWebArea"
+    },
+    "chromeRole": {
+      "type": "internalRole",
+      "value": 144
+    },
+    "name": {
+      "type": "computedString",
+      "value": "りんばむ 管理",
+      "sources": [
+        {
+          "type": "relatedElement",
+          "attribute": "aria-labelledby"
+        },
+        {
+          "type": "attribute",
+          "attribute": "aria-label"
+        },
+        {
+          "type": "attribute",
+          "attribute": "aria-label",
+          "superseded": true
+        },
+        {
+          "type": "relatedElement",
+          "value": {
+            "type": "computedString",
+            "value": "りんばむ 管理"
+          },
+          "nativeSource": "title"
+        }
+      ]
+    },
+    "properties": [
+      {
+        "name": "focusable",
+        "value": {
+          "type": "booleanOrUndefined",
+          "value": true
+        }
+      },
+      {
+        "name": "focused",
+        "value": {
+          "type": "booleanOrUndefined",
+          "value": true
+        }
+      },
+      {
+        "name": "url",
+        "value": {
+          "type": "string",
+          "value": "https://rinbamu-admin.vercel.app/?audit=1786598039078-forced-colors-320x900"
+        }
+      }
+    ],
+    "childIds": [
+      "103"
+    ],
+    "backendDOMNodeId": 102,
+    "frameId": "89E3128776806F488A5ACD5F95A7094E"
+  },
+  {
+    "nodeId": "103",
+    "ignored": true,
+    "ignoredReasons": [
+      {
+        "name": "uninteresting",
+        "value": {
+          "type": "boolean",
+          "value": true
+        }
+      }
+    ],
+    "role": {
+      "type": "role",
+      "value": "none"
+    },
+    "chromeRole": {
+      "type": "internalRole",
+      "value": 0
+    },
+    "parentId": "102",
+    "childIds": [
+      "118"
+    ],
+    "backendDOMNodeId": 103
+  },
+  {
+    "nodeId": "118",
+    "ignored": true,
+    "ignoredReasons": [
+      {
+        "name": "uninteresting",
+        "value": {
+          "type": "boolean",
+          "value": true
+        }
+      }
+    ],
+    "role": {
+      "type": "role",
+      "value": "none"
+    },
+    "chromeRole": {
+      "type": "internalRole",
+      "value": 0
+    },
+    "parentId": "103",
+    "childIds": [
+      "120",
+      "136"
+    ],
+    "backendDOMNodeId": 118
+  },
+  {
+    "nodeId": "120",
+    "ignored": false,
+    "role": {
+      "type": "role",
+      "value": "main"
+    },
+    "chromeRole": {
+      "type": "internalRole",
+      "value": 118
+    },
+    "name": {
+      "type": "computedString",
+      "value": "",
+      "sources": [
+        {
+          "type": "relatedElement",
+          "attribute": "aria-labelledby"
+        },
+        {
+          "type": "attribute",
+          "attribute": "aria-label"
+        },
+        {
+          "type": "attribute",
+          "attribute": "title"
+        }
+      ]
+    },
+    "properties": [],
+    "parentId": "118",
+    "childIds": [
+      "121"
+    ],
+    "backendDOMNodeId": 120
+  },
+  {
+    "nodeId": "136",
+    "ignored": false,
+    "role": {
+      "type": "role",
+      "value": "generic"
+    },
+    "chromeRole": {
+      "type": "internalRole",
+      "value": 88
+    },
+    "name": {
+      "type": "computedString",
+      "value": "",
+      "sources": [
+        {
+          "type": "relatedElement",
+          "attribute": "aria-labelledby"
+        },
+        {
+          "type": "attribute",
+          "attribute": "aria-label"
+        },
+        {
+          "type": "attribute",
+          "attribute": "title"
+        }
+      ]
+    },
+    "properties": [],
+    "parentId": "118",
+    "childIds": [
+      "137"
+    ],
+    "backendDOMNodeId": 136
+  },
+  {
+    "nodeId": "121",
+    "ignored": false,
+    "role": {
+      "type": "role",
+      "value": "generic"
+    },
+    "chromeRole": {
+      "type": "internalRole",
+      "value": 211
+    },
+    "name": {
+      "type": "computedString",
+      "value": "",
+      "sources": [
+        {
+          "type": "relatedElement",
+          "attribute": "aria-labelledby"
+        },
+        {
+          "type": "attribute",
+          "attribute": "aria-label"
+        },
+        {
+          "type": "attribute",
+          "attribute": "title"
+        }
+      ]
+    },
+    "properties": [],
+    "parentId": "120",
+    "childIds": [
+      "122",
+      "123",
+      "93"
+    ],
+    "backendDOMNodeId": 121
+  },
+  {
+    "nodeId": "137",
+    "ignored": false,
+    "role": {
+      "type": "role",
+      "value": "alert"
+    },
+    "chromeRole": {
+      "type": "internalRole",
+      "value": 2
+    },
+    "name": {
+      "type": "computedString",
+      "value": "",
+      "sources": [
+        {
+          "type": "relatedElement",
+          "attribute": "aria-labelledby"
+        },
+        {
+          "type": "attribute",
+          "attribute": "aria-label"
+        },
+        {
+          "type": "attribute",
+          "attribute": "title"
+        }
+      ]
+    },
+    "properties": [
+      {
+        "name": "live",
+        "value": {
+          "type": "token",
+          "value": "assertive"
+        }
+      },
+      {
+        "name": "atomic",
+        "value": {
+          "type": "boolean",
+          "value": true
+        }
+      },
+      {
+        "name": "relevant",
+        "value": {
+          "type": "tokenList",
+          "value": "additions text"
+        }
+      }
+    ],
+    "parentId": "136",
+    "childIds": [],
+    "backendDOMNodeId": 137
+  },
+  {
+    "nodeId": "122",
+    "ignored": false,
+    "role": {
+      "type": "role",
+      "value": "heading"
+    },
+    "chromeRole": {
+      "type": "internalRole",
+      "value": 96
+    },
+    "name": {
+      "type": "computedString",
+      "value": "りんばむ 管理",
+      "sources": [
+        {
+          "type": "relatedElement",
+          "attribute": "aria-labelledby"
+        },
+        {
+          "type": "attribute",
+          "attribute": "aria-label"
+        },
+        {
+          "type": "contents",
+          "value": {
+            "type": "computedString",
+            "value": "りんばむ 管理"
+          }
+        },
+        {
+          "type": "attribute",
+          "attribute": "title",
+          "superseded": true
+        }
+      ]
+    },
+    "properties": [
+      {
+        "name": "level",
+        "value": {
+          "type": "integer",
+          "value": 1
+        }
+      }
+    ],
+    "parentId": "121",
+    "childIds": [
+      "95"
+    ],
+    "backendDOMNodeId": 122
+  },
+  {
+    "nodeId": "123",
+    "ignored": false,
+    "role": {
+      "type": "role",
+      "value": "paragraph"
+    },
+    "chromeRole": {
+      "type": "internalRole",
+      "value": 133
+    },
+    "name": {
+      "type": "computedString",
+      "value": "",
+      "sources": [
+        {
+          "type": "relatedElement",
+          "attribute": "aria-labelledby"
+        },
+        {
+          "type": "attribute",
+          "attribute": "aria-label"
+        }
+      ]
+    },
+    "properties": [],
+    "parentId": "121",
+    "childIds": [
+      "96"
+    ],
+    "backendDOMNodeId": 123
+  },
+  {
+    "nodeId": "93",
+    "ignored": false,
+    "role": {
+      "type": "role",
+      "value": "form"
+    },
+    "chromeRole": {
+      "type": "internalRole",
+      "value": 87
+    },
+    "name": {
+      "type": "computedString",
+      "value": "",
+      "sources": [
+        {
+          "type": "relatedElement",
+          "attribute": "aria-labelledby"
+        },
+        {
+          "type": "attribute",
+          "attribute": "aria-label"
+        },
+        {
+          "type": "attribute",
+          "attribute": "title"
+        }
+      ]
+    },
+    "properties": [],
+    "parentId": "121",
+    "childIds": [
+      "124",
+      "126",
+      "101"
+    ],
+    "backendDOMNodeId": 93
+  },
+  {
+    "nodeId": "95",
+    "ignored": false,
+    "role": {
+      "type": "internalRole",
+      "value": "StaticText"
+    },
+    "chromeRole": {
+      "type": "internalRole",
+      "value": 158
+    },
+    "name": {
+      "type": "computedString",
+      "value": "りんばむ 管理",
+      "sources": [
+        {
+          "type": "contents",
+          "value": {
+            "type": "computedString",
+            "value": "りんばむ 管理"
+          }
+        }
+      ]
+    },
+    "properties": [],
+    "parentId": "122",
+    "childIds": [
+      "-1000000050"
+    ],
+    "backendDOMNodeId": 95
+  },
+  {
+    "nodeId": "96",
+    "ignored": false,
+    "role": {
+      "type": "internalRole",
+      "value": "StaticText"
+    },
+    "chromeRole": {
+      "type": "internalRole",
+      "value": 158
+    },
+    "name": {
+      "type": "computedString",
+      "value": "優待コード管理には管理者アカウントでのサインインが必要です。",
+      "sources": [
+        {
+          "type": "contents",
+          "value": {
+            "type": "computedString",
+            "value": "優待コード管理には管理者アカウントでのサインインが必要です。"
+          }
+        }
+      ]
+    },
+    "properties": [],
+    "parentId": "123",
+    "childIds": [
+      "-1000000051",
+      "-1000000052"
+    ],
+    "backendDOMNodeId": 96
+  },
+  {
+    "nodeId": "124",
+    "ignored": false,
+    "role": {
+      "type": "internalRole",
+      "value": "LabelText"
+    },
+    "chromeRole": {
+      "type": "internalRole",
+      "value": 104
+    },
+    "name": {
+      "type": "computedString",
+      "value": "",
+      "sources": [
+        {
+          "type": "relatedElement",
+          "attribute": "aria-labelledby"
+        },
+        {
+          "type": "attribute",
+          "attribute": "aria-label"
+        },
+        {
+          "type": "attribute",
+          "attribute": "title"
+        }
+      ]
+    },
+    "properties": [],
+    "parentId": "93",
+    "childIds": [
+      "97",
+      "94"
+    ],
+    "backendDOMNodeId": 124
+  },
+  {
+    "nodeId": "126",
+    "ignored": false,
+    "role": {
+      "type": "internalRole",
+      "value": "LabelText"
+    },
+    "chromeRole": {
+      "type": "internalRole",
+      "value": 104
+    },
+    "name": {
+      "type": "computedString",
+      "value": "",
+      "sources": [
+        {
+          "type": "relatedElement",
+          "attribute": "aria-labelledby"
+        },
+        {
+          "type": "attribute",
+          "attribute": "aria-label"
+        },
+        {
+          "type": "attribute",
+          "attribute": "title"
+        }
+      ]
+    },
+    "properties": [],
+    "parentId": "93",
+    "childIds": [
+      "98",
+      "100"
+    ],
+    "backendDOMNodeId": 126
+  },
+  {
+    "nodeId": "101",
+    "ignored": false,
+    "role": {
+      "type": "role",
+      "value": "button"
+    },
+    "chromeRole": {
+      "type": "internalRole",
+      "value": 9
+    },
+    "name": {
+      "type": "computedString",
+      "value": "サインイン",
+      "sources": [
+        {
+          "type": "relatedElement",
+          "attribute": "aria-labelledby"
+        },
+        {
+          "type": "attribute",
+          "attribute": "aria-label"
+        },
+        {
+          "type": "relatedElement",
+          "nativeSource": "label"
+        },
+        {
+          "type": "contents",
+          "value": {
+            "type": "computedString",
+            "value": "サインイン"
+          }
+        },
+        {
+          "type": "attribute",
+          "attribute": "title",
+          "superseded": true
+        }
+      ]
+    },
+    "properties": [
+      {
+        "name": "invalid",
+        "value": {
+          "type": "token",
+          "value": "false"
+        }
+      },
+      {
+        "name": "focusable",
+        "value": {
+          "type": "booleanOrUndefined",
+          "value": true
+        }
+      }
+    ],
+    "parentId": "93",
+    "childIds": [
+      "99"
+    ],
+    "backendDOMNodeId": 101
+  },
+  {
+    "nodeId": "-1000000050",
+    "ignored": false,
+    "role": {
+      "type": "internalRole",
+      "value": "InlineTextBox"
+    },
+    "chromeRole": {
+      "type": "internalRole",
+      "value": 101
+    },
+    "name": {
+      "type": "computedString",
+      "value": "りんばむ 管理"
+    },
+    "properties": [],
+    "parentId": "95",
+    "childIds": []
+  },
+  {
+    "nodeId": "-1000000051",
+    "ignored": false,
+    "role": {
+      "type": "internalRole",
+      "value": "InlineTextBox"
+    },
+    "chromeRole": {
+      "type": "internalRole",
+      "value": 101
+    },
+    "name": {
+      "type": "computedString",
+      "value": "優待コード管理には管理者アカウ"
+    },
+    "properties": [],
+    "parentId": "96",
+    "childIds": []
+  },
+  {
+    "nodeId": "-1000000052",
+    "ignored": false,
+    "role": {
+      "type": "internalRole",
+      "value": "InlineTextBox"
+    },
+    "chromeRole": {
+      "type": "internalRole",
+      "value": 101
+    },
+    "name": {
+      "type": "computedString",
+      "value": "ントでのサインインが必要です。"
+    },
+    "properties": [],
+    "parentId": "96",
+    "childIds": []
+  },
+  {
+    "nodeId": "97",
+    "ignored": false,
+    "role": {
+      "type": "internalRole",
+      "value": "StaticText"
+    },
+    "chromeRole": {
+      "type": "internalRole",
+      "value": 158
+    },
+    "name": {
+      "type": "computedString",
+      "value": "メール",
+      "sources": [
+        {
+          "type": "contents",
+          "value": {
+            "type": "computedString",
+            "value": "メール"
+          }
+        }
+      ]
+    },
+    "properties": [],
+    "parentId": "124",
+    "childIds": [
+      "-1000000053"
+    ],
+    "backendDOMNodeId": 97
+  },
+  {
+    "nodeId": "94",
+    "ignored": false,
+    "role": {
+      "type": "role",
+      "value": "textbox"
+    },
+    "chromeRole": {
+      "type": "internalRole",
+      "value": 170
+    },
+    "name": {
+      "type": "computedString",
+      "value": "メール",
+      "sources": [
+        {
+          "type": "relatedElement",
+          "attribute": "aria-labelledby"
+        },
+        {
+          "type": "attribute",
+          "attribute": "aria-label"
+        },
+        {
+          "type": "relatedElement",
+          "value": {
+            "type": "computedString",
+            "value": "メール"
+          },
+          "nativeSource": "labelwrapped",
+          "nativeSourceValue": {
+            "type": "nodeList",
+            "relatedNodes": [
+              {
+                "backendDOMNodeId": 124,
+                "text": "メール"
+              }
+            ]
+          }
+        },
+        {
+          "type": "attribute",
+          "attribute": "title",
+          "superseded": true
+        },
+        {
+          "type": "placeholder",
+          "attribute": "placeholder",
+          "superseded": true
+        },
+        {
+          "type": "placeholder",
+          "attribute": "aria-placeholder",
+          "superseded": true
+        },
+        {
+          "type": "attribute",
+          "attribute": "title",
+          "superseded": true
+        }
+      ]
+    },
+    "properties": [
+      {
+        "name": "invalid",
+        "value": {
+          "type": "token",
+          "value": "false"
+        }
+      },
+      {
+        "name": "focusable",
+        "value": {
+          "type": "booleanOrUndefined",
+          "value": true
+        }
+      },
+      {
+        "name": "editable",
+        "value": {
+          "type": "token",
+          "value": "plaintext"
+        }
+      },
+      {
+        "name": "settable",
+        "value": {
+          "type": "booleanOrUndefined",
+          "value": true
+        }
+      },
+      {
+        "name": "multiline",
+        "value": {
+          "type": "boolean",
+          "value": false
+        }
+      },
+      {
+        "name": "readonly",
+        "value": {
+          "type": "boolean",
+          "value": false
+        }
+      },
+      {
+        "name": "required",
+        "value": {
+          "type": "boolean",
+          "value": false
+        }
+      },
+      {
+        "name": "labelledby",
+        "value": {
+          "type": "nodeList",
+          "relatedNodes": [
+            {
+              "backendDOMNodeId": 124,
+              "text": "メール"
+            }
+          ]
+        }
+      }
+    ],
+    "parentId": "124",
+    "childIds": [
+      "125"
+    ],
+    "backendDOMNodeId": 94
+  },
+  {
+    "nodeId": "98",
+    "ignored": false,
+    "role": {
+      "type": "internalRole",
+      "value": "StaticText"
+    },
+    "chromeRole": {
+      "type": "internalRole",
+      "value": 158
+    },
+    "name": {
+      "type": "computedString",
+      "value": "パスワード",
+      "sources": [
+        {
+          "type": "contents",
+          "value": {
+            "type": "computedString",
+            "value": "パスワード"
+          }
+        }
+      ]
+    },
+    "properties": [],
+    "parentId": "126",
+    "childIds": [
+      "-1000000054"
+    ],
+    "backendDOMNodeId": 98
+  },
+  {
+    "nodeId": "100",
+    "ignored": false,
+    "role": {
+      "type": "role",
+      "value": "textbox"
+    },
+    "chromeRole": {
+      "type": "internalRole",
+      "value": 170
+    },
+    "name": {
+      "type": "computedString",
+      "value": "パスワード",
+      "sources": [
+        {
+          "type": "relatedElement",
+          "attribute": "aria-labelledby"
+        },
+        {
+          "type": "attribute",
+          "attribute": "aria-label"
+        },
+        {
+          "type": "relatedElement",
+          "value": {
+            "type": "computedString",
+            "value": "パスワード"
+          },
+          "nativeSource": "labelwrapped",
+          "nativeSourceValue": {
+            "type": "nodeList",
+            "relatedNodes": [
+              {
+                "backendDOMNodeId": 126,
+                "text": "パスワード"
+              }
+            ]
+          }
+        },
+        {
+          "type": "attribute",
+          "attribute": "title",
+          "superseded": true
+        },
+        {
+          "type": "placeholder",
+          "attribute": "placeholder",
+          "superseded": true
+        },
+        {
+          "type": "placeholder",
+          "attribute": "aria-placeholder",
+          "superseded": true
+        },
+        {
+          "type": "attribute",
+          "attribute": "title",
+          "superseded": true
+        }
+      ]
+    },
+    "properties": [
+      {
+        "name": "invalid",
+        "value": {
+          "type": "token",
+          "value": "false"
+        }
+      },
+      {
+        "name": "focusable",
+        "value": {
+          "type": "booleanOrUndefined",
+          "value": true
+        }
+      },
+      {
+        "name": "editable",
+        "value": {
+          "type": "token",
+          "value": "plaintext"
+        }
+      },
+      {
+        "name": "settable",
+        "value": {
+          "type": "booleanOrUndefined",
+          "value": true
+        }
+      },
+      {
+        "name": "multiline",
+        "value": {
+          "type": "boolean",
+          "value": false
+        }
+      },
+      {
+        "name": "readonly",
+        "value": {
+          "type": "boolean",
+          "value": false
+        }
+      },
+      {
+        "name": "required",
+        "value": {
+          "type": "boolean",
+          "value": false
+        }
+      },
+      {
+        "name": "labelledby",
+        "value": {
+          "type": "nodeList",
+          "relatedNodes": [
+            {
+              "backendDOMNodeId": 126,
+              "text": "パスワード"
+            }
+          ]
+        }
+      }
+    ],
+    "parentId": "126",
+    "childIds": [
+      "127"
+    ],
+    "backendDOMNodeId": 100
+  },
+  {
+    "nodeId": "99",
+    "ignored": false,
+    "role": {
+      "type": "internalRole",
+      "value": "StaticText"
+    },
+    "chromeRole": {
+      "type": "internalRole",
+      "value": 158
+    },
+    "name": {
+      "type": "computedString",
+      "value": "サインイン",
+      "sources": [
+        {
+          "type": "contents",
+          "value": {
+            "type": "computedString",
+            "value": "サインイン"
+          }
+        }
+      ]
+    },
+    "properties": [],
+    "parentId": "101",
+    "childIds": [
+      "-1000000055"
+    ],
+    "backendDOMNodeId": 99
+  },
+  {
+    "nodeId": "-1000000053",
+    "ignored": false,
+    "role": {
+      "type": "internalRole",
+      "value": "InlineTextBox"
+    },
+    "chromeRole": {
+      "type": "internalRole",
+      "value": 101
+    },
+    "name": {
+      "type": "computedString",
+      "value": "メール"
+    },
+    "properties": [],
+    "parentId": "97",
+    "childIds": []
+  },
+  {
+    "nodeId": "125",
+    "ignored": false,
+    "role": {
+      "type": "role",
+      "value": "generic"
+    },
+    "chromeRole": {
+      "type": "internalRole",
+      "value": 88
+    },
+    "name": {
+      "type": "computedString",
+      "value": "",
+      "sources": [
+        {
+          "type": "relatedElement",
+          "attribute": "aria-labelledby"
+        },
+        {
+          "type": "attribute",
+          "attribute": "aria-label"
+        }
+      ]
+    },
+    "properties": [
+      {
+        "name": "editable",
+        "value": {
+          "type": "token",
+          "value": "plaintext"
+        }
+      }
+    ],
+    "parentId": "94",
+    "childIds": [],
+    "backendDOMNodeId": 125
+  },
+  {
+    "nodeId": "-1000000054",
+    "ignored": false,
+    "role": {
+      "type": "internalRole",
+      "value": "InlineTextBox"
+    },
+    "chromeRole": {
+      "type": "internalRole",
+      "value": 101
+    },
+    "name": {
+      "type": "computedString",
+      "value": "パスワード"
+    },
+    "properties": [],
+    "parentId": "98",
+    "childIds": []
+  },
+  {
+    "nodeId": "127",
+    "ignored": false,
+    "role": {
+      "type": "role",
+      "value": "generic"
+    },
+    "chromeRole": {
+      "type": "internalRole",
+      "value": 88
+    },
+    "name": {
+      "type": "computedString",
+      "value": "",
+      "sources": [
+        {
+          "type": "relatedElement",
+          "attribute": "aria-labelledby"
+        },
+        {
+          "type": "attribute",
+          "attribute": "aria-label"
+        }
+      ]
+    },
+    "properties": [
+      {
+        "name": "editable",
+        "value": {
+          "type": "token",
+          "value": "plaintext"
+        }
+      }
+    ],
+    "parentId": "100",
+    "childIds": [],
+    "backendDOMNodeId": 127
+  },
+  {
+    "nodeId": "-1000000055",
+    "ignored": false,
+    "role": {
+      "type": "internalRole",
+      "value": "InlineTextBox"
+    },
+    "chromeRole": {
+      "type": "internalRole",
+      "value": 101
+    },
+    "name": {
+      "type": "computedString",
+      "value": "サインイン"
+    },
+    "properties": [],
+    "parentId": "99",
+    "childIds": []
+  }
+]

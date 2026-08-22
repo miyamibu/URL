@@ -253,6 +253,11 @@ sealed interface SharedTagAccountDeletionResult {
     data class LocalCleanupRequired(
         val aiDataPending: Boolean,
         val sessionPending: Boolean,
+        val syncWorkCancellationPending: Boolean = false,
+        val sharedDataCleanupPending: Boolean = false,
+        val pendingInviteCleanupPending: Boolean = false,
+        val entitlementCleanupPending: Boolean = false,
+        val personalLinkSettingsCleanupPending: Boolean = false,
     ) : SharedTagAccountDeletionResult
     data class Failure(val message: String) : SharedTagAccountDeletionResult
 }

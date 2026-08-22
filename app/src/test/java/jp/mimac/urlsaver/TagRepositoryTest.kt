@@ -5,7 +5,13 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import jp.mimac.urlsaver.data.AppDatabase
+import jp.mimac.urlsaver.data.AccountDeletionRemoteStatus
+import jp.mimac.urlsaver.data.AccountDeletionRequestGrant
+import jp.mimac.urlsaver.data.AccountDeletionRequestRecord
+import jp.mimac.urlsaver.data.AccountDeletionRequestStore
+import jp.mimac.urlsaver.data.AccountOperationFence
 import jp.mimac.urlsaver.data.AiLocalDataClearer
+import jp.mimac.urlsaver.data.AccountLinkedLocalDataCleaner
 import jp.mimac.urlsaver.data.AiDraftEntity
 import jp.mimac.urlsaver.data.AiDiffProposalEntity
 import jp.mimac.urlsaver.data.AiReceiptEntity
@@ -69,7 +75,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -92,6 +102,8 @@ class TagRepositoryTest {
     private lateinit var aiTransparencyRepository: AiTransparencyRepository
     private lateinit var aiLocalDataClearer: CountingAiLocalDataClearer
     private lateinit var localAccountCleanupStore: InMemoryLocalAccountCleanupStore
+    private val deletionRequestStore = InMemoryAccountDeletionRequestStore()
+    private lateinit var accountLinkedLocalDataCleaner: CountingAccountLinkedLocalDataCleaner
     private val scheduler = FakeScheduler()
     private val clock = FakeClock(1_000L)
 
@@ -105,6 +117,7 @@ class TagRepositoryTest {
         syncScheduler = FakeSyncScheduler()
         remote = FakeRemoteDataSource()
         localAccountCleanupStore = InMemoryLocalAccountCleanupStore()
+        accountLinkedLocalDataCleaner = CountingAccountLinkedLocalDataCleaner()
         aiTransparencyRepository = AiTransparencyRepository(
             database = db,
             aiTransparencyDao = db.aiTransparencyDao(),
@@ -148,7 +161,9 @@ class TagRepositoryTest {
                 ),
             ),
             aiLocalDataClearer = aiLocalDataClearer,
+            accountLinkedLocalDataCleaner = accountLinkedLocalDataCleaner,
             localAccountCleanupStore = localAccountCleanupStore,
+            accountDeletionRequestStore = deletionRequestStore,
         )
     }
 
@@ -189,6 +204,11 @@ class TagRepositoryTest {
         assertEquals(1, remote.deleteAccountCallCount)
         assertEquals(1, aiLocalDataClearer.clearCallCount)
         assertEquals(1, authProvider.clearSessionCallCount)
+        assertEquals(listOf("delete-user-success"), accountLinkedLocalDataCleaner.cancelledSyncUsers)
+        assertEquals(listOf("delete-user-success"), accountLinkedLocalDataCleaner.clearedSharedDataUsers)
+        assertEquals(0, accountLinkedLocalDataCleaner.pendingInviteClearCallCount)
+        assertEquals(listOf("delete-user-success"), accountLinkedLocalDataCleaner.clearedEntitlementUsers)
+        assertEquals(listOf("delete-user-success"), accountLinkedLocalDataCleaner.clearedPersonalLinkSettingsUsers)
         assertNull(localAccountCleanupStore.pending.value)
     }
 
@@ -213,6 +233,11 @@ class TagRepositoryTest {
         assertEquals(1, remote.deleteAccountCallCount)
         assertEquals(0, aiLocalDataClearer.clearCallCount)
         assertEquals(0, authProvider.clearSessionCallCount)
+        assertTrue(accountLinkedLocalDataCleaner.cancelledSyncUsers.isEmpty())
+        assertTrue(accountLinkedLocalDataCleaner.clearedSharedDataUsers.isEmpty())
+        assertEquals(0, accountLinkedLocalDataCleaner.pendingInviteClearCallCount)
+        assertTrue(accountLinkedLocalDataCleaner.clearedEntitlementUsers.isEmpty())
+        assertTrue(accountLinkedLocalDataCleaner.clearedPersonalLinkSettingsUsers.isEmpty())
         assertNull(localAccountCleanupStore.pending.value)
     }
 
@@ -236,7 +261,11 @@ class TagRepositoryTest {
         assertEquals(1, authProvider.clearSessionCallCount)
         assertNull(authProvider.session.value)
         assertEquals(
-            LocalAccountCleanupMarker(aiDataPending = true, sessionPending = false),
+            LocalAccountCleanupMarker(
+                aiDataPending = true,
+                sessionPending = false,
+                authUserId = "delete-user-ai-failure",
+            ),
             localAccountCleanupStore.pending.value,
         )
     }
@@ -266,6 +295,26 @@ class TagRepositoryTest {
     }
 
     @Test
+    fun concurrentDeleteAndRetry_areSingleFlightAndNeverRepeatRemoteDelete() = runBlocking {
+        val authUserId = "delete-user-single-flight"
+        authProvider.updateSession(SharedTagAuthSession(authUserId, "token"))
+        remote.deleteAccountStarted = CompletableDeferred()
+        remote.allowDeleteAccount = CompletableDeferred()
+
+        val deletion = async(Dispatchers.Default) { repository.deleteAccount() }
+        requireNotNull(remote.deleteAccountStarted).await()
+        val retry = async(Dispatchers.Default) { repository.retryLocalAccountCleanup() }
+
+        remote.allowDeleteAccount?.complete(Unit)
+        withTimeout(5_000) {
+            assertEquals(SharedTagAccountDeletionResult.Success, deletion.await())
+            assertEquals(SharedTagAccountDeletionResult.Success, retry.await())
+        }
+        assertEquals(1, remote.deleteAccountCallCount)
+        assertNull(localAccountCleanupStore.pending.value)
+    }
+
+    @Test
     fun deleteAccount_sessionClearFailure_stillAttemptsAiCleanup() = runBlocking {
         authProvider.updateSession(
             SharedTagAuthSession(
@@ -285,9 +334,18 @@ class TagRepositoryTest {
         assertEquals(1, authProvider.clearSessionCallCount)
         assertNotNull(authProvider.session.value)
         assertEquals(
-            LocalAccountCleanupMarker(aiDataPending = false, sessionPending = true),
+            LocalAccountCleanupMarker(
+                aiDataPending = false,
+                sessionPending = true,
+                syncWorkCancellationPending = true,
+                sharedDataCleanupPending = true,
+                entitlementCleanupPending = true,
+                personalLinkSettingsCleanupPending = true,
+                authUserId = "delete-user-session-failure",
+            ),
             localAccountCleanupStore.pending.value,
         )
+        assertTrue(accountLinkedLocalDataCleaner.cancelledSyncUsers.isEmpty())
     }
 
     @Test
@@ -296,7 +354,7 @@ class TagRepositoryTest {
 
         assertEquals(SharedTagAccountDeletionResult.Success, result)
         assertEquals(0, remote.deleteAccountCallCount)
-        assertEquals(1, aiLocalDataClearer.clearCallCount)
+        assertEquals(0, aiLocalDataClearer.clearCallCount)
         assertEquals(0, authProvider.clearSessionCallCount)
         assertNull(localAccountCleanupStore.pending.value)
     }
@@ -326,6 +384,212 @@ class TagRepositoryTest {
         assertEquals(SharedTagAccountDeletionResult.Success, recreatedRepository.retryLocalAccountCleanup())
         assertEquals(1, remote.deleteAccountCallCount)
         assertNull(localAccountCleanupStore.pending.value)
+    }
+
+    @Test
+    fun signOut_clearsOnlySessionAndPreservesDeletionSpecificLocalState() = runBlocking {
+        authProvider.updateSession(SharedTagAuthSession("sign-out-user", "token"))
+
+        repository.signOut()
+
+        assertNull(authProvider.session.value)
+        assertEquals(1, authProvider.clearSessionCallCount)
+        assertTrue(accountLinkedLocalDataCleaner.cancelledSyncUsers.isEmpty())
+        assertTrue(accountLinkedLocalDataCleaner.clearedSharedDataUsers.isEmpty())
+        assertEquals(0, accountLinkedLocalDataCleaner.pendingInviteClearCallCount)
+        assertTrue(accountLinkedLocalDataCleaner.clearedEntitlementUsers.isEmpty())
+        assertTrue(accountLinkedLocalDataCleaner.clearedPersonalLinkSettingsUsers.isEmpty())
+        assertNull(localAccountCleanupStore.pending.value)
+    }
+
+    @Test
+    fun deleteAccount_syncCancellationFailureBlocksAccountDataCleanupUntilRetry() = runBlocking {
+        val authUserId = "delete-user-sync-cancel-failure"
+        authProvider.updateSession(SharedTagAuthSession(authUserId, "token"))
+        accountLinkedLocalDataCleaner.syncCancellationFailure = IllegalStateException("cancel failed")
+
+        val firstResult = repository.deleteAccount() as SharedTagAccountDeletionResult.LocalCleanupRequired
+
+        assertTrue(firstResult.syncWorkCancellationPending)
+        assertTrue(firstResult.sharedDataCleanupPending)
+        assertFalse(firstResult.pendingInviteCleanupPending)
+        assertTrue(firstResult.entitlementCleanupPending)
+        assertTrue(firstResult.personalLinkSettingsCleanupPending)
+        assertNull(authProvider.session.value)
+        assertTrue(accountLinkedLocalDataCleaner.clearedSharedDataUsers.isEmpty())
+        assertEquals(authUserId, localAccountCleanupStore.pending.value?.authUserId)
+
+        accountLinkedLocalDataCleaner.syncCancellationFailure = null
+        assertEquals(SharedTagAccountDeletionResult.Success, repository.retryLocalAccountCleanup())
+        assertEquals(1, remote.deleteAccountCallCount)
+        assertEquals(listOf(authUserId, authUserId), accountLinkedLocalDataCleaner.cancelledSyncUsers)
+        assertEquals(listOf(authUserId), accountLinkedLocalDataCleaner.clearedSharedDataUsers)
+        assertEquals(listOf(authUserId), accountLinkedLocalDataCleaner.clearedPersonalLinkSettingsUsers)
+    }
+
+    @Test
+    fun deleteAccount_sharedDataFailureRetainsOnlyThatStageAndNeverRepeatsRemoteDelete() = runBlocking {
+        val authUserId = "delete-user-shared-data-failure"
+        authProvider.updateSession(SharedTagAuthSession(authUserId, "token"))
+        accountLinkedLocalDataCleaner.sharedDataClearFailure = IllegalStateException("shared data failed")
+
+        val firstResult = repository.deleteAccount() as SharedTagAccountDeletionResult.LocalCleanupRequired
+
+        assertTrue(firstResult.sharedDataCleanupPending)
+        assertFalse(firstResult.pendingInviteCleanupPending)
+        assertFalse(firstResult.entitlementCleanupPending)
+        assertEquals(authUserId, localAccountCleanupStore.pending.value?.authUserId)
+
+        accountLinkedLocalDataCleaner.sharedDataClearFailure = null
+        assertEquals(SharedTagAccountDeletionResult.Success, repository.retryLocalAccountCleanup())
+        assertEquals(1, remote.deleteAccountCallCount)
+        assertEquals(listOf(authUserId, authUserId), accountLinkedLocalDataCleaner.clearedSharedDataUsers)
+        assertEquals(0, accountLinkedLocalDataCleaner.pendingInviteClearCallCount)
+        assertEquals(listOf(authUserId), accountLinkedLocalDataCleaner.clearedEntitlementUsers)
+        assertEquals(listOf(authUserId), accountLinkedLocalDataCleaner.clearedPersonalLinkSettingsUsers)
+    }
+
+    @Test
+    fun deleteAccount_preservesUnownedPendingInviteAndNeverCallsItsCleaner() = runBlocking {
+        val authUserId = "delete-user-preserve-invite"
+        authProvider.updateSession(SharedTagAuthSession(authUserId, "token"))
+        accountLinkedLocalDataCleaner.pendingInviteClearFailure = IllegalStateException("invite failed")
+
+        val result = repository.deleteAccount()
+
+        assertEquals(SharedTagAccountDeletionResult.Success, result)
+        assertEquals(0, accountLinkedLocalDataCleaner.pendingInviteClearCallCount)
+        assertEquals(1, remote.deleteAccountCallCount)
+        assertNull(localAccountCleanupStore.pending.value)
+    }
+
+    @Test
+    fun deleteAccount_entitlementFailureRetainsOnlyEntitlementStage() = runBlocking {
+        val authUserId = "delete-user-entitlement-failure"
+        authProvider.updateSession(SharedTagAuthSession(authUserId, "token"))
+        accountLinkedLocalDataCleaner.entitlementClearFailure = IllegalStateException("entitlement failed")
+
+        val firstResult = repository.deleteAccount() as SharedTagAccountDeletionResult.LocalCleanupRequired
+
+        assertTrue(firstResult.entitlementCleanupPending)
+        assertFalse(firstResult.sharedDataCleanupPending)
+        assertFalse(firstResult.pendingInviteCleanupPending)
+        assertEquals(authUserId, localAccountCleanupStore.pending.value?.authUserId)
+
+        accountLinkedLocalDataCleaner.entitlementClearFailure = null
+        assertEquals(SharedTagAccountDeletionResult.Success, repository.retryLocalAccountCleanup())
+        assertEquals(1, remote.deleteAccountCallCount)
+        assertEquals(listOf(authUserId, authUserId), accountLinkedLocalDataCleaner.clearedEntitlementUsers)
+        assertEquals(listOf(authUserId), accountLinkedLocalDataCleaner.clearedPersonalLinkSettingsUsers)
+    }
+
+    @Test
+    fun deleteAccount_personalLinkSettingsFailureRetainsOnlyThatStageAndRetriesLocally() = runBlocking {
+        val authUserId = "delete-user-personal-link-failure"
+        authProvider.updateSession(SharedTagAuthSession(authUserId, "token"))
+        accountLinkedLocalDataCleaner.personalLinkSettingsClearFailure = IllegalStateException("settings failed")
+
+        val firstResult = repository.deleteAccount() as SharedTagAccountDeletionResult.LocalCleanupRequired
+
+        assertTrue(firstResult.personalLinkSettingsCleanupPending)
+        assertFalse(firstResult.sharedDataCleanupPending)
+        assertFalse(firstResult.pendingInviteCleanupPending)
+        assertFalse(firstResult.entitlementCleanupPending)
+        assertEquals(authUserId, localAccountCleanupStore.pending.value?.authUserId)
+
+        accountLinkedLocalDataCleaner.personalLinkSettingsClearFailure = null
+        assertEquals(SharedTagAccountDeletionResult.Success, repository.retryLocalAccountCleanup())
+        assertEquals(1, remote.deleteAccountCallCount)
+        assertEquals(
+            listOf(authUserId, authUserId),
+            accountLinkedLocalDataCleaner.clearedPersonalLinkSettingsUsers,
+        )
+    }
+
+    @Test
+    fun coordinatorWorkerAndForegroundMutationUseOneLockOrderAndCompleteWithoutDeadlock() = runBlocking {
+        val authUserId = "lock-order-user"
+        authProvider.updateSession(SharedTagAuthSession(authUserId, "token"))
+        val sharedFence = AccountOperationFence(localAccountCleanupStore)
+        val coordinatorRemote = FakeRemoteDataSource().apply {
+            pullSnapshotStarted = CompletableDeferred()
+            allowPullSnapshot = CompletableDeferred()
+        }
+        val coordinator = SharedTagSyncCoordinator(
+            database = db,
+            tagDao = db.tagDao(),
+            syncDao = db.sharedTagSyncDao(),
+            urlEntryDao = db.urlEntryDao(),
+            authSessionProvider = authProvider,
+            remoteDataSource = coordinatorRemote,
+            clock = clock,
+            metadataScheduler = scheduler,
+            accountOperationFence = sharedFence,
+        )
+        val fencedRepository = DefaultTagRepository(
+            database = db,
+            tagDao = db.tagDao(),
+            syncDao = db.sharedTagSyncDao(),
+            urlEntryDao = db.urlEntryDao(),
+            clock = clock,
+            metadataScheduler = scheduler,
+            authSessionProvider = authProvider,
+            authRemoteDataSource = FakeAuthRemoteDataSource(),
+            syncScheduler = syncScheduler,
+            syncCoordinator = coordinator,
+            remoteDataSource = remote,
+            remoteConfig = SharedTagSyncRemoteConfig(
+                enabled = true,
+                supabaseUrl = "https://example.supabase.co",
+                anonKey = "anon",
+            ),
+            usageSummaryDataSource = DefaultUsageSummaryDataSource(
+                urlEntryDao = db.urlEntryDao(),
+                tagDao = db.tagDao(),
+                authSessionProvider = authProvider,
+            ),
+            aiLocalDataClearer = aiLocalDataClearer,
+            accountLinkedLocalDataCleaner = accountLinkedLocalDataCleaner,
+            localAccountCleanupStore = localAccountCleanupStore,
+            accountOperationFence = sharedFence,
+        )
+
+        val backgroundSync = async(Dispatchers.Default) { coordinator.syncForAuthUser(authUserId) }
+        requireNotNull(coordinatorRemote.pullSnapshotStarted).await()
+        val foregroundMutation = async(Dispatchers.Default) {
+            fencedRepository.createSyncedTagWithResult("lock-order-tag")
+        }
+        coordinatorRemote.allowPullSnapshot?.complete(Unit)
+
+        withTimeout(5_000) {
+            assertTrue(backgroundSync.await())
+            assertTrue(foregroundMutation.await() is CreateTagResult.Success)
+        }
+
+        db.sharedTagSyncDao().deleteOutboxForUser(authUserId)
+        coordinatorRemote.pullSnapshotStarted = CompletableDeferred()
+        coordinatorRemote.allowPullSnapshot = CompletableDeferred()
+        val secondBackgroundSync = async(Dispatchers.Default) { coordinator.syncForAuthUser(authUserId) }
+        requireNotNull(coordinatorRemote.pullSnapshotStarted).await()
+        val deletionAttempted = CompletableDeferred<Unit>()
+        val deletionCleanup = async(Dispatchers.Default) {
+            deletionAttempted.complete(Unit)
+            sharedFence.withExclusiveOperation {
+                sharedFence.markRemoteAccountDeleted(authUserId)
+                coordinator.clearLocalStateForDeletedAccount(authUserId)
+            }
+        }
+        deletionAttempted.await()
+        assertFalse(deletionCleanup.isCompleted)
+        coordinatorRemote.allowPullSnapshot?.complete(Unit)
+
+        withTimeout(5_000) {
+            assertTrue(secondBackgroundSync.await())
+            deletionCleanup.await()
+        }
+        val pullCountAfterCleanup = coordinatorRemote.pullSnapshotCallCount
+        assertTrue(coordinator.syncForAuthUser(authUserId))
+        assertEquals(pullCountAfterCleanup, coordinatorRemote.pullSnapshotCallCount)
     }
 
     @Test
@@ -814,6 +1078,7 @@ class TagRepositoryTest {
                 authSessionProvider = authProvider,
             ),
             aiLocalDataClearer = aiTransparencyRepository,
+            accountLinkedLocalDataCleaner = accountLinkedLocalDataCleaner,
             localAccountCleanupStore = localAccountCleanupStore,
         )
     }
@@ -822,16 +1087,26 @@ class TagRepositoryTest {
         private val state = MutableStateFlow<LocalAccountCleanupMarker?>(null)
         override val pending: StateFlow<LocalAccountCleanupMarker?> = state
 
-        override fun save(aiDataPending: Boolean, sessionPending: Boolean) {
-            state.value = if (aiDataPending || sessionPending) {
-                LocalAccountCleanupMarker(aiDataPending, sessionPending)
-            } else {
-                null
-            }
+        override fun save(marker: LocalAccountCleanupMarker) {
+            state.value = marker.takeIf(LocalAccountCleanupMarker::requiresCleanup)
         }
 
         override fun clear() {
             state.value = null
+        }
+    }
+
+    private class InMemoryAccountDeletionRequestStore : AccountDeletionRequestStore {
+        private var record: AccountDeletionRequestRecord? = null
+        override val pending: AccountDeletionRequestRecord?
+            get() = record
+
+        override fun save(record: AccountDeletionRequestRecord) {
+            this.record = record
+        }
+
+        override fun clear() {
+            record = null
         }
     }
 
@@ -875,6 +1150,162 @@ class TagRepositoryTest {
         return Triple(receiptId, draftId, proposalId)
     }
 
+    @Test
+    fun deleteAccount_requestProtocolPersistsRecordBeforeRemoteAndClearsOnSuccess() = runBlocking {
+        authProvider.updateSession(
+            SharedTagAuthSession(
+                authUserId = "acc-del-user",
+                accessToken = "token",
+            ),
+        )
+        remote.captureStore = { deletionRequestStore.pending }
+
+        val result = repository.deleteAccount()
+
+        assertEquals(SharedTagAccountDeletionResult.Success, result)
+        assertEquals(1, remote.createRequestCallCount)
+        assertEquals(listOf(remote.createdRequestId), remote.deleteWithRequestCalls)
+        assertNotNull(remote.recordSeenAtDeleteCall)
+        assertEquals(remote.createdRequestId, remote.recordSeenAtDeleteCall?.requestId)
+        assertEquals("acc-del-user", remote.recordSeenAtDeleteCall?.authUserId)
+        assertNull(deletionRequestStore.pending)
+        assertEquals(0, remote.statusCallCount)
+    }
+
+    @Test
+    fun deleteAccount_crashWindowWithoutSessionConvergesViaCompletedStatus() = runBlocking {
+        deletionRequestStore.save(
+            AccountDeletionRequestRecord(
+                authUserId = "orphan-user",
+                requestId = "rid-1",
+                token = "tok-1",
+            ),
+        )
+        remote.statusResult = AccountDeletionRemoteStatus("completed")
+
+        val result = repository.deleteAccount()
+
+        assertEquals(SharedTagAccountDeletionResult.Success, result)
+        assertEquals(0, remote.deleteWithRequestCalls.size)
+        assertEquals(0, remote.deleteAccountCallCount)
+        assertEquals(1, remote.statusCallCount)
+        assertEquals(listOf("orphan-user"), accountLinkedLocalDataCleaner.clearedSharedDataUsers)
+        assertNull(authProvider.session.value)
+        assertNull(deletionRequestStore.pending)
+        assertNull(localAccountCleanupStore.pending.value)
+    }
+
+    @Test
+    fun deleteAccount_lostResponseWithLiveSessionReplaysSameRequestOnce() = runBlocking {
+        authProvider.updateSession(
+            SharedTagAuthSession(
+                authUserId = "replay-user",
+                accessToken = "token",
+            ),
+        )
+        deletionRequestStore.save(
+            AccountDeletionRequestRecord(
+                authUserId = "replay-user",
+                requestId = "rid-9",
+                token = "tok-9",
+            ),
+        )
+
+        val result = repository.deleteAccount()
+
+        assertEquals(SharedTagAccountDeletionResult.Success, result)
+        assertEquals(listOf("rid-9"), remote.deleteWithRequestCalls)
+        assertEquals(0, remote.statusCallCount)
+        assertNull(deletionRequestStore.pending)
+    }
+
+    @Test
+    fun deleteAccount_pendingStatusWithoutSessionStallsWithoutRepeatingRemote() = runBlocking {
+        deletionRequestStore.save(
+            AccountDeletionRequestRecord(
+                authUserId = "pending-user",
+                requestId = "rid-2",
+                token = "tok-2",
+            ),
+        )
+        remote.statusResult = AccountDeletionRemoteStatus("pending")
+
+        val result = repository.deleteAccount()
+
+        assertTrue(result is SharedTagAccountDeletionResult.Failure)
+        assertEquals(0, remote.deleteWithRequestCalls.size)
+        assertEquals(0, remote.deleteAccountCallCount)
+        assertEquals("rid-2", deletionRequestStore.pending?.requestId)
+        assertEquals(emptyList<String>(), accountLinkedLocalDataCleaner.clearedSharedDataUsers)
+        assertNull(localAccountCleanupStore.pending.value)
+    }
+
+    @Test
+    fun deleteAccount_ownerTransferRequiredKeepsRequestForRetry() = runBlocking {
+        authProvider.updateSession(
+            SharedTagAuthSession(
+                authUserId = "ot-user",
+                accessToken = "token",
+            ),
+        )
+        remote.deleteWithRequestFailure = IllegalStateException("owner_transfer_required")
+
+        val result = repository.deleteAccount()
+
+        assertEquals(SharedTagAccountDeletionResult.OwnerTransferRequired, result)
+        assertEquals("ot-user", deletionRequestStore.pending?.authUserId)
+        assertNull(localAccountCleanupStore.pending.value)
+    }
+
+    @Test
+    fun deleteAccount_statusQueryFailureWithoutSessionStallsFailClosed() = runBlocking {
+        deletionRequestStore.save(
+            AccountDeletionRequestRecord(
+                authUserId = "sf-user",
+                requestId = "rid-3",
+                token = "tok-3",
+            ),
+        )
+        remote.statusFailure = IllegalStateException("offline")
+
+        val result = repository.deleteAccount()
+
+        assertTrue(result is SharedTagAccountDeletionResult.Failure)
+        assertEquals(1, remote.statusCallCount)
+        assertEquals(0, remote.deleteWithRequestCalls.size)
+        assertEquals("rid-3", deletionRequestStore.pending?.requestId)
+        assertNull(localAccountCleanupStore.pending.value)
+    }
+
+    @Test
+    fun retryLocalAccountCleanup_successClearsDurableDeletionRequestRecord() = runBlocking {
+        localAccountCleanupStore.save(
+            LocalAccountCleanupMarker(
+                aiDataPending = true,
+                sessionPending = true,
+                syncWorkCancellationPending = true,
+                sharedDataCleanupPending = true,
+                pendingInviteCleanupPending = false,
+                entitlementCleanupPending = true,
+                personalLinkSettingsCleanupPending = true,
+                authUserId = "retry-user",
+            ),
+        )
+        deletionRequestStore.save(
+            AccountDeletionRequestRecord(
+                authUserId = "retry-user",
+                requestId = "rid-4",
+                token = "tok-4",
+            ),
+        )
+
+        val result = repository.retryLocalAccountCleanup()
+
+        assertEquals(SharedTagAccountDeletionResult.Success, result)
+        assertNull(localAccountCleanupStore.pending.value)
+        assertNull(deletionRequestStore.pending)
+    }
+
     private class FakeScheduler : MetadataScheduler {
         val enqueued = mutableListOf<Long>()
 
@@ -899,6 +1330,44 @@ class TagRepositoryTest {
             clearCallCount += 1
             clearFailure?.let { throw it }
             delegate.clearLocalAiData()
+        }
+    }
+
+    private class CountingAccountLinkedLocalDataCleaner : AccountLinkedLocalDataCleaner {
+        val cancelledSyncUsers = mutableListOf<String>()
+        val clearedSharedDataUsers = mutableListOf<String>()
+        val clearedEntitlementUsers = mutableListOf<String>()
+        var pendingInviteClearCallCount: Int = 0
+        var syncCancellationFailure: Throwable? = null
+        var sharedDataClearFailure: Throwable? = null
+        var pendingInviteClearFailure: Throwable? = null
+        var entitlementClearFailure: Throwable? = null
+        val clearedPersonalLinkSettingsUsers = mutableListOf<String>()
+        var personalLinkSettingsClearFailure: Throwable? = null
+
+        override suspend fun cancelSharedTagSyncWork(authUserId: String) {
+            cancelledSyncUsers += authUserId
+            syncCancellationFailure?.let { throw it }
+        }
+
+        override suspend fun clearSharedTagData(authUserId: String) {
+            clearedSharedDataUsers += authUserId
+            sharedDataClearFailure?.let { throw it }
+        }
+
+        override fun clearPendingInvite() {
+            pendingInviteClearCallCount += 1
+            pendingInviteClearFailure?.let { throw it }
+        }
+
+        override suspend fun clearEntitlementCache(authUserId: String) {
+            clearedEntitlementUsers += authUserId
+            entitlementClearFailure?.let { throw it }
+        }
+
+        override fun clearChatGptPersonalLinkSettings(authUserId: String) {
+            clearedPersonalLinkSettingsUsers += authUserId
+            personalLinkSettingsClearFailure?.let { throw it }
         }
     }
 
@@ -984,6 +1453,11 @@ class TagRepositoryTest {
     private class FakeRemoteDataSource : SharedTagSyncRemoteDataSource {
         var deleteAccountFailure: Throwable? = null
         var deleteAccountCallCount: Int = 0
+        var deleteAccountStarted: CompletableDeferred<Unit>? = null
+        var allowDeleteAccount: CompletableDeferred<Unit>? = null
+        var pullSnapshotStarted: CompletableDeferred<Unit>? = null
+        var allowPullSnapshot: CompletableDeferred<Unit>? = null
+        var pullSnapshotCallCount: Int = 0
 
         override suspend fun applyOps(
             session: SharedTagAuthSession,
@@ -991,6 +1465,9 @@ class TagRepositoryTest {
         ): ApplySharedTagOpsResponse = ApplySharedTagOpsResponse(emptyList())
 
         override suspend fun pullSnapshot(session: SharedTagAuthSession): PullSharedTagSnapshotResponse {
+            pullSnapshotCallCount += 1
+            pullSnapshotStarted?.complete(Unit)
+            allowPullSnapshot?.await()
             return PullSharedTagSnapshotResponse(
                 pulledAt = "2026-04-20T00:00:00Z",
                 normalizationVersion = 1,
@@ -1045,15 +1522,71 @@ class TagRepositoryTest {
 
         override suspend fun deleteAccount(session: SharedTagAuthSession) {
             deleteAccountCallCount += 1
+            deleteAccountStarted?.complete(Unit)
+            allowDeleteAccount?.await()
             deleteAccountFailure?.let { throw it }
+        }
+
+        var createdRequestId: String? = null
+        var createRequestCallCount: Int = 0
+        var createRequestFailure: Throwable? = null
+        val deleteWithRequestCalls = mutableListOf<String>()
+        var deleteWithRequestFailure: Throwable? = null
+        var statusCallCount: Int = 0
+        var statusResult: AccountDeletionRemoteStatus? = null
+        var statusFailure: Throwable? = null
+        var recordSeenAtDeleteCall: AccountDeletionRequestRecord? = null
+        var captureStore: (() -> AccountDeletionRequestRecord?)? = null
+
+        override suspend fun createAccountDeletionRequest(
+            session: SharedTagAuthSession,
+        ): AccountDeletionRequestGrant {
+            createRequestCallCount += 1
+            createRequestFailure?.let { throw it }
+            val requestId = "req-${session.authUserId}-$createRequestCallCount"
+            createdRequestId = requestId
+            return AccountDeletionRequestGrant(
+                requestId = requestId,
+                token = "status-token-$requestId",
+            )
+        }
+
+        override suspend fun deleteAccountWithRequest(
+            session: SharedTagAuthSession,
+            requestId: String,
+        ) {
+            // The request-aware path is still exactly one remote deletion;
+            // keep the unified remote-delete counter meaningful for the
+            // existing single-flight/retry contracts.
+            deleteAccountCallCount += 1
+            deleteWithRequestCalls += requestId
+            recordSeenAtDeleteCall = captureStore?.invoke()
+            deleteAccountStarted?.complete(Unit)
+            allowDeleteAccount?.await()
+            deleteAccountFailure?.let { throw it }
+            deleteWithRequestFailure?.let { throw it }
+        }
+
+        override suspend fun accountDeletionStatus(
+            requestId: String,
+            token: String,
+        ): AccountDeletionRemoteStatus {
+            statusCallCount += 1
+            statusFailure?.let { throw it }
+            return statusResult ?: AccountDeletionRemoteStatus("not_found")
         }
     }
 
     private class FakeSyncScheduler : SharedTagSyncScheduler {
         val enqueued = mutableListOf<String>()
+        val cancelled = mutableListOf<String>()
 
         override fun enqueue(authUserId: String) {
             enqueued += authUserId
+        }
+
+        override suspend fun cancel(authUserId: String) {
+            cancelled += authUserId
         }
     }
 }

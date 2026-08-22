@@ -7,12 +7,17 @@ import androidx.work.WorkManager
 import jp.mimac.urlsaver.BuildConfig
 import jp.mimac.urlsaver.billing.GooglePlayBillingService
 import jp.mimac.urlsaver.data.AppDatabase
+import jp.mimac.urlsaver.data.AccountDeletionRequestStore
+import jp.mimac.urlsaver.data.SharedPreferencesAccountDeletionRequestStore
+import jp.mimac.urlsaver.data.AccountOperationFence
 import jp.mimac.urlsaver.data.AiTransparencyRepository
 import jp.mimac.urlsaver.data.ChatGptPersonalLinkSyncRepository
+import jp.mimac.urlsaver.data.ChatGptPersonalLinkSyncSettingsStore
 import jp.mimac.urlsaver.data.ConfiguredContactSupportClient
 import jp.mimac.urlsaver.data.ContactSupportClient
 import jp.mimac.urlsaver.data.DataStoreEntryCardDisplayModeStore
 import jp.mimac.urlsaver.data.DataStoreEntitlementGrantStore
+import jp.mimac.urlsaver.data.DefaultAccountLinkedLocalDataCleaner
 import jp.mimac.urlsaver.data.DefaultTagRepository
 import jp.mimac.urlsaver.data.DefaultUrlRepository
 import jp.mimac.urlsaver.data.EntryCardDisplayModeStore
@@ -66,6 +71,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.net.URI
 import java.net.URLEncoder
+import java.io.File
 
 class AppContainer(context: Context) {
     private val appContext = context.applicationContext
@@ -117,6 +123,12 @@ class AppContainer(context: Context) {
     val localAccountCleanupStore: LocalAccountCleanupStore by lazy {
         SharedPreferencesLocalAccountCleanupStore(appContext)
     }
+    val accountDeletionRequestStore: AccountDeletionRequestStore by lazy {
+        SharedPreferencesAccountDeletionRequestStore(appContext)
+    }
+    private val accountOperationFence: AccountOperationFence by lazy {
+        AccountOperationFence(localAccountCleanupStore)
+    }
     private val sharedTagSyncRemoteConfig: SharedTagSyncRemoteConfig by lazy {
         SharedTagSyncRemoteConfig(
             enabled = BuildConfig.SHARED_TAG_CLOUD_ENABLED,
@@ -141,6 +153,9 @@ class AppContainer(context: Context) {
     private val entitlementGrantStore: EntitlementGrantStore by lazy {
         DataStoreEntitlementGrantStore(appContext)
     }
+    private val chatGptPersonalLinkSyncSettingsStore: ChatGptPersonalLinkSyncSettingsStore by lazy {
+        SharedPreferencesChatGptPersonalLinkSyncSettingsStore(appContext)
+    }
     val entitlementGrantRepository: EntitlementGrantRepository by lazy {
         EntitlementGrantRepository(
             authSessionProvider = sharedTagAuthSessionProvider,
@@ -151,6 +166,7 @@ class AppContainer(context: Context) {
             ),
             grantStore = entitlementGrantStore,
             clock = clock,
+            accountOperationFence = accountOperationFence,
         )
     }
     val googlePlayBillingService: GooglePlayBillingService by lazy {
@@ -169,7 +185,7 @@ class AppContainer(context: Context) {
             authSessionProvider = sharedTagAuthSessionProvider,
             urlEntryDao = database.urlEntryDao(),
             tagDao = database.tagDao(),
-            settingsStore = SharedPreferencesChatGptPersonalLinkSyncSettingsStore(appContext),
+            settingsStore = chatGptPersonalLinkSyncSettingsStore,
             remoteDataSource = SupabaseChatGptPersonalLinkRemoteDataSource(
                 config = sharedTagSyncRemoteConfig,
                 authSessionProvider = sharedTagAuthSessionProvider,
@@ -177,6 +193,7 @@ class AppContainer(context: Context) {
             ),
             operationEnabled = BuildConfig.CHATGPT_PERSONAL_LINK_SYNC_OPERATION_ENABLED &&
                 sharedTagSyncRemoteConfig.isConfigured,
+            accountOperationFence = accountOperationFence,
         )
     }
     val aiTransparencyRepository: AiTransparencyRepository by lazy {
@@ -202,6 +219,16 @@ class AppContainer(context: Context) {
             remoteDataSource = sharedTagSyncRemoteDataSource,
             clock = clock,
             metadataScheduler = scheduler,
+            accountOperationFence = accountOperationFence,
+        )
+    }
+    private val accountLinkedLocalDataCleaner by lazy {
+        DefaultAccountLinkedLocalDataCleaner(
+            syncScheduler = sharedTagSyncScheduler,
+            syncCoordinator = sharedTagSyncCoordinator,
+            pendingInviteStore = pendingInviteStore,
+            entitlementGrantStore = entitlementGrantStore,
+            chatGptPersonalLinkSyncSettingsStore = chatGptPersonalLinkSyncSettingsStore,
         )
     }
     private val usageSummaryDataSource: UsageSummaryDataSource by lazy {
@@ -278,7 +305,10 @@ class AppContainer(context: Context) {
             remoteConfig = sharedTagSyncRemoteConfig,
             usageSummaryDataSource = usageSummaryDataSource,
             aiLocalDataClearer = aiTransparencyRepository,
+            accountLinkedLocalDataCleaner = accountLinkedLocalDataCleaner,
             localAccountCleanupStore = localAccountCleanupStore,
+            accountDeletionRequestStore = accountDeletionRequestStore,
+            accountOperationFence = accountOperationFence,
         )
     }
 
@@ -291,6 +321,7 @@ class AppContainer(context: Context) {
             syncBeforeExport = { sharedTagSyncCoordinator.syncCurrentSession() },
             clock = clock,
             appVersion = BuildConfig.VERSION_NAME,
+            archiveDirectory = File(appContext.cacheDir, "exports"),
         )
     }
 

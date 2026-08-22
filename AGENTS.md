@@ -2,7 +2,7 @@
 
 ## Repository Purpose
 Android / iOS / Web / Supabase を含む「共有された URL をあとで開き直す」ための実装を維持する。
-Phase 1a/1b の URL 保存契約をコア不変条件として守りつつ、承認済みの検索・タグ・コレクション・共有タグ・AI-friendly export・課金/権限まわりの後続機能は現在機能として扱う。
+Phase 1a/1b の URL 保存契約をコア不変条件として守りつつ、承認済みの検索・自作タグ・共有タグ・AI-friendly export・課金/権限まわりの後続機能は現在機能として扱う。Collection / 保存先 / Android UserLabel は既存データ保護のための互換殻であり、現行のユーザー機能として復活させない。
 
 ## Phase 1a Scope
 - `ACTION_SEND` の単一 URL 共有受信
@@ -52,7 +52,9 @@ Phase 1a/1b の URL 保存契約をコア不変条件として守りつつ、承
 - Never run `connectedDebugAndroidTest`, `pm clear`, uninstall/reinstall, or any command/test that can clear app data on the user's normal physical Android device when saved URLs may matter.
 - Treat Android app data on real devices as user data. DB resets inside instrumentation tests, including `clearAllTables()`, are destructive on that device.
 - Before any physical Android instrumentation run, explicitly confirm the target device is a disposable test install or that the user approves data deletion for that run.
-- The connected Android Gradle guard must require both `URLSAVER_ALLOW_CONNECTED_ANDROID_TESTS=true` and `URLSAVER_APPROVE_ANDROID_APP_DATA_RESET=true`; do not bypass this on a normal user device.
+- The connected Android Gradle guard must require `URLSAVER_ALLOW_CONNECTED_ANDROID_TESTS=true`, `URLSAVER_APPROVE_ANDROID_APP_DATA_RESET=true`, and a non-empty `URLSAVER_CONNECTED_ANDROID_SERIAL`.
+- Before any connected Android test/install task starts, `adb devices` must contain exactly one entry, that entry must be in `device` state, and its serial must exactly match `URLSAVER_CONNECTED_ANDROID_SERIAL`. Multiple entries (including mixed ready/offline entries), zero entries, unauthorized/offline entries, serial mismatch, malformed output, or adb failure must fail closed.
+- Set `ANDROID_SERIAL` to the same approved serial as defense in depth, but do not rely on it instead of the Gradle guard. Never bypass the one-device check on a normal user device.
 - Prefer emulator, throwaway test device/user profile, or a separate test-only application id for destructive instrumentation.
 - If physical-device validation is requested, first state whether the planned commands preserve app data. If they do not, stop and ask before running them.
 
@@ -113,7 +115,7 @@ Phase 1a/1b の URL 保存契約をコア不変条件として守りつつ、承
 
 - For UI/UX tasks, read `DESIGN.md` before editing code and keep long repeatable procedures in `.agents/skills/`.
 - For Android/iOS home, card list, tag management, detail tag sections, physical-device UI regression, or rollback/restoration work, first read `.agents/skills/rinbam-single-route/SKILL.md` and `docs/mobile-ui-regression-contract.md`, then run `python3 scripts/verify_mobile_ui_contract.py` before and after the change when those surfaces are in scope.
-- Source of truth priority: current explicit user instruction, existing Compose/SwiftUI code and domain contracts, `DESIGN.md`, approved Figma/design files, screenshots or `gpt-image-2` images, then ambiguous natural-language preferences.
+- Product source-of-truth priority is defined only in `docs/rinbam-canonical-spec.md#source-of-truth`. Collection / UserLabel を含む現行・退役判定は、その順位と同書の `Current And Compatibility-Only Features` に従う。
 - The top bookmark/book "使い方" button must open the rich illustrated usage-list page with sections such as "まず覚える", "便利な操作", and "共有とAI"; it must not open or replace that page with the first-run onboarding/spotlight overlay.
 - First-run onboarding and the manual "使い方" list are separate UI surfaces. After UI changes, verify the bookmark/book button on both canonical iOS and Android apps before reporting completion.
 - The main bottom action bar must keep five visible actions on the home screen: グループ, エクスポート, center ＋, タグ, アーカイブ. The manual "使い方" list should hide that bottom action bar and provide an in-page back button to return to the top/home screen.

@@ -1,0 +1,186 @@
+[
+  {
+    "RuleID": "generic-api-key",
+    "File": "supabase/functions/contact-support/index.test.ts",
+    "StartLine": 69,
+    "Commit": "556948a65bc651b7843e0cc4d78087f1be1532d4",
+    "Finding": "SHAPE_MATCH_REDACTED",
+    "Disposition": "UNVALIDATED_PATTERN_MATCH"
+  },
+  {
+    "RuleID": "curl-auth-header",
+    "File": "docs/media-resolver-backend.md",
+    "StartLine": 55,
+    "Commit": "5567f1a2de7ab9dc972b968669882a47a083b240",
+    "Finding": "SHAPE_MATCH_REDACTED",
+    "Disposition": "UNVALIDATED_PATTERN_MATCH"
+  },
+  {
+    "RuleID": "generic-api-key",
+    "File": "ios/URLSaveriOSTests/AiTransparencyTests.swift",
+    "StartLine": 22,
+    "Commit": "5567f1a2de7ab9dc972b968669882a47a083b240",
+    "Finding": "SHAPE_MATCH_REDACTED",
+    "Disposition": "UNVALIDATED_PATTERN_MATCH"
+  },
+  {
+    "RuleID": "generic-api-key",
+    "File": "ios/URLSaveriOSTests/AiTransparencyTests.swift",
+    "StartLine": 29,
+    "Commit": "5567f1a2de7ab9dc972b968669882a47a083b240",
+    "Finding": "SHAPE_MATCH_REDACTED",
+    "Disposition": "UNVALIDATED_PATTERN_MATCH"
+  },
+  {
+    "RuleID": "generic-api-key",
+    "File": "ios/URLSaveriOSTests/AiTransparencyTests.swift",
+    "StartLine": 32,
+    "Commit": "5567f1a2de7ab9dc972b968669882a47a083b240",
+    "Finding": "SHAPE_MATCH_REDACTED",
+    "Disposition": "UNVALIDATED_PATTERN_MATCH"
+  },
+  {
+    "RuleID": "generic-api-key",
+    "File": "app/src/test/java/jp/mimac/urlsaver/ExportRepositoryTest.kt",
+    "StartLine": 683,
+    "Commit": "1b4a8fdb016d3b5996b8686d1ff48c4774f4869c",
+    "Finding": "SHAPE_MATCH_REDACTED",
+    "Disposition": "UNVALIDATED_PATTERN_MATCH"
+  },
+  {
+    "RuleID": "generic-api-key",
+    "File": "app/src/test/java/jp/mimac/urlsaver/ExportRepositoryTest.kt",
+    "StartLine": 684,
+    "Commit": "1b4a8fdb016d3b5996b8686d1ff48c4774f4869c",
+    "Finding": "SHAPE_MATCH_REDACTED",
+    "Disposition": "UNVALIDATED_PATTERN_MATCH"
+  },
+  {
+    "RuleID": "generic-api-key",
+    "File": "supabase/functions/verify-store-purchase/index.test.ts",
+    "StartLine": 77,
+    "Commit": "508e65cd37559423e76af3d6a89691dc3564b321",
+    "Finding": "SHAPE_MATCH_REDACTED",
+    "Disposition": "UNVALIDATED_PATTERN_MATCH"
+  },
+  {
+    "RuleID": "generic-api-key",
+    "File": "ios/URLSaveriOSTests/ExportArchiveBuilderTests.swift",
+    "StartLine": 450,
+    "Commit": "1b4a8fdb016d3b5996b8686d1ff48c4774f4869c",
+    "Finding": "SHAPE_MATCH_REDACTED",
+    "Disposition": "UNVALIDATED_PATTERN_MATCH"
+  },
+  {
+    "RuleID": "generic-api-key",
+    "File": "ios/URLSaveriOSTests/ExportArchiveBuilderTests.swift",
+    "StartLine": 454,
+    "Commit": "1b4a8fdb016d3b5996b8686d1ff48c4774f4869c",
+    "Finding": "SHAPE_MATCH_REDACTED",
+    "Disposition": "UNVALIDATED_PATTERN_MATCH"
+  },
+  {
+    "RuleID": "generic-api-key",
+    "File": "ios/URLSaveriOSTests/ExportArchiveBuilderTests.swift",
+    "StartLine": 460,
+    "Commit": "1b4a8fdb016d3b5996b8686d1ff48c4774f4869c",
+    "Finding": "SHAPE_MATCH_REDACTED",
+    "Disposition": "UNVALIDATED_PATTERN_MATCH"
+  },
+  {
+    "RuleID": "generic-api-key",
+    "File": "ios/URLSaveriOSTests/ExportArchiveBuilderTests.swift",
+    "StartLine": 461,
+    "Commit": "1b4a8fdb016d3b5996b8686d1ff48c4774f4869c",
+    "Finding": "SHAPE_MATCH_REDACTED",
+    "Disposition": "UNVALIDATED_PATTERN_MATCH"
+  },
+  {
+    "RuleID": "generic-api-key",
+    "File": "ios/URLSaveriOSTests/ExportArchiveBuilderTests.swift",
+    "StartLine": 699,
+    "Commit": "1b4a8fdb016d3b5996b8686d1ff48c4774f4869c",
+    "Finding": "SHAPE_MATCH_REDACTED",
+    "Disposition": "UNVALIDATED_PATTERN_MATCH"
+  },
+  {
+    "RuleID": "generic-api-key",
+    "File": "supabase/functions/verify-store-purchase/index.test.ts",
+    "StartLine": 77,
+    "Commit": "9b7693e08b0b9d77ea240113ed51c215109bdaa7",
+    "Finding": "SHAPE_MATCH_REDACTED",
+    "Disposition": "UNVALIDATED_PATTERN_MATCH"
+  },
+  {
+    "RuleID": "generic-api-key",
+    "File": "ios/URLSaveriOSTests/ExportArchiveBuilderTests.swift",
+    "StartLine": 64,
+    "Commit": "de40c4e33661c2e0c5231bd7b90b4e2f9bf9bd4f",
+    "Finding": "SHAPE_MATCH_REDACTED",
+    "Disposition": "UNVALIDATED_PATTERN_MATCH"
+  },
+  {
+    "RuleID": "generic-api-key",
+    "File": "app/src/test/java/jp/mimac/urlsaver/ExportRepositoryTest.kt",
+    "StartLine": 200,
+    "Commit": "de40c4e33661c2e0c5231bd7b90b4e2f9bf9bd4f",
+    "Finding": "SHAPE_MATCH_REDACTED",
+    "Disposition": "UNVALIDATED_PATTERN_MATCH"
+  },
+  {
+    "RuleID": "generic-api-key",
+    "File": "app/src/test/java/jp/mimac/urlsaver/ExportRepositoryTest.kt",
+    "StartLine": 200,
+    "Commit": "f52bbce460f60b9f1dfe9157f48d63b39393134b",
+    "Finding": "SHAPE_MATCH_REDACTED",
+    "Disposition": "UNVALIDATED_PATTERN_MATCH"
+  },
+  {
+    "RuleID": "generic-api-key",
+    "File": "ios/URLSaveriOSTests/ExportArchiveBuilderTests.swift",
+    "StartLine": 64,
+    "Commit": "f52bbce460f60b9f1dfe9157f48d63b39393134b",
+    "Finding": "SHAPE_MATCH_REDACTED",
+    "Disposition": "UNVALIDATED_PATTERN_MATCH"
+  },
+  {
+    "RuleID": "generic-api-key",
+    "File": "web/invite-link/auth/reset-password/index.html",
+    "StartLine": 148,
+    "Commit": "295a4f732b5e412ec04d01fab7b6bbfc33a634f8",
+    "Finding": "SHAPE_MATCH_REDACTED",
+    "Disposition": "UNVALIDATED_PATTERN_MATCH"
+  },
+  {
+    "RuleID": "gcp-api-key",
+    "File": "app/src/main/java/jp/mimac/urlsaver/video/providers/YouTubeVideoResolver.kt",
+    "StartLine": 196,
+    "Commit": "233e2ee775ddd3cb1cbf8a15c0c030602e82007a",
+    "Finding": "SHAPE_MATCH_REDACTED",
+    "Disposition": "UNVALIDATED_PATTERN_MATCH"
+  },
+  {
+    "RuleID": "gcp-api-key",
+    "File": "ios/URLSaveriOS/App/MetadataCoordinator.swift",
+    "StartLine": 808,
+    "Commit": "233e2ee775ddd3cb1cbf8a15c0c030602e82007a",
+    "Finding": "SHAPE_MATCH_REDACTED",
+    "Disposition": "UNVALIDATED_PATTERN_MATCH"
+  },
+  {
+    "RuleID": "gcp-api-key",
+    "File": "app/src/main/java/jp/mimac/urlsaver/worker/MetadataFetcher.kt",
+    "StartLine": 2413,
+    "Commit": "f4a71b794e33f395a35f7a2a62a2e36e4397ef86",
+    "Finding": "SHAPE_MATCH_REDACTED",
+    "Disposition": "UNVALIDATED_PATTERN_MATCH"
+  },
+  {
+    "RuleID": "gcp-api-key",
+    "File": "app/src/main/java/jp/mimac/urlsaver/worker/MetadataFetcher.kt",
+    "StartLine": 2413,
+    "Commit": "1feb3e5c4f5911f14afb9dddb08d7fd0cabd2849",
+    "Finding": "SHAPE_MATCH_REDACTED",
+    "Disposition": "UNVALIDATED_PATTERN_MATCH"
+  }
+]

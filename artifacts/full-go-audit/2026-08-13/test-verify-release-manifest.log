@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "/Users/mimac/Desktop/りんばむ/scripts/test_verify_release_manifest.py", line 11, in <module>
+    from scripts import verify_release_manifest
+ModuleNotFoundError: No module named 'scripts'

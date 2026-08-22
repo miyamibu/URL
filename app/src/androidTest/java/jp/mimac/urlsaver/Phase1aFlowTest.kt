@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.WorkManager
 import jp.mimac.urlsaver.data.EXTRA_SHARE_ENTRY_ID
@@ -74,8 +76,74 @@ class Phase1aFlowTest {
 
         waitForText("まず覚える")
         composeRule.onNodeWithText("便利な操作").assertExists()
-        composeRule.onNodeWithText("共有とAI").assertExists()
-        composeRule.onNodeWithText("Web版の使い方を開く").assertExists()
+        composeRule.onNode(hasScrollAction())
+            .performScrollToNode(hasText("共有とAI"))
+        composeRule.onNodeWithText("共有とAI").assertIsDisplayed()
+        composeRule.onNode(hasScrollAction())
+            .performScrollToNode(hasTestTag("usage_guide_external_link"))
+        composeRule.onNodeWithTag("usage_guide_external_link")
+            .assertIsDisplayed()
+            .assertHasClickAction()
+    }
+
+    @Test
+    fun manualInput_imeKeepsSaveActionVisibleWithoutDraggingSheet() {
+        composeRule.onNodeWithContentDescription("追加").performClick()
+        composeRule.onNodeWithTag("manual_input_field")
+            .performClick()
+            .performTextInput("https://example.com/manual-ime-visible")
+
+        composeRule.waitUntil(UI_TIMEOUT_MS) {
+            ViewCompat.getRootWindowInsets(composeRule.activity.window.decorView)
+                ?.isVisible(WindowInsetsCompat.Type.ime()) == true
+        }
+
+        val windowInsets = requireNotNull(
+            ViewCompat.getRootWindowInsets(composeRule.activity.window.decorView),
+        )
+        val imeBottomInset = windowInsets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+        val imeTop = composeRule.activity.window.decorView.height - imeBottomInset
+        val saveButtonBottom = composeRule.onNodeWithTag("manual_input_save")
+            .fetchSemanticsNode()
+            .boundsInRoot
+            .bottom
+
+        assertTrue("IME inset must be visible during this regression check", imeBottomInset > 0)
+        assertTrue(
+            "Save action bottom $saveButtonBottom must stay above IME top $imeTop",
+            saveButtonBottom <= imeTop,
+        )
+    }
+
+    @Test
+    fun manualInput_activityRecreationRestoresSheetInputAndSelectedTag() {
+        val tagName = "回転保持-${System.currentTimeMillis()}"
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val tagId = runBlocking {
+            val result = (context as UrlSaverApp).container.tagRepository.createLocalTagWithResult(tagName)
+            assertTrue(result is CreateTagResult.Success)
+            (result as CreateTagResult.Success).tagId
+        }
+        val url = uniqueUrl("manual-recreate")
+
+        composeRule.onNodeWithContentDescription("追加").performClick()
+        composeRule.onNodeWithTag("manual_input_field")
+            .performClick()
+            .performTextInput(url)
+        composeRule.onNodeWithTag("manual_input_field").performImeAction()
+        composeRule.waitUntil(UI_TIMEOUT_MS) {
+            composeRule.onAllNodesWithText(tagName, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("manual_input_tag_$tagId").performClick().assertIsSelected()
+
+        composeRule.activityRule.scenario.recreate()
+
+        composeRule.waitUntil(UI_TIMEOUT_MS) {
+            composeRule.onAllNodesWithTag("manual_input_field").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("manual_input_field").assertTextContains(url)
+        composeRule.onNodeWithTag("manual_input_tag_$tagId").assertIsSelected()
+        composeRule.onNodeWithTag("manual_input_save").assertIsDisplayed()
     }
 
     @Test
@@ -353,8 +421,10 @@ class Phase1aFlowTest {
 
     @Test
     fun main_privacyDisclosureActionOpensDialog() {
-        composeRule.onNodeWithContentDescription("プライバシー情報")
-            .assertExists()
+        composeRule.onNodeWithContentDescription("メニュー").performClick()
+        composeRule.onNodeWithText("データの取り扱い")
+            .assertIsDisplayed()
+            .assertHasClickAction()
             .performClick()
         waitForText("データの取り扱い")
         waitForTextContaining("Standard / Pro")

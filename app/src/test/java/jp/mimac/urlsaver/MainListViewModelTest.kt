@@ -1,5 +1,6 @@
 package jp.mimac.urlsaver
 
+import androidx.lifecycle.SavedStateHandle
 import jp.mimac.urlsaver.data.MainListRepository
 import jp.mimac.urlsaver.data.EntryCardDisplayModeStore
 import jp.mimac.urlsaver.data.LocalTagEntryRef
@@ -15,6 +16,8 @@ import jp.mimac.urlsaver.domain.TagWithCount
 import jp.mimac.urlsaver.ui.filterEntriesBySearch
 import jp.mimac.urlsaver.ui.ListFilterLoadState
 import jp.mimac.urlsaver.ui.MainListViewModel
+import jp.mimac.urlsaver.ui.ManualInputUiState
+import jp.mimac.urlsaver.ui.restoreManualInputUiState
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
@@ -116,6 +119,62 @@ class MainListViewModelTest {
         assertEquals(33L, result.entryId)
         assertEquals(0, result.failedTagAssignmentCount)
         assertEquals(listOf(" https://example.com "), repository.manualInputCalls)
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun manualInput_failedSaveRestoresSheetInputTagsAndErrorFromSavedState() = runTest {
+        val savedStateHandle = SavedStateHandle()
+        val repository = FakeRepository().apply {
+            manualSaveResult = SaveResult(ShareSaveResult.SAVE_FAILED)
+        }
+        val first = MainListViewModel(
+            repository = repository,
+            displayModeStore = FakeDisplayModeStore(),
+            savedStateHandle = savedStateHandle,
+        )
+
+        first.openManualInput()
+        first.updateManualInputText("https://example.com/restored-manual")
+        first.selectManualInputTag(17L)
+        first.selectManualInputTag(23L)
+        first.submitCurrentManualInput()
+        advanceUntilIdle()
+
+        val restored = MainListViewModel(
+            repository = repository,
+            displayModeStore = FakeDisplayModeStore(),
+            savedStateHandle = savedStateHandle,
+        ).manualInputState.value
+
+        assertTrue(restored.visible)
+        assertEquals("https://example.com/restored-manual", restored.inputText)
+        assertEquals(setOf(17L, 23L), restored.selectedLocalTagIds)
+        assertEquals(ShareSaveResult.SAVE_FAILED, restored.inputError)
+        assertTrue(!restored.isSaving)
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun manualInput_successClearsDurableDraftOnlyAfterRepositorySucceeds() = runTest {
+        val savedStateHandle = SavedStateHandle()
+        val repository = FakeRepository().apply {
+            manualSaveResult = SaveResult(ShareSaveResult.CREATED, entryId = 44L)
+        }
+        val viewModel = MainListViewModel(
+            repository = repository,
+            displayModeStore = FakeDisplayModeStore(),
+            savedStateHandle = savedStateHandle,
+        )
+
+        viewModel.openManualInput()
+        viewModel.updateManualInputText("https://example.com/clear-on-success")
+        viewModel.selectManualInputTag(31L)
+        viewModel.submitCurrentManualInput()
+        advanceUntilIdle()
+
+        assertEquals(ManualInputUiState(), viewModel.manualInputState.value)
+        assertEquals(ManualInputUiState(), restoreManualInputUiState(savedStateHandle))
     }
 
     @Test

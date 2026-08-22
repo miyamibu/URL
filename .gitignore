@@ -9,6 +9,7 @@ app/build/
 # Local agent/tooling state
 .claude/
 .codex/
+.playwright-cli/
 .understand-anything/
 
 # Generated evidence and temporary outputs
@@ -25,7 +26,9 @@ artifacts/ui-review/2026-06-30/
 artifacts/ui-review/**/*.jpg
 artifacts/ui-review/**/*.jpeg
 artifacts/ui-review/**/*.png
+artifacts/ui-review/**/*.log
 artifacts/ui-review/**/*.xml
+artifacts/ui-review/**/*.yml
 artifacts/tiktok-live/
 __pycache__/
 tmp_main.png

@@ -1,0 +1,245 @@
+{
+  "capturedAt": "2026-08-13T05:14:00.655Z",
+  "targetUrl": "https://rinbamu-admin.vercel.app/",
+  "browser": {
+    "protocolVersion": "1.3",
+    "product": "Chrome/151.0.7922.109",
+    "revision": "@28a7a6c409e03c701d3474ef9e3b1f0be6249039",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+    "jsVersion": "15.1.206.16"
+  },
+  "mobile": {
+    "title": "りんばむ 管理",
+    "lang": "ja",
+    "url": "https://rinbamu-admin.vercel.app/?audit=1786598034999-mobile-320x900",
+    "viewport": {
+      "width": 320,
+      "height": 900,
+      "dpr": 1
+    },
+    "scroll": {
+      "width": 320,
+      "height": 900
+    },
+    "forcedColors": false,
+    "favicon": [
+      "https://rinbamu-admin.vercel.app/icon.svg?cba2a17d0eb4b8d6"
+    ],
+    "controls": [
+      {
+        "tag": "input",
+        "type": "email",
+        "name": "メール",
+        "x": 37,
+        "y": 420.5,
+        "width": 246,
+        "height": 44,
+        "outline": "rgb(23, 32, 42) none 3px"
+      },
+      {
+        "tag": "input",
+        "type": "password",
+        "name": "パスワード",
+        "x": 37,
+        "y": 508.5,
+        "width": 246,
+        "height": 44,
+        "outline": "rgb(23, 32, 42) none 3px"
+      },
+      {
+        "tag": "button",
+        "type": "submit",
+        "name": "サインイン",
+        "x": 37,
+        "y": 566.5,
+        "width": 246,
+        "height": 46,
+        "outline": "rgb(255, 255, 255) none 3px"
+      }
+    ],
+    "headings": [
+      {
+        "level": "H1",
+        "text": "りんばむ 管理"
+      }
+    ],
+    "bodyText": "りんばむ 管理\n\n優待コード管理には管理者アカウントでのサインインが必要です。\n\nメール\nパスワード\nサインイン"
+  },
+  "desktop": {
+    "title": "りんばむ 管理",
+    "lang": "ja",
+    "url": "https://rinbamu-admin.vercel.app/?audit=1786598037978-desktop-1280x900",
+    "viewport": {
+      "width": 1280,
+      "height": 900,
+      "dpr": 1
+    },
+    "scroll": {
+      "width": 1280,
+      "height": 900
+    },
+    "forcedColors": false,
+    "favicon": [
+      "https://rinbamu-admin.vercel.app/icon.svg?cba2a17d0eb4b8d6"
+    ],
+    "controls": [
+      {
+        "tag": "input",
+        "type": "email",
+        "name": "メール",
+        "x": 431,
+        "y": 429.5,
+        "width": 418,
+        "height": 44,
+        "outline": "rgb(23, 32, 42) none 3px"
+      },
+      {
+        "tag": "input",
+        "type": "password",
+        "name": "パスワード",
+        "x": 431,
+        "y": 517.5,
+        "width": 418,
+        "height": 44,
+        "outline": "rgb(23, 32, 42) none 3px"
+      },
+      {
+        "tag": "button",
+        "type": "submit",
+        "name": "サインイン",
+        "x": 431,
+        "y": 575.5,
+        "width": 418,
+        "height": 46,
+        "outline": "rgb(255, 255, 255) none 3px"
+      }
+    ],
+    "headings": [
+      {
+        "level": "H1",
+        "text": "りんばむ 管理"
+      }
+    ],
+    "bodyText": "りんばむ 管理\n\n優待コード管理には管理者アカウントでのサインインが必要です。\n\nメール\nパスワード\nサインイン"
+  },
+  "forcedColors": {
+    "title": "りんばむ 管理",
+    "lang": "ja",
+    "url": "https://rinbamu-admin.vercel.app/?audit=1786598039078-forced-colors-320x900",
+    "viewport": {
+      "width": 320,
+      "height": 900,
+      "dpr": 1
+    },
+    "scroll": {
+      "width": 320,
+      "height": 900
+    },
+    "forcedColors": true,
+    "favicon": [
+      "https://rinbamu-admin.vercel.app/icon.svg?cba2a17d0eb4b8d6"
+    ],
+    "controls": [
+      {
+        "tag": "input",
+        "type": "email",
+        "name": "メール",
+        "x": 37,
+        "y": 419.5,
+        "width": 246,
+        "height": 44,
+        "outline": "rgb(255, 255, 255) none 3px"
+      },
+      {
+        "tag": "input",
+        "type": "password",
+        "name": "パスワード",
+        "x": 37,
+        "y": 507.5,
+        "width": 246,
+        "height": 44,
+        "outline": "rgb(255, 255, 255) none 3px"
+      },
+      {
+        "tag": "button",
+        "type": "submit",
+        "name": "サインイン",
+        "x": 37,
+        "y": 565.5,
+        "width": 246,
+        "height": 48,
+        "outline": "rgb(255, 255, 255) none 3px"
+      }
+    ],
+    "headings": [
+      {
+        "level": "H1",
+        "text": "りんばむ 管理"
+      }
+    ],
+    "bodyText": "りんばむ 管理\n\n優待コード管理には管理者アカウントでのサインインが必要です。\n\nメール\nパスワード\nサインイン"
+  },
+  "tabOrder": [
+    {
+      "tag": "input",
+      "type": "email",
+      "name": "メール",
+      "outline": "rgb(36, 99, 235) solid 3px",
+      "rect": {
+        "x": 37,
+        "y": 420.5,
+        "width": 246,
+        "height": 44
+      }
+    },
+    {
+      "tag": "input",
+      "type": "password",
+      "name": "パスワード",
+      "outline": "rgb(36, 99, 235) solid 3px",
+      "rect": {
+        "x": 37,
+        "y": 508.5,
+        "width": 246,
+        "height": 44
+      }
+    },
+    {
+      "tag": "button",
+      "type": "submit",
+      "name": "サインイン",
+      "outline": "rgb(36, 99, 235) solid 3px",
+      "rect": {
+        "x": 37,
+        "y": 566.5,
+        "width": 246,
+        "height": 46
+      }
+    },
+    {
+      "tag": "input",
+      "type": "email",
+      "name": "メール",
+      "outline": "rgb(36, 99, 235) solid 3px",
+      "rect": {
+        "x": 37,
+        "y": 420.5,
+        "width": 246,
+        "height": 44
+      }
+    }
+  ],
+  "consoleRecords": [],
+  "failedNetworkEntries": [],
+  "assertions": {
+    "mobileNoHorizontalOverflow": true,
+    "desktopNoHorizontalOverflow": true,
+    "mobileControlsAtLeast44CssPx": true,
+    "allVisibleControlsNamed": true,
+    "tabStartsWithEmailPasswordSubmit": true,
+    "focusOutlineVisible": true,
+    "forcedColorsActive": true,
+    "faviconPublished": true,
+    "noConsoleErrors": true
+  }
+}

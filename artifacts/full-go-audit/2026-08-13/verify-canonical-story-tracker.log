@@ -1,0 +1,15 @@
+PASS CSV header
+PASS story row count
+PASS duplicate story IDs
+PASS missing story IDs
+PASS XLSX zip integrity
+PASS CSV/XLSX story sheet
+PASS XLSX summary sheet
+Remaining gates:
+- android_device: 4 (US-013,US-021,US-025,CH-013)
+- iphone_device: 4 (US-013,US-021,US-025,US-037)
+- distribution_signing: 2 (US-028,CH-013)
+- supabase_auth: 21 (US-016,US-017,US-018,US-019,US-020,US-022,US-023,US-024,AS-001,AS-002,AS-003,AS-004,AS-005,AS-006,ES-005,US-032,US-033,AS-007,AS-008,US-039,AS-009)
+- store_console: 6 (US-029,US-033,AS-007,ES-006,US-040,CH-013)
+- resend_live: 4 (AS-003,AS-006,AS-008,AS-009)
+PASS canonical story tracker verification

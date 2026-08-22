@@ -3,8 +3,12 @@ package jp.mimac.urlsaver.data
 import android.content.Context
 import jp.mimac.urlsaver.domain.RecordState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -18,6 +22,7 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.time.Instant
+import java.security.MessageDigest
 import java.util.UUID
 
 data class ChatGptPersonalLinkSyncSettings(
@@ -40,54 +45,88 @@ data class ChatGptSyncEligibilitySnapshot(
 )
 
 interface ChatGptPersonalLinkSyncSettingsStore {
-    val settings: StateFlow<ChatGptPersonalLinkSyncSettings>
-    fun snapshot(): ChatGptPersonalLinkSyncSettings
-    fun setEnabled(enabled: Boolean, contentFetchEnabled: Boolean)
-    fun markSyncSuccess(syncedAt: Long)
-    fun markSyncFailure(message: String)
+    val revision: StateFlow<Long>
+    fun snapshot(authUserId: String?): ChatGptPersonalLinkSyncSettings
+    fun setEnabled(authUserId: String, enabled: Boolean, contentFetchEnabled: Boolean)
+    fun markSyncSuccess(authUserId: String, syncedAt: Long)
+    fun markSyncFailure(authUserId: String, message: String)
+    fun clear(authUserId: String)
 }
 
 class SharedPreferencesChatGptPersonalLinkSyncSettingsStore(
     context: Context,
 ) : ChatGptPersonalLinkSyncSettingsStore {
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-    private val state = MutableStateFlow(read())
+    private val revisionState = MutableStateFlow(0L)
 
-    override val settings: StateFlow<ChatGptPersonalLinkSyncSettings> = state
+    override val revision: StateFlow<Long> = revisionState
 
-    override fun snapshot(): ChatGptPersonalLinkSyncSettings = state.value
-
-    override fun setEnabled(enabled: Boolean, contentFetchEnabled: Boolean) {
-        prefs.edit()
-            .putBoolean(KEY_ENABLED, enabled)
-            .putBoolean(KEY_CONTENT_FETCH_ENABLED, enabled && contentFetchEnabled)
-            .remove(KEY_LAST_ERROR_MESSAGE)
-            .apply()
-        state.value = read()
+    override fun snapshot(authUserId: String?): ChatGptPersonalLinkSyncSettings {
+        val scope = accountScope(authUserId) ?: return ChatGptPersonalLinkSyncSettings()
+        return read(scope)
     }
 
-    override fun markSyncSuccess(syncedAt: Long) {
-        prefs.edit()
-            .putLong(KEY_LAST_SYNCED_AT, syncedAt)
-            .remove(KEY_LAST_ERROR_MESSAGE)
-            .apply()
-        state.value = read()
+    override fun setEnabled(authUserId: String, enabled: Boolean, contentFetchEnabled: Boolean) {
+        val scope = requireAccountScope(authUserId)
+        commit {
+            putBoolean(scopedKey(KEY_ENABLED, scope), enabled)
+            putBoolean(scopedKey(KEY_CONTENT_FETCH_ENABLED, scope), enabled && contentFetchEnabled)
+            remove(scopedKey(KEY_LAST_ERROR_MESSAGE, scope))
+        }
     }
 
-    override fun markSyncFailure(message: String) {
-        prefs.edit()
-            .putString(KEY_LAST_ERROR_MESSAGE, message.take(MAX_ERROR_LENGTH))
-            .apply()
-        state.value = read()
+    override fun markSyncSuccess(authUserId: String, syncedAt: Long) {
+        val scope = requireAccountScope(authUserId)
+        commit {
+            putLong(scopedKey(KEY_LAST_SYNCED_AT, scope), syncedAt)
+            remove(scopedKey(KEY_LAST_ERROR_MESSAGE, scope))
+        }
     }
 
-    private fun read(): ChatGptPersonalLinkSyncSettings =
+    override fun markSyncFailure(authUserId: String, message: String) {
+        val scope = requireAccountScope(authUserId)
+        commit {
+            putString(scopedKey(KEY_LAST_ERROR_MESSAGE, scope), message.take(MAX_ERROR_LENGTH))
+        }
+    }
+
+    override fun clear(authUserId: String) {
+        val scope = requireAccountScope(authUserId)
+        commit {
+            remove(scopedKey(KEY_ENABLED, scope))
+            remove(scopedKey(KEY_CONTENT_FETCH_ENABLED, scope))
+            remove(scopedKey(KEY_LAST_SYNCED_AT, scope))
+            remove(scopedKey(KEY_LAST_ERROR_MESSAGE, scope))
+        }
+    }
+
+    private fun read(scope: String): ChatGptPersonalLinkSyncSettings =
         ChatGptPersonalLinkSyncSettings(
-            enabled = prefs.getBoolean(KEY_ENABLED, false),
+            enabled = prefs.getBoolean(scopedKey(KEY_ENABLED, scope), false),
             contentFetchEnabled = false,
-            lastSyncedAt = if (prefs.contains(KEY_LAST_SYNCED_AT)) prefs.getLong(KEY_LAST_SYNCED_AT, 0L) else null,
-            lastErrorMessage = prefs.getString(KEY_LAST_ERROR_MESSAGE, null),
+            lastSyncedAt = scopedKey(KEY_LAST_SYNCED_AT, scope).let { key ->
+                if (prefs.contains(key)) prefs.getLong(key, 0L) else null
+            },
+            lastErrorMessage = prefs.getString(scopedKey(KEY_LAST_ERROR_MESSAGE, scope), null),
         )
+
+    private fun commit(edit: android.content.SharedPreferences.Editor.() -> Unit) {
+        val committed = prefs.edit().apply(edit).commit()
+        check(committed) { "Could not persist ChatGPT personal link sync settings" }
+        revisionState.value += 1L
+    }
+
+    private fun requireAccountScope(authUserId: String): String =
+        requireNotNull(accountScope(authUserId)) { "authUserId must not be blank" }
+
+    private fun accountScope(authUserId: String?): String? {
+        val normalized = authUserId?.trim()?.takeIf(String::isNotEmpty) ?: return null
+        return MessageDigest.getInstance("SHA-256")
+            .digest(normalized.toByteArray(Charsets.UTF_8))
+            .joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xff) }
+    }
+
+    private fun scopedKey(key: String, scope: String): String = "$key.$scope"
 
     private companion object {
         const val PREFS_NAME = "chatgpt_personal_link_sync"
@@ -205,35 +244,64 @@ class ChatGptPersonalLinkSyncRepository(
     private val settingsStore: ChatGptPersonalLinkSyncSettingsStore,
     private val remoteDataSource: ChatGptPersonalLinkRemoteDataSource,
     private val operationEnabled: Boolean = true,
+    private val accountOperationFence: AccountOperationFence = AccountOperationFence(),
 ) {
-    val settings: StateFlow<ChatGptPersonalLinkSyncSettings> = settingsStore.settings
+    val settings: Flow<ChatGptPersonalLinkSyncSettings> = combine(
+        authSessionProvider.session,
+        settingsStore.revision,
+    ) { session, _ ->
+        settingsStore.snapshot(session?.authUserId)
+    }.distinctUntilChanged()
     val isOperationEnabled: Boolean get() = operationEnabled
 
     @Suppress("UNUSED_PARAMETER")
     suspend fun setEnabled(enabled: Boolean, contentFetchEnabled: Boolean): ChatGptSyncResult {
         if (!operationEnabled) return ChatGptSyncResult.GateOff
-        val session = authSessionProvider.session.value ?: return ChatGptSyncResult.AuthRequired
-        return runCatching {
-            remoteDataSource.setSyncEnabled(session, enabled, contentFetchEnabled = false)
-            settingsStore.setEnabled(enabled, contentFetchEnabled = false)
-            if (enabled) {
-                syncCurrentSnapshot(session)
-            } else {
-                ChatGptSyncResult.Success(targetCount = 0, excludedCount = 0, syncedCount = 0)
+        return accountOperationFence.withAccountOperation(
+            authUserId = { authSessionProvider.session.value?.authUserId },
+            blockedResult = { ChatGptSyncResult.AuthRequired },
+        ) {
+            val session = authSessionProvider.session.value ?: return@withAccountOperation ChatGptSyncResult.AuthRequired
+            try {
+                remoteDataSource.setSyncEnabled(session, enabled, contentFetchEnabled = false)
+                if (!isCurrentSession(session)) return@withAccountOperation ChatGptSyncResult.AuthRequired
+                settingsStore.setEnabled(session.authUserId, enabled, contentFetchEnabled = false)
+                if (enabled) {
+                    syncCurrentSnapshot(session)
+                } else {
+                    ChatGptSyncResult.Success(targetCount = 0, excludedCount = 0, syncedCount = 0)
+                }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Throwable) {
+                if (isCurrentSession(session)) {
+                    runCatching { settingsStore.markSyncFailure(session.authUserId, SAFE_FAILURE_MESSAGE) }
+                }
+                ChatGptSyncResult.Failure(SAFE_FAILURE_MESSAGE)
             }
-        }.getOrElse {
-            settingsStore.markSyncFailure(SAFE_FAILURE_MESSAGE)
-            ChatGptSyncResult.Failure(SAFE_FAILURE_MESSAGE)
         }
     }
 
     suspend fun syncNow(): ChatGptSyncResult {
         if (!operationEnabled) return ChatGptSyncResult.GateOff
-        if (!settingsStore.snapshot().enabled) return ChatGptSyncResult.NotEnabled
-        val session = authSessionProvider.session.value ?: return ChatGptSyncResult.AuthRequired
-        return runCatching { syncCurrentSnapshot(session) }.getOrElse {
-            settingsStore.markSyncFailure(SAFE_FAILURE_MESSAGE)
-            ChatGptSyncResult.Failure(SAFE_FAILURE_MESSAGE)
+        return accountOperationFence.withAccountOperation(
+            authUserId = { authSessionProvider.session.value?.authUserId },
+            blockedResult = { ChatGptSyncResult.AuthRequired },
+        ) {
+            val session = authSessionProvider.session.value ?: return@withAccountOperation ChatGptSyncResult.AuthRequired
+            if (!settingsStore.snapshot(session.authUserId).enabled) {
+                return@withAccountOperation ChatGptSyncResult.NotEnabled
+            }
+            try {
+                syncCurrentSnapshot(session)
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Throwable) {
+                if (isCurrentSession(session)) {
+                    runCatching { settingsStore.markSyncFailure(session.authUserId, SAFE_FAILURE_MESSAGE) }
+                }
+                ChatGptSyncResult.Failure(SAFE_FAILURE_MESSAGE)
+            }
         }
     }
 
@@ -270,6 +338,7 @@ class ChatGptPersonalLinkSyncRepository(
     }
 
     private suspend fun syncCurrentSnapshot(session: SharedTagAuthSession): ChatGptSyncResult {
+        if (!isCurrentSession(session)) return ChatGptSyncResult.AuthRequired
         val snapshot = eligibilitySnapshot()
         val operations = snapshot.eligibleEntries
             .map { entry ->
@@ -277,10 +346,12 @@ class ChatGptPersonalLinkSyncRepository(
                 entry.toChatGptOperation(tags)
             }
         if (operations.isNotEmpty()) {
+            if (!isCurrentSession(session)) return ChatGptSyncResult.AuthRequired
             val response = remoteDataSource.applyOps(session, operations)
+            if (!isCurrentSession(session)) return ChatGptSyncResult.AuthRequired
             val appliedCount = response.appliedCount.coerceIn(0, operations.size)
             val failedCount = (operations.size - appliedCount).coerceAtLeast(0)
-            settingsStore.markSyncSuccess(System.currentTimeMillis())
+            settingsStore.markSyncSuccess(session.authUserId, System.currentTimeMillis())
             if (failedCount > 0) {
                 return ChatGptSyncResult.Partial(
                     targetCount = operations.size,
@@ -295,13 +366,17 @@ class ChatGptPersonalLinkSyncRepository(
                 syncedCount = appliedCount,
             )
         }
-        settingsStore.markSyncSuccess(System.currentTimeMillis())
+        if (!isCurrentSession(session)) return ChatGptSyncResult.AuthRequired
+        settingsStore.markSyncSuccess(session.authUserId, System.currentTimeMillis())
         return ChatGptSyncResult.Success(
             targetCount = 0,
             excludedCount = snapshot.excludedCount,
             syncedCount = 0,
         )
     }
+
+    private fun isCurrentSession(session: SharedTagAuthSession): Boolean =
+        authSessionProvider.session.value?.authUserId == session.authUserId
 
     private fun UrlEntryEntity.toChatGptOperation(
         tags: List<String>,

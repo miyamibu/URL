@@ -39,6 +39,56 @@ def require_order(rel_path: str, first: str, second: str, reason: str) -> None:
 def main() -> int:
     checks = [
         lambda: require(
+            "docs/rinbam-canonical-spec.md",
+            "## Current And Compatibility-Only Features",
+            "current and retired product scope must have one canonical definition",
+        ),
+        lambda: require(
+            "docs/rinbam-canonical-spec.md",
+            "Collection / 保存先 / Android UserLabel の既存テーブル、列、過去migration、旧exportの `collection` フィールドは、既存データを開けるための互換殻",
+            "collections and user labels must be compatibility-only",
+        ),
+        lambda: require(
+            "docs/rinbam-canonical-spec.md",
+            "手動追加・共有保存の「保存先タグ」は、保存時に付ける自作タグを指す",
+            "save-destination wording must mean local tag selection",
+        ),
+        lambda: require(
+            "AGENTS.md",
+            "Product source-of-truth priority is defined only in `docs/rinbam-canonical-spec.md#source-of-truth`",
+            "repo instructions must not define a competing product priority",
+        ),
+        lambda: require(
+            "AGENTS.md",
+            "Collection / 保存先 / Android UserLabel は既存データ保護のための互換殻",
+            "repo instructions must classify retired collection data consistently",
+        ),
+        lambda: forbid(
+            "AGENTS.md",
+            "検索・タグ・コレクション・共有タグ",
+            "repo instructions must not list collections as a current feature",
+        ),
+        lambda: require(
+            "README.md",
+            "Collection / UserLabel は既存DB・migration・旧出力の互換性だけを保つ退役済み要素",
+            "README must distinguish current tags from retired collections",
+        ),
+        lambda: forbid(
+            "README.md",
+            "検索・タグ・コレクション・共有タグ",
+            "README must not list collections as a current feature",
+        ),
+        lambda: require(
+            "docs/phase1b-draft.md",
+            "Historical / superseded: 当時案の `user labels` / `collections` UIは採用しない",
+            "historical user-label proposal must not override current scope",
+        ),
+        lambda: require(
+            "docs/codex-ios-port-prompt.md",
+            "Collection/UserLabel is compatibility-only and must not be restored as active UI",
+            "historical iOS prompt must remain subordinate to current scope",
+        ),
+        lambda: require(
             "docs/mobile-ui-regression-contract.md",
             "Local Tags On Cards",
             "single source of truth for card/tag regression behavior",

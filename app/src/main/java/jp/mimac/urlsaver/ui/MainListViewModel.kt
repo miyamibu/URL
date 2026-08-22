@@ -1,5 +1,6 @@
 package jp.mimac.urlsaver.ui
 
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import jp.mimac.urlsaver.data.EntryCardDisplayModeStore
@@ -15,6 +16,7 @@ import jp.mimac.urlsaver.domain.RecordState
 import jp.mimac.urlsaver.domain.ServiceType
 import jp.mimac.urlsaver.domain.ShareSaveResult
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.catch
@@ -24,6 +26,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 
@@ -33,10 +36,15 @@ class MainListViewModel(
     private val serviceFilterOrderStore: ServiceFilterOrderStore = InMemoryServiceFilterOrderStore(),
     private val topFilterOrderStore: TopFilterOrderStore = InMemoryTopFilterOrderStore(),
     private val tagRepository: TagRepository? = null,
+    private val savedStateHandle: SavedStateHandle = SavedStateHandle(),
 ) : ViewModel() {
 
     private val selectedService = MutableStateFlow(ServiceType.ALL)
     private val entrySourceState = MutableStateFlow(EntrySourceUiState())
+    private val _manualInputState = MutableStateFlow(restoreManualInputUiState(savedStateHandle))
+    val manualInputState: StateFlow<ManualInputUiState> = _manualInputState
+    private val manualSaveEventChannel = Channel<ManualSaveEvent>(capacity = Channel.BUFFERED)
+    val manualSaveEvents = manualSaveEventChannel.receiveAsFlow()
     private var observeEntriesJob: Job? = null
 
     init {
@@ -136,6 +144,88 @@ class MainListViewModel(
         return assignedCount
     }
 
+    fun openManualInput() {
+        updateManualInputState(ManualInputUiState(visible = true))
+    }
+
+    fun dismissManualInput() {
+        updateManualInputState(ManualInputUiState())
+    }
+
+    fun updateManualInputText(inputText: String) {
+        updateManualInputState(
+            manualInputState.value.copy(
+                inputText = inputText,
+                inputError = null,
+            ),
+        )
+    }
+
+    fun selectManualInputTag(tagId: Long) {
+        val current = manualInputState.value
+        updateManualInputState(
+            current.copy(
+                selectedLocalTagIds = current.selectedLocalTagIds + tagId,
+                localTagError = null,
+            ),
+        )
+    }
+
+    fun toggleManualInputTag(tagId: Long) {
+        val current = manualInputState.value
+        updateManualInputState(
+            current.copy(
+                selectedLocalTagIds = if (tagId in current.selectedLocalTagIds) {
+                    current.selectedLocalTagIds - tagId
+                } else {
+                    current.selectedLocalTagIds + tagId
+                },
+                localTagError = null,
+            ),
+        )
+    }
+
+    fun submitCurrentManualInput() {
+        val snapshot = manualInputState.value
+        if (!snapshot.visible || snapshot.isSaving) return
+        updateManualInputState(snapshot.copy(isSaving = true))
+        viewModelScope.launch {
+            try {
+                val submitResult = submitManualInput(
+                    input = snapshot.inputText,
+                    localTagIds = snapshot.selectedLocalTagIds,
+                )
+                if (shouldPreserveManualInputAfter(submitResult.saveResult)) {
+                    updateManualInputState(
+                        manualInputState.value.copy(
+                            inputError = submitResult.saveResult,
+                            isSaving = false,
+                        ),
+                    )
+                } else {
+                    updateManualInputState(ManualInputUiState())
+                    manualSaveEventChannel.send(
+                        ManualSaveEvent(
+                            saveResult = submitResult.saveResult,
+                            entryId = submitResult.entryId,
+                            failedTagAssignmentCount = submitResult.failedTagAssignmentCount,
+                        ),
+                    )
+                }
+            } catch (cancellation: CancellationException) {
+                updateManualInputState(manualInputState.value.copy(isSaving = false))
+                throw cancellation
+            } catch (_: Throwable) {
+                updateManualInputState(
+                    manualInputState.value.copy(
+                        inputError = ShareSaveResult.SAVE_FAILED,
+                        isSaving = false,
+                    ),
+                )
+            }
+        }
+    }
+
     suspend fun submitManualInput(
         input: String,
         localTagIds: Set<Long> = emptySet(),
@@ -176,7 +266,8 @@ class MainListViewModel(
     }
 
     suspend fun archiveEntries(entryIds: Collection<Long>): List<Long> {
-        return entryIds.filter { repository.archive(it) }
+        val archivedIds = repository.archiveEntries(entryIds)
+        return entryIds.distinct().filter { it in archivedIds }
     }
 
     suspend fun markPendingDelete(entryId: Long): Long? {
@@ -184,13 +275,7 @@ class MainListViewModel(
     }
 
     suspend fun markPendingDeleteEntries(entryIds: Collection<Long>): Map<Long, Long> {
-        return buildMap {
-            entryIds.forEach { entryId ->
-                repository.markPendingDelete(entryId)?.let { pendingUntil ->
-                    put(entryId, pendingUntil)
-                }
-            }
-        }
+        return repository.markPendingDeleteEntries(entryIds)
     }
 
     private fun observeActiveEntries() {
@@ -228,6 +313,15 @@ class MainListViewModel(
                 }
         }
     }
+
+    private fun updateManualInputState(state: ManualInputUiState) {
+        _manualInputState.value = state
+        savedStateHandle[MANUAL_INPUT_VISIBLE_KEY] = state.visible
+        savedStateHandle[MANUAL_INPUT_TEXT_KEY] = state.inputText
+        savedStateHandle[MANUAL_INPUT_ERROR_KEY] = state.inputError?.name
+        savedStateHandle[MANUAL_INPUT_TAG_IDS_KEY] = state.selectedLocalTagIds.sorted().toLongArray()
+        savedStateHandle[MANUAL_INPUT_LOCAL_TAG_ERROR_KEY] = state.localTagError
+    }
 }
 
 private data class EntrySourceUiState(
@@ -240,6 +334,39 @@ data class ManualInputSubmitResult(
     val entryId: Long?,
     val failedTagAssignmentCount: Int = 0,
 )
+
+data class ManualSaveEvent(
+    val saveResult: ShareSaveResult,
+    val entryId: Long?,
+    val failedTagAssignmentCount: Int = 0,
+)
+
+data class ManualInputUiState(
+    val visible: Boolean = false,
+    val inputText: String = "",
+    val inputError: ShareSaveResult? = null,
+    val selectedLocalTagIds: Set<Long> = emptySet(),
+    val localTagError: String? = null,
+    val isSaving: Boolean = false,
+)
+
+internal fun restoreManualInputUiState(savedStateHandle: SavedStateHandle): ManualInputUiState {
+    val errorName = savedStateHandle.get<String>(MANUAL_INPUT_ERROR_KEY)
+    return ManualInputUiState(
+        visible = savedStateHandle[MANUAL_INPUT_VISIBLE_KEY] ?: false,
+        inputText = savedStateHandle[MANUAL_INPUT_TEXT_KEY] ?: "",
+        inputError = errorName?.let { runCatching { ShareSaveResult.valueOf(it) }.getOrNull() },
+        selectedLocalTagIds = savedStateHandle.get<LongArray>(MANUAL_INPUT_TAG_IDS_KEY)?.toSet().orEmpty(),
+        localTagError = savedStateHandle[MANUAL_INPUT_LOCAL_TAG_ERROR_KEY],
+        isSaving = false,
+    )
+}
+
+private const val MANUAL_INPUT_VISIBLE_KEY = "manual_input.visible"
+private const val MANUAL_INPUT_TEXT_KEY = "manual_input.text"
+private const val MANUAL_INPUT_ERROR_KEY = "manual_input.error"
+private const val MANUAL_INPUT_TAG_IDS_KEY = "manual_input.local_tag_ids"
+private const val MANUAL_INPUT_LOCAL_TAG_ERROR_KEY = "manual_input.local_tag_error"
 
 private class InMemoryEntryCardDisplayModeStore : EntryCardDisplayModeStore {
     override fun observeDisplayMode() = flowOf(EntryCardDisplayMode.RICH)
