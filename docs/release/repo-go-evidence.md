@@ -8,7 +8,7 @@ This section records the 2026-08-22 repository-scope verification that supports 
 
 Verification executed against this exact source state (all exit 0 unless noted):
 
-- Isolated local Supabase (`URLSAVER_ALLOW_LOCAL_SUPABASE_RESET=true`, no linked project): fresh migration replay + SQL/RLS lint + pgTAP 19 files / 112 tests PASS, including new `supabase/tests/account_deletion_idempotency_validation.sql`.
+- Isolated local Supabase (`URLSAVER_ALLOW_LOCAL_SUPABASE_RESET=true`, no linked project): fresh migration replay + SQL/RLS lint + pgTAP 19 files / 113 tests PASS, including new `supabase/tests/account_deletion_idempotency_validation.sql`.
 - Android JDK21 host-only: `testDebugUnitTest lintDebug assembleDebug` BUILD SUCCESSFUL; JUnit aggregation 450/450 PASS, 0 failures/errors/skips; debug APK produced.
 - iOS Simulator (fresh DerivedData, iPhone 17 Pro simulator): full suite 228 total / 225 PASS / 0 fail / 3 skip (live-cloud integration only); focused account-deletion suite 30/30 PASS.
 - Web/static: `test_public_web_contract.py`, browser smoke, `verify_public_web_release.sh`, `verify_admin_web_release.sh`, `verify_web_ui_contrast.py`, release hygiene, release-manifest verifier + its unit tests, canonical story tracker (+unit), MCP contract, shared URL normalization contract (against local DB, 15 vectors), admin e2e unit, Chapter 13 fixture parity, Deno test files — ALL PASS.
