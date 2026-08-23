@@ -161,18 +161,16 @@ val verifyConnectedAndroidDeviceTarget by tasks.registering {
         val standardOutput = ByteArrayOutputStream()
         val errorOutput = ByteArrayOutputStream()
         val execution = runCatching {
-            providers.exec {
-                commandLine(resolveAdbExecutable(), "devices")
-                this.standardOutput = standardOutput
-                this.errorOutput = errorOutput
-                isIgnoreExitValue = true
-            }.result.get()
+            val process = ProcessBuilder(resolveAdbExecutable(), "devices").start()
+            process.inputStream.use { it.copyTo(standardOutput) }
+            process.errorStream.use { it.copyTo(errorOutput) }
+            process.waitFor()
         }
         val decision = evaluateConnectedAndroidDeviceGuard(
             allowConnectedTests = allowConnectedTests,
             approveAppDataReset = approveAppDataReset,
             targetSerial = targetSerial,
-            adbSucceeded = execution.getOrNull()?.exitValue == 0,
+            adbSucceeded = execution.getOrNull() == 0,
             adbOutput = standardOutput.toString(Charsets.UTF_8.name()),
         )
         if (!decision.allowed) {
