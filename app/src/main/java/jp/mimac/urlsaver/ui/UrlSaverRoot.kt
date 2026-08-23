@@ -203,6 +203,7 @@ import jp.mimac.urlsaver.domain.validateSharedTagName
 import jp.mimac.urlsaver.ui.components.OrbitActionButton
 import jp.mimac.urlsaver.ui.components.OrbitActionStyle
 import jp.mimac.urlsaver.ui.components.OrbitActionText
+import jp.mimac.urlsaver.ui.components.OrbitCappedFontScale
 import jp.mimac.urlsaver.ui.components.OrbitFilterChip
 import jp.mimac.urlsaver.ui.components.OrbitPanel
 import jp.mimac.urlsaver.ui.components.OrbitPanelTone
@@ -1535,7 +1536,16 @@ private fun MainScreen(
     val isGroupPane = mainPane == MainPane.GROUPS && showSharedTagCloudUi && !showUsageGuide
     val isSearchActive = searchBarVisible || searchQueryLocal.isNotBlank()
     val showMainBottomBar = !selectionModeActive && selectedEntryIds.isEmpty() && !showUsageGuide && !isGroupPane && !isSearchActive
-    Box(modifier = Modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val mainBottomBarFontScale = LocalDensity.current.fontScale
+        val mainBottomBarContentHeight = mainBottomBarContentHeightDp(
+            maxWidthDp = maxWidth.value,
+            fontScale = mainBottomBarFontScale,
+        ).dp
+        val mainBottomBarExpandedLabels = shouldUseExpandedMainBottomBar(
+            maxWidthDp = maxWidth.value,
+            fontScale = mainBottomBarFontScale,
+        )
         Scaffold(
             containerColor = MaterialTheme.colorScheme.background,
             contentWindowInsets = if (isGroupPane) {
@@ -1547,10 +1557,14 @@ private fun MainScreen(
                 if (!isGroupPane) {
                     TopAppBar(
                         title = {
-                            Text(
-                                text = "りんばむ",
-                                modifier = Modifier.clickable { returnToMainHome() },
-                            )
+                            OrbitCappedFontScale(2.0f) {
+                                Text(
+                                    text = "りんばむ",
+                                    modifier = Modifier.clickable { returnToMainHome() },
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
                         },
                         colors = orbitTopAppBarColors(),
                         windowInsets = compactTopAppBarInsets(),
@@ -1664,7 +1678,13 @@ private fun MainScreen(
             Box(
                 modifier = Modifier
                     .padding(paddingValues)
-                .then(if (showMainBottomBar) Modifier.padding(bottom = 92.dp) else Modifier)
+                    .then(
+                        if (showMainBottomBar) {
+                            Modifier.padding(bottom = mainBottomBarContentHeight + 16.dp)
+                        } else {
+                            Modifier
+                        },
+                    )
                     .fillMaxSize()
                     .background(MaterialTheme.colorScheme.background),
                 contentAlignment = Alignment.TopCenter,
@@ -1849,6 +1869,8 @@ private fun MainScreen(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .offset(y = 4.dp),
+                contentHeight = mainBottomBarContentHeight,
+                expandedLabels = mainBottomBarExpandedLabels,
                 onOpenGroups = {
                     showUsageGuide = false
                     mainPane = MainPane.GROUPS
@@ -1871,6 +1893,21 @@ private fun MainScreen(
         }
     }
 
+}
+
+internal fun shouldUseExpandedMainBottomBar(
+    maxWidthDp: Float,
+    fontScale: Float,
+): Boolean = maxWidthDp < 360f || fontScale >= 1.3f
+
+internal fun mainBottomBarContentHeightDp(
+    maxWidthDp: Float,
+    fontScale: Float,
+): Float = if (shouldUseExpandedMainBottomBar(maxWidthDp, fontScale)) {
+    val effectiveFontScale = fontScale.coerceAtMost(2.0f)
+    maxOf(96f, 56f + (42f * effectiveFontScale))
+} else {
+    76f
 }
 
 @Composable
@@ -6813,6 +6850,8 @@ private fun EmptyState(
 @Composable
 private fun MainBottomNavBar(
     modifier: Modifier = Modifier,
+    contentHeight: Dp,
+    expandedLabels: Boolean,
     onOpenGroups: () -> Unit,
     onExport: () -> Unit,
     onOpenChatGpt: () -> Unit,
@@ -6826,12 +6865,12 @@ private fun MainBottomNavBar(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(156.dp + bottomFillHeight),
+            .height(80.dp + contentHeight + bottomFillHeight),
     ) {
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(76.dp + bottomFillHeight)
+                .height(contentHeight + bottomFillHeight)
                 .align(Alignment.BottomCenter),
             color = bottomBarColor,
             tonalElevation = 0.dp,
@@ -6841,7 +6880,7 @@ private fun MainBottomNavBar(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(76.dp)
+                        .height(contentHeight)
                         .align(Alignment.TopCenter),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -6849,6 +6888,7 @@ private fun MainBottomNavBar(
                         MainBottomNavItem(
                             icon = Icons.Outlined.Groups,
                             label = "グループ",
+                            expandedLabels = expandedLabels,
                             onClick = onOpenGroups,
                         )
                     }
@@ -6856,6 +6896,7 @@ private fun MainBottomNavBar(
                         MainBottomNavItem(
                             icon = Icons.Outlined.IosShare,
                             label = "エクスポート",
+                            expandedLabels = expandedLabels,
                             onClick = onExport,
                         )
                     }
@@ -6864,6 +6905,7 @@ private fun MainBottomNavBar(
                         MainBottomNavItem(
                             icon = Icons.Outlined.Sell,
                             label = "タグ",
+                            expandedLabels = expandedLabels,
                             onClick = onTagManage,
                         )
                     }
@@ -6871,6 +6913,7 @@ private fun MainBottomNavBar(
                         MainBottomNavItem(
                             icon = Icons.Outlined.Archive,
                             label = "アーカイブ",
+                            expandedLabels = expandedLabels,
                             onClick = onOpenArchive,
                         )
                     }
@@ -6890,45 +6933,49 @@ private fun MainBottomNavBar(
                 .semantics { contentDescription = "追加" },
             contentAlignment = Alignment.Center,
         ) {
-            Text(
-                text = "+",
-                color = MaterialTheme.colorScheme.onPrimary,
-                fontSize = 48.sp,
-                fontWeight = FontWeight.Black,
-                lineHeight = 48.sp,
-                textAlign = TextAlign.Center,
-            )
-        }
-        Surface(
-            onClick = onOpenChatGpt,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 8.dp, end = 14.dp)
-                .heightIn(min = 48.dp)
-                .semantics { contentDescription = "ChatGPT" },
-            shape = RoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.primaryContainer,
-            shadowElevation = 3.dp,
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.ChatBubbleOutline,
-                    contentDescription = null,
-                    modifier = Modifier.size(20.dp),
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                )
+            OrbitCappedFontScale(1.0f) {
                 Text(
-                    text = "ChatGPT",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                    text = "+",
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    fontSize = 48.sp,
+                    fontWeight = FontWeight.Black,
+                    lineHeight = 48.sp,
+                    textAlign = TextAlign.Center,
                 )
+            }
+        }
+        OrbitCappedFontScale(1.3f) {
+            Surface(
+                onClick = onOpenChatGpt,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 8.dp, end = 14.dp)
+                    .heightIn(min = 48.dp)
+                    .semantics { contentDescription = "ChatGPT" },
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.primaryContainer,
+                shadowElevation = 3.dp,
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.ChatBubbleOutline,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
+                    Text(
+                        text = "ChatGPT",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
     }
@@ -6940,6 +6987,7 @@ private fun MainBottomNavItem(
     label: String,
     selected: Boolean = false,
     enabled: Boolean = true,
+    expandedLabels: Boolean = false,
     onClick: () -> Unit,
 ) {
     val tint = when {
@@ -6947,8 +6995,6 @@ private fun MainBottomNavItem(
         selected -> MaterialTheme.colorScheme.primary
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
-    val baseStyle = MaterialTheme.typography.labelSmall
-    var labelScale by remember(label) { mutableStateOf(1f) }
     Column(
         modifier = Modifier
             .offset(y = (-2).dp)
@@ -6962,25 +7008,30 @@ private fun MainBottomNavItem(
                 },
             )
             .semantics { contentDescription = label }
-            .padding(horizontal = 4.dp, vertical = 6.dp),
+            .padding(
+                horizontal = 4.dp,
+                vertical = if (expandedLabels) 4.dp else 6.dp,
+            ),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(if (expandedLabels) 2.dp else 6.dp),
     ) {
-        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(36.dp))
-        Text(
-            text = label,
-            style = baseStyle,
-            fontSize = baseStyle.fontSize * labelScale,
-            color = tint,
-            maxLines = 1,
-            softWrap = false,
-            overflow = TextOverflow.Ellipsis,
-            onTextLayout = { result ->
-                if (result.hasVisualOverflow && labelScale > 0.7f) {
-                    labelScale -= 0.05f
-                }
-            },
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(if (expandedLabels) 32.dp else 36.dp),
         )
+        OrbitCappedFontScale(2.0f) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = tint,
+                textAlign = TextAlign.Center,
+                maxLines = if (expandedLabels) 3 else 1,
+                softWrap = expandedLabels,
+                overflow = if (expandedLabels) TextOverflow.Clip else TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -22,16 +23,39 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import jp.mimac.urlsaver.ui.theme.OrbitTokens
 import jp.mimac.urlsaver.ui.theme.selectableChipPalette
+
+fun cappedOrbitFontScale(
+    fontScale: Float,
+    maxFontScale: Float,
+): Float = fontScale.coerceAtMost(maxFontScale)
+
+@Composable
+internal fun OrbitCappedFontScale(
+    maxFontScale: Float,
+    content: @Composable () -> Unit,
+) {
+    val density = LocalDensity.current
+    val cappedDensity = Density(
+        density = density.density,
+        fontScale = cappedOrbitFontScale(density.fontScale, maxFontScale),
+    )
+    CompositionLocalProvider(LocalDensity provides cappedDensity) {
+        content()
+    }
+}
 
 enum class OrbitPanelTone {
     DEFAULT,
@@ -103,35 +127,37 @@ fun OrbitFilterChip(
 ) {
     val hasCustomLabelSize = labelFontSize != TextUnit.Unspecified
     val palette = selectableChipPalette(MaterialTheme.colorScheme, selected)
-    Box(
-        modifier = modifier
-            .widthIn(min = if (compact) 44.dp else 72.dp, max = 220.dp)
-            .height(44.dp)
-            .background(
-                color = palette.container,
-                shape = RoundedCornerShape(OrbitTokens.radiusChip),
+    OrbitCappedFontScale(if (hasCustomLabelSize) 1.3f else 2.0f) {
+        Box(
+            modifier = modifier
+                .widthIn(min = if (compact) 44.dp else 72.dp, max = 220.dp)
+                .heightIn(min = 44.dp)
+                .background(
+                    color = palette.container,
+                    shape = RoundedCornerShape(OrbitTokens.radiusChip),
+                )
+                .padding(
+                    horizontal = if (compact) 0.dp else 16.dp,
+                    vertical = if (hasCustomLabelSize) 0.dp else 10.dp,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge.copy(
+                    letterSpacing = if (compact) 0.sp else 0.8.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = when {
+                        hasCustomLabelSize -> labelFontSize
+                        compact && label == "+" -> 22.sp
+                        else -> MaterialTheme.typography.labelLarge.fontSize
+                    },
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = palette.content,
             )
-            .padding(
-                horizontal = if (compact) 0.dp else 16.dp,
-                vertical = if (hasCustomLabelSize) 0.dp else 10.dp,
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelLarge.copy(
-                letterSpacing = if (compact) 0.sp else 0.8.sp,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = when {
-                    hasCustomLabelSize -> labelFontSize
-                    compact && label == "+" -> 22.sp
-                    else -> MaterialTheme.typography.labelLarge.fontSize
-                },
-            ),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            color = palette.content,
-        )
+        }
     }
 }
 

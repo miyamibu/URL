@@ -411,8 +411,8 @@ internal class ShareReceiverViewModel(
             append(
                 when (result) {
                     ShareSaveResult.CREATED -> "保存しました"
-                    ShareSaveResult.DUPLICATE_ACTIVE -> "このURLはすでに保存されています"
-                    ShareSaveResult.DUPLICATE_ARCHIVED -> "このURLはアーカイブ済みです"
+                    ShareSaveResult.DUPLICATE_ACTIVE -> "この内容はすでに保存済みです"
+                    ShareSaveResult.DUPLICATE_ARCHIVED -> "この内容はアーカイブ済みです"
                     ShareSaveResult.RESTORED_FROM_PENDING_DELETE -> "削除を取り消して復元しました"
                     ShareSaveResult.PERSONAL_URL_LIMIT_REACHED -> "現在のプランの保存上限に達しました。不要なURLを整理してから追加してください。"
                     ShareSaveResult.INPUT_TOO_LARGE -> "共有内容が長すぎるため処理できませんでした"

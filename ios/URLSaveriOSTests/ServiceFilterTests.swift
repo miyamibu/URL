@@ -346,6 +346,18 @@ final class ServiceFilterTests: XCTestCase {
         XCTAssertTrue(detailSource.contains("Text(saveError == nil ? \"保存\" : \"再試行\")"))
     }
 
+    func testDuplicateSaveNotificationsUseContentNeutralWordingsInBothSources() throws {
+        let appModelSource = try String(contentsOf: appModelSourceURL(), encoding: .utf8)
+        let shareExtensionSource = try String(contentsOf: shareExtensionSourceURL(), encoding: .utf8)
+
+        for source in [appModelSource, shareExtensionSource] {
+            XCTAssertTrue(source.contains("この内容はすでに保存済みです"))
+            XCTAssertTrue(source.contains("この内容はアーカイブ済みです"))
+            XCTAssertFalse(source.contains("このURLはすでに保存済みです"))
+            XCTAssertFalse(source.contains("このURLはアーカイブ済みです"))
+        }
+    }
+
     func testMediaSortIndexParsesZeroPaddedPrefix() {
         XCTAssertEqual(rinbamMediaSortIndex(from: "000_shortcode_item_0.jpg"), 0)
         XCTAssertEqual(rinbamMediaSortIndex(from: "001_shortcode_item_1.mp4"), 1)
@@ -432,6 +444,10 @@ final class ServiceFilterTests: XCTestCase {
 
     private func appModelSourceURL() -> URL {
         sourceURL("URLSaveriOS/App/URLSaverAppModel.swift")
+    }
+
+    private func shareExtensionSourceURL() -> URL {
+        sourceURL("URLSaverShareExtension/ShareViewController.swift")
     }
 
     private func appChromeSourceURL() -> URL {

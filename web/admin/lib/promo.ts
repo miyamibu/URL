@@ -30,12 +30,12 @@ export function promoCodeHash(code: string): string {
 }
 
 export function promoLinkForCode(code: string): string {
-  const baseUrl = (process.env.PROMO_LINK_BASE_URL ?? "https://miyamibu.xyz").replace(/\/+$/, "");
+  const baseUrl = (process.env.PROMO_LINK_BASE_URL ?? "https://rinbam-app.miyamibu.chatgpt.site").replace(/\/+$/, "");
   return `${baseUrl}/promo#code=${encodeURIComponent(code)}`;
 }
 
 function promoLandingLink(): string {
-  const baseUrl = (process.env.PROMO_LINK_BASE_URL ?? "https://miyamibu.xyz").replace(/\/+$/, "");
+  const baseUrl = (process.env.PROMO_LINK_BASE_URL ?? "https://rinbam-app.miyamibu.chatgpt.site").replace(/\/+$/, "");
   return `${baseUrl}/promo`;
 }
 

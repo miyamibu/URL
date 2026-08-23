@@ -135,6 +135,22 @@ class ShareReceiverActivityEntrypointTest {
     }
 
     @Test
+    fun actionView_productionSitesInviteLink_routesToMainWithInviteTokenExtra() {
+        val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
+        val intent = Intent(context, ShareReceiverActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = Uri.parse("https://rinbam-app.miyamibu.chatgpt.site/invite/production-token")
+        }
+
+        val controller = Robolectric.buildActivity(ShareReceiverActivity::class.java, intent).setup()
+        ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+
+        val started = shadowOf(controller.get()).nextStartedActivity
+        assertEquals("production-token", started.getStringExtra(EXTRA_SHARED_TAG_INVITE_TOKEN))
+        assertFalse(started.getBooleanExtra(EXTRA_SHARED_TAG_INVITE_INVALID, false))
+    }
+
+    @Test
     fun actionView_httpInviteLink_routesToMainWithGenericInvalidFlag() {
         val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
         val intent = Intent(context, ShareReceiverActivity::class.java).apply {

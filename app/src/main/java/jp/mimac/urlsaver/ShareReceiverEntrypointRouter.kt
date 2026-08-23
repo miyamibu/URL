@@ -120,7 +120,15 @@ internal object ShareReceiverEntrypointRouter {
         if (hasExplicitUserInfoOrPort(uri)) return false
         if (hasAmbiguousWebPath(uri)) return false
         val expectedHost = canonicalHttpsHost(baseUrl) ?: return false
-        return expectedHost.equals(incomingHost, ignoreCase = true)
+        val allowedHosts = if (
+            expectedHost.equals(PRODUCTION_INVITE_LINK_HOST, ignoreCase = true) ||
+            expectedHost.equals(LEGACY_INVITE_LINK_HOST, ignoreCase = true)
+        ) {
+            setOf(PRODUCTION_INVITE_LINK_HOST, LEGACY_INVITE_LINK_HOST)
+        } else {
+            setOf(expectedHost)
+        }
+        return allowedHosts.any { allowedHost -> allowedHost.equals(incomingHost, ignoreCase = true) }
     }
 
     private fun canonicalHttpsHost(baseUrl: String): String? {
@@ -165,4 +173,7 @@ internal object ShareReceiverEntrypointRouter {
             uri.path.orEmpty().contains('\\') ||
             encodedPath.contains("//")
     }
+
+    private const val PRODUCTION_INVITE_LINK_HOST = "rinbam-app.miyamibu.chatgpt.site"
+    private const val LEGACY_INVITE_LINK_HOST = "miyamibu.xyz"
 }

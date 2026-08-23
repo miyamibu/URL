@@ -79,7 +79,7 @@ struct SharedTagCloudConfig: Sendable {
 
     private static func normalizedInviteLinkBaseURL(_ raw: String?) -> String {
         let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let value = trimmed.isEmpty ? "https://miyamibu.xyz" : trimmed
+        let value = trimmed.isEmpty ? "https://rinbam-app.miyamibu.chatgpt.site" : trimmed
         return value.trimmingTrailingSlashes()
     }
 }

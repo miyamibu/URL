@@ -10,8 +10,8 @@
   "ios": {
     "bundleId": "com.mibu.codebridge.ios",
     "shareExtensionBundleId": "com.mibu.codebridge.ios.share",
-    "shortVersion": "1.0.17",
-    "build": 19,
+    "shortVersion": "1.0.18",
+    "build": 20,
     "appPlist": "ios/URLSaveriOS/Info.plist",
     "shareExtensionPlist": "ios/URLSaverShareExtension/Info.plist",
     "project": "ios/URLSaveriOS.xcodeproj/project.pbxproj"

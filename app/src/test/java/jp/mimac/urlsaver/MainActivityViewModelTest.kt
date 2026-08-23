@@ -55,7 +55,7 @@ class MainActivityViewModelTest {
 
         val event = viewModel.snackbarEvents.first()
         assertEquals(SnackbarEventKind.OPEN_EXISTING, event.kind)
-        assertEquals("このURLはアーカイブ済みです", event.message)
+        assertEquals("この内容はアーカイブ済みです", event.message)
         assertEquals("見る", event.actionLabel)
         assertEquals(19L, event.entryId)
     }
@@ -72,7 +72,7 @@ class MainActivityViewModelTest {
 
         val event = viewModel.snackbarEvents.first()
         assertEquals(SnackbarEventKind.INFO, event.kind)
-        assertEquals("このURLはアーカイブ済みです", event.message)
+        assertEquals("この内容はアーカイブ済みです", event.message)
         assertNull(event.actionLabel)
     }
 
@@ -95,7 +95,7 @@ class MainActivityViewModelTest {
         viewModel.consumeShareResult(dupIntent, Routes.MAIN)
         val dup = viewModel.snackbarEvents.first()
         assertEquals(SnackbarEventKind.OPEN_EXISTING, dup.kind)
-        assertEquals("このURLはすでに保存済みです", dup.message)
+        assertEquals("この内容はすでに保存済みです", dup.message)
         assertEquals("見る", dup.actionLabel)
 
         val invalidIntent = Intent().apply {

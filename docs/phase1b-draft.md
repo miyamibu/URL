@@ -1,7 +1,7 @@
 # Phase 1b Draft: 保存後の状態理解と再発見性の改善
 
-Status: Implemented (P0 Partially Verified)  
-Updated: 2026-04-17  
+Status: Implemented (P0 Partially Verified)
+Updated: 2026-08-23
 Scope type: Phase 1b 実装仕様（Phase 1a 不変条件を維持）
 
 ## 1. 目的
@@ -24,7 +24,7 @@ SNS やメッセージで見かけた URL をあとで見返したいユーザ�
 - Crash reporting は本リリースでは未導入運用（OS ログ + 再現手順）で公開可とする
 
 ## 1.4 実行前提
-- Java 17
+- Java 21
 - Android SDK Platform 35
 - Android SDK Build-Tools / Platform-Tools / Command-line Tools
 - instrumentation 実行時は端末または AVD を接続済みであること
@@ -55,7 +55,7 @@ SNS やメッセージで見かけた URL をあとで見返したいユーザ�
 
 ### 4.1 保存結果の理解を明確化（P0）
 - `DUPLICATE_ARCHIVED` の標準文言を明確化する。
-  - 文言: `このURLはアーカイブ済みです`
+  - 文言: `この内容はアーカイブ済みです`
   - action: `見る`（ラベル固定）
   - action 挙動: 既存の archived 項目を開いて確認する導線
     - entry が特定できる場合は当該詳細を開く
@@ -64,7 +64,7 @@ SNS やメッセージで見かけた URL をあとで見返したいユーザ�
 - `復元して見る` は 1b 主導線にしない。
   - 自動復元や復元を伴う action は標準導線にしない。
 - `DUPLICATE_ACTIVE` でも、既存項目を確認できる導線を出す。
-  - 文言: `このURLはすでに保存済みです`
+  - 文言: `この内容はすでに保存済みです`
   - action: `見る`
   - action 挙動: 既存 active 項目を確認できる場所へ遷移
 
@@ -156,7 +156,7 @@ SNS やメッセージで見かけた URL をあとで見返したいユーザ�
 
 ## 7. 実装反映（2026-04-17）
 - `DUPLICATE_ACTIVE` / `DUPLICATE_ARCHIVED` は `見る` 導線で統一した。
-  - 文言はそれぞれ `このURLはすでに保存済みです` / `このURLはアーカイブ済みです`。
+  - 文言はそれぞれ `この内容はすでに保存済みです` / `この内容はアーカイブ済みです`。
   - `見る` は既存項目確認導線として扱い、`復元して見る` は主導線にしていない。
   - entryId が取れる場合は詳細へ、取れない場合は対象 destination へ遷移する。
 - metadata 文言は内部状態語から分離した。
@@ -188,7 +188,7 @@ SNS やメッセージで見かけた URL をあとで見返したいユーザ�
 
 ## 8. 完了条件（1b 実装）
 - 対象・非対象が文書で明確化されている。
-- `duplicate archived` の基本導線が「このURLはアーカイブ済みです + 見る」に固定されている。
+- `duplicate archived` の基本導線が「この内容はアーカイブ済みです + 見る」に固定されている。
 - `復元して見る` が主導線でないことが明記されている。
 - metadata の内部状態語と UI 文言の分離方針が定義されている。
 - 手動追加 UX の改善範囲が定義されている。

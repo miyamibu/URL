@@ -96,12 +96,12 @@ class MainActivityViewModel(
             )
             ShareSaveResult.DUPLICATE_ARCHIVED -> {
                 if (currentRoute == Routes.ARCHIVE) {
-                    enqueueSnackbar(SnackbarEvent(kind = SnackbarEventKind.INFO, message = "このURLはアーカイブ済みです"))
+                    enqueueSnackbar(SnackbarEvent(kind = SnackbarEventKind.INFO, message = "この内容はアーカイブ済みです"))
                 } else {
                     enqueueSnackbar(
                         SnackbarEvent(
                             kind = SnackbarEventKind.OPEN_EXISTING,
-                            message = "このURLはアーカイブ済みです",
+                            message = "この内容はアーカイブ済みです",
                             actionLabel = "見る",
                             entryId = entryId,
                             targetRoute = SnackbarTargetRoute.ARCHIVE,
@@ -163,12 +163,12 @@ class MainActivityViewModel(
             )
             ShareSaveResult.DUPLICATE_ARCHIVED -> {
                 if (currentRoute == Routes.ARCHIVE) {
-                    enqueueSnackbar(SnackbarEvent(kind = SnackbarEventKind.INFO, message = "このURLはアーカイブ済みです"))
+                    enqueueSnackbar(SnackbarEvent(kind = SnackbarEventKind.INFO, message = "この内容はアーカイブ済みです"))
                 } else {
                     enqueueSnackbar(
                         SnackbarEvent(
                             kind = SnackbarEventKind.OPEN_EXISTING,
-                            message = "このURLはアーカイブ済みです",
+                            message = "この内容はアーカイブ済みです",
                             actionLabel = "見る",
                             entryId = entryId,
                             targetRoute = SnackbarTargetRoute.ARCHIVE,
@@ -519,7 +519,7 @@ class MainActivityViewModel(
     private fun duplicateActiveEvent(entryId: Long?): SnackbarEvent {
         return SnackbarEvent(
             kind = SnackbarEventKind.OPEN_EXISTING,
-            message = "このURLはすでに保存済みです",
+            message = "この内容はすでに保存済みです",
             actionLabel = "見る",
             entryId = entryId,
             targetRoute = SnackbarTargetRoute.MAIN,

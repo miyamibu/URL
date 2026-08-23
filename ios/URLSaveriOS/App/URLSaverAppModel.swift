@@ -1895,7 +1895,7 @@ final class URLSaverAppModel: ObservableObject {
         case .duplicateActive:
             enqueueNotification(
                 AppNotification(
-                    message: "このURLはすでに保存済みです",
+                    message: "この内容はすでに保存済みです",
                     actionLabel: "見る",
                     action: saveResult.entryID.map(AppNotification.Action.openEntry),
                     autoDismissAfter: 5
@@ -1904,7 +1904,7 @@ final class URLSaverAppModel: ObservableObject {
         case .duplicateArchived:
             enqueueNotification(
                 AppNotification(
-                    message: "このURLはアーカイブ済みです",
+                    message: "この内容はアーカイブ済みです",
                     actionLabel: "見る",
                     action: saveResult.entryID.map(AppNotification.Action.openEntry) ?? .openArchive,
                     autoDismissAfter: 5
@@ -1967,7 +1967,7 @@ final class URLSaverAppModel: ObservableObject {
         case .duplicateActive:
             enqueueNotification(
                 AppNotification(
-                    message: "このURLはすでに保存済みです",
+                    message: "この内容はすでに保存済みです",
                     actionLabel: "見る",
                     action: report.entryID.map(AppNotification.Action.openEntry),
                     autoDismissAfter: 5
@@ -1976,7 +1976,7 @@ final class URLSaverAppModel: ObservableObject {
         case .duplicateArchived:
             enqueueNotification(
                 AppNotification(
-                    message: "このURLはアーカイブ済みです",
+                    message: "この内容はアーカイブ済みです",
                     actionLabel: "見る",
                     action: report.entryID.map(AppNotification.Action.openEntry) ?? .openArchive,
                     autoDismissAfter: 5
@@ -2464,7 +2464,7 @@ enum IncomingURLRoute {
                   !Self.hasForbiddenHTTPSAuthority(url),
                   !Self.hasAmbiguousWebPath(url),
                   let expectedHost = Self.canonicalHTTPSHost(from: canonicalHTTPSHost),
-                  host == expectedHost else {
+                  Self.allowedHTTPSHosts(for: expectedHost).contains(host) else {
                 self = .unknown
                 return
             }
@@ -2551,6 +2551,16 @@ enum IncomingURLRoute {
             return nil
         }
         return host
+    }
+
+    private static let productionInviteLinkHost = "rinbam-app.miyamibu.chatgpt.site"
+    private static let legacyInviteLinkHost = "miyamibu.xyz"
+
+    private static func allowedHTTPSHosts(for expectedHost: String) -> Set<String> {
+        if expectedHost == productionInviteLinkHost || expectedHost == legacyInviteLinkHost {
+            return [productionInviteLinkHost, legacyInviteLinkHost]
+        }
+        return [expectedHost]
     }
 
     private static func isCanonicalHost(_ host: String) -> Bool {

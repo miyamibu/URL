@@ -1,12 +1,12 @@
 # Privacy And Data Safety Draft
 
 ## Goal
-現在の source baseline（Android `1.0.17 (versionCode=21)` / iOS `1.0.17 (build=19)`）から次回提出する privacy / Data safety 回答を、選択した release mode と照合できる状態にする。過去の `1.0.11` 提出証跡は履歴として残すが、現在の提出可否の証明には使わない。
+現在の source baseline（Android `1.0.17 (versionCode=21)` / iOS `1.0.18 (build=20)`）の privacy / Data Safety 回答を、選択した release mode と照合できる状態にする。過去の `1.0.11` 提出証跡は履歴として残すが、現在の提出可否の証明には使わない。
 
 ## Current source snapshot (manifest-backed)
 
 - Android: `jp.miyamibu.urlalbum`, `versionName=1.0.17`, `versionCode=21`
-- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.17`, `build=19`; share extension `com.mibu.codebridge.ios.share`
+- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.18`, `build=20`; share extension `com.mibu.codebridge.ios.share`
 - Supabase migration head: `20260822090000_account_deletion_idempotency.sql`
 
 ## Release Assumption
@@ -16,7 +16,7 @@
 - Third-party crash reporting: not used.
 - Shared-tag cloud: release mode dependent. Android reads release local/env config; iOS defaults to tracked local-only xcconfig and requires an explicit secrets xcconfig for cloud-sharing Archive/TestFlight.
 - Account sign-in: enabled only when shared-tag cloud is enabled for the submitted binary.
-- Current integration status: repo-local disclosure sources and public web checks can pass independently, but the shared working tree is dirty/unfrozen and current launch status is `NO_GO_INTERNAL / BLOCKED_EXTERNAL`. The signed iOS 1.0.17 (19) archive is local-only, so its public `データの収集なし` answer is not treated as a confirmed privacy mismatch. Google Play remains a confirmed Data safety mismatch for the cloud-enabled signed Android v21 candidate. The App Store has a separate listing-functionality mismatch because its description advertises cloud/sync/invite features that the distributed local-only binary cannot provide.
+- Current integration status: repo-local disclosure sources and public web checks pass, Google Play Data Safety correction is under review, and the signed local-only iOS 1.0.18 (20) build is `審査待ち` with matching Store copy. Current status is `STORE_SUBMISSION_GO / EXTERNAL_REVIEW_PENDING / DEVICE_UI_PARTIAL`; public propagation is not yet proof.
 
 ## Exact-binary Store Reconciliation (2026-08-13)
 
@@ -58,7 +58,7 @@
 - Account deletion is available in app and through a public deletion request page.
 
 ## App Store Privacy Draft
-- Distributed 1.0.17 (19): `Data Not Collected` is supported by the matching local-only archive evidence, subject to a final exact-binary SDK/privacy-manifest review. Do not copy the cloud-enabled draft below onto this binary.
+- Submitted 1.0.18 (20): `Data Not Collected` is supported by the matching local-only archive/configuration and privacy-manifest evidence. Do not copy the cloud-enabled draft below onto this binary.
 - Future cloud-enabled iOS build only: declare Contact Info (auth/support email and optional name), User Content (shared-tag data and customer support), Identifiers (account ID), Purchases (transaction/entitlement processing), App Functionality purposes, and linked-to-user treatment where applicable.
 - Tracking: No while no tracking/advertising profile is implemented.
 - Required reason APIs: no app-owned categories currently declared in `PrivacyInfo.xcprivacy`.
@@ -82,7 +82,7 @@
 
 ## Validation Method
 - Check submitted Android release `BuildConfig.SHARED_TAG_CLOUD_ENABLED`.
-- Check submitted iOS `Info.plist` values for `SharedTagCloudEnabled`, `SupabaseURL`, and `SupabaseAnonKey` without displaying values. For 1.0.17 (19), this was completed: cloud disabled and relevant values empty.
+- Check submitted iOS `Info.plist` values for `SharedTagCloudEnabled`, `SupabaseURL`, and `SupabaseAnonKey` without displaying values. For 1.0.18 (20), this was completed: cloud disabled and relevant values empty.
 - Verify `PrivacyInfo.xcprivacy` in both iOS app and share extension.
 - Verify release manifest has no AdMob app ID, ad permissions, or ad provider declarations.
 - Verify the submitted Android/iOS build shows the same redacted preview used for the ZIP, warns that unknown secrets may remain, and blocks generation/share until explicit confirmation.
@@ -104,9 +104,9 @@
 | Android ads | `app/build.gradle.kts` release sets `ADS_ENABLED=false` and empty AdMob IDs; `app/src/release/AndroidManifest.xml` removes ad IDs/providers. | Release can be no-ads if built with default release settings. | DONE |
 | Android shared-tag cloud | Exact signed `1.0.17 (21)` AAB hash matched the C0-provided digest; read-only DEX inspection found enabled shared-tag cloud plus HTTPS-shaped Supabase/contact-support endpoints without recording values. | Cloud-enabled exact-binary premise and encrypted-endpoint shape are verified. Secret values were not printed or retained. | EXACT_AAB_VERIFIED / CLOUD_ENABLED / HTTPS_ENDPOINTS |
 | iOS privacy manifest | `ios/URLSaveriOS/PrivacyInfo.xcprivacy` and share extension privacy manifest have empty tracking arrays. | Supports no-tracking posture. Cloud account/contact/user-content disclosure applies only to an exact binary that enables those flows. | DONE |
-| iOS shared-tag cloud | Signed `URLSaveriOS-20260728-1.0.17-distribution.xcarchive`: version/build/bundle/Team match public 1.0.17 (19), cloud disabled, Supabase/contact-support configuration empty. | The distributed binary is local-only. Keep `Data Not Collected` unless deeper exact-binary review finds another collection flow; fix the listing's cloud claims instead. | ARCHIVE_VERIFIED / APP_PRIVACY_MAJOR_REBUTTED / LISTING_MAJOR |
-| Account deletion | `docs/account-deletion.md` and `web/invite-link/account-deletion/index.html` exist; current public-web deployment is `dpl_52Tc5XaiiLeV9F1EkxTLPXssqRmq`. | Public route contract is verified by `scripts/verify_public_web_release.sh`; enter/verify it in both consoles. | DONE_PUBLIC_CONTRACT / CONSOLE_RECHECK_REQUIRED |
-| Public privacy policy | `web/invite-link/privacy/index.html` and `https://miyamibu.xyz/privacy/`; current deployment `dpl_52Tc5XaiiLeV9F1EkxTLPXssqRmq`. | Live policy discloses cloud account/shared-tag/support/purchase processing. | PUBLIC_VERIFIED / STORE_DECLARATIONS_CONFLICT |
+| iOS shared-tag cloud | Submitted signed 1.0.18 (20) archive: version/build/bundle/Team match, cloud disabled, Supabase/contact-support configuration empty. | The submitted binary is local-only and uses matching Store copy. | ARCHIVE_VERIFIED / APP_STORE_REVIEW_PENDING |
+| Account deletion | `docs/account-deletion.md` and `web/invite-link/account-deletion/index.html` exist; current public-web deployment is `dpl_8yPxLjXnf4quJTa45q5dHEoTN51B`. | Public route contract passes; the URL was included in the submitted Google Data Safety answers. | DONE_PUBLIC_CONTRACT / GOOGLE_REVIEW_PENDING |
+| Public privacy policy | `web/invite-link/privacy/index.html` and `https://miyamibu.xyz/privacy/`; current deployment `dpl_8yPxLjXnf4quJTa45q5dHEoTN51B`. | Live policy verification passes; public Store declaration propagation remains pending. | PUBLIC_VERIFIED / STORE_REVIEW_PENDING |
 | App Store public declaration | Official product URL plus matching signed distribution archive, direct 2026-08-13 check. | App Privacy `no data collected` is consistent with the local-only archive; the public cloud/sync/invite description is not. | PRIVACY_MAJOR_FALSE_POSITIVE / LISTING_ACCURACY_MAJOR / BLOCKED_EXTERNAL |
 | Google Play public declaration and Console form | Official product URL plus C0's authenticated read-only Console check on 2026-08-13. | Cloud sync described; public/Step 5 says no data collected; Step 2 says collect/share yes; account creation is incorrectly `does not allow`; deletion is unanswered. No save/change was made. | CONFIRMED_MAJOR / BLOCKED_EXTERNAL / CONSOLE_READ_ONLY_VERIFIED |
 | iOS localization | Current source, signed distribution archive, and public Store. | Source declares Japanese; archive contains development language English with no localization bundle; public Store correctly reports English for that archive. | CONFIRMED_MINOR / NEW_ARCHIVE_AND_PUBLIC_RECHECK_REQUIRED |
@@ -126,8 +126,8 @@
 | Cloud-sharing | Security | HTTPS is used for Supabase/contact-support and normal metadata endpoints; user-provided HTTP URLs may be opened/fetched as provided. | Do not overstate all data encrypted in transit. |
 | Cloud-sharing | Account deletion | In-app account deletion plus public HTTPS deletion URL required. | `web/invite-link/account-deletion/index.html` must be deployed. |
 | Any mode exposing manual ChatGPT handoff | User-directed external share | Review the current platform form definitions and exact binary; record the owner-approved answer rather than presuming developer collection/sharing. | Local ZIP + OS share, no app API/OAuth/MCP. Public policy and App Review disclosure are required before submission. |
-| iOS 1.0.17 (19) local-only | App Privacy | Keep `Data Not Collected` unless final exact-binary review finds collection not covered by the archive configuration evidence. | Matching signed archive disables shared-tag cloud and has empty Supabase/contact-support configuration. |
-| iOS 1.0.17 (19) local-only | Product description | Remove cloud/sync/invite claims, or replace the binary with a cloud-enabled build and use the cloud-sharing privacy rows above. | Public listing currently promises unavailable functionality. |
+| iOS 1.0.18 (20) local-only | App Privacy | Keep `Data Not Collected` for this exact submitted binary. | Matching signed archive disables shared-tag cloud and has empty Supabase/contact-support configuration. |
+| iOS 1.0.18 (20) local-only | Product description | Use the submitted dedicated local-only copy without cloud/sync/invite claims. | App Store Connect shows the matching version as `審査待ち`; public propagation is pending. |
 
 ## Console Completion Evidence Required
 

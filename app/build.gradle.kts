@@ -38,7 +38,7 @@ fun contactSupportEndpointFromSupabaseUrl(supabaseUrl: String): String {
 val publicInviteLinkBaseUrl = configString(
     propertyName = "invite.link.base.url",
     envName = "URLSAVER_INVITE_LINK_BASE_URL",
-    defaultValue = "https://miyamibu.xyz",
+    defaultValue = "https://rinbam-app.miyamibu.chatgpt.site",
 ).trim().trimEnd('/')
 val mediaResolverBackendUrl = configString(
     propertyName = "media.resolver.backend.url",

@@ -163,7 +163,7 @@ data class SharedTagSyncRemoteConfig(
         get() = inviteLinkBaseUrl.trim().trimEnd('/').ifBlank { DEFAULT_INVITE_LINK_BASE_URL }
 
     companion object {
-        const val DEFAULT_INVITE_LINK_BASE_URL = "https://miyamibu.xyz"
+        const val DEFAULT_INVITE_LINK_BASE_URL = "https://rinbam-app.miyamibu.chatgpt.site"
     }
 }
 

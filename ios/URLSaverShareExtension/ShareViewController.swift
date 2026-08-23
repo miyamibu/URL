@@ -1013,9 +1013,9 @@ final class ShareViewController: UIViewController {
         case .created:
             main = "保存しました"
         case .duplicateActive:
-            main = "このURLはすでに保存済みです"
+            main = "この内容はすでに保存済みです"
         case .duplicateArchived:
-            main = "このURLはアーカイブ済みです"
+            main = "この内容はアーカイブ済みです"
         case .restoredFromPendingDelete:
             main = "削除を取り消して復元しました"
         case .saveFailed:

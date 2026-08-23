@@ -891,7 +891,7 @@ class TagRepositoryTest {
 
         assertTrue(result is SharedTagInviteCreationResult.Success)
         assertEquals(
-            "https://miyamibu.xyz/invite/invite-token",
+            "https://rinbam-app.miyamibu.chatgpt.site/invite/invite-token",
             (result as SharedTagInviteCreationResult.Success).inviteUrl,
         )
     }

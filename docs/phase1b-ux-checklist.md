@@ -39,12 +39,12 @@ Updated: 2026-04-23
 
 | ID | 優先 | 確認項目 | 期待結果 | 判定 | メモ |
 |---|---|---|---|---|---|
-| UX-001 | P0 | Main 画面で保存済み URL を再保存（ARCHIVED）したときの文言 | `このURLはアーカイブ済みです` が表示される | OK | `MainActivityViewModel.onManualSaveResult` の現行実装と unit test 群で固定。P0 launch gate では duplicate 文言契約をコード・test で確認 |
+| UX-001 | P0 | Main 画面で保存済み URL を再保存（ARCHIVED）したときの文言 | `この内容はアーカイブ済みです` が表示される | OK | `MainActivityViewModel.onManualSaveResult` の現行実装と unit test 群で固定。P0 launch gate では duplicate 文言契約をコード・test で確認 |
 | UX-002 | P0 | 上記 Snackbar action | action は `見る` のみ | OK | `MainActivityViewModel.onManualSaveResult` の `DUPLICATE_ARCHIVED` 分岐を再確認。action label は `見る` 固定 |
 | UX-003 | P0 | `見る` 押下時の遷移先 | 既存 archived 項目を確認できる（entry 特定時は詳細、未特定時は Archive） | OK | unit test: `MainActivityViewModelTest.onSnackbarAction_openExisting_withEntryIdNavigatesToDetail` / `...withoutEntryIdUsesTargetRoute` |
 | UX-004 | P0 | Archive 画面上で同じ `DUPLICATE_ARCHIVED` が起きた場合 | action は表示しない（情報通知のみ） | OK | unit test: `consumeShareResult_duplicateArchived_onArchiveRouteShowsInfoOnly` |
 | UX-005 | P0 | `DUPLICATE_ARCHIVED` の主導線 | `復元して見る` ではない | OK | 実装確認: action label は `見る` 固定（`MainActivityViewModel`） |
-| UX-006 | P0 | `DUPLICATE_ACTIVE` の文言 | `このURLはすでに保存済みです` が表示される | OK | `MainActivityViewModel.duplicateActiveEvent` の現行実装と unit test で再確認 |
+| UX-006 | P0 | `DUPLICATE_ACTIVE` の文言 | `この内容はすでに保存済みです` が表示される | OK | `MainActivityViewModel.duplicateActiveEvent` の現行実装と unit test で再確認 |
 | UX-007 | P0 | `DUPLICATE_ACTIVE` の導線 | 既存項目を確認する `見る` 導線がある | OK | unit test: `consumeShareResult_createdDuplicateAndErrors_emitExpectedMessages` |
 | UX-008 | P0 | `CREATED` / `SAVE_FAILED` の意味の明確さ | 成功/失敗を誤解しない文言になっている | OK | unit test: `consumeShareResult_createdDuplicateAndErrors_emitExpectedMessages`（`保存しました` / `保存できませんでした`） |
 
@@ -77,7 +77,7 @@ Updated: 2026-04-23
 | UX-202 | P0 | `INVALID_URL` エラー説明 | 修正方法が分かる表現になっている | OK | 実装確認: `https` を案内する具体メッセージ |
 | UX-203 | P0 | `NO_URL_FOUND` エラー説明 | `INVALID_URL` と区別される | OK | 実装確認: 2 種の supportingText を分岐表示 |
 | UX-204 | P0 | 手動追加のエラー提示場所 | ボトムシート内で完結し、Snackbar に流さない | OK | 実装確認: 手動追加時 `INVALID_URL/NO_URL_FOUND` は in-sheet、`onManualSaveResult` で Snackbar 非発火 |
-| UX-205 | P0 | 手動追加から `DUPLICATE_ARCHIVED` になった場合 | 2章と同じ文言・導線（`このURLはアーカイブ済みです` + `見る`） | OK | duplicate archived の Snackbar 契約は `MainActivityViewModel.onManualSaveResult` で main/archive route ごとに固定 |
+| UX-205 | P0 | 手動追加から `DUPLICATE_ARCHIVED` になった場合 | 2章と同じ文言・導線（`この内容はアーカイブ済みです` + `見る`） | OK | duplicate archived の Snackbar 契約は `MainActivityViewModel.onManualSaveResult` で main/archive route ごとに固定 |
 | UX-206 | P0 | キーボード種別 | `KeyboardType.Uri` が適用される | OK | 実装確認: `OutlinedTextField` の `keyboardType = KeyboardType.Uri` |
 | UX-207 | P0 | クリップボード貼り付け導線 | 明示導線があり、挙動が分かる | OK | 実装確認: `クリップボードを貼り付け` ボタンと貼付処理あり |
 | UX-208 | P1 | 入力途中離脱時の挙動 | 1a ルール（内容破棄）と矛盾しない |  |  |

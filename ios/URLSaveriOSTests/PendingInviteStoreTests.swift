@@ -24,11 +24,20 @@ final class PendingInviteStoreTests: XCTestCase {
 
 final class IncomingURLRouteTests: XCTestCase {
     func testCanonicalHTTPSInviteRoute() throws {
-        switch try route("https://miyamibu.xyz/invite/invite-token") {
+        switch try route("https://rinbam-app.miyamibu.chatgpt.site/invite/invite-token") {
         case .invite(let token):
             XCTAssertEqual(token, "invite-token")
         default:
             XCTFail("canonical HTTPS invite URL must be routed as an invite")
+        }
+    }
+
+    func testLegacyHTTPSInviteRouteRemainsAcceptedDuringRollbackWindow() throws {
+        switch try route("https://miyamibu.xyz/invite/legacy-token") {
+        case .invite(let token):
+            XCTAssertEqual(token, "legacy-token")
+        default:
+            XCTFail("legacy HTTPS invite URL must remain accepted during the rollback window")
         }
     }
 

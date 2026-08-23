@@ -57,7 +57,7 @@ class Phase1aFlowTest {
         val entryId = waitForEntryCard(url)
 
         addManualUrl(url)
-        waitForText("このURLはすでに保存済みです")
+        waitForText("この内容はすでに保存済みです")
         composeRule.onNodeWithText("見る").assertExists()
 
         composeRule.onNodeWithTag(entryCardTag(entryId)).performClick()
@@ -160,7 +160,7 @@ class Phase1aFlowTest {
         Thread.sleep(5200)
 
         addManualUrl(url)
-        waitForText("このURLはアーカイブ済みです")
+        waitForText("この内容はアーカイブ済みです")
         composeRule.onNodeWithText("見る").assertExists().performClick()
         composeRule.onNodeWithText("詳細").assertIsDisplayed()
         composeRule.onNodeWithText("アーカイブ解除").assertExists()
@@ -342,7 +342,7 @@ class Phase1aFlowTest {
     fun detailNotFound_showsRecoveryAction() {
         dispatchShareSaveResult(ShareSaveResult.DUPLICATE_ACTIVE, Long.MAX_VALUE)
 
-        waitForText("このURLはすでに保存済みです")
+        waitForText("この内容はすでに保存済みです")
         composeRule.onNodeWithText("見る").performClick()
         composeRule.onNodeWithTag("detail_not_found").assertExists()
         composeRule.onNodeWithText("一覧に戻る").performClick()

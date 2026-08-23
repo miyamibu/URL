@@ -1,0 +1,2 @@
+# Preserve exact Google Play Console CSV bytes; labels may contain provider-authored trailing spaces.
+artifacts/full-go-audit/2026-08-23/*.csv -text whitespace=-trailing-space

@@ -1,6 +1,24 @@
 # REPO_GO Evidence
 
-Final status: REPO_GO (repository scope frozen and locally verified 2026-08-22) / PUBLIC_RELEASE_BLOCKED_EXTERNAL (production migration apply, public web deploy of the updated privacy/deletion pages, Google Play Data safety, App Store listing accuracy, physical-device gates)
+Final status: REPO_GO (repository scope verified 2026-08-23) / PRODUCTION_BACKEND_WEB_GO / STORE_SUBMISSION_GO_REVIEW_PENDING / DEVICE_UI_PARTIAL / PUBLIC_LAUNCH_PENDING_EXTERNAL_REVIEW
+
+## 2026-08-23 production execution and current-source verification
+
+This pass used the repository root `/Users/mimac/Desktop/りんばむ`, branch `codex/full-go-mobile-s1-20260811`, and canonical identities Android `jp.miyamibu.urlalbum` / iOS `com.mibu.codebridge.ios`. The release owner explicitly authorized the bounded production deployment, Store-form save/submission, App Store version creation/upload/submission, commit, and push operations. No app/user data was deleted, and no device was uninstalled or reset.
+
+| Surface | Evidence | Classification |
+|---|---|---|
+| Supabase production | `supabase db push --linked --yes` applied only `20260822090000_account_deletion_idempotency.sql`. A post-apply linked migration list shows local/remote parity through `20260822090000`. `supabase db lint --linked --schema public` exited 0 with only the two pre-existing unused-parameter warnings in `public.consume_rinbam_mcp_rate_limit`; no account-deletion migration error was reported. No account-deletion RPC or user-row mutation was invoked. | `PRODUCTION_MIGRATION_APPLIED / HISTORY_MATCH / PUBLIC_SCHEMA_LINT_NO_ERROR` |
+| Public web production | Vercel production deployment `dpl_8yPxLjXnf4quJTa45q5dHEoTN51B`, URL `https://invite-link-d5t42kqcp-miyamibus-projects.vercel.app`, aliased to `https://miyamibu.xyz`. Post-deploy `bash scripts/verify_public_web_release.sh` passed every privacy, deletion, reset, invite, CSP, App Links, and Universal Links check. | `PUBLIC_WEB_GO` |
+| Android local | JDK 21 `testDebugUnitTest lintDebug assembleDebug` succeeded. The mobile UI contract, MCP contract, public-web source contract, and release hygiene checks passed. The public-web live verifier failed before deployment and passed after deployment, proving that the live state changed rather than only the local source. | `HOST_GO` |
+| Android visual | Canonical debug APK was data-preservingly installed on emulator `emulator-5554` (`rinbam_api36_pixel9a`). Home was captured at font scale 1.0, 1.3, and 2.0 under `artifacts/ui-review/2026-08-23/`; all five main actions remained visible and the center add action remained present. This is emulator evidence, not physical-Android evidence. | `EMULATOR_VISUAL_PASS / NOT_PHYSICAL_ANDROID` |
+| iOS local | Full Simulator XCTest run: 230 total, 227 passed, 0 failed, 3 skipped live-cloud tests. A signed arm64 archive for app `com.mibu.codebridge.ios` and share extension `com.mibu.codebridge.ios.share`, version `1.0.18 (20)`, Team `8R3B5675ZJ`, was exported with Apple Distribution signing. IPA `/tmp/rinbam-app-store-export-1.0.18-20/りんばむ.ipa` has SHA-256 `23c2aae8fce7d56495e978b68b7229c6ef27792859b877460de079155dd823d8`; both executables have `get-task-allow=false`. The archive contains the bounded local-only configuration: shared-tag cloud false, Supabase/contact/media/AI/ChatGPT-personal-sync values empty or false, and Japanese development/localization declarations. | `LOCAL_TEST_GO / SIGNED_APP_STORE_ARTIFACT_VERIFIED` |
+| iPhone 12 | Physical UDID `00008101-00066D96340A001E` (CoreDevice identifier `E9D5CA0F-0729-5DFD-94B9-EFE2AB589C0E`). The current-source 1.0.18 (20) app was overwrite-installed without uninstall/reset, launched, and listed as `com.mibu.codebridge.ios` 1.0.18 (20). Appium/WDA UI proof remains unavailable because the XCUITest RemoteXPC tunnel command requires administrator execution and `127.0.0.1:42314` was absent. | `INSTALL_LAUNCH_PASS / NOT VERIFIED on physical iPhone UI` |
+| Google Play | Authenticated Play Console imported the owner-reviewed v3 CSV for canonical package `jp.miyamibu.urlalbum`; SHA-256 `b347b759e816eef3306035cee4733cac9a8836d97f8b4c4d0d1c9c87c2fcc08e`. Preview showed shared Web browsing history; collected Name, Email address, User IDs, Purchase history, Web browsing history, Other user-generated content, Other actions, and Device or other IDs; encryption in transit; and account/data deletion URLs `https://miyamibu.xyz/account-deletion/`. The form was saved and one Data Safety change was submitted. Play Console first confirmed `1 件の変更を審査に送信しました`; after the automated quick check completed, the final recheck showed `審査中の変更` and `変更内容は現在審査中です`. | `DATA_SAFETY_SUBMITTED / GOOGLE_REVIEW_PENDING` |
+| App Store Connect | Authenticated App Store Connect created iOS 1.0.18, received build 20 through an `xcodebuild -exportArchive` upload (`Upload succeeded` / `EXPORT SUCCEEDED`), and attached it to version 1.0.18. The product description, What's New, and review notes were replaced with the exact local-only behavior boundary; automatic release after approval and immediate all-user update remain selected. The submission completed with `1項目が提出されました`, and version 1.0.18 (20) now shows `審査待ち`. The public App Store page remains on 1.0.17 until Apple approves and publishes this version. | `APP_STORE_SUBMITTED / APPLE_REVIEW_PENDING` |
+| OpenCode independent review | `opencode/nemotron-3-ultra-free` performed the broad release-gate audit, release preparation, signed-artifact/upload execution, and Store-boundary checks. `opencode/x-preview-f-free` performed the current-diff cross-review and a separate Data Safety CSV review; both returned `REVIEW_STATUS=PASS`. Ox confirmed the selected data categories, purposes, required/optional treatment, deletion/account answers, and conditional consistency, while recording the owner-approved service-provider and user-initiated-action exception interpretations. | `TWO_MODEL_REVIEW_COMPLETE / STORE_PACKET_PASS` |
+
+Production backend/public web and both Store submissions are GO. Public launch is not yet claimed: Google and Apple review decisions and public-page propagation are external pending states. Physical-iPhone install/launch is current-source 1.0.18 (20) proof, but requested UI-operation proof remains weaker until the administrator-authorized RemoteXPC tunnel makes Appium/WDA available; no physical Android was connected, so the emulator visual pass does not upgrade that gate.
 
 ## 2026-08-22 OpenCode remediation freeze (repository scope)
 
@@ -17,12 +35,12 @@ Verification executed against this exact source state (all exit 0 unless noted):
 
 Scope closed by this remediation: S1-REMOTE-MARKER-006 / S2-ACCDEL-008 server+client idempotent deletion contract (`FIXED_AND_VERIFIED` within local scope). Public copy now matches implemented behavior and is contract-pinned locally.
 
-Still open (external, owner-gated): production migration apply + live status-query validation; deploy updated `web/invite-link` pages to the existing Vercel project; Google Play Data safety import packet; App Store description/localization correction for the cloud-enabled next build; physical Android/iPhone runtime gates; signed candidate build. These keep PUBLIC_RELEASE at `NO_GO_EXTERNAL` independent of this repository-scope GO.
+Still open at the time of the 2026-08-22 freeze (external, owner-gated): production migration apply + live status-query validation; deploy updated `web/invite-link` pages to the existing Vercel project; Google Play Data safety import packet; App Store description/localization correction; physical Android/iPhone runtime gates; signed candidate build. The 2026-08-23 execution section above supersedes those Store/deploy/signing items with current evidence; physical UI and external Store review/public propagation remain open.
 
 ## Current source snapshot (manifest-backed)
 
 - Android: `jp.miyamibu.urlalbum`, `versionName=1.0.17`, `versionCode=21`
-- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.17`, `build=19`; share extension `com.mibu.codebridge.ios.share`
+- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.18`, `build=20`; share extension `com.mibu.codebridge.ios.share`
 - Supabase migration head: `20260822090000_account_deletion_idempotency.sql`
 - Machine-readable source: `docs/release/release-manifest.json`
 
@@ -179,16 +197,16 @@ The following records are a dated provider-state capture made while the applicat
 | Provider deployment/source revision correspondence | External / unverified: provider deployment/function state is recorded above, but independent confirmation that Vercel, Railway, Supabase, and `web/invite-link` artifacts correspond to the repository HEAD is still required. |
 | Production MCP/OAuth registration | Requires owner-controlled provider console and secret entry. |
 | OpenAI Apps Developer Mode connection and submission | Requires owner ChatGPT/OpenAI account and deployed HTTPS MCP endpoint. |
-| Google Play privacy declaration | Public Data safety currently says no data is collected while the listing and Privacy Policy describe cloud sync/account/support/purchase processing. Correct the exact data types, purposes, collection/sharing, optionality, encryption, and deletion answers in Play Console; save before/after screenshots and recheck the public page. |
+| Google Play privacy declaration | The corrected Data Safety packet was imported, saved, and submitted on 2026-08-23. Google review/quick-check completion and public Data Safety propagation remain external pending states; recheck the official public page after approval. |
 | App Store privacy declaration | The distributed `1.0.17 (19)` archive is local-only, so the earlier instruction to replace `データの収集なし` is withdrawn. Re-open App Privacy only if a future submitted archive enables account/cloud/support collection or if a deeper exact-binary SDK review finds another retained developer-accessible flow. |
-| App Store listing functionality | The public description advertises shared tags, cloud sync, and invitations while the matching signed archive disables them. Remove those claims for the local-only binary or submit a cloud-enabled build with matching App Privacy answers and review notes. |
-| App Store localization packaging | Public `EN 英語` matches the signed archive (`CFBundleDevelopmentRegion=en`, no `.lproj`). Ensure Japanese localization is included in a new archive and recheck the public language field; current source declarations alone are insufficient. |
+| App Store listing functionality | Version 1.0.18 (20) was submitted with local-only description, What's New text, and review notes matching the signed binary. Apple approval and public product-page propagation remain pending. |
+| App Store localization packaging | The submitted 1.0.18 (20) archive declares Japanese as the development/localization language. Recheck the public language field after Apple publishes the version. |
 | Production secrets | Must be entered outside repo and chat. |
-| Store/live verification | Public Store pages were rechecked on 2026-08-13 and expose a confirmed privacy declaration mismatch. Authenticated console correction and post-change public verification remain external. |
-| Physical-device final verification | iPhone 12 build 19 install/launch is verified. Android v21 installation and UI operation are unverified because no Android device or emulator was attached during the v21 release pass. |
+| Store/live verification | Authenticated Google Play and App Store Connect submission is complete. Google/Apple review decisions and post-approval public-page verification remain external. |
+| Physical-device final verification | iPhone 12 version 1.0.18 (20) overwrite-install/launch is verified. Appium/WDA UI operation remains unverified because the administrator-run RemoteXPC tunnel was absent. Android emulator visual evidence passed at font scales 1.0/1.3/2.0; physical Android was not connected. |
 | Sandbox purchase | External / unverified. |
-| Full launch GO | `NO_GO_INTERNAL / BLOCKED_EXTERNAL`; public-web deployment evidence does not override the dirty/untracked integration snapshot, Google Play Data safety Major, App Store listing-functionality Major, or unverified release/device/production gates. |
-| Signed iOS archive/upload | Distribution archive/export, App Store Connect upload/review, and public release for build 19 are complete. |
+| Full launch GO | `STORE_SUBMISSION_GO / EXTERNAL_REVIEW_PENDING / DEVICE_UI_PARTIAL`. Public launch cannot be claimed until Google and Apple approve/propagate the submitted changes; physical-device UI proof remains a separate quality gate. |
+| Signed iOS archive/upload | Distribution archive/export/upload and App Store review submission for version 1.0.18 build 20 are complete; Apple review/public release is pending. |
 
 ## REPO_GO vs LAUNCH_READY_REPO
 
