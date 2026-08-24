@@ -39,7 +39,7 @@ DIRECT_MEDIA_PROXIES: dict[str, dict[str, str | float]] = {}
 DIRECT_MEDIA_PROXY_TTL_SECONDS = 10 * 60
 YOUTUBE_DELEGATE_HEADER = "X-Rinbam-Resolver-Hop"
 YOUTUBE_DELEGATE_HEADER_VALUE = "youtube-delegate"
-YOUTUBE_INNERTUBE_ENDPOINT = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
+YOUTUBE_INNERTUBE_ENDPOINT = "https://youtubei.googleapis.com/youtubei/v1/player?prettyPrint=false"
 YOUTUBE_INNERTUBE_CLIENT_VERSION = "20.10.38"
 YOUTUBE_INNERTUBE_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
