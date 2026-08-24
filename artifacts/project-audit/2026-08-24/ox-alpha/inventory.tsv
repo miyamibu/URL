@@ -1,0 +1,19 @@
+ID	対象	種別	確認状態	確認範囲	バージョン	備考
+INV-01	Git基準状態	codex/修正 @ eda2f267	FULLY REVIEWED	branch/HEAD/log/status確認済み	eda2f2678c16bfbbda56d398c613012376993e76	未追跡 artifacts/ui-review/2026-08-11/ を保護し非接触
+INV-02	AGENTS.md / DESIGN.md / docs/mobile-ui-regression-contract.md / .agents/skills/rinbam-single-route	SKILL	NOT PROVIDED	-	-	外部Skill読込は本セッションで不可だったため、リポジトリ内のSKILL.mdは読了
+INV-03	app/src/main/java domain (UrlRules.kt ほか)	source	FULLY REVIEWED	URL正規化/抽出/text card/effectiveTitle/制限値	eda2f267	Phase1a不変条件と一致
+INV-04	app/src/main/java data (DefaultUrlRepository.kt, AppDatabase.kt, SharedTagSyncAuth.kt)	source	PARTIALLY REVIEWED	保存/重複/promote/pending delete/migration構造/session暗号化	eda2f267	migration本体は構造確認中心(MIGRATION_18_20等の全文は未読)
+INV-05	app/src/main/java worker (FetchMetadataWorker.kt, ResolveWorker.kt)	source	PARTIALLY REVIEWED	FetchMetadataWorker全文, retry契約(runAttemptCount<2=計3回)	eda2f267	MetadataFetcher実装詳細は一部
+INV-06	app/src/main/java network/video	binary/source	PARTIALLY REVIEWED	NetworkUrlPolicy全文(SSRF対策)	eda2f267	VideoResolver群は未読
+INV-07	app/src/main/java ui (ShareReceiverActivity.kt ほか)	source	SAMPLED	ShareReceiver全文+修正, ExternalActions, 他画面は未個別読査	eda2f267	実機/Simulator UI操作は本セッション禁止範囲
+INV-08	AndroidManifest.xml	config	FULLY REVIEWED	exported/intent-filter/deep link/backup設定	eda2f267	autoVerify資産links実配信は未検証
+INV-09	Android unit tests	test	FULLY REVIEWED	358 tests / 0 failures (JDK21), 19クラス失敗はJDK17環境由来	E4実行	/tmp/gradle-test-baseline.log, /tmp/gradle-test-java21.log
+INV-10	iOS URLSaverShared Domain/Data	source	SAMPLED	URLRules.normalize等の正規化parity, SQLite normalized_url UNIQUE, 重複結果分類	eda2f267	xcodebuild未実行(ios/無変更)
+INV-11	iOS URLSaverShareExtension/ShareViewController.swift	source	SAMPLED	grepレベル(危険API/保存フラグメント)	eda2f267	1087行の全行読査は未実施
+INV-12	supabase/migrations (66件)	migration	SAMPLED	RLS適用とpolicy一覧抽出, shared_tag_sync.sql該当部精読	eda2f267	66 migration全文は未読
+INV-13	supabase/functions	store	FULLY REVIEWED	store-notification-receiver/index.ts 冒頭270行+シグネチャ検証経路	eda2f267	残り750行と他functionは未読
+INV-14	web/invite-link	static	FULLY REVIEWED	vercel.json CSP/構造, ディレクトリ構成	eda2f267	各HTML本文の全行読査は未実施
+INV-15	web/admin (lib/auth.ts ほか)	source	PARTIALLY REVIEWED	auth.ts全文(サーバー側JWT検証/step-up), api route一覧	eda2f267	runtime動作・prod設定は未検証
+INV-16	scripts/verify_mobile_ui_contract.py	script	FULLY REVIEWED	変更前後で実行し両方PASS	E4実行	-
+INV-17	scripts/verify_shared_url_normalization_contract.py	script	BLOCKED	ローカルPostgres不在のため起動不可	E4実行	要supabase local stack
+INV-18	docs/release/launch-go-checklist.md	doc	SAMPLED	冒頭60行(GOゲート構造)	eda2f267	-

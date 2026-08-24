@@ -266,6 +266,25 @@ enum PendingDeleteTimerWaiter {
     }
 }
 
+enum ShareHostHandoffOutcome: Equatable, Sendable {
+    case proceedWithRepositoryAccess
+    case failClosed(message: String)
+}
+
+/// App Group 不通時にホストアプリへ URL を引き継ぐ経路は意図的に提供しない。
+/// urlsaver://save?url=... の平文 query は OS ログ等へ露出するため、
+/// fail-closed として本体からの手動追加を案内する。outcome は URL を運ばない。
+enum ShareHostHandoffPolicy {
+    static func outcome(hasAppGroupAccess: Bool) -> ShareHostHandoffOutcome {
+        if hasAppGroupAccess {
+            return .proceedWithRepositoryAccess
+        }
+        return .failClosed(
+            message: "共有領域にアクセスできなかったため保存できませんでした。\n共有元でURLをコピーし、りんばむ本体の「＋」ボタンから貼り付けて保存してください。"
+        )
+    }
+}
+
 struct FirstRunOnboardingMigrationDecision: Equatable, Sendable {
     let hasSeenOnboarding: Bool
     let migrationCompleted: Bool

@@ -55,8 +55,8 @@ Still open at the time of the 2026-08-22 freeze (external, owner-gated): product
 ## Current source snapshot (manifest-backed)
 
 - Android: `jp.miyamibu.urlalbum`, `versionName=1.0.17`, `versionCode=21`
-- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.18`, `build=20`; share extension `com.mibu.codebridge.ios.share`
-- Supabase migration head: `20260822090000_account_deletion_idempotency.sql`
+- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.18`, `build=21`; share extension `com.mibu.codebridge.ios.share`
+- Supabase migration head: `20260824090000_fix_apply_personal_link_ops_conflict.sql`
 - Machine-readable source: `docs/release/release-manifest.json`
 
 > Dated provider, store, and device captures below are historical evidence unless they are explicitly re-run for the current source. They must not be treated as current proof solely because they appear in this document.

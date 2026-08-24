@@ -11,14 +11,14 @@
     "bundleId": "com.mibu.codebridge.ios",
     "shareExtensionBundleId": "com.mibu.codebridge.ios.share",
     "shortVersion": "1.0.18",
-    "build": 20,
+    "build": 21,
     "appPlist": "ios/URLSaveriOS/Info.plist",
     "shareExtensionPlist": "ios/URLSaverShareExtension/Info.plist",
     "project": "ios/URLSaveriOS.xcodeproj/project.pbxproj"
   },
   "supabase": {
     "migrationDirectory": "supabase/migrations",
-    "migrationHead": "20260822090000_account_deletion_idempotency.sql"
+    "migrationHead": "20260824090000_fix_apply_personal_link_ops_conflict.sql"
   },
   "currentDocumentation": [
     "docs/release/repo-go-evidence.md",

@@ -1,13 +1,13 @@
 # Store Listing Draft
 
 ## Goal
-App Store / Google Play へ提出する文言を、現在の source baseline（Android `1.0.17 (versionCode=21)` / iOS `1.0.18 (build=20)`）と、実際に選択した release mode に一致させる。
+App Store / Google Play へ提出する文言を、現在の source baseline（Android `1.0.17 (versionCode=21)` / iOS `1.0.18 (build=21)`）と、実際に選択した release mode に一致させる。
 
 ## Current source snapshot (manifest-backed)
 
 - Android: `jp.miyamibu.urlalbum`, `versionName=1.0.17`, `versionCode=21`
-- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.18`, `build=20`; share extension `com.mibu.codebridge.ios.share`
-- Supabase migration head: `20260822090000_account_deletion_idempotency.sql`
+- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.18`, `build=21`; share extension `com.mibu.codebridge.ios.share`
+- Supabase migration head: `20260824090000_fix_apply_personal_link_ops_conflict.sql`
 
 ## App Identity
 - App name: りんばむ
@@ -21,7 +21,7 @@ App Store / Google Play へ提出する文言を、現在の source baseline（A
 - Account deletion URL: required for this cloud-enabled release. Use the deployed public deletion route that matches `web/invite-link/account-deletion/index.html`.
 
 ## Current Release Branch Decision
-Current source baseline is Android `1.0.17 (versionCode=21)` and iOS `1.0.18 (build=20)`. The official App Store URL still showed public `1.0.17` before the 2026-08-23 submission; App Store Connect now shows submitted 1.0.18 (20) as `審査待ち`.
+Current source baseline is Android `1.0.17 (versionCode=21)` and iOS `1.0.18 (build=21)`. The official App Store URL still shows public `1.0.17`; App Store Connect build 20 submission is historical `審査待ち` evidence and must be replaced or superseded by exact current-source build 21 before release approval.
 
 - Android release mode depends on `release.shared.tag.cloud.enabled` and release Supabase values from local/env configuration.
 - iOS defaults to tracked local-only xcconfig; cloud-sharing Archive/TestFlight must pass ignored `ios/Config/URLSaverSecrets.xcconfig` explicitly.

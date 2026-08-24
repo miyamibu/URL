@@ -8,12 +8,12 @@
 
 ## Current source snapshot (manifest-backed)
 - Android: `jp.miyamibu.urlalbum`, `versionName=1.0.17`, `versionCode=21`
-- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.18`, `build=20`; share extension `com.mibu.codebridge.ios.share`
-- Supabase migration head: `20260822090000_account_deletion_idempotency.sql`
+- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.18`, `build=21`; share extension `com.mibu.codebridge.ios.share`
+- Supabase migration head: `20260824090000_fix_apply_personal_link_ops_conflict.sql`
 - Machine-readable source: `docs/release/release-manifest.json`.
 - The dated provider and store records below are historical evidence and do not become current proof without a fresh recheck.
 - Current release/ops readiness tracker: `docs/release/launch-go-checklist.md`.
-- Current repo-local checks and public-Web contracts are tracked independently from release approval. Current status after the 2026-08-23 Store operations is `STORE_SUBMISSION_GO / EXTERNAL_REVIEW_PENDING / DEVICE_UI_PARTIAL`: Google Play Data Safety is under review, and App Store version 1.0.18 (20) is `審査待ち` with local-only copy matching the signed binary. Public propagation, physical-device UI proof, sandbox purchase, and the remaining production integrations remain separate gates.
+- Current repo-local checks and public-Web contracts are tracked independently from release approval. The 2026-08-23 App Store version 1.0.18 (20) submission is historical exact-binary evidence. Current source is 1.0.18 (21), adding the audited Share Extension fail-closed correction, and therefore requires a new signed archive/upload and App Store build replacement before current-source Store GO. Current status is `REPO_LOCAL_GO / APP_STORE_BUILD_REPLACEMENT_REQUIRED / DEVICE_UI_PARTIAL`; public propagation, sandbox purchase, and production integrations remain separate gates.
 - AI-safe export, manual ChatGPT handoff, and MCP source contracts are tracked separately under `docs/ai/`. Manual handoff is local ZIP + OS share with no question/API/OAuth; those local docs do not mean production MCP deployment, production OAuth registration, OpenAI submission, store submission, production secret entry, or store/live recheck is complete.
 - The `1.0.11` store submission, public URL, screenshot, signing, and console rows below are historical evidence, not current proof for the manifest-backed source.
 - Rows below that say `DONE` are historical `1.0.11` evidence unless the row explicitly names a current repo gate. Do not use them as `LAUNCH_GO` evidence without re-running the manual launch checklist.

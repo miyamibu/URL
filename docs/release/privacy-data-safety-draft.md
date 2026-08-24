@@ -1,13 +1,13 @@
 # Privacy And Data Safety Draft
 
 ## Goal
-現在の source baseline（Android `1.0.17 (versionCode=21)` / iOS `1.0.18 (build=20)`）の privacy / Data Safety 回答を、選択した release mode と照合できる状態にする。過去の `1.0.11` 提出証跡は履歴として残すが、現在の提出可否の証明には使わない。
+現在の source baseline（Android `1.0.17 (versionCode=21)` / iOS `1.0.18 (build=21)`）の privacy / Data Safety 回答を、選択した release mode と照合できる状態にする。過去の提出証跡は履歴として残すが、現在の提出可否の証明には使わない。
 
 ## Current source snapshot (manifest-backed)
 
 - Android: `jp.miyamibu.urlalbum`, `versionName=1.0.17`, `versionCode=21`
-- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.18`, `build=20`; share extension `com.mibu.codebridge.ios.share`
-- Supabase migration head: `20260822090000_account_deletion_idempotency.sql`
+- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.18`, `build=21`; share extension `com.mibu.codebridge.ios.share`
+- Supabase migration head: `20260824090000_fix_apply_personal_link_ops_conflict.sql`
 
 ## Release Assumption
 - Ads: disabled.
@@ -16,7 +16,7 @@
 - Third-party crash reporting: not used.
 - Shared-tag cloud: release mode dependent. Android reads release local/env config; iOS defaults to tracked local-only xcconfig and requires an explicit secrets xcconfig for cloud-sharing Archive/TestFlight.
 - Account sign-in: enabled only when shared-tag cloud is enabled for the submitted binary.
-- Current integration status: repo-local disclosure sources and public web checks pass, Google Play Data Safety correction is under review, and the signed local-only iOS 1.0.18 (20) build is `審査待ち` with matching Store copy. Current status is `STORE_SUBMISSION_GO / EXTERNAL_REVIEW_PENDING / DEVICE_UI_PARTIAL`; public propagation is not yet proof.
+- Current integration status: repo-local disclosure sources and public web checks pass. The signed local-only iOS 1.0.18 (20) build remains historical `審査待ち` evidence; current source 1.0.18 (21) preserves the same local-only disclosure boundary but requires a new exact-binary archive/upload before Store submission GO. Current status is `REPO_LOCAL_GO / APP_STORE_BUILD_REPLACEMENT_REQUIRED / DEVICE_UI_PARTIAL`.
 
 ## Exact-binary Store Reconciliation (2026-08-13)
 

@@ -201,6 +201,53 @@ class YouTubeDelegateTest(unittest.TestCase):
             media_resolver_backend.YOUTUBE_DELEGATE_HEADER_VALUE,
         )
 
+    def test_youtube_delegate_failure_falls_back_to_primary_resolver(self):
+        resolver = media_resolver_backend.MediaResolver(
+            pathlib.Path(tempfile.mkdtemp()),
+            "https://render.example.test",
+        )
+        primary_result = {
+            "ok": True,
+            "provider": "youtube",
+            "assets": [
+                {
+                    "mediaType": "VIDEO",
+                    "downloadUrl": "https://render.example.test/proxy/primary",
+                },
+            ],
+        }
+
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
+            resolver,
+            "_resolve_youtube_delegate",
+            return_value={
+                "ok": False,
+                "provider": "youtube",
+                "error": "MEDIA_NOT_CREATED",
+                "message": "sensitive upstream detail",
+                "assets": [],
+            },
+        ), mock.patch.object(
+            media_resolver_backend,
+            "_safe_log",
+        ) as safe_log, mock.patch.object(
+            media_resolver_backend,
+            "_load_tools",
+            return_value=(mock.Mock(), None),
+        ), mock.patch.object(
+            resolver,
+            "_resolve_youtube_direct_asset",
+            return_value=(primary_result, None),
+        ) as primary:
+            result = resolver.resolve("https://youtu.be/abc123", "youtube")
+
+        primary.assert_called_once()
+        safe_log.assert_called_once()
+        log_message = safe_log.call_args.args[0]
+        self.assertIn("error=MEDIA_NOT_CREATED", log_message)
+        self.assertNotIn("sensitive upstream detail", log_message)
+        self.assertEqual(result, primary_result)
+
     def test_youtube_delegate_is_skipped_when_loop_guard_is_disabled(self):
         resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://render.example.test")
         with mock.patch.dict(

@@ -643,6 +643,26 @@ final class URLRulesTests: XCTestCase {
         XCTAssertTrue(failedHandoff.shouldCancelTasksWhenViewDisappears)
     }
 
+    /// App Group 不通時は urlsaver://save?url=... 平文引き継ぎを行わず fail-closed する。
+    /// ShareHostHandoffOutcome は URL を運ばないため、この経路から route URL は構築不能。
+    func testShareHandoffWithoutAppGroupFailsClosedWithRecoveryMessage() {
+        guard case .failClosed(let message) = ShareHostHandoffPolicy.outcome(hasAppGroupAccess: false) else {
+            XCTFail("App Group 不通時は fail-closed であること")
+            return
+        }
+        XCTAssertTrue(message.contains("保存できませんでした"))
+        XCTAssertTrue(message.contains("「＋」ボタン"))
+        XCTAssertTrue(message.contains("貼り付けて保存"))
+        XCTAssertFalse(message.lowercased().contains("urlsaver://"))
+    }
+
+    func testShareHandoffWithAppGroupProceedsWithRepositoryAccess() {
+        XCTAssertEqual(
+            ShareHostHandoffPolicy.outcome(hasAppGroupAccess: true),
+            .proceedWithRepositoryAccess
+        )
+    }
+
     func testCancelledPendingDeleteTimerNeverAllowsFinalize() async {
         let waiter = Task {
             await PendingDeleteTimerWaiter.wait(seconds: 60)

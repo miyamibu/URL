@@ -523,8 +523,14 @@ class MediaResolver:
         provider = self._provider(url, service_type)
         if provider == "youtube" and allow_delegate:
             delegated = self._resolve_youtube_delegate(url)
-            if delegated is not None:
+            if delegated is not None and delegated.get("ok") is True:
                 return delegated
+            if delegated is not None:
+                delegate_error = _truncate_log(str(delegated.get("error") or "UNKNOWN"), limit=80)
+                _safe_log(
+                    f"youtube delegate returned no usable result error={delegate_error}; "
+                    "falling back to the primary resolver"
+                )
         if provider == "tiktok":
             tiktok_assets = self._resolve_tiktok_tikwm(url)
             if tiktok_assets:

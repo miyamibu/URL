@@ -340,7 +340,8 @@ final class ShareViewController: UIViewController {
             return
         }
         if !SharedContainer.hasAppGroupAccess() {
-            await processShareViaHostAppFallback(payload: payload)
+            guard case .failClosed(let message) = ShareHostHandoffPolicy.outcome(hasAppGroupAccess: false) else { return }
+            await MainActor.run { updateStatus(message, finished: true) }
             return
         }
         let repository = try? URLRepository()
@@ -942,61 +943,6 @@ final class ShareViewController: UIViewController {
         }
         let summary = batchSummary(for: operation)
         return "\(summary.total)件を処理しました（新規\(summary.created) / 既存\(summary.duplicate) / 復元\(summary.restored) / 失敗\(summary.failed)）"
-    }
-
-    private func processShareViaHostAppFallback(payload: ShareExtensionPayload) async {
-        let degradation = URLRules.countValidURLs(in: payload.candidateGroups) > 1 ? ShareDegradationNotice.truncatedToFirstURL : nil
-        let routeURL: URL?
-
-        switch URLRules.extractFromCandidateGroups(payload.candidateGroups) {
-        case .found(let url):
-            routeURL = makeHostAppSaveURL(url: url, degradation: degradation)
-        case .inputTooLarge:
-            routeURL = nil
-            await MainActor.run { updateStatus("共有内容が長すぎるため処理できませんでした", finished: true) }
-            return
-        case .invalidURL:
-            routeURL = nil
-            await MainActor.run { updateStatus("有効なURLではありませんでした", finished: true) }
-            return
-        case .noURLFound:
-            routeURL = nil
-            await MainActor.run { updateStatus("保存できる内容が見つかりませんでした", finished: true) }
-            return
-        }
-
-        guard let routeURL else {
-            await MainActor.run { updateStatus("保存できませんでした", finished: true) }
-            return
-        }
-
-        lifecycle.beginHostHandoff()
-        let opened = await openHostApp(routeURL)
-        let statusText = if opened {
-            degradation == .truncatedToFirstURL
-                ? "アプリで保存を続けます\n共有内容に複数URLが含まれていたため、1件目のみ保存します"
-                : "アプリで保存を続けます"
-        } else {
-            "アプリへ引き継げなかったため保存できませんでした"
-        }
-        await MainActor.run { updateStatus(statusText, finished: true) }
-        if opened {
-            finishExtension()
-        } else {
-            lifecycle.hostHandoffFailed()
-        }
-    }
-
-    private func makeHostAppSaveURL(url: String, degradation: ShareDegradationNotice?) -> URL? {
-        var components = URLComponents()
-        components.scheme = "urlsaver"
-        components.host = "save"
-        var queryItems = [URLQueryItem(name: "url", value: url)]
-        if let degradation {
-            queryItems.append(URLQueryItem(name: "degradation", value: degradation.rawValue))
-        }
-        components.queryItems = queryItems
-        return components.url
     }
 
     private func openHostApp(_ url: URL) async -> Bool {
