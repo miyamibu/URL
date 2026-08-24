@@ -1,12 +1,12 @@
 # Store Listing Draft
 
 ## Goal
-App Store / Google Play へ提出する文言を、現在の source baseline（Android `1.0.17 (versionCode=21)` / iOS `1.0.18 (build=21)`）と、実際に選択した release mode に一致させる。
+App Store / Google Play へ提出する文言を、現在の source baseline（Android `1.0.17 (versionCode=21)` / iOS `1.0.19 (build=21)`）と、実際に選択した release mode に一致させる。
 
 ## Current source snapshot (manifest-backed)
 
 - Android: `jp.miyamibu.urlalbum`, `versionName=1.0.17`, `versionCode=21`
-- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.18`, `build=21`; share extension `com.mibu.codebridge.ios.share`
+- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.19`, `build=21`; share extension `com.mibu.codebridge.ios.share`
 - Supabase migration head: `20260824090000_fix_apply_personal_link_ops_conflict.sql`
 
 ## App Identity
@@ -21,7 +21,7 @@ App Store / Google Play へ提出する文言を、現在の source baseline（A
 - Account deletion URL: required for this cloud-enabled release. Use the deployed public deletion route that matches `web/invite-link/account-deletion/index.html`.
 
 ## Current Release Branch Decision
-Current source baseline is Android `1.0.17 (versionCode=21)` and iOS `1.0.18 (build=21)`. The official App Store URL still shows public `1.0.17`; App Store Connect build 20 submission is historical `審査待ち` evidence and must be replaced or superseded by exact current-source build 21 before release approval.
+Current source baseline is Android `1.0.17 (versionCode=21)` and iOS `1.0.19 (build=21)`. The official App Store URL showed public `1.0.18` on 2026-08-25 with the approved local-only metadata for build 20. Exact current-source version 1.0.19 build 21 was archived, Apple Distribution exported, verified, and uploaded successfully on 2026-08-25; version creation, build attachment, review submission, approval, and propagation remain before current-source Store GO.
 
 - Android release mode depends on `release.shared.tag.cloud.enabled` and release Supabase values from local/env configuration.
 - iOS defaults to tracked local-only xcconfig; cloud-sharing Archive/TestFlight must pass ignored `ios/Config/URLSaverSecrets.xcconfig` explicitly.
@@ -113,6 +113,23 @@ The following text is the complete copy for the matching signed local-only App S
 - 提出対象は `com.mibu.codebridge.ios` version `1.0.18`, build `20` のlocal-only構成です。
 - 共有タグクラウドは無効で、Supabaseおよび問い合わせ送信先は設定されていません。サインイン、招待、クラウド同期、問い合わせ送信、アプリ内課金はこのbinaryでは利用できません。
 - ユーザーは共有メニューまたは手入力からURLを端末内へ保存できます。単一/複数URL、正規化、重複判定、一覧、Archive、Detail、削除猶予+Undo、メタデータ取得、検索、自作タグ、JSON/ZIP exportが対象です。
+- `ChatGPTに聞く`は端末上で対象と伏せ字後の内容を確認し、ZIPを生成してOSの共有画面を開く手動機能です。質問の入力・自動送信、OpenAI API/OAuth/MCP接続は行いません。共有先の選択と最終送信はユーザー操作です。
+- ページタイトル等の取得のため、ユーザーが保存したURLの対象ページまたは公開oEmbedエンドポイントへ通信する場合があります。りんばむのサーバーへ保存データを同期する機能はこのbinaryでは無効です。
+- 広告、外部アナリティクス、第三者クラッシュ収集サービスはありません。
+
+## Current Local-only App Store Submission Copy — iOS 1.0.19 (21)
+
+Version 1.0.19 inherits the published 1.0.18 local-only product description above. Before saving the new version, replace only the exact sentence prefix `このiOS 1.0.18 (20)では` with `このiOS 1.0.19 (21)では`; keep every cloud/account/purchase exclusion unchanged.
+
+### このバージョンの新機能
+
+共有メニューから保存できない場合の案内を改善し、URLを安全に本体アプリから保存できるようにしました。安定性とプライバシー保護を改善しました。
+
+### 1.0.19 審査メモ
+
+- 提出対象は `com.mibu.codebridge.ios` version `1.0.19`, build `21` のlocal-only構成です。
+- 1.0.18 (20)からの機能差分は、Share ExtensionがApp Groupへアクセスできない場合のfail-closed処理です。共有URLをcustom URL schemeへ埋め込まず保存を中止し、共有元でURLをコピーして本体アプリの`＋`から貼り付け保存する案内を表示します。
+- 共有タグクラウドは無効で、Supabase、問い合わせ送信先、media resolver backendは設定されていません。サインイン、招待、クラウド同期、問い合わせ送信、アプリ内課金はこのbinaryでは利用できません。
 - `ChatGPTに聞く`は端末上で対象と伏せ字後の内容を確認し、ZIPを生成してOSの共有画面を開く手動機能です。質問の入力・自動送信、OpenAI API/OAuth/MCP接続は行いません。共有先の選択と最終送信はユーザー操作です。
 - ページタイトル等の取得のため、ユーザーが保存したURLの対象ページまたは公開oEmbedエンドポイントへ通信する場合があります。りんばむのサーバーへ保存データを同期する機能はこのbinaryでは無効です。
 - 広告、外部アナリティクス、第三者クラッシュ収集サービスはありません。

@@ -247,3 +247,82 @@ Now I have the full picture of all changes. Let me perform the independent audit
 
 ## 8. REVIEW_STATUS
 **PASS** — 現行差分に P0/P1/P2 Confirmed 不備なし。全初回指摘は RESOLVED（001, 003, 004, 005）または REJECTED（002, 007）。DEFERRED_VALIDATION 6 件はリリースゲートとして実機・本番検証を分離済み。
+
+# Nemotron 3 Ultra Free 追加リリースID独立監査
+
+## 1. MODEL_ASSIGNMENT
+
+- **Model**: `opencode/nemotron-3-ultra-free`
+- **Session ID**: `ses_fcbb44eb5ffel29kLsqL9guhrg`
+- **Start**: `2026-08-24T22:00:13Z`
+- **End**: `2026-08-24T22:05:00Z`
+- **Scope**: Apple公式公開1.0.18 (20)確認後の、iOS 1.0.19 (21) release-identity未コミット差分8ファイル
+- **Mode**: read-only。ファイル変更、commit、push、外部操作、ユーザー質問を禁止
+
+## 2. FINDINGS
+
+P0/P1/P2 Confirmedなし。App/Share Extensionの`CFBundleShortVersionString=1.0.19`、両者の`CFBundleVersion=21`、release manifest、5つのmanifest-backed現行文書が一致していることを確認。公開済み1.0.18 (20)を履歴事実、監査修正入り1.0.19 (21)を現行ソースとして分離している。
+
+確認した主要locator:
+
+- `/Users/mimac/Desktop/りんばむ/ios/URLSaveriOS/Info.plist:26`
+- `/Users/mimac/Desktop/りんばむ/ios/URLSaverShareExtension/Info.plist:24`
+- `/Users/mimac/Desktop/りんばむ/docs/release/release-manifest.json:13`
+- `/Users/mimac/Desktop/りんばむ/docs/release/repo-go-evidence.md`
+- `/Users/mimac/Desktop/りんばむ/docs/release/final-submission-checklist.md`
+- `/Users/mimac/Desktop/りんばむ/docs/release/android-internal-testing-checklist.md:9`
+- `/Users/mimac/Desktop/りんばむ/docs/release/privacy-data-safety-draft.md`
+- `/Users/mimac/Desktop/りんばむ/docs/release/store-listing-draft.md`
+
+監査時点のDEFERRED_VALIDATIONは、1.0.19 (21) archive/sign/upload、Railway YouTube delegate、物理iPhone 1.0.19 UI。監査完了後、archive/sign/export/uploadは主任側で実行・検証し、外部ゲートを更新した。
+
+## 3. QUESTION_PACKET
+
+NONE
+
+## 4. REVIEW_STATUS
+
+**PASS — release-identity delta has no P0/P1/P2 Confirmed**
+
+# Nemotron 3 Ultra Free 最終リリース差分反証監査
+
+## 1. MODEL_ASSIGNMENT
+
+- **Model**: `opencode/nemotron-3-ultra-free`
+- **Session ID**: `ses_fcbb44eb5ffel29kLsqL9guhrg`
+- **End**: `2026-08-24T22:09:55Z`
+- **Scope**: 現在の未コミット差分と `artifacts/production-go/2026-08-25/ios-release/verification.md`
+- **Mode**: read-only。外部 `/tmp` artifact は再読せず、主任検証記録とリポジトリ文書の整合性を監査
+
+## 2. RAW FINAL RESPONSE
+
+### SCOPE
+
+- 対象: 現在の未コミット差分全9ファイル（Info.plist×2、release-manifest.json、repo-go-evidence.md、final-submission-checklist.md、android-internal-testing-checklist.md、privacy-data-safety-draft.md、store-listing-draft.md、independent-audit-raw.md）と、`artifacts/production-go/2026-08-25/ios-release/verification.md` の主任検証記録
+- モード: read-only、ファイル変更・commit・push・外部操作・ユーザー質問を禁止
+- 外部 `/tmp` artifact への直接アクセスは実施せず、verification.md 記録を「主任が保持した証拠」として文書整合性のみを監査
+
+### CONFIRMED
+
+1. **公開済み1.0.18と現行1.0.19(21)の分離**: 全manifest-backed文書が `PUBLIC_1_0_18_CONFIRMED` / `CURRENT_SOURCE_1_0_19` を明確に区別（repo-go-evidence.md, final-submission-checklist.md, store-listing-draft.md, privacy-data-safety-draft.md, android-internal-testing-checklist.md）
+2. **development-signed archive(get-task-allow=true) と exported IPA(get-task-allow=false) の分離**: verification.md:40-41 で正確に記述、repo-go-evidence.md の「Signed iOS candidate and upload」セクションも `Apple Distribution signed, and get-task-allow=false` と正しく表現
+3. **Upload成功の過大昇格なし**: verification.md:36,43 / repo-go-evidence.md が `Upload succeeded` / `App Store Connect accepted the package for processing` / `VERSION_CREATION_AND_SUBMISSION_BLOCKED_AUTH` として、version作成・build attach・review submit・approval/publication を明示的に未完了扱い
+4. **Exact-current physical iPhone UI未検証**: verification.md:44 / repo-go-evidence.md が `CURRENT_VERSION NOT VERIFIED on physical iPhone` と正確に記述
+5. **Railway paid-plan blocker**: repo-go-evidence.md が `BLOCKED_EXTERNAL_FINANCIAL / YOUTUBE_PRODUCTION_NO_GO` として維持
+6. **Current diff内 version/manifest/doc 整合**: 9ファイル全てで `CFBundleShortVersionString=1.0.19` / `CFBundleVersion=21` / `bundleId=com.mibu.codebridge.ios` / `shareExtensionBundleId=com.mibu.codebridge.ios.share` / `Team=8R3B5675ZJ` / `App Group=group.jp.mimac.urlsaver` が一致
+7. **秘密情報混入なし**: verification.md:3 が no account email/password/passkey/private key/token/provisioning-profile payload を宣言、git diff 全体に秘密値なし
+
+### FINDINGS
+
+NONE — P0/P1/P2 Confirmed 不備なし。全文書が主任証拠の境界（development vs distribution 署名、upload vs version作成/submission/approval、物理検証未実施、Railway blocker、公開版1.0.18と現行1.0.19の分離）を正確に表現している。
+
+### DEFERRED_VALIDATION
+
+- Owner-entered App Store Connect 認証による version creation / build attachment / review submission / approval / public propagation
+- Railway YouTube delegate 有料プラン選択・デプロイ可否
+- Exact 1.0.19 (21) physical iPhone UI 検証（RemoteXPC/Appium 可用性依存）
+- 上記完了後の public page propagation 再確認
+
+### REVIEW_STATUS
+
+**PASS — final release delta has no P0/P1/P2 Confirmed**

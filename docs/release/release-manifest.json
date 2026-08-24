@@ -10,7 +10,7 @@
   "ios": {
     "bundleId": "com.mibu.codebridge.ios",
     "shareExtensionBundleId": "com.mibu.codebridge.ios.share",
-    "shortVersion": "1.0.18",
+    "shortVersion": "1.0.19",
     "build": 21,
     "appPlist": "ios/URLSaveriOS/Info.plist",
     "shareExtensionPlist": "ios/URLSaverShareExtension/Info.plist",

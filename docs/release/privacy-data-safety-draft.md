@@ -1,12 +1,12 @@
 # Privacy And Data Safety Draft
 
 ## Goal
-現在の source baseline（Android `1.0.17 (versionCode=21)` / iOS `1.0.18 (build=21)`）の privacy / Data Safety 回答を、選択した release mode と照合できる状態にする。過去の提出証跡は履歴として残すが、現在の提出可否の証明には使わない。
+現在の source baseline（Android `1.0.17 (versionCode=21)` / iOS `1.0.19 (build=21)`）の privacy / Data Safety 回答を、選択した release mode と照合できる状態にする。過去の提出証跡は履歴として残すが、現在の提出可否の証明には使わない。
 
 ## Current source snapshot (manifest-backed)
 
 - Android: `jp.miyamibu.urlalbum`, `versionName=1.0.17`, `versionCode=21`
-- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.18`, `build=21`; share extension `com.mibu.codebridge.ios.share`
+- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.19`, `build=21`; share extension `com.mibu.codebridge.ios.share`
 - Supabase migration head: `20260824090000_fix_apply_personal_link_ops_conflict.sql`
 
 ## Release Assumption
@@ -16,7 +16,7 @@
 - Third-party crash reporting: not used.
 - Shared-tag cloud: release mode dependent. Android reads release local/env config; iOS defaults to tracked local-only xcconfig and requires an explicit secrets xcconfig for cloud-sharing Archive/TestFlight.
 - Account sign-in: enabled only when shared-tag cloud is enabled for the submitted binary.
-- Current integration status: repo-local disclosure sources and public web checks pass. The signed local-only iOS 1.0.18 (20) build remains historical `審査待ち` evidence; current source 1.0.18 (21) preserves the same local-only disclosure boundary but requires a new exact-binary archive/upload before Store submission GO. Current status is `REPO_LOCAL_GO / APP_STORE_BUILD_REPLACEMENT_REQUIRED / DEVICE_UI_PARTIAL`.
+- Current integration status: repo-local disclosure sources and public web checks pass. Apple published the signed local-only iOS 1.0.18 (20) build on 2026-08-25. Current-source 1.0.19 (21) preserves the same local-only disclosure boundary and adds the audited Share Extension fail-closed correction; its exact signed binary was archived, exported, verified, and uploaded successfully on 2026-08-25. Version creation, build attachment, and review submission remain blocked on owner-entered App Store Connect authentication. Current status is `REPO_LOCAL_GO / APP_STORE_1_0_19_UPLOAD_GO / VERSION_CREATION_AND_SUBMISSION_AUTH_BLOCKED / DEVICE_UI_PARTIAL`.
 
 ## Exact-binary Store Reconciliation (2026-08-13)
 
