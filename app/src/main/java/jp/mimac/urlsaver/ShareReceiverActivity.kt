@@ -45,6 +45,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -247,11 +248,11 @@ private fun ShareReceiverContent(
             .sortedBy { tag -> tag.name.lowercase() }
             .distinctBy { tag -> tag.remoteTagId ?: "local:${tag.id}" }
     }
-    var selectedTagIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
-    var newTagName by remember { mutableStateOf("") }
-    var tagCreateError by remember { mutableStateOf<String?>(null) }
+    var selectedTagIds by rememberSaveable { mutableStateOf<Set<Long>>(emptySet()) }
+    var newTagName by rememberSaveable { mutableStateOf("") }
+    var tagCreateError by rememberSaveable { mutableStateOf<String?>(null) }
     var isSaving by remember { mutableStateOf(false) }
-    var resultMessage by remember { mutableStateOf<String?>(null) }
+    var resultMessage by rememberSaveable { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     Box(
