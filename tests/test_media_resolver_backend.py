@@ -172,6 +172,31 @@ class FormatSelectionTest(unittest.TestCase):
 
         self.assertEqual(args, ["--extractor-args", "youtube:po_token=token-value;player_client=ios"])
 
+    def test_innertube_client_version_accepts_only_numeric_dotted_override(self):
+        with mock.patch.dict(
+            os.environ,
+            {"MEDIA_RESOLVER_YOUTUBE_INNERTUBE_CLIENT_VERSION": "21.4.7"},
+            clear=True,
+        ):
+            self.assertEqual(media_resolver_backend._youtube_innertube_client_version(), "21.4.7")
+        with mock.patch.dict(
+            os.environ,
+            {"MEDIA_RESOLVER_YOUTUBE_INNERTUBE_CLIENT_VERSION": "bad\r\nX-Test: injected"},
+            clear=True,
+        ):
+            self.assertEqual(
+                media_resolver_backend._youtube_innertube_client_version(),
+                media_resolver_backend.YOUTUBE_INNERTUBE_CLIENT_VERSION,
+            )
+
+    def test_proxy_dns_guard_accepts_only_global_addresses(self):
+        public_result = [(2, 1, 6, "", ("8.8.8.8", 443))]
+        private_result = [(2, 1, 6, "", ("169.254.169.254", 443))]
+        with mock.patch.object(media_resolver_backend.socket, "getaddrinfo", return_value=public_result):
+            self.assertTrue(media_resolver_backend._url_resolves_to_public_ip("https://media.example.test/file"))
+        with mock.patch.object(media_resolver_backend.socket, "getaddrinfo", return_value=private_result):
+            self.assertFalse(media_resolver_backend._url_resolves_to_public_ip("https://media.example.test/file"))
+
 
 class YouTubeDelegateTest(unittest.TestCase):
     def test_youtube_resolve_uses_delegate_when_configured(self):
@@ -236,6 +261,10 @@ class YouTubeDelegateTest(unittest.TestCase):
             return_value=(mock.Mock(), None),
         ), mock.patch.object(
             resolver,
+            "_resolve_youtube_innertube_asset",
+            return_value=(None, None),
+        ), mock.patch.object(
+            resolver,
             "_resolve_youtube_direct_asset",
             return_value=(primary_result, None),
         ) as primary:
@@ -248,6 +277,24 @@ class YouTubeDelegateTest(unittest.TestCase):
         self.assertNotIn("sensitive upstream detail", log_message)
         self.assertEqual(result, primary_result)
 
+    def test_youtube_delegate_failure_uses_innertube_before_ytdlp(self):
+        resolver = media_resolver_backend.MediaResolver(
+            pathlib.Path(tempfile.mkdtemp()),
+            "https://render.example.test",
+        )
+        expected = {"ok": True, "provider": "youtube", "assets": [{"providerAssetId": "innertube"}]}
+        with (
+            mock.patch.object(resolver, "_resolve_youtube_delegate", return_value={"ok": False, "error": "UPSTREAM"}),
+            mock.patch.object(resolver, "_resolve_youtube_innertube_asset", return_value=(expected, None)) as innertube,
+            mock.patch.object(media_resolver_backend, "_load_tools") as load_tools,
+            mock.patch.dict(os.environ, {}, clear=True),
+        ):
+            result = resolver.resolve("https://youtu.be/jNQXAC9IVRw", "youtube")
+
+        self.assertEqual(result, expected)
+        innertube.assert_called_once()
+        load_tools.assert_not_called()
+
     def test_youtube_delegate_is_skipped_when_loop_guard_is_disabled(self):
         resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://render.example.test")
         with mock.patch.dict(
@@ -255,6 +302,8 @@ class YouTubeDelegateTest(unittest.TestCase):
             {"MEDIA_RESOLVER_YOUTUBE_DELEGATE_URL": "https://railway.example.test"},
             clear=True,
         ), mock.patch.object(media_resolver_backend, "_load_tools", return_value=(mock.Mock(), None)), mock.patch.object(
+            resolver, "_resolve_youtube_innertube_asset", return_value=(None, None)
+        ), mock.patch.object(
             resolver, "_resolve_youtube_direct_asset", return_value=(None, "no formats")
         ), mock.patch.object(
             media_resolver_backend.urllib.request, "urlopen"
@@ -272,6 +321,8 @@ class YouTubeDelegateTest(unittest.TestCase):
             {"MEDIA_RESOLVER_YOUTUBE_DELEGATE_URL": "https://render.example.test"},
             clear=True,
         ), mock.patch.object(media_resolver_backend, "_load_tools", return_value=(mock.Mock(), None)), mock.patch.object(
+            resolver, "_resolve_youtube_innertube_asset", return_value=(None, None)
+        ), mock.patch.object(
             resolver, "_resolve_youtube_direct_asset", return_value=(None, "no formats")
         ), mock.patch.object(
             media_resolver_backend.urllib.request, "urlopen"
@@ -311,6 +362,137 @@ class YouTubeDirectResultTest(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         format_index = calls[0].index("--format")
         self.assertEqual(calls[0][format_index + 1], "all")
+
+    def test_innertube_fallback_returns_only_combined_mp4_through_proxy(self):
+        resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://example.test")
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = b'''{
+          "playabilityStatus":{"status":"OK"},
+          "videoDetails":{"videoId":"jNQXAC9IVRw","title":"Me at the zoo","author":"jawed","lengthSeconds":"19","thumbnail":{"thumbnails":[{"url":"https://img.example.test/low.jpg"},{"url":"https://img.example.test/high.jpg"}]}},
+          "streamingData":{"formats":[
+            {"itag":18,"url":"https://rr1---sn.example.googlevideo.com/videoplayback","mimeType":"video/mp4; codecs=\\"avc1.42001E, mp4a.40.2\\"","width":320,"height":240,"bitrate":240000},
+            {"itag":22,"signatureCipher":"cipher-only","mimeType":"video/mp4; codecs=\\"avc1.64001F, mp4a.40.2\\"","width":1280,"height":720}
+          ]}
+        }'''
+
+        with mock.patch.object(media_resolver_backend.urllib.request, "urlopen", return_value=response) as urlopen:
+            result, error = resolver._resolve_youtube_innertube_asset(
+                "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+                "stable",
+            )
+
+        self.assertIsNone(error)
+        self.assertTrue(result["ok"])
+        asset = result["assets"][0]
+        self.assertEqual(asset["providerAssetId"], "jNQXAC9IVRw:direct:18")
+        self.assertEqual(asset["title"], "Me at the zoo")
+        self.assertEqual(asset["authorName"], "jawed")
+        self.assertEqual(asset["thumbnailUrl"], "https://img.example.test/high.jpg")
+        self.assertEqual(asset["durationMs"], 19000)
+        self.assertTrue(asset["downloadUrl"].startswith("https://example.test/proxy/"))
+        proxy_item = next(iter(media_resolver_backend.DIRECT_MEDIA_PROXIES.values()))
+        self.assertEqual(proxy_item["url"], "https://rr1---sn.example.googlevideo.com/videoplayback")
+        self.assertNotIn("Cookie", proxy_item["headers"])
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, media_resolver_backend.YOUTUBE_INNERTUBE_ENDPOINT)
+        self.assertNotIn(b"https://www.youtube.com/watch", request.data)
+
+    def test_innertube_fallback_fails_closed_without_progressive_mp4(self):
+        resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://example.test")
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = b'''{
+          "playabilityStatus":{"status":"OK"},
+          "videoDetails":{"videoId":"jNQXAC9IVRw"},
+          "streamingData":{"adaptiveFormats":[
+            {"itag":137,"url":"https://video.example.test/video-only.mp4","mimeType":"video/mp4; codecs=\\"avc1.640028\\""}
+          ]}
+        }'''
+
+        with mock.patch.object(media_resolver_backend.urllib.request, "urlopen", return_value=response):
+            result, error = resolver._resolve_youtube_innertube_asset(
+                "https://youtu.be/jNQXAC9IVRw",
+                "stable",
+            )
+
+        self.assertIsNone(result)
+        self.assertEqual(error, "no progressive formats")
+        self.assertEqual(media_resolver_backend.DIRECT_MEDIA_PROXIES, {})
+
+    def test_innertube_fallback_rejects_non_googlevideo_media_url(self):
+        resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://example.test")
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = b'''{
+          "playabilityStatus":{"status":"OK"},
+          "videoDetails":{"videoId":"jNQXAC9IVRw"},
+          "streamingData":{"formats":[
+            {"itag":18,"url":"https://internal.example.test/media.mp4","mimeType":"video/mp4; codecs=\\"avc1.42001E, mp4a.40.2\\""}
+          ]}
+        }'''
+
+        with mock.patch.object(media_resolver_backend.urllib.request, "urlopen", return_value=response):
+            result, error = resolver._resolve_youtube_innertube_asset(
+                "https://youtu.be/jNQXAC9IVRw",
+                "stable",
+            )
+
+        self.assertIsNone(result)
+        self.assertEqual(error, "no combined mp4 format")
+        self.assertEqual(media_resolver_backend.DIRECT_MEDIA_PROXIES, {})
+
+    def test_innertube_fallback_fails_closed_for_unplayable_video(self):
+        resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://example.test")
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = b'{"playabilityStatus":{"status":"LOGIN_REQUIRED"}}'
+
+        with mock.patch.object(media_resolver_backend.urllib.request, "urlopen", return_value=response):
+            result, error = resolver._resolve_youtube_innertube_asset(
+                "https://youtube.com/shorts/jNQXAC9IVRw",
+                "stable",
+            )
+
+        self.assertIsNone(result)
+        self.assertEqual(error, "playability=LOGIN_REQUIRED")
+        self.assertEqual(media_resolver_backend.DIRECT_MEDIA_PROXIES, {})
+
+    def test_innertube_fallback_identifies_cipher_only_format_without_decoding(self):
+        resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://example.test")
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = b'''{
+          "playabilityStatus":{"status":"OK"},
+          "videoDetails":{"videoId":"jNQXAC9IVRw"},
+          "streamingData":{"formats":[
+            {"itag":18,"signatureCipher":"url=https%3A%2F%2Frr1.googlevideo.com%2Fvideoplayback&s=encrypted&sp=sig","mimeType":"video/mp4; codecs=\\"avc1.42001E, mp4a.40.2\\""}
+          ]}
+        }'''
+
+        with mock.patch.object(media_resolver_backend.urllib.request, "urlopen", return_value=response):
+            result, error = resolver._resolve_youtube_innertube_asset(
+                "https://youtu.be/jNQXAC9IVRw",
+                "stable",
+            )
+
+        self.assertIsNone(result)
+        self.assertEqual(error, "signature required")
+        self.assertEqual(media_resolver_backend.DIRECT_MEDIA_PROXIES, {})
+
+    def test_youtube_resolve_prefers_innertube_before_loading_ytdlp(self):
+        resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://example.test")
+        expected = {"ok": True, "provider": "youtube", "assets": [{"providerAssetId": "asset"}]}
+        with (
+            mock.patch.object(resolver, "_resolve_youtube_innertube_asset", return_value=(expected, None)) as innertube,
+            mock.patch.object(media_resolver_backend, "_load_tools") as load_tools,
+            mock.patch.dict(os.environ, {}, clear=True),
+        ):
+            result = resolver.resolve("https://youtu.be/jNQXAC9IVRw", "youtube", allow_delegate=False)
+
+        self.assertEqual(result, expected)
+        innertube.assert_called_once()
+        load_tools.assert_not_called()
 
     def test_top_level_url_is_returned_as_preferred_asset(self):
         resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://example.test")
@@ -420,6 +602,7 @@ class YouTubeDirectResultTest(unittest.TestCase):
         resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://example.test")
         with (
             mock.patch.object(media_resolver_backend, "_load_tools", return_value=(mock.Mock(), None)),
+            mock.patch.object(resolver, "_resolve_youtube_innertube_asset", return_value=(None, "unavailable")),
             mock.patch.object(resolver, "_resolve_youtube_direct_asset", return_value=(None, "bot challenge")),
             mock.patch.object(resolver, "_resolve_youtube_cli_download") as cli_download,
             mock.patch.dict(os.environ, {}, clear=True),
@@ -444,12 +627,14 @@ class YouTubeDirectResultTest(unittest.TestCase):
 
         with (
             mock.patch.object(media_resolver_backend, "_load_tools", return_value=(yt_dlp, None)),
+            mock.patch.object(resolver, "_resolve_youtube_innertube_asset") as innertube,
             mock.patch.object(resolver, "_resolve_youtube_direct_asset") as direct_asset,
             mock.patch.dict(os.environ, {"MEDIA_RESOLVER_YOUTUBE_SERVER_DOWNLOAD_ENABLED": "true"}, clear=True),
         ):
             result = resolver.resolve("https://youtu.be/abc123", "youtube")
 
         direct_asset.assert_not_called()
+        innertube.assert_not_called()
         self.assertTrue(result["ok"])
         self.assertTrue(result["assets"][0]["downloadUrl"].startswith("https://example.test/files/"))
 
@@ -511,6 +696,9 @@ class InstagramOrderTest(unittest.TestCase):
 
 
 class HandlerTest(unittest.TestCase):
+    def setUp(self):
+        media_resolver_backend.DIRECT_MEDIA_PROXIES.clear()
+
     def test_head_health_returns_ok_for_render_readiness(self):
         with tempfile.TemporaryDirectory() as tmp:
             media_resolver_backend.Handler.resolver = media_resolver_backend.MediaResolver(
@@ -531,6 +719,82 @@ class HandlerTest(unittest.TestCase):
                 self.assertEqual(response.status, 200)
                 self.assertEqual(response.read(), b"")
                 connection.close()
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+    def test_proxy_forwards_range_only_after_public_dns_check(self):
+        media_resolver_backend.DIRECT_MEDIA_PROXIES["range-token"] = {
+            "url": "https://rr1.googlevideo.com/videoplayback",
+            "mimeType": "video/mp4",
+            "headers": {"Referer": "https://www.youtube.com/"},
+            "expiresAt": media_resolver_backend.time.time() + 60,
+        }
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        response.status = 206
+        response.headers = {
+            "Content-Type": "video/mp4",
+            "Content-Length": "4",
+            "Content-Range": "bytes 0-3/4",
+            "Accept-Ranges": "bytes",
+        }
+        response.read.side_effect = [b"data", b""]
+        with tempfile.TemporaryDirectory() as tmp:
+            media_resolver_backend.Handler.resolver = media_resolver_backend.MediaResolver(
+                pathlib.Path(tmp),
+                "https://example.test",
+            )
+            server = media_resolver_backend.ThreadingHTTPServer(("127.0.0.1", 0), media_resolver_backend.Handler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                with (
+                    mock.patch.object(media_resolver_backend, "_url_resolves_to_public_ip", return_value=True),
+                    mock.patch.object(media_resolver_backend.urllib.request, "urlopen", return_value=response) as urlopen,
+                ):
+                    connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                    connection.request("GET", "/proxy/range-token", headers={"Range": "bytes=0-3"})
+                    downstream = connection.getresponse()
+                    self.assertEqual(downstream.status, 206)
+                    self.assertEqual(downstream.read(), b"data")
+                    connection.close()
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+        upstream_request = urlopen.call_args.args[0]
+        self.assertEqual(upstream_request.get_header("Range"), "bytes=0-3")
+
+    def test_proxy_rejects_non_public_dns_before_upstream_request(self):
+        media_resolver_backend.DIRECT_MEDIA_PROXIES["blocked-token"] = {
+            "url": "https://rr1.googlevideo.com/videoplayback",
+            "mimeType": "video/mp4",
+            "headers": {},
+            "expiresAt": media_resolver_backend.time.time() + 60,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            media_resolver_backend.Handler.resolver = media_resolver_backend.MediaResolver(
+                pathlib.Path(tmp),
+                "https://example.test",
+            )
+            server = media_resolver_backend.ThreadingHTTPServer(("127.0.0.1", 0), media_resolver_backend.Handler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                with (
+                    mock.patch.object(media_resolver_backend, "_url_resolves_to_public_ip", return_value=False),
+                    mock.patch.object(media_resolver_backend.urllib.request, "urlopen") as urlopen,
+                ):
+                    connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                    connection.request("GET", "/proxy/blocked-token")
+                    downstream = connection.getresponse()
+                    self.assertEqual(downstream.status, 502)
+                    downstream.read()
+                    connection.close()
+                    urlopen.assert_not_called()
             finally:
                 server.shutdown()
                 thread.join(timeout=5)

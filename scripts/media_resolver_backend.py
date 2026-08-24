@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import mimetypes
 import os
@@ -17,6 +18,7 @@ import pathlib
 import re
 import secrets
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -24,7 +26,7 @@ import urllib.error
 import urllib.request
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".webm"}
@@ -37,6 +39,9 @@ DIRECT_MEDIA_PROXIES: dict[str, dict[str, str | float]] = {}
 DIRECT_MEDIA_PROXY_TTL_SECONDS = 10 * 60
 YOUTUBE_DELEGATE_HEADER = "X-Rinbam-Resolver-Hop"
 YOUTUBE_DELEGATE_HEADER_VALUE = "youtube-delegate"
+YOUTUBE_INNERTUBE_ENDPOINT = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
+YOUTUBE_INNERTUBE_CLIENT_VERSION = "20.10.38"
+YOUTUBE_INNERTUBE_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
 
 def _env_value(*names: str) -> str | None:
@@ -87,6 +92,36 @@ def _safe_url_host(value: str | None) -> str | None:
 
 def _safe_id(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:24]
+
+
+def _youtube_video_id(value: str) -> str | None:
+    try:
+        parsed = urlparse(value)
+        host = (parsed.hostname or "").lower()
+        candidate = None
+        if host == "youtu.be":
+            candidate = parsed.path.strip("/").split("/", 1)[0]
+        elif host == "youtube.com" or host.endswith(".youtube.com"):
+            if parsed.path == "/watch":
+                candidate = (parse_qs(parsed.query).get("v") or [None])[0]
+            else:
+                parts = [part for part in parsed.path.split("/") if part]
+                if len(parts) >= 2 and parts[0] in {"embed", "live", "shorts"}:
+                    candidate = parts[1]
+        if isinstance(candidate, str) and re.fullmatch(r"[A-Za-z0-9_-]{6,64}", candidate):
+            return candidate
+    except Exception:
+        pass
+    return None
+
+
+def _is_youtube_media_url(value: str) -> bool:
+    try:
+        parsed = urlparse(value)
+        host = (parsed.hostname or "").lower()
+        return parsed.scheme == "https" and (host == "googlevideo.com" or host.endswith(".googlevideo.com"))
+    except Exception:
+        return False
 
 
 def _is_supported_url(value: str) -> bool:
@@ -400,6 +435,30 @@ def _quality_label(info: dict, path: pathlib.Path) -> str | None:
     return None
 
 
+def _url_resolves_to_public_ip(value: str) -> bool:
+    try:
+        parsed = urlparse(value)
+        host = parsed.hostname
+        if parsed.scheme not in {"http", "https"} or not host:
+            return False
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        addresses = {
+            sockaddr[0].split("%", 1)[0]
+            for _, _, _, _, sockaddr in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+            if sockaddr
+        }
+        return bool(addresses) and all(ipaddress.ip_address(address).is_global for address in addresses)
+    except Exception:
+        return False
+
+
+def _youtube_innertube_client_version() -> str:
+    configured = _env_value("MEDIA_RESOLVER_YOUTUBE_INNERTUBE_CLIENT_VERSION")
+    if configured and len(configured) <= 32 and re.fullmatch(r"\d+(?:\.\d+){2,3}", configured):
+        return configured
+    return YOUTUBE_INNERTUBE_CLIENT_VERSION
+
+
 def _yt_dlp_format(provider: str) -> str:
     if provider == "youtube":
         return "b[ext=mp4][height<=360]/b[ext=mp4][height<=480]/18/best[ext=mp4]/best"
@@ -546,11 +605,18 @@ class MediaResolver:
             if instagram_assets:
                 return {"ok": True, "provider": "instagram", "assets": instagram_assets}
 
-        yt_dlp, ffmpeg_location = _load_tools()
         stable = _safe_id(url)
         if provider == "youtube":
             server_download_enabled = os.environ.get("MEDIA_RESOLVER_YOUTUBE_SERVER_DOWNLOAD_ENABLED", "").lower() in {"1", "true", "yes"}
             direct_error = None
+            if not server_download_enabled:
+                innertube_result, innertube_error = self._resolve_youtube_innertube_asset(url, stable)
+                if innertube_result is not None:
+                    return innertube_result
+                if innertube_error:
+                    _safe_log(f"youtube innertube fallback unavailable: {_truncate_log(innertube_error)}")
+        yt_dlp, ffmpeg_location = _load_tools()
+        if provider == "youtube":
             if not server_download_enabled:
                 direct_result, direct_error = self._resolve_youtube_direct_asset(yt_dlp, url, stable)
                 if direct_result is not None:
@@ -763,6 +829,132 @@ class MediaResolver:
                 }
             )
         return assets
+
+    def _resolve_youtube_innertube_asset(self, url: str, stable: str) -> tuple[dict | None, str | None]:
+        video_id = _youtube_video_id(url)
+        if video_id is None:
+            return None, "invalid video id"
+        client_version = _youtube_innertube_client_version()
+
+        payload = json.dumps(
+            {
+                "context": {
+                    "client": {
+                        "clientName": "ANDROID",
+                        "clientVersion": client_version,
+                        "androidSdkVersion": 35,
+                        "hl": "ja",
+                        "gl": "JP",
+                    }
+                },
+                "videoId": video_id,
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+        request = urllib.request.Request(
+            YOUTUBE_INNERTUBE_ENDPOINT,
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": (
+                    f"com.google.android.youtube/{client_version} "
+                    "(Linux; U; Android 15) gzip"
+                ),
+                "X-YouTube-Client-Name": "3",
+                "X-YouTube-Client-Version": client_version,
+            },
+            method="POST",
+        )
+        timeout = int(os.environ.get("MEDIA_RESOLVER_YOUTUBE_INNERTUBE_TIMEOUT_SECONDS", "12"))
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                body = response.read(YOUTUBE_INNERTUBE_MAX_RESPONSE_BYTES + 1)
+            if len(body) > YOUTUBE_INNERTUBE_MAX_RESPONSE_BYTES:
+                return None, "response too large"
+            player = json.loads(body.decode("utf-8", "replace"))
+        except urllib.error.HTTPError as exc:
+            return None, f"request failed: HTTP {exc.code}"
+        except Exception as exc:
+            return None, f"request failed: {type(exc).__name__}"
+
+        if not isinstance(player, dict):
+            return None, "invalid response"
+        playability = player.get("playabilityStatus")
+        status = str(playability.get("status") or "UNKNOWN") if isinstance(playability, dict) else "UNKNOWN"
+        if status != "OK":
+            return None, f"playability={status}"
+
+        streaming_data = player.get("streamingData")
+        formats = streaming_data.get("formats") if isinstance(streaming_data, dict) else None
+        if not isinstance(formats, list):
+            return None, "no progressive formats"
+
+        proxy_headers = {
+            "User-Agent": (
+                f"com.google.android.youtube/{client_version} "
+                "(Linux; U; Android 15) gzip"
+            ),
+            "Referer": "https://www.youtube.com/",
+        }
+        candidates = []
+        signature_required = False
+        for item in formats:
+            if not isinstance(item, dict):
+                continue
+            if item.get("signatureCipher") or item.get("cipher"):
+                signature_required = True
+            media_url = item.get("url")
+            mime_type = str(item.get("mimeType") or "").lower()
+            if not isinstance(media_url, str) or not _is_youtube_media_url(media_url):
+                continue
+            if not mime_type.startswith("video/mp4") or "avc1" not in mime_type or "mp4a" not in mime_type:
+                continue
+            candidates.append(
+                {
+                    "format_id": str(item.get("itag") or "mp4"),
+                    "url": media_url,
+                    "ext": "mp4",
+                    "mime_type": mime_type,
+                    "vcodec": "avc1",
+                    "acodec": "mp4a",
+                    "width": item.get("width"),
+                    "height": item.get("height"),
+                    "tbr": (item.get("bitrate") / 1000) if isinstance(item.get("bitrate"), int) else None,
+                    "http_headers": proxy_headers,
+                }
+            )
+        if not candidates:
+            return None, "signature required" if signature_required else "no combined mp4 format"
+
+        details = player.get("videoDetails") if isinstance(player.get("videoDetails"), dict) else {}
+        response_video_id = details.get("videoId")
+        if isinstance(response_video_id, str) and response_video_id != video_id:
+            return None, "video id mismatch"
+        thumbnails = (
+            details.get("thumbnail", {}).get("thumbnails", [])
+            if isinstance(details.get("thumbnail"), dict)
+            else []
+        )
+        thumbnail = None
+        if isinstance(thumbnails, list):
+            valid_thumbnails = [item for item in thumbnails if isinstance(item, dict) and isinstance(item.get("url"), str)]
+            if valid_thumbnails:
+                thumbnail = valid_thumbnails[-1]["url"]
+        duration = details.get("lengthSeconds")
+        info = {
+            "id": video_id,
+            "webpage_url": url,
+            "title": details.get("title"),
+            "uploader": details.get("author"),
+            "thumbnail": thumbnail,
+            "duration": int(duration) if isinstance(duration, str) and duration.isdigit() else None,
+            "formats": candidates,
+        }
+        result = self._youtube_direct_result(info, url, stable)
+        if result is None:
+            return None, "combined mp4 rejected"
+        return result, None
 
     def _resolve_youtube_direct_asset(self, yt_dlp, url: str, stable: str) -> tuple[dict | None, str | None]:
         cli_info, cli_error = self._resolve_youtube_direct_info_cli(url)
@@ -1590,6 +1782,9 @@ class Handler(BaseHTTPRequestHandler):
             media_url = str(item.get("url") or "") if item else ""
             if not media_url.startswith(("http://", "https://")):
                 self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            if not _url_resolves_to_public_ip(media_url):
+                self.send_error(HTTPStatus.BAD_GATEWAY)
                 return
             headers = {
                 "User-Agent": "Mozilla/5.0",
