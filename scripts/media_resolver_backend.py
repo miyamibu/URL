@@ -42,6 +42,11 @@ YOUTUBE_DELEGATE_HEADER_VALUE = "youtube-delegate"
 YOUTUBE_INNERTUBE_ENDPOINT = "https://youtubei.googleapis.com/youtubei/v1/player?prettyPrint=false"
 YOUTUBE_INNERTUBE_CLIENT_VERSION = "20.10.38"
 YOUTUBE_INNERTUBE_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+YOUTUBE_INNERTUBE_LAST_DIAGNOSTIC: dict[str, object] = {
+    "status": "never",
+    "error": None,
+    "at": 0,
+}
 
 
 def _env_value(*names: str) -> str | None:
@@ -459,6 +464,16 @@ def _youtube_innertube_client_version() -> str:
     return YOUTUBE_INNERTUBE_CLIENT_VERSION
 
 
+def _record_youtube_innertube_diagnostic(result: dict | None, error: str | None) -> None:
+    YOUTUBE_INNERTUBE_LAST_DIAGNOSTIC.update(
+        {
+            "status": "success" if result is not None else "failed",
+            "error": None if result is not None else _truncate_log(error or "unknown", limit=80),
+            "at": int(time.time()),
+        }
+    )
+
+
 def _yt_dlp_format(provider: str) -> str:
     if provider == "youtube":
         return "b[ext=mp4][height<=360]/b[ext=mp4][height<=480]/18/best[ext=mp4]/best"
@@ -610,6 +625,7 @@ class MediaResolver:
             server_download_enabled = os.environ.get("MEDIA_RESOLVER_YOUTUBE_SERVER_DOWNLOAD_ENABLED", "").lower() in {"1", "true", "yes"}
             direct_error = None
             innertube_result, innertube_error = self._resolve_youtube_innertube_asset(url, stable)
+            _record_youtube_innertube_diagnostic(innertube_result, innertube_error)
             if innertube_result is not None:
                 return innertube_result
             if innertube_error:
@@ -1757,6 +1773,7 @@ class Handler(BaseHTTPRequestHandler):
                     "serverDownloadEnabled": os.environ.get("MEDIA_RESOLVER_YOUTUBE_SERVER_DOWNLOAD_ENABLED", "").lower() in {"1", "true", "yes"},
                     "delegateConfigured": bool(_youtube_delegate_url()),
                     "delegateHost": _safe_url_host(_youtube_delegate_url()),
+                    "innertube": dict(YOUTUBE_INNERTUBE_LAST_DIAGNOSTIC),
                 },
                 "time": int(time.time()),
             })

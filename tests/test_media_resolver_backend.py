@@ -197,6 +197,16 @@ class FormatSelectionTest(unittest.TestCase):
         with mock.patch.object(media_resolver_backend.socket, "getaddrinfo", return_value=private_result):
             self.assertFalse(media_resolver_backend._url_resolves_to_public_ip("https://media.example.test/file"))
 
+    def test_innertube_diagnostic_contains_only_bounded_status(self):
+        media_resolver_backend._record_youtube_innertube_diagnostic(None, "failure " + ("x" * 200))
+        diagnostic = media_resolver_backend.YOUTUBE_INNERTUBE_LAST_DIAGNOSTIC
+        self.assertEqual(diagnostic["status"], "failed")
+        self.assertLessEqual(len(diagnostic["error"]), 80)
+        self.assertIsInstance(diagnostic["at"], int)
+        media_resolver_backend._record_youtube_innertube_diagnostic({"ok": True}, None)
+        self.assertEqual(diagnostic["status"], "success")
+        self.assertIsNone(diagnostic["error"])
+
 
 class YouTubeDelegateTest(unittest.TestCase):
     def test_youtube_resolve_uses_delegate_when_configured(self):
