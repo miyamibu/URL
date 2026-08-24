@@ -609,12 +609,11 @@ class MediaResolver:
         if provider == "youtube":
             server_download_enabled = os.environ.get("MEDIA_RESOLVER_YOUTUBE_SERVER_DOWNLOAD_ENABLED", "").lower() in {"1", "true", "yes"}
             direct_error = None
-            if not server_download_enabled:
-                innertube_result, innertube_error = self._resolve_youtube_innertube_asset(url, stable)
-                if innertube_result is not None:
-                    return innertube_result
-                if innertube_error:
-                    _safe_log(f"youtube innertube fallback unavailable: {_truncate_log(innertube_error)}")
+            innertube_result, innertube_error = self._resolve_youtube_innertube_asset(url, stable)
+            if innertube_result is not None:
+                return innertube_result
+            if innertube_error:
+                _safe_log(f"youtube innertube fallback unavailable: {_truncate_log(innertube_error)}")
         yt_dlp, ffmpeg_location = _load_tools()
         if provider == "youtube":
             if not server_download_enabled:

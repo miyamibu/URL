@@ -494,6 +494,24 @@ class YouTubeDirectResultTest(unittest.TestCase):
         innertube.assert_called_once()
         load_tools.assert_not_called()
 
+    def test_youtube_resolve_prefers_innertube_when_server_download_is_enabled(self):
+        resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://example.test")
+        expected = {"ok": True, "provider": "youtube", "assets": [{"providerAssetId": "asset"}]}
+        with (
+            mock.patch.object(resolver, "_resolve_youtube_innertube_asset", return_value=(expected, None)) as innertube,
+            mock.patch.object(media_resolver_backend, "_load_tools") as load_tools,
+            mock.patch.dict(
+                os.environ,
+                {"MEDIA_RESOLVER_YOUTUBE_SERVER_DOWNLOAD_ENABLED": "true"},
+                clear=True,
+            ),
+        ):
+            result = resolver.resolve("https://youtu.be/jNQXAC9IVRw", "youtube", allow_delegate=False)
+
+        self.assertEqual(result, expected)
+        innertube.assert_called_once()
+        load_tools.assert_not_called()
+
     def test_top_level_url_is_returned_as_preferred_asset(self):
         resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://example.test")
         result = resolver._youtube_direct_result(
@@ -613,7 +631,7 @@ class YouTubeDirectResultTest(unittest.TestCase):
         self.assertEqual(result["error"], "RESOLVE_FAILED")
         cli_download.assert_not_called()
 
-    def test_youtube_server_download_flag_prefers_cached_file_over_proxy(self):
+    def test_youtube_server_download_flag_falls_back_to_cached_file_after_innertube(self):
         cache_dir = pathlib.Path(tempfile.mkdtemp())
         stable = media_resolver_backend._safe_id("https://youtu.be/abc123")
         (cache_dir / f"{stable}.mp4").write_bytes(b"media")
@@ -627,14 +645,18 @@ class YouTubeDirectResultTest(unittest.TestCase):
 
         with (
             mock.patch.object(media_resolver_backend, "_load_tools", return_value=(yt_dlp, None)),
-            mock.patch.object(resolver, "_resolve_youtube_innertube_asset") as innertube,
+            mock.patch.object(
+                resolver,
+                "_resolve_youtube_innertube_asset",
+                return_value=(None, "unavailable"),
+            ) as innertube,
             mock.patch.object(resolver, "_resolve_youtube_direct_asset") as direct_asset,
             mock.patch.dict(os.environ, {"MEDIA_RESOLVER_YOUTUBE_SERVER_DOWNLOAD_ENABLED": "true"}, clear=True),
         ):
             result = resolver.resolve("https://youtu.be/abc123", "youtube")
 
         direct_asset.assert_not_called()
-        innertube.assert_not_called()
+        innertube.assert_called_once()
         self.assertTrue(result["ok"])
         self.assertTrue(result["assets"][0]["downloadUrl"].startswith("https://example.test/files/"))
 
