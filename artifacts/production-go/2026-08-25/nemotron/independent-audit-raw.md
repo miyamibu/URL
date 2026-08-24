@@ -337,3 +337,27 @@ NONE — P0/P1/P2 Confirmed 不備なし。全文書が主任証拠の境界（d
 FINDINGS: NONE
 
 REVIEW_STATUS: PASS — physical iPhone evidence delta has no P0/P1/P2 Confirmed
+
+# Nemotron 3 Ultra Free 外部ゲート追加反証監査
+
+- **Model**: `opencode/nemotron-3-ultra-free`
+- **Session ID**: `ses_fcbb44eb5ffel29kLsqL9guhrg`
+- **End**: `2026-08-24T23:09:04Z`
+- **Scope**: exact-current iPhone automation failure、Railway 404、Render YouTube `AUTH_REQUIRED`、App Store Connect `authResult=FAILED` と既存 `PUBLIC_LAUNCH_NO_GO` 判定の整合性
+- **Mode**: read-only。変更、commit、push、外部操作、ユーザー質問なし
+
+## RAW FINAL RESPONSE
+
+### REVIEW_STATUS
+
+**PASS — 現行レポート判定に P0/P1/P2 Confirmed の過大/過小評価なし**
+
+### 反証可能な根拠
+
+- 物理 iPhone 1.0.19 (21) は install/launch 済みだが、WDA Runner 起動後の automation mode timeout と macOS Password 待ちにより exact-current Appium UI 操作証拠は未成立。既存の UI 未検証判定と整合する。
+- Railway YouTube delegate の HTTP 404 は既存台帳の外部ブロッカーと一致する。
+- Render の公開 YouTube 動画が約 172 秒後に `AUTH_REQUIRED`、同コードのローカル実行が約 7 秒で asset 成功という差は、YouTube 本番経路が未解決であることを強めるが、既存の `PUBLIC_LAUNCH_NO_GO` 判定を覆さない。
+- App Store Connect の `authResult=FAILED`、1.0.19 version 未作成、build 21 未添付、review 未提出は既存の `VERSION_CREATION_AND_SUBMISSION_BLOCKED_AUTH` と整合する。
+- 「Appium UI 操作済み」「1.0.19 公開済み」「YouTube 本番解決済み」への過大昇格はない。
+
+FINDINGS: NONE — P0/P1/P2 Confirmed 不備なし。
