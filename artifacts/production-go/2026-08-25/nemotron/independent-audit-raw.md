@@ -326,3 +326,14 @@ NONE — P0/P1/P2 Confirmed 不備なし。全文書が主任証拠の境界（d
 ### REVIEW_STATUS
 
 **PASS — final release delta has no P0/P1/P2 Confirmed**
+
+# Nemotron 3 Ultra Free 物理iPhone証拠差分監査
+
+- **Model**: `opencode/nemotron-3-ultra-free`
+- **Session ID**: `ses_fcbb44eb5ffel29kLsqL9guhrg`
+- **Scope**: 1.0.19 (21) development-signed app のデータ保持 install/launch 記録と、Appium/WDA 未検証境界
+- **Mode**: read-only。変更、commit、push、外部操作、ユーザー質問なし
+
+FINDINGS: NONE
+
+REVIEW_STATUS: PASS — physical iPhone evidence delta has no P0/P1/P2 Confirmed
