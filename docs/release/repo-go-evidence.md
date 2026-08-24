@@ -1,6 +1,21 @@
 # REPO_GO Evidence
 
-Final status: REPO_GO (repository scope verified 2026-08-23) / PRODUCTION_BACKEND_WEB_GO / STORE_SUBMISSION_GO_REVIEW_PENDING / DEVICE_UI_PARTIAL / PUBLIC_LAUNCH_PENDING_EXTERNAL_REVIEW
+Final status: REPO_GO (repository scope verified 2026-08-24) / PRODUCTION_BACKEND_WEB_GO / STORE_SUBMISSION_GO_REVIEW_PENDING / DEVICE_UI_PARTIAL / PUBLIC_LAUNCH_PENDING_EXTERNAL_REVIEW
+
+## 2026-08-24 final evidence synchronization
+
+This pass used the repository root `/Users/mimac/Desktop/りんばむ`, branch `main`, implementation commit `4f51bee8d2a345f5c11249cdf90e4789450ba513`, and evidence commit `5e9b7b6f`. The implementation commit was already synchronized to `origin/main`, and GitHub Actions run `32645908756` completed all five jobs successfully. The evidence-only commit updates the canonical story tracker; it does not change application, migration, or release configuration source.
+
+| Surface | Evidence | Classification |
+|---|---|---|
+| Repository checks | `python3 scripts/verify_canonical_story_tracker.py` passed CSV/XLSX story and summary synchronization for all 59 stories. `bash scripts/check_launch_readiness.sh` passed every source, manifest, hygiene, CSP, public-Web local contract, MCP, and mobile-UI check except the expected pre-push `main`-ahead-of-`origin/main` condition and this evidence file's prior-date condition. | `REPO_GO_CURRENT_SOURCE / EVIDENCE_SYNC_PENDING_PUSH` |
+| Android guarded instrumentation | The connected-test guard passed 13 decision cases and 6 wiring checks. `connectedDebugAndroidTest` ran only on disposable emulator `emulator-5554`: 21 tests, 20 passed, and 1 live shared-tag test skipped because confirmed live accounts were not configured. The current `adb devices -l` output contains only that emulator; no physical Android result is claimed. | `EMULATOR_INSTRUMENTATION_PASS / NOT_PHYSICAL_ANDROID` |
+| iPhone 12 UI | Canonical app `com.mibu.codebridge.ios` version `1.0.18 (20)` was operated on physical UDID `00008101-00066D96340A001E` through Appium 3.5.0, XCUITest 11.16.3, and WebDriverAgent session `b7d4dca2-079d-4186-bd43-866f79ecec8f`. The home five actions, manual usage list and return, non-mutating manual-add/tag/archive/group/profile flows, real-data `example` search, and ZIP export through iOS `UIActivityViewController` were confirmed. The share sheet showed AirDrop/copy and was closed without sending. Evidence is under ignored `artifacts/device-verification/2026-08-23-final/iphone-appium/`. | `PHYSICAL_IPHONE_APPIUM_WDA_PASS_FOR_CHECKED_FLOWS` |
+| Contact support / Resend | A synthetic no-reply production canary was accepted twice with HTTP 202 and the same request ID, confirming idempotent handling. The signed provider webhook updated the linked database to `delivery_status=delivered`, `delivery_event_type=email.delivered`, with a provider message ID, one attempt, sent outbox state, and scrubbed payload. This proves provider delivery signaling, not human inbox opening. | `RESEND_LIVE_DELIVERED_AND_AUDITED` |
+| Usage guide | Nested repository `/Users/mimac/Desktop/りんばむ/web/usage-guide` is clean at `dde36e2c253376c01843aa859fddb65d9602374a`; build, rendered-page tests, and lint passed. Sites version `appgver_7485a68e697c8191bb5739271e496cd2` was deployed as `appgdep_6a8b09a5042c8191a2211c4202636899`, reached `succeeded`, and `https://rinbam-usage-guide.miyamibu.chatgpt.site` returned HTTP 200. | `SITES_CURRENT_SOURCE_DEPLOYED` |
+| Branch/worktree hygiene | Merged local topic branches and stale worktree metadata were removed after explicit owner approval. Local `main`, unique local/remote work, and the dirty detached preservation worktree at `/Users/mimac/.codex/worktrees/136b/りんばむ` were retained; no user changes were reset or cleaned. | `MERGED_BRANCHES_CLEANED / UNIQUE_AND_DIRTY_WORK_PRESERVED` |
+
+The remaining canonical external gates are 4 physical-Android rows, 2 additional iPhone rows, 3 distribution-signing rows, 20 Supabase-auth rows, 6 Store-console rows, and 3 other Resend-live rows. The physical-Android checks require a connected disposable test device because instrumentation can reset app data. The Supabase shared-tag live tests require confirmed owner/collaborator accounts supplied outside chat. Apple/Google review decisions, Store propagation, sandbox purchase, and other provider-owned states remain external and are not upgraded by repository, emulator, Simulator, or local test evidence.
 
 ## 2026-08-23 production execution and current-source verification
 
