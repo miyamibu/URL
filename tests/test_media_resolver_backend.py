@@ -1,5 +1,6 @@
 import importlib.util
 import http.client
+import json
 import os
 import pathlib
 import threading
@@ -572,7 +573,7 @@ class YouTubeDirectResultTest(unittest.TestCase):
             )
 
         self.assertIsNone(error)
-        self.assertEqual(path, cache_dir / "stable.mp4")
+        self.assertEqual(path, cache_dir / "stable.innertube-ios.mp4")
         self.assertEqual(path.read_bytes(), b"merged-media")
         self.assertEqual(info["height"], 360)
         self.assertEqual(info["title"], "Me at the zoo")
@@ -580,6 +581,7 @@ class YouTubeDirectResultTest(unittest.TestCase):
         self.assertIn("https://video.example.googlevideo.com/360", command)
         self.assertNotIn("https://video.example.googlevideo.com/1080", command)
         self.assertIn("https://audio.example.googlevideo.com/high", command)
+        self.assertRegex(pathlib.Path(command[-1]).name, r"^stable\.innertube-[0-9a-f]{16}-tmp\.mp4$")
         self.assertEqual(dns_check.call_count, 2)
 
     def test_innertube_ios_download_rejects_non_public_dns_before_ffmpeg(self):
@@ -831,7 +833,7 @@ class YouTubeDirectResultTest(unittest.TestCase):
     def test_youtube_server_download_uses_ios_innertube_merge_before_cli(self):
         cache_dir = pathlib.Path(tempfile.mkdtemp())
         stable = media_resolver_backend._safe_id("https://youtu.be/abc123")
-        merged = cache_dir / f"{stable}.mp4"
+        merged = cache_dir / f"{stable}.innertube-ios.mp4"
         resolver = media_resolver_backend.MediaResolver(cache_dir, "https://example.test")
         info = {"id": "abc123", "title": "Video title", "height": 360}
 
@@ -844,17 +846,17 @@ class YouTubeDirectResultTest(unittest.TestCase):
             mock.patch.object(resolver, "_resolve_youtube_innertube_asset", return_value=(None, "playability=LOGIN_REQUIRED")),
             mock.patch.object(resolver, "_resolve_youtube_innertube_ios_download", side_effect=ios_download) as ios,
             mock.patch.object(resolver, "_resolve_youtube_cli_download") as cli_download,
-            mock.patch.object(resolver, "_ensure_mobile_mp4") as ensure_mobile,
+            mock.patch.object(resolver, "_ensure_mobile_mp4", return_value=merged) as ensure_mobile,
             mock.patch.dict(os.environ, {"MEDIA_RESOLVER_YOUTUBE_SERVER_DOWNLOAD_ENABLED": "true"}, clear=True),
         ):
             result = resolver.resolve("https://youtu.be/abc123", "youtube", allow_delegate=False)
 
         ios.assert_called_once()
         cli_download.assert_not_called()
-        ensure_mobile.assert_not_called()
+        ensure_mobile.assert_called_once_with(merged, "/opt/ffmpeg")
         self.assertTrue(result["ok"])
         self.assertEqual(result["assets"][0]["title"], "Video title")
-        self.assertTrue(result["assets"][0]["downloadUrl"].endswith(f"/files/{stable}.mp4"))
+        self.assertTrue(result["assets"][0]["downloadUrl"].endswith(f"/files/{stable}.innertube-ios.mp4"))
         self.assertEqual(media_resolver_backend.YOUTUBE_INNERTUBE_LAST_DIAGNOSTIC["status"], "success")
 
 
@@ -937,6 +939,36 @@ class HandlerTest(unittest.TestCase):
                 response = connection.getresponse()
                 self.assertEqual(response.status, 200)
                 self.assertEqual(response.read(), b"")
+                connection.close()
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+    def test_get_health_exposes_innertube_status_without_error_detail(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            media_resolver_backend.Handler.resolver = media_resolver_backend.MediaResolver(
+                pathlib.Path(tmp),
+                "https://example.test",
+            )
+            media_resolver_backend.YOUTUBE_INNERTUBE_LAST_DIAGNOSTIC.update(
+                {"status": "failed", "error": "sensitive diagnostic", "at": 123}
+            )
+            server = media_resolver_backend.ThreadingHTTPServer(
+                ("127.0.0.1", 0),
+                media_resolver_backend.Handler,
+            )
+            thread = threading.Thread(target=server.serve_forever)
+            thread.daemon = True
+            thread.start()
+            try:
+                connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                connection.request("GET", "/health")
+                response = connection.getresponse()
+                body = json.loads(response.read())
+                self.assertEqual(response.status, 200)
+                self.assertEqual(body["youtube"]["innertube"], {"status": "failed", "at": 123})
+                self.assertNotIn("sensitive diagnostic", repr(body))
                 connection.close()
             finally:
                 server.shutdown()

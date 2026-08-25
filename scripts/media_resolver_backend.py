@@ -713,7 +713,6 @@ class MediaResolver:
                 )
         existing = self._find_existing(stable)
         info: dict = {}
-        ios_downloaded = False
         if existing is None:
             if provider == "youtube":
                 info, existing, ios_error = self._resolve_youtube_innertube_ios_download(
@@ -722,7 +721,6 @@ class MediaResolver:
                     ffmpeg_location,
                 )
                 if existing is not None:
-                    ios_downloaded = True
                     _record_youtube_innertube_diagnostic({"ok": True}, None)
                 else:
                     combined_error = "; ".join(
@@ -741,7 +739,7 @@ class MediaResolver:
                     if cli_error:
                         _safe_log(f"youtube resolver failed: {_truncate_log(cli_error)}")
                     return _resolver_error(provider, RuntimeError(cli_error or "YouTube media file was not created"))
-                if ffmpeg_location and not ios_downloaded:
+                if ffmpeg_location:
                     existing = self._ensure_mobile_mp4(existing, ffmpeg_location)
             else:
                 outtmpl = str(self.cache_dir / f"{stable}.%(ext)s")
@@ -1097,8 +1095,8 @@ class MediaResolver:
             }
         )
         header_lines = "".join(f"{key}: {value}\r\n" for key, value in headers.items())
-        target = self.cache_dir / f"{stable}.mp4"
-        temp = self.cache_dir / f"{stable}.innertube-tmp.mp4"
+        target = self.cache_dir / f"{stable}.innertube-ios.mp4"
+        temp = self.cache_dir / f"{stable}.innertube-{secrets.token_hex(8)}-tmp.mp4"
         command = [ffmpeg_location, "-y", "-hide_banner"]
         if header_lines:
             command.extend(["-headers", header_lines])
@@ -1120,7 +1118,12 @@ class MediaResolver:
                 str(temp),
             ]
         )
-        timeout = int(os.environ.get("MEDIA_RESOLVER_YOUTUBE_DOWNLOAD_TIMEOUT_SECONDS", "180"))
+        timeout = int(
+            os.environ.get(
+                "MEDIA_RESOLVER_YOUTUBE_INNERTUBE_IOS_MERGE_TIMEOUT_SECONDS",
+                os.environ.get("MEDIA_RESOLVER_YOUTUBE_DOWNLOAD_TIMEOUT_SECONDS", "180"),
+            )
+        )
         try:
             subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=True)
             if not temp.is_file() or temp.stat().st_size <= 0:
@@ -1837,10 +1840,17 @@ class MediaResolver:
             capture_output=True,
             text=True,
         )
-        if path.suffix.lower() == ".mp4" and "Video: h264" in probe.stderr and "Audio:" in probe.stderr:
+        if (
+            path.suffix.lower() == ".mp4"
+            and "Video: h264" in probe.stderr
+            and "yuv420p" in probe.stderr
+            and "Audio: aac" in probe.stderr
+        ):
             return path
 
-        temp_path = target.with_name(f"{target.stem}.mobile-tmp{target.suffix}")
+        temp_path = target.with_name(
+            f"{target.stem}.mobile-{secrets.token_hex(8)}-tmp{target.suffix}"
+        )
         try:
             subprocess.run(
                 [
@@ -1954,7 +1964,10 @@ class Handler(BaseHTTPRequestHandler):
                     "serverDownloadEnabled": os.environ.get("MEDIA_RESOLVER_YOUTUBE_SERVER_DOWNLOAD_ENABLED", "").lower() in {"1", "true", "yes"},
                     "delegateConfigured": bool(_youtube_delegate_url()),
                     "delegateHost": _safe_url_host(_youtube_delegate_url()),
-                    "innertube": dict(YOUTUBE_INNERTUBE_LAST_DIAGNOSTIC),
+                    "innertube": {
+                        "status": YOUTUBE_INNERTUBE_LAST_DIAGNOSTIC.get("status", "never"),
+                        "at": YOUTUBE_INNERTUBE_LAST_DIAGNOSTIC.get("at", 0),
+                    },
                 },
                 "time": int(time.time()),
             })
