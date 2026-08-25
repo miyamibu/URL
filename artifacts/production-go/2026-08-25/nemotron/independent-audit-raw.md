@@ -361,3 +361,58 @@ REVIEW_STATUS: PASS — physical iPhone evidence delta has no P0/P1/P2 Confirmed
 - 「Appium UI 操作済み」「1.0.19 公開済み」「YouTube 本番解決済み」への過大昇格はない。
 
 FINDINGS: NONE — P0/P1/P2 Confirmed 不備なし。
+
+# Nemotron 3 Ultra Free YouTube Innertube fallback 独立監査
+
+## MODEL_ASSIGNMENT
+
+- **Model**: `opencode/nemotron-3-ultra-free`
+- **Session ID**: `ses_fcbb44eb5ffel29kLsqL9guhrg`
+- **Mode**: read-only。変更、commit、push、deploy、ユーザーへの直接質問なし
+- **Initial scope**: `6c84af136cc8283f70df1eea5fbe36ef1594507c..68ac75b5423fff7929d42b88e26b2bfe76616081`
+- **Final hardening scope**: `68ac75b5423fff7929d42b88e26b2bfe76616081..4b645c05e74e23c6109ad51e610cd8392e224adb`
+
+## INITIAL RESPONSE
+
+初回監査は `FAIL` とし、DNS TOCTOUをP0、Innertube endpointのAPI key必須仮説をP1、コーデック、timeout、cache競合、health診断、client versionをP2として提示した。
+
+## COORDINATOR COUNTER-EVIDENCE
+
+- iOS mergeは `/proxy` を経由せず、GoogleのTLS済Innertubeレスポンスに含まれるHTTPS `googlevideo.com` URLだけをffmpegへ渡す。攻撃者がGoogle管理サブドメインと有効TLS証明書を支配するという前提は確認されていない。
+- `youtubei.googleapis.com` はAPI keyなしのローカル実走でHTTP成功、`playability=OK`、direct URL取得済み。本番も403/429ではなく有効player JSONの `LOGIN_REQUIRED` を返した。120秒は2回のInnertube後に旧yt-dlpへ落ちた外側リクエスト全体である。
+- Android Innertube成功経路はファイルを書かずdirect proxy tokenを返す。ただし、同時iOS merge同士が固定temp名を共有する競合は実コードで成立した。
+- 実ネットワークで生成した744,412-byte MP4をffmpegでH.264、音声、durationありと確認した。
+- health診断は元から80文字に制限され、URL、cookie、token、upstream body、exception detailを含まなかった。
+
+## COUNTER-REVIEW RESPONSE
+
+同一セッションはP0をCandidateへdowngradeし、P1をwithdrawした。コーデック、timeout、health、client versionはCandidateへdowngradeし、実コードで成立する唯一のConfirmedとして、同時iOS mergeの固定temp競合をP2で保持した。
+
+`REVIEW_STATUS: PASS — P0/P1 Confirmed なし。残存P2はFINDING-005のみ。コード品質PASS、Production YouTube NO_GO。`
+
+## HARDENING IMPLEMENTED
+
+- iOS targetを `stable.innertube-ios.mp4` へ分離
+- iOS merge tempとmobile transcode tempを `secrets.token_hex(8)` で一意化
+- merge専用timeout環境変数を追加
+- `_ensure_mobile_mp4` をiOS merge後にも適用し、H.264、yuv420p、AACを要求
+- public `/health` からInnertube error detailを除き、statusとtimestampだけを公開
+- 関連51 unittest PASS
+- 実ネットワーク再実走: 744,412 bytes、H.264、yuv420p、AAC、durationあり
+
+## RAW FINAL RESPONSE
+
+### 残存 P0/P1/P2 Confirmed
+
+**なし** — 全前回 P2 (FINDING-005) と hardening 候補が実装済みで検証済み。
+
+### コード品質 vs Production GO
+
+| 項目 | 判定 | 根拠 |
+|---|---|---|
+| コード品質 | PASS | 51 unittest PASS、ローカル実ネットワークで `live.innertube-ios.mp4` 744412 bytes、H.264+yuv420p+AAC+Duration確認。unique temp、専用timeout、probe、診断非公開を確認。 |
+| Production YouTube | NO_GO | Render本番でAndroid/iOS双方 `playability=LOGIN_REQUIRED`。Railway delegate 404、owner login/billing待ち。 |
+
+### REVIEW_STATUS
+
+**PASS — 残存 P0/P1/P2 Confirmed なし。全 hardening 実装確認済み。コード品質 PASS。Production YouTube は外部依存で NO_GO。**
