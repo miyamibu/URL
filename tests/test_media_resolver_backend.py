@@ -189,6 +189,23 @@ class FormatSelectionTest(unittest.TestCase):
                 media_resolver_backend.YOUTUBE_INNERTUBE_CLIENT_VERSION,
             )
 
+    def test_innertube_ios_client_version_accepts_only_numeric_dotted_override(self):
+        with mock.patch.dict(
+            os.environ,
+            {"MEDIA_RESOLVER_YOUTUBE_INNERTUBE_IOS_CLIENT_VERSION": "20.11.5"},
+            clear=True,
+        ):
+            self.assertEqual(media_resolver_backend._youtube_innertube_ios_client_version(), "20.11.5")
+        with mock.patch.dict(
+            os.environ,
+            {"MEDIA_RESOLVER_YOUTUBE_INNERTUBE_IOS_CLIENT_VERSION": "20.11.5\r\nX-Test: injected"},
+            clear=True,
+        ):
+            self.assertEqual(
+                media_resolver_backend._youtube_innertube_ios_client_version(),
+                media_resolver_backend.YOUTUBE_INNERTUBE_IOS_CLIENT_VERSION,
+            )
+
     def test_proxy_dns_guard_accepts_only_global_addresses(self):
         public_result = [(2, 1, 6, "", ("8.8.8.8", 443))]
         private_result = [(2, 1, 6, "", ("169.254.169.254", 443))]
@@ -490,6 +507,147 @@ class YouTubeDirectResultTest(unittest.TestCase):
         self.assertEqual(error, "signature required")
         self.assertEqual(media_resolver_backend.DIRECT_MEDIA_PROXIES, {})
 
+    def test_innertube_ios_download_merges_bounded_video_and_best_audio(self):
+        cache_dir = pathlib.Path(tempfile.mkdtemp())
+        resolver = media_resolver_backend.MediaResolver(cache_dir, "https://example.test")
+        player = {
+            "videoDetails": {
+                "videoId": "jNQXAC9IVRw",
+                "title": "Me at the zoo",
+                "author": "jawed",
+                "lengthSeconds": "19",
+            },
+            "streamingData": {
+                "adaptiveFormats": [
+                    {
+                        "itag": 133,
+                        "url": "https://video.example.googlevideo.com/240",
+                        "mimeType": 'video/mp4; codecs="avc1.4d400d"',
+                        "height": 240,
+                        "bitrate": 200000,
+                    },
+                    {
+                        "itag": 134,
+                        "url": "https://video.example.googlevideo.com/360",
+                        "mimeType": 'video/mp4; codecs="avc1.4d401e"',
+                        "height": 360,
+                        "bitrate": 400000,
+                    },
+                    {
+                        "itag": 137,
+                        "url": "https://video.example.googlevideo.com/1080",
+                        "mimeType": 'video/mp4; codecs="avc1.640028"',
+                        "height": 1080,
+                        "bitrate": 2000000,
+                    },
+                    {
+                        "itag": 139,
+                        "url": "https://audio.example.googlevideo.com/low",
+                        "mimeType": 'audio/mp4; codecs="mp4a.40.5"',
+                        "bitrate": 48000,
+                    },
+                    {
+                        "itag": 140,
+                        "url": "https://audio.example.googlevideo.com/high",
+                        "mimeType": 'audio/mp4; codecs="mp4a.40.2"',
+                        "bitrate": 128000,
+                    },
+                ]
+            },
+        }
+
+        def fake_run(command, **kwargs):
+            pathlib.Path(command[-1]).write_bytes(b"merged-media")
+            return mock.Mock(stdout="", stderr="")
+
+        with (
+            mock.patch.object(media_resolver_backend, "_request_youtube_innertube_player", return_value=(player, None)),
+            mock.patch.object(media_resolver_backend, "_url_resolves_to_public_ip", return_value=True) as dns_check,
+            mock.patch.object(media_resolver_backend.subprocess, "run", side_effect=fake_run) as run,
+        ):
+            info, path, error = resolver._resolve_youtube_innertube_ios_download(
+                "https://youtu.be/jNQXAC9IVRw",
+                "stable",
+                "/opt/ffmpeg",
+            )
+
+        self.assertIsNone(error)
+        self.assertEqual(path, cache_dir / "stable.mp4")
+        self.assertEqual(path.read_bytes(), b"merged-media")
+        self.assertEqual(info["height"], 360)
+        self.assertEqual(info["title"], "Me at the zoo")
+        command = run.call_args.args[0]
+        self.assertIn("https://video.example.googlevideo.com/360", command)
+        self.assertNotIn("https://video.example.googlevideo.com/1080", command)
+        self.assertIn("https://audio.example.googlevideo.com/high", command)
+        self.assertEqual(dns_check.call_count, 2)
+
+    def test_innertube_ios_download_rejects_non_public_dns_before_ffmpeg(self):
+        resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://example.test")
+        player = {
+            "videoDetails": {"videoId": "jNQXAC9IVRw"},
+            "streamingData": {
+                "adaptiveFormats": [
+                    {
+                        "url": "https://video.example.googlevideo.com/media",
+                        "mimeType": 'video/mp4; codecs="avc1.4d401e"',
+                        "height": 360,
+                    },
+                    {
+                        "url": "https://audio.example.googlevideo.com/media",
+                        "mimeType": 'audio/mp4; codecs="mp4a.40.2"',
+                    },
+                ]
+            },
+        }
+        with (
+            mock.patch.object(media_resolver_backend, "_request_youtube_innertube_player", return_value=(player, None)),
+            mock.patch.object(media_resolver_backend, "_url_resolves_to_public_ip", side_effect=[True, False]),
+            mock.patch.object(media_resolver_backend.subprocess, "run") as run,
+        ):
+            info, path, error = resolver._resolve_youtube_innertube_ios_download(
+                "https://youtu.be/jNQXAC9IVRw",
+                "stable",
+                "/opt/ffmpeg",
+            )
+
+        self.assertEqual(info, {})
+        self.assertIsNone(path)
+        self.assertEqual(error, "adaptive media DNS rejected")
+        run.assert_not_called()
+
+    def test_innertube_ios_download_fails_closed_for_cipher_only_formats(self):
+        resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://example.test")
+        player = {
+            "videoDetails": {"videoId": "jNQXAC9IVRw"},
+            "streamingData": {
+                "adaptiveFormats": [
+                    {
+                        "signatureCipher": "encrypted",
+                        "mimeType": 'video/mp4; codecs="avc1.4d401e"',
+                    },
+                    {
+                        "signatureCipher": "encrypted",
+                        "mimeType": 'audio/mp4; codecs="mp4a.40.2"',
+                    },
+                ]
+            },
+        }
+        with mock.patch.object(
+            media_resolver_backend,
+            "_request_youtube_innertube_player",
+            return_value=(player, None),
+        ):
+            info, path, error = resolver._resolve_youtube_innertube_ios_download(
+                "https://youtu.be/jNQXAC9IVRw",
+                "stable",
+                "/opt/ffmpeg",
+            )
+
+        self.assertEqual(info, {})
+        self.assertIsNone(path)
+        self.assertEqual(error, "signature required")
+
     def test_youtube_resolve_prefers_innertube_before_loading_ytdlp(self):
         resolver = media_resolver_backend.MediaResolver(pathlib.Path(tempfile.mkdtemp()), "https://example.test")
         expected = {"ok": True, "provider": "youtube", "assets": [{"providerAssetId": "asset"}]}
@@ -669,6 +827,35 @@ class YouTubeDirectResultTest(unittest.TestCase):
         innertube.assert_called_once()
         self.assertTrue(result["ok"])
         self.assertTrue(result["assets"][0]["downloadUrl"].startswith("https://example.test/files/"))
+
+    def test_youtube_server_download_uses_ios_innertube_merge_before_cli(self):
+        cache_dir = pathlib.Path(tempfile.mkdtemp())
+        stable = media_resolver_backend._safe_id("https://youtu.be/abc123")
+        merged = cache_dir / f"{stable}.mp4"
+        resolver = media_resolver_backend.MediaResolver(cache_dir, "https://example.test")
+        info = {"id": "abc123", "title": "Video title", "height": 360}
+
+        def ios_download(*args):
+            merged.write_bytes(b"merged")
+            return info, merged, None
+
+        with (
+            mock.patch.object(media_resolver_backend, "_load_tools", return_value=(mock.Mock(), "/opt/ffmpeg")),
+            mock.patch.object(resolver, "_resolve_youtube_innertube_asset", return_value=(None, "playability=LOGIN_REQUIRED")),
+            mock.patch.object(resolver, "_resolve_youtube_innertube_ios_download", side_effect=ios_download) as ios,
+            mock.patch.object(resolver, "_resolve_youtube_cli_download") as cli_download,
+            mock.patch.object(resolver, "_ensure_mobile_mp4") as ensure_mobile,
+            mock.patch.dict(os.environ, {"MEDIA_RESOLVER_YOUTUBE_SERVER_DOWNLOAD_ENABLED": "true"}, clear=True),
+        ):
+            result = resolver.resolve("https://youtu.be/abc123", "youtube", allow_delegate=False)
+
+        ios.assert_called_once()
+        cli_download.assert_not_called()
+        ensure_mobile.assert_not_called()
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["assets"][0]["title"], "Video title")
+        self.assertTrue(result["assets"][0]["downloadUrl"].endswith(f"/files/{stable}.mp4"))
+        self.assertEqual(media_resolver_backend.YOUTUBE_INNERTUBE_LAST_DIAGNOSTIC["status"], "success")
 
 
 class InstagramOrderTest(unittest.TestCase):
