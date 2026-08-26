@@ -144,6 +144,43 @@ private or age-restricted videos, and cipher-only formats. Media bytes are
 streamed through the local `/proxy/{token}` route with safe headers
 (`User-Agent` + `Referer`; cookies are stripped by `_safe_proxy_headers`).
 
+## Automatic PO Token Provider (Railway Free container)
+
+When a datacenter egress IP is flagged (`Sign in to confirm you're not a bot`),
+yt-dlp can use an automatic YouTube PO token provider instead of user cookies,
+accounts, or manually supplied tokens. The Railway Free image bundles
+[bgutil-ytdlp-pot-provider](https://github.com/Brainicism/bgutil-ytdlp-pot-provider)
+(GPL-3.0) pinned to release **1.3.2**:
+
+- The matching yt-dlp plugin is installed via
+  `requirements-media-resolver.txt` (`bgutil-ytdlp-pot-provider==1.3.2`).
+- The provider HTTP server is copied from the official Node image pinned by an
+  immutable digest in `Railway.Dockerfile`, started by
+  `scripts/start_media_resolver.sh` inside the same container on port 4416,
+  and pointed to yt-dlp through
+  `MEDIA_RESOLVER_YOUTUBE_POT_PROVIDER_BASE_URL` (default
+  `http://127.0.0.1:4416`).
+- Fail-safe contract: if the provider bundle or process is missing, the
+  resolver still starts, the CLI args are simply omitted, and the existing
+  Innertube/CLI fallbacks keep working. A downed provider never crashes a
+  resolve.
+- `GET /health` reports only a bounded status —
+  `"potProvider": {"configured": bool, "reachable": bool}` — never the base
+  URL or any token material.
+- Deno 2.4.1 is retained as yt-dlp's explicit JavaScript runtime for EJS
+  challenge solving; it is not used as the PO-token HTTP server.
+- Provider stdout/stderr is discarded because upstream diagnostic output can
+  contain generated token material. Health output remains bounded metadata.
+- The final Railway process runs as the unprivileged `resolver` user; it does
+  not require root privileges or a privileged port.
+- The combined process memory must be measured after each image change against
+  Railway Free's 512 MB service limit; source review alone is not capacity
+  evidence.
+
+The provider and plugin are GPL-3.0 dependencies. Distribution and notice
+obligations must remain part of release review; this document does not make a
+legal-compliance determination.
+
 Render free instances sleep after inactivity; the first request after an idle
 period pays cold-start latency. Keep-alive pings are an external-service
 decision and are not configured by this repository.

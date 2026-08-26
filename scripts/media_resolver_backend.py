@@ -556,7 +556,7 @@ def _youtube_fallback_formats() -> list[str | None]:
 
 
 def _youtube_client_variants() -> list[list[str]]:
-    return [
+    variants = [
         _youtube_extractor_args_cli(None),
         _youtube_extractor_args_cli("web"),
         _youtube_extractor_args_cli("mweb"),
@@ -564,6 +564,13 @@ def _youtube_client_variants() -> list[list[str]]:
         _youtube_extractor_args_cli("android"),
         _youtube_extractor_args_cli("tv"),
     ]
+    if _youtube_pot_provider_base_url():
+        # The automatic provider supports the mweb GVS flow. Prefer it when the
+        # provider is configured so a challenged datacenter IP does not spend
+        # multiple full CLI timeouts on incompatible clients first.
+        mweb = _youtube_extractor_args_cli("mweb")
+        return [mweb, *[variant for variant in variants if variant != mweb]]
+    return variants
 
 
 def _youtube_extractor_args_cli(player_client: str | None) -> list[str]:
@@ -589,6 +596,51 @@ def _youtube_impersonate_cli_args() -> list[str]:
     if not target or target.lower() in {"0", "false", "none", "off"}:
         return []
     return ["--impersonate", target]
+
+
+def _youtube_pot_provider_base_url() -> str | None:
+    value = _env_value("MEDIA_RESOLVER_YOUTUBE_POT_PROVIDER_BASE_URL")
+    if not value or not value.startswith(("http://", "https://")):
+        return None
+    return value.rstrip("/")
+
+
+def _youtube_pot_provider_cli_args() -> list[str]:
+    base_url = _youtube_pot_provider_base_url()
+    if not base_url:
+        return []
+    # bgutil-ytdlp-pot-provider plugin (installed via requirements). When the
+    # provider server is down yt-dlp's POT framework degrades to no-token
+    # behavior on its own, so this stays fail-safe for the existing fallbacks.
+    return ["--extractor-args", f"youtubepot-bgutilhttp:base_url={base_url}"]
+
+
+def _youtube_js_runtime_cli_args() -> list[str]:
+    value = _env_value("MEDIA_RESOLVER_YOUTUBE_DENO_RUNTIME")
+    if value is None:
+        if shutil.which("deno"):
+            return ["--js-runtimes", "deno"]
+        return []
+    value = value.strip()
+    if not value or value.lower() in {"0", "false", "none", "off"}:
+        return []
+    return ["--js-runtimes", f"deno:{value}"]
+
+
+def _probe_youtube_pot_provider(timeout_seconds: float = 1.5) -> dict[str, object]:
+    """Bounded, secret-free status of the local PO token provider."""
+    base_url = _youtube_pot_provider_base_url()
+    if not base_url:
+        return {"configured": False, "reachable": False}
+    try:
+        request = urllib.request.Request(f"{base_url}/ping", headers={"Accept": "application/json"})
+        with urllib.request.urlopen(request, timeout=timeout_seconds):
+            return {"configured": True, "reachable": True}
+    except urllib.error.HTTPError:
+        # Any HTTP response (even 404) proves the server process is up.
+        return {"configured": True, "reachable": True}
+    except Exception:
+        return {"configured": True, "reachable": False}
 
 
 def _resolver_error(provider: str, exc: Exception) -> dict:
@@ -1196,6 +1248,7 @@ class MediaResolver:
             "--no-playlist",
             "--remote-components",
             "ejs:github",
+            *_youtube_js_runtime_cli_args(),
             "--merge-output-format",
             "mp4",
             "--retries",
@@ -1206,6 +1259,7 @@ class MediaResolver:
             outtmpl,
             *_yt_dlp_cookie_cli_args("youtube"),
             *_youtube_impersonate_cli_args(),
+            *_youtube_pot_provider_cli_args(),
         ]
         if ffmpeg_location:
             base_command.extend(["--ffmpeg-location", ffmpeg_location])
@@ -1379,10 +1433,12 @@ class MediaResolver:
             "--no-warnings",
             "--remote-components",
             "ejs:github",
+            *_youtube_js_runtime_cli_args(),
             "--format",
             "all",
             *_yt_dlp_cookie_cli_args("youtube"),
             *_youtube_impersonate_cli_args(),
+            *_youtube_pot_provider_cli_args(),
         ]
         client_variants = _youtube_client_variants()
         last_error = None
@@ -1964,6 +2020,7 @@ class Handler(BaseHTTPRequestHandler):
                     "serverDownloadEnabled": os.environ.get("MEDIA_RESOLVER_YOUTUBE_SERVER_DOWNLOAD_ENABLED", "").lower() in {"1", "true", "yes"},
                     "delegateConfigured": bool(_youtube_delegate_url()),
                     "delegateHost": _safe_url_host(_youtube_delegate_url()),
+                    "potProvider": _probe_youtube_pot_provider(),
                     "innertube": {
                         "status": YOUTUBE_INNERTUBE_LAST_DIAGNOSTIC.get("status", "never"),
                         "at": YOUTUBE_INNERTUBE_LAST_DIAGNOSTIC.get("at", 0),

@@ -4,3 +4,4 @@
 !scripts/
 !scripts/install_deno_for_nixpacks.py
 !scripts/media_resolver_backend.py
+!scripts/start_media_resolver.sh

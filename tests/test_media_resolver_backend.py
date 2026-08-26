@@ -1052,5 +1052,187 @@ class HandlerTest(unittest.TestCase):
                 server.server_close()
 
 
+class PotProviderTest(unittest.TestCase):
+    def test_pot_provider_cli_args_omitted_without_configuration(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(media_resolver_backend._youtube_pot_provider_cli_args(), [])
+            status = media_resolver_backend._probe_youtube_pot_provider()
+        self.assertEqual(status, {"configured": False, "reachable": False})
+
+    def test_pot_provider_cli_args_include_base_url(self):
+        with mock.patch.dict(
+            os.environ,
+            {"MEDIA_RESOLVER_YOUTUBE_POT_PROVIDER_BASE_URL": "http://127.0.0.1:4416"},
+            clear=True,
+        ):
+            self.assertEqual(
+                media_resolver_backend._youtube_pot_provider_cli_args(),
+                ["--extractor-args", "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416"],
+            )
+
+    def test_pot_provider_prefers_mweb_client(self):
+        with mock.patch.dict(
+            os.environ,
+            {"MEDIA_RESOLVER_YOUTUBE_POT_PROVIDER_BASE_URL": "http://127.0.0.1:4416"},
+            clear=True,
+        ):
+            variants = media_resolver_backend._youtube_client_variants()
+
+        self.assertEqual(variants[0], ["--extractor-args", "youtube:player_client=mweb"])
+
+    def test_youtube_js_runtime_uses_configured_deno(self):
+        with mock.patch.dict(
+            os.environ,
+            {"MEDIA_RESOLVER_YOUTUBE_DENO_RUNTIME": "/opt/deno/bin"},
+            clear=True,
+        ):
+            self.assertEqual(
+                media_resolver_backend._youtube_js_runtime_cli_args(),
+                ["--js-runtimes", "deno:/opt/deno/bin"],
+            )
+
+    def test_youtube_js_runtime_uses_path_deno_when_available(self):
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch.object(media_resolver_backend.shutil, "which", return_value="/usr/local/bin/deno"),
+        ):
+            self.assertEqual(
+                media_resolver_backend._youtube_js_runtime_cli_args(),
+                ["--js-runtimes", "deno"],
+            )
+
+    def test_youtube_js_runtime_can_be_disabled(self):
+        with mock.patch.dict(
+            os.environ,
+            {"MEDIA_RESOLVER_YOUTUBE_DENO_RUNTIME": "off"},
+            clear=True,
+        ):
+            self.assertEqual(media_resolver_backend._youtube_js_runtime_cli_args(), [])
+
+    def test_pot_provider_base_url_rejects_non_http_scheme(self):
+        with mock.patch.dict(
+            os.environ,
+            {"MEDIA_RESOLVER_YOUTUBE_POT_PROVIDER_BASE_URL": "ftp://127.0.0.1:4416"},
+            clear=True,
+        ):
+            self.assertIsNone(media_resolver_backend._youtube_pot_provider_base_url())
+            self.assertEqual(media_resolver_backend._youtube_pot_provider_cli_args(), [])
+
+    def test_pot_provider_probe_reports_reachable_on_ping(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = b'{"ping": "pong"}'
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"MEDIA_RESOLVER_YOUTUBE_POT_PROVIDER_BASE_URL": "http://127.0.0.1:4416"},
+                clear=True,
+            ),
+            mock.patch.object(media_resolver_backend.urllib.request, "urlopen", return_value=response) as urlopen,
+        ):
+            status = media_resolver_backend._probe_youtube_pot_provider()
+
+        self.assertEqual(status, {"configured": True, "reachable": True})
+        self.assertTrue(urlopen.call_args.args[0].full_url.endswith("/ping"))
+
+    def test_pot_provider_probe_treats_any_http_response_as_reachable(self):
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"MEDIA_RESOLVER_YOUTUBE_POT_PROVIDER_BASE_URL": "http://127.0.0.1:4416"},
+                clear=True,
+            ),
+            mock.patch.object(
+                media_resolver_backend.urllib.request,
+                "urlopen",
+                side_effect=media_resolver_backend.urllib.error.HTTPError(
+                    "http://127.0.0.1:4416/ping",
+                    404,
+                    "not found",
+                    None,
+                    None,
+                ),
+            ),
+        ):
+            status = media_resolver_backend._probe_youtube_pot_provider()
+
+        self.assertEqual(status, {"configured": True, "reachable": True})
+
+    def test_pot_provider_probe_reports_unreachable_when_down(self):
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"MEDIA_RESOLVER_YOUTUBE_POT_PROVIDER_BASE_URL": "http://127.0.0.1:4416"},
+                clear=True,
+            ),
+            mock.patch.object(
+                media_resolver_backend.urllib.request,
+                "urlopen",
+                side_effect=OSError("connection refused"),
+            ),
+        ):
+            status = media_resolver_backend._probe_youtube_pot_provider()
+
+        self.assertEqual(status, {"configured": True, "reachable": False})
+
+    def test_direct_info_cli_includes_pot_provider_args(self):
+        calls = []
+
+        def fake_run(command, **kwargs):
+            calls.append(command)
+            return mock.Mock(stdout='{"id":"abc123","url":"https://video.example.test/media.mp4","ext":"mp4","vcodec":"avc1","acodec":"mp4a"}\n', stderr="")
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "MEDIA_RESOLVER_YOUTUBE_POT_PROVIDER_BASE_URL": "http://127.0.0.1:4416",
+                    "MEDIA_RESOLVER_YOUTUBE_DENO_RUNTIME": "/opt/deno/bin",
+                },
+                clear=True,
+            ),
+            mock.patch.object(media_resolver_backend.subprocess, "run", side_effect=fake_run),
+        ):
+            info, error = media_resolver_backend.MediaResolver._resolve_youtube_direct_info_cli(
+                "https://youtu.be/abc123"
+            )
+
+        self.assertIsNone(error)
+        self.assertIn("--extractor-args", calls[0])
+        self.assertIn("--js-runtimes", calls[0])
+        runtime_index = calls[0].index("--js-runtimes")
+        self.assertEqual(calls[0][runtime_index + 1], "deno:/opt/deno/bin")
+        extractor_index = calls[0].index("--extractor-args")
+        self.assertEqual(calls[0][extractor_index + 1], "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416")
+
+    def test_get_health_reports_bounded_pot_provider_status_without_secrets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            media_resolver_backend.Handler.resolver = media_resolver_backend.MediaResolver(
+                pathlib.Path(tmp),
+                "https://example.test",
+            )
+            server = media_resolver_backend.ThreadingHTTPServer(
+                ("127.0.0.1", 0),
+                media_resolver_backend.Handler,
+            )
+            thread = threading.Thread(target=server.serve_forever)
+            thread.daemon = True
+            thread.start()
+            try:
+                connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                connection.request("GET", "/health")
+                response = connection.getresponse()
+                body = json.loads(response.read())
+                self.assertEqual(response.status, 200)
+                self.assertEqual(body["youtube"]["potProvider"], {"configured": False, "reachable": False})
+                self.assertNotIn("base_url", json.dumps(body))
+                self.assertNotIn("127.0.0.1:4416", json.dumps(body))
+                connection.close()
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+
 if __name__ == "__main__":
     unittest.main()
