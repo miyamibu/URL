@@ -40,4 +40,3 @@ After this review completed, the coordinator also resolved a second public
 video (`M7lc1UVf-VE`) on Railway Free and received HTTP 200 / MP4 followed by
 HTTP 206 for 256 of 43,776,160 bytes. This is additional coordinator evidence,
 not a Nemotron observation.
-
