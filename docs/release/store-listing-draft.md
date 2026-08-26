@@ -21,7 +21,7 @@ App Store / Google Play へ提出する文言を、現在の source baseline（A
 - Account deletion URL: required for this cloud-enabled release. Use the deployed public deletion route that matches `web/invite-link/account-deletion/index.html`.
 
 ## Current Release Branch Decision
-Current source baseline is Android `1.0.17 (versionCode=21)` and iOS `1.0.19 (build=21)`. The official App Store URL showed public `1.0.18` on 2026-08-25 with the approved local-only metadata for build 20. Exact current-source version 1.0.19 build 21 was archived, Apple Distribution exported, verified, and uploaded successfully on 2026-08-25; version creation, build attachment, review submission, approval, and propagation remain before current-source Store GO.
+Current source baseline is Android `1.0.17 (versionCode=21)` and iOS `1.0.19 (build=21)`. The official App Store URL showed public `1.0.18` on 2026-08-25 with the approved local-only metadata for build 20. Exact current-source version 1.0.19 build 21 was archived, Apple Distribution exported, verified, uploaded, attached to version 1.0.19, and submitted to App Review on 2026-08-26 under submission ID `4dded547-70a6-4da3-99c0-00e9156023b9`. Apple approval and public propagation remain before current-source Store GO.
 
 - Android release mode depends on `release.shared.tag.cloud.enabled` and release Supabase values from local/env configuration.
 - iOS defaults to tracked local-only xcconfig; cloud-sharing Archive/TestFlight must pass ignored `ios/Config/URLSaverSecrets.xcconfig` explicitly.

@@ -416,3 +416,77 @@ FINDINGS: NONE — P0/P1/P2 Confirmed 不備なし。
 ### REVIEW_STATUS
 
 **PASS — 残存 P0/P1/P2 Confirmed なし。全 hardening 実装確認済み。コード品質 PASS。Production YouTube は外部依存で NO_GO。**
+
+# 2026-08-26 App Store / Appium / Railway 外部証拠監査
+
+## MODEL_ASSIGNMENT
+
+- **Model**: `opencode/nemotron-3-ultra-free`
+- **Session ID**: `ses_fcbb44eb5ffel29kLsqL9guhrg`
+- **Mode**: read-only。変更、commit、push、deploy、ユーザーへの直接質問なし
+- **Baseline**: `390b2bae04e69c777be6a582f689d38142c3f083`
+- **Scope**: 今回の未commit release-document差分、`artifacts/ui-review/2026-08-26/appium-current-1.0.19-21/`
+- モデル自身が出力したStart/End時刻はcoordinator clockと整合しなかったため、監査時刻の一次証拠には使用しない。モデル、session ID、scope、raw textのみをrouting/execution証拠として扱う。
+
+## INITIAL RAW RESULT
+
+### Confirmed findings emitted by Nemotron
+
+| ID | Severity | Finding |
+|---|---|---|
+| F-001 | P1 | `DEVICE_UI_GO` / `PHYSICAL_IPHONE_UI_GO` は、home/menu/使い方/scroll/back/bottom actionsだけの実機証拠に対して広すぎる。 |
+| F-002 | P1 | `APP_STORE_1_0_19_REVIEW_PENDING` と広い `DEVICE_UI_GO` の併記は、審査・実機coverage境界の伝達を弱める。 |
+| F-003 | P2 | Railway Trial expired / 0 serviceに対するHobby planの具体コストと未支払いがrelease docsに不足。 |
+| F-004 | P2 | raw Appium log/sourceを削除したため、privacy-safe evidenceだけでは再現性が弱い。 |
+| F-005 | P2 | Share Extension App Group-inaccessible fail-closed branchは物理実機で未検証。 |
+
+### Confirmed-safe facts emitted by Nemotron
+
+- 公開App Storeは1.0.18 (20)のままで、1.0.19 (21)はsubmission `4dded547-70a6-4da3-99c0-00e9156023b9`、2026-08-26 10:20 JST、`審査待ち`として一貫しており、公開・承認済みへの過大昇格はない。
+- Railway delegateはHTTP 404 / Trial expired / owner billing action待ち、Render YouTubeは0 bytes / timeout / `innertube.status=failed`で、Production YouTube NO_GOは正しい。
+- Appium evidence自体はdevelopment-signed 1.0.19 (21)、`noReset=true`、USB実機、実施した限定operationとして正確に記載されている。
+- privacy-safe screenshotsのみ保持し、raw source/logを保持しない境界は明示されている。
+
+### Initial status emitted by Nemotron
+
+`REVIEW_STATUS: PASS` — 事実誤記ではないが、上記F-001〜F-005を表現精度・粒度・risk communicationとして指摘。
+
+`PUBLIC_LAUNCH: NO_GO` — Apple審査未完了、YouTube production未解決、Railway未復旧、distribution-signed実機未検証。
+
+## COORDINATOR RESOLUTION
+
+- F-001/F-002: 採用。`DEVICE_UI_GO` / `PHYSICAL_IPHONE_UI_GO` を `DEVICE_UI_CORE_NAV_SMOKE_PASS` / `PHYSICAL_IPHONE_CORE_NAV_SMOKE_PASS` へ降格。全feature-flow証明ではないと明記。
+- F-003: 採用。live checkoutで確認した初回USD 5、月USD 5 minimum、USD 5 monthly credits、超過課金、final Subscribeとsaved-card autofill未実施をrelease evidenceへ追記。
+- F-004: raw source/logの保持はuser URL/titleを含むため不採用。代わりに2 Appium session IDs、allow-listed operation ledger、privacy-safe 4 screenshotsのSHA-256、temporary source削除をサニタイズ済み証拠へ追記。
+- F-005: 未検証境界を維持。署名/entitlement条件の障害注入は今回実施せず、distribution-signed proofやfull feature-flow proofではないと明記。
+- 追加Appium smoke: URL addを開き未入力・保存disabledでcancel。Tag management、Export、Archive、Group、ChatGPT surfaceを非破壊で開閉し、create/edit/delete/share/restoreを行わずhomeへ復帰。
+
+## RAW COUNTER-REVIEW RESULT
+
+### Closure
+
+| ID | Result |
+|---|---|
+| F-001 | **CLOSED** — `DEVICE_UI_CORE_NAV_SMOKE_PASS` / `PHYSICAL_IPHONE_CORE_NAV_SMOKE_PASS` と明記。 |
+| F-002 | **CLOSED** — Appleは`REVIEW_PENDING`、deviceは`CORE_NAV_SMOKE_PASS`として別scope。 |
+| F-003 | **CLOSED** — Railway cost、credits、overage、未購読を明記。 |
+| F-004 | **CLOSED** — raw privacy boundaryを維持し、session IDs、SHA-256、sanitized ledgerを追加。 |
+| F-005 | **CLOSED** — 未検証とfull/distribution proofでないことを明記。 |
+
+### Remaining Confirmed P0/P1/P2
+
+**なし** — 全項目クローズ確認。新規不備なし。
+
+### Candidate / Hypothesis
+
+- Apple審査Rejectリスクは未確定。
+- Railway再開後もYouTube匿名clientが`LOGIN_REQUIRED`となる可能性。
+- development-signedとdistribution-signedの動作差異は未検証。
+
+### REVIEW_STATUS
+
+**PASS — 残存 P0/P1/P2 Confirmed なし。全前回指摘クローズ確認済み。**
+
+### PUBLIC_LAUNCH
+
+**NO_GO — Apple審査通過未了、YouTube本番解決不能、Railway未復旧、distribution-signed実機未検証。**
