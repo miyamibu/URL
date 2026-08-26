@@ -107,6 +107,29 @@ for path in "${required_files[@]}"; do
   require_file "$path"
 done
 
+require_policy_marker() {
+  local path="$1"
+  local marker="$2"
+  local label="$3"
+  if rg -Fq "$marker" "$path" 2>/dev/null; then
+    ok "$label"
+  else
+    fail "$label is missing from $path"
+  fi
+}
+
+require_policy_marker "AGENTS.md" "monthly_fixed_cost = 0" "canonical zero-cost infrastructure policy"
+require_policy_marker "docs/release/launch-go-checklist.md" "monthly_fixed_cost = 0" "launch checklist zero-cost gate"
+require_policy_marker "docs/release/launch-status-model.md" "monthly_fixed_cost = 0" "launch status zero-cost requirement"
+
+if [[ -f render.yaml ]]; then
+  if rg -q '^[[:space:]]*plan:[[:space:]]*free([[:space:]]*#.*)?$' render.yaml; then
+    ok "Render blueprint uses the free plan"
+  else
+    fail "Render blueprint must explicitly use plan: free"
+  fi
+fi
+
 if grep -q "Final status: REPO_GO" docs/release/repo-go-evidence.md 2>/dev/null; then
   ok "REPO_GO evidence status recorded"
 else

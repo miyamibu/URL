@@ -3,6 +3,15 @@
 ## Goal
 Drive the repo from `LAUNCH_READY_REPO` through manual `STAGING_GO`, `INTERNAL_TEST_GO`, and final `LAUNCH_GO` without mixing external console actions into repo-local readiness.
 
+## 0. Zero-cost infrastructure gate
+
+- [ ] Check:
+  - Owner: Release owner / Infrastructure owner
+  - Command / Console: Verify every production and failover provider against `monthly_fixed_cost = 0`, including the provider plan screen, free-tier limits, and overage behavior. For Railway, only `Free` is permitted; `Hobby`, `Pro`, Enterprise, card entry, and subscription actions are prohibited.
+  - Expected result: Every required production path runs on a $0/month plan with no fixed minimum and no automatic paid overage. A free-tier outage or limit has a tested $0 failover or a clearly bounded `NOT_VERIFIED` state; paid upgrade is not a launch prerequisite.
+  - Evidence to save: Sanitized plan/usage screenshot or primary-source URL, provider/service name, capture timestamp, free limits, overage behavior, and production smoke result. Never save card data or secret values.
+  - Stop if: Any required/recommended path depends on a paid plan, fixed minimum, paid overage, card registration, or an unverified billing assumption. Redesign to a free provider, client/local execution, or failover before launch; do not request a paid upgrade.
+
 ## 1. Pre-commit / diff freeze
 
 - [ ] Check:
@@ -126,6 +135,6 @@ Drive the repo from `LAUNCH_READY_REPO` through manual `STAGING_GO`, `INTERNAL_T
 - [ ] Check:
   - Owner: Release owner
   - Command / Console: Compare evidence against `docs/release/launch-status-model.md`
-  - Expected result: `STAGING_GO` and `INTERNAL_TEST_GO` are achieved; privacy/store/OpenAI stop conditions clear.
+  - Expected result: `STAGING_GO` and `INTERNAL_TEST_GO` are achieved; privacy/store/OpenAI stop conditions clear; the zero-cost evidence proves `monthly_fixed_cost = 0` for every required production path.
   - Evidence to save: final `LAUNCH_GO` decision note.
-  - Stop if: any stop condition remains unresolved or evidence is stale.
+  - Stop if: any stop condition remains unresolved, evidence is stale, or a paid infrastructure plan is required/recommended.

@@ -2,7 +2,7 @@ services:
   - type: web
     name: rinbam-media-resolver
     env: python
-    plan: starter
+    plan: free
     buildCommand: DENO_INSTALL=$PWD/.deno curl -fsSL https://deno.land/install.sh | sh && pip install --upgrade -r requirements-media-resolver.txt
     startCommand: PATH=$PWD/.deno/bin:$PATH python3 scripts/media_resolver_backend.py
     healthCheckPath: /health
@@ -13,5 +13,7 @@ services:
         value: /tmp/rinbam-media-cache
       - key: MEDIA_RESOLVER_YOUTUBE_CLI_TIMEOUT_SECONDS
         value: "55"
-      - key: MEDIA_RESOLVER_YOUTUBE_DELEGATE_URL
-        value: https://rinbam-youtube-resolver-production.up.railway.app
+      # MEDIA_RESOLVER_YOUTUBE_DELEGATE_URL is intentionally unset: the resolver
+      # attempts public-YouTube resolution on this host via the Innertube
+      # fallback. Production GO still requires a live smoke from Render. If that
+      # smoke fails, delegate only to a production-proven Railway Free instance.

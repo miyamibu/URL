@@ -55,8 +55,11 @@ Use a server-style host such as Render or Railway.
 For Render Blueprint deploys, `render.yaml` defines the service, build command,
 start command, and `/health` check for `rinbam-media-resolver`.
 
-For Railway deploys, `railway.json` uses the same build and start commands. The
-script reads Railway's `PORT` and `RAILWAY_PUBLIC_DOMAIN` automatically.
+For Railway deploys, `railway.json` uses the current Railpack builder. The root
+`requirements.txt` points to `requirements-media-resolver.txt`, allowing
+Railpack to detect Python and install the existing resolver dependencies without
+duplicating their versions. The script reads Railway's `PORT` and
+`RAILWAY_PUBLIC_DOMAIN` automatically.
 
 Recommended start command:
 
@@ -91,6 +94,12 @@ Do not commit cookies or account secrets to the repository.
 
 ## YouTube Delegate Host
 
+Delegate is optional. With `MEDIA_RESOLVER_YOUTUBE_DELEGATE_URL` unset, the
+app-facing host first attempts public-YouTube resolution through the built-in
+Innertube fallback (see below). This path needs no cookies, PO token, or second
+host, but it is GO only after a production smoke from that host succeeds;
+datacenter egress can receive a different YouTube response than a local run.
+
 If a host can resolve Instagram/TikTok but YouTube is blocked by that host's
 egress or HTTP fingerprint, keep the app-facing backend URL on the existing
 host and delegate only YouTube to a separate resolver host:
@@ -103,6 +112,34 @@ Set this variable only on the app-facing host, such as Render. Do not set it on
 the YouTube resolver host itself. Requests forwarded by the backend include an
 internal loop-guard header so an accidental recursive configuration does not
 delegate indefinitely.
+
+## Zero-Cost Production YouTube Configuration
+
+`monthly_fixed_cost=0` is a hard requirement for this service. The supported
+combination is:
+
+- **Render free instance** (`plan: free` in `render.yaml`) as the app-facing
+  host. Keep the delegate unset only when the production Innertube smoke passes.
+- **Railway Free (0 yen plan) failover** — when Render's direct production
+  smoke fails, deploy `railway.json` only to Railway Free and set the delegate
+  variable on Render after Railway `/health` and `/resolve` pass. Hobby/Pro
+  plans, cards, and subscriptions are not used.
+- **Fail closed** — if neither zero-cost path passes, return the bounded resolver
+  error and retain `YOUTUBE_PRODUCTION_NO_GO`; never convert a local success or
+  a successful deploy into production media-resolution proof.
+
+The Innertube fallback (`_resolve_youtube_innertube_asset`, ANDROID player API)
+needs no secrets: it requests the public player endpoint with fixed client
+headers, accepts only combined video+audio MP4 candidates served from
+`googlevideo.com` without `signatureCipher`/`cipher`, and fails closed to the
+existing `AUTH_REQUIRED` / `MEDIA_NOT_FOUND` errors for bot challenges,
+private or age-restricted videos, and cipher-only formats. Media bytes are
+streamed through the local `/proxy/{token}` route with safe headers
+(`User-Agent` + `Referer`; cookies are stripped by `_safe_proxy_headers`).
+
+Render free instances sleep after inactivity; the first request after an idle
+period pays cold-start latency. Keep-alive pings are an external-service
+decision and are not configured by this repository.
 
 `GET /health` intentionally reports only safe cookie diagnostics:
 

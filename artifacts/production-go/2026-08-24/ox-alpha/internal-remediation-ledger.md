@@ -255,3 +255,21 @@ VALIDATION: PASS (Swift focused + Simulator full suite + isolated Supabase repla
 REPO_GO_IMPACT: maintained; two internal gaps closed at HEAD 15c7554a
 STATUS: INCOMPLETE_REVIEW for external/device gates only (unchanged classification)
 ```
+
+## 2026-08-26 0円インフラ制約の追加実装
+
+- 実セッション: `ses_fcbdef8b7ffeswhlbo3XfnYP1b`
+- 実モデル: `opencode/x-preview-f-free` (Ox Alpha Free)
+- baseline: `fd99a6bd93bcd2cd61423ad5992cc28d6726bb22`, `main`, 開始時 clean
+- 最上位制約: `monthly_fixed_cost = 0`。RailwayはFreeのみ。Hobby/Pro/Enterprise、カード、購読、課金、有料化要求を禁止。
+- Ox担当差分: `render.yaml` の `plan: free` 化と失効delegateのBlueprint依存除去、`docs/media-resolver-backend.md` の0円構成・fail-closed境界追記。
+- Oxローカル実走: public video `jNQXAC9IVRw` をdelegate/cookie/PO tokenなしでInnertube解決し、約0.3秒、MP4 asset 1件。`python3 -m unittest tests.test_media_resolver_backend` は44件PASS、YAML parseは `plan=free` / delegate未設定、`git diff --check` PASS。
+- Oxが未検証として残した境界: RenderデータセンターIPからのInnertube、本番Free cold start、512MB同時実行、実デプロイ。
+- 主任による独立した本番実走: Render認証済み画面で実サービスが既にFreeであることを確認し、失効したdelegate環境変数だけを削除して同一HEADを再デプロイ。デプロイは成功したが、Render本番のInnertubeは `failed`、`/resolve` は45.193秒でtimeout。したがってOxのローカル成功を本番成功には昇格しない。
+- Railway認証済み画面: workspaceをTrialからFreeへ切替済み。Free上限は1 vCPU / 0.512GB、Serverless有効。Hobby/Pro/カード/購読操作は不使用。GitHub `miyamibu/URL` `main` 接続はRailway Freeのピーク時間制限解除後に適用・実走する。
+
+```
+OX_STATUS: PASS (implementation/local scope)
+PRODUCTION_RENDER_DIRECT_YOUTUBE: NO_GO
+PRODUCTION_RAILWAY_FREE_DELEGATE: RETEST_PENDING_FREE_WINDOW
+```

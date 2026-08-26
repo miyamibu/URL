@@ -490,3 +490,40 @@ FINDINGS: NONE — P0/P1/P2 Confirmed 不備なし。
 ### PUBLIC_LAUNCH
 
 **NO_GO — Apple審査通過未了、YouTube本番解決不能、Railway未復旧、distribution-signed実機未検証。**
+
+# 2026-08-26 0円インフラ差分の独立監査・カウンターレビュー
+
+## MODEL_ASSIGNMENT
+
+- Model: `opencode/nemotron-3-ultra-free`
+- Official session: `ses_fcbb44eb5ffel29kLsqL9guhrg`
+- Baseline: `fd99a6bd93bcd2cd61423ad5992cc28d6726bb22`
+- Mode: read-only。編集、commit、push、deploy、外部操作、ユーザーへの直接質問なし。
+- Top constraint: `monthly_fixed_cost = 0`。RailwayはFreeのみ。有料プラン、カード、購読、課金、有料化提案は不採用。
+- 注記: モデルが初回出力したStart/End時刻はcoordinator clockと整合しなかったため、証拠時刻には使用しない。
+
+## INITIAL RESULT
+
+- P0/P1/P2 Confirmed: なし。
+- `REVIEW_STATUS: PASS`
+- `PUBLIC_LAUNCH: NO_GO`
+- 初回CandidateのうちC-004は、`privacy-data-safety-draft.md` の履歴節を現行Google Play状態と誤読してData Safety不一致を再掲した。
+- 初回C-006は、Hobby料金の排除履歴を採用候補のように扱った。
+
+## COORDINATOR COUNTER-EVIDENCE
+
+- `docs/release/repo-go-evidence.md` の現行Google Play行は、2026-08-25に公開Data Safety修正を直接確認済みで、visible pending-change blockなしと記録している。
+- Railway Hobby/Pro等は候補ではなく、現行正準ルールで明示的に除外済み。
+- QUESTION_PACKETは代表質問者が統合し、Railway FreeをPT 20時以降に即再試行、512MB適合は実デプロイで測定、platformごとの提出バイナリ機能と開示を分離する方針で解消した。
+
+## RAW CORRECTED FINAL RESULT
+
+- C-004: `WITHDRAWN (誤読)` — 現行公開Google Play Data Safety修正を確認。
+- C-006: `WITHDRAWN (誤読)` — Railway有料料金は排除履歴であり採用候補ではない。
+- 残存P0/P1/P2 Confirmed: **なし**。
+- 残存外部ゲート: Render YouTube本番失敗、Railway Free実デプロイ、Apple 1.0.19審査・公開、full feature-flow/distribution-signed実機、sandbox購入・実運用。
+
+```text
+CORRECTED_REVIEW_STATUS: PASS
+PUBLIC_LAUNCH: NO_GO
+```

@@ -48,6 +48,15 @@ Phase 1a/1b の URL 保存契約をコア不変条件として守りつつ、承
 - AI/release作業では `docs/release/launch-go-checklist.md` と `.agents/skills/ai-release-gate/` を確認する。
 - commit/push/deploy/store/OpenAI submission/production secrets投入はユーザー明示指示なしに行わない。
 
+## Zero-Cost Infrastructure Policy
+- インフラ構成の正準コスト条件は `monthly_fixed_cost = 0`。月額固定費、最低利用額、無料クレジット超過後の自動従量課金が発生しうるプランを本番の `required`、`recommended`、または GO 条件にしない。
+- Railway を使う場合は `Free`（$0/月）だけを選択する。`Hobby`、`Pro`、Enterprise、その他の有料プラン、カードの選択・登録・送信、購読・課金開始操作は禁止する。
+- Railway Free の容量、時間帯、サービス数、ネットワーク、継続性の制約で成立しない場合、有料化を確認せず、必要機能を維持したまま Railway を本番必須依存から外す。
+- 無料経路は、(1) Railway Free の最小構成、(2) 既存の月額0円インフラ、(3) 月額0円の代替ホスティング、(4) 安全なクライアント側・ローカル処理、(5) failover の順で検討・実装・実走する。
+- 外部サービスの追加・変更前に、料金、無料枠上限、超過時挙動、自動課金の有無を公式画面または一次資料で確認する。0円を証明できない構成は採用せず、GO証拠へ昇格させない。
+- 無料枠の不足だけを理由に作業を停止したり、有料プランをユーザーへ要求したりしない。無料代替の設計・検証を継続し、実走できなかった外部境界だけを正確に `NOT_VERIFIED` または `BLOCKED_EXTERNAL` とする。
+- Ox Alpha Free、Nemotron 3 Ultra Free、その他の委任先にも、この節を最上位制約として明示的に継承させる。
+
 ## Android Device Data Guard
 - Never run `connectedDebugAndroidTest`, `pm clear`, uninstall/reinstall, or any command/test that can clear app data on the user's normal physical Android device when saved URLs may matter.
 - Treat Android app data on real devices as user data. DB resets inside instrumentation tests, including `clearAllTables()`, are destructive on that device.

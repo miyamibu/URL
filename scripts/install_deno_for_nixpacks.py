@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install Deno in Nixpacks without relying on unzip/7z."""
+"""Install Deno during a Railway build without relying on unzip/7z."""
 
 from __future__ import annotations
 
