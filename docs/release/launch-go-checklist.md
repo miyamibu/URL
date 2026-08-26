@@ -5,12 +5,13 @@ Drive the repo from `LAUNCH_READY_REPO` through manual `STAGING_GO`, `INTERNAL_T
 
 ## 0. Zero-cost infrastructure gate
 
-- [ ] Check:
+- [x] Check:
   - Owner: Release owner / Infrastructure owner
   - Command / Console: Verify every production and failover provider against `monthly_fixed_cost = 0`, including the provider plan screen, free-tier limits, and overage behavior. For Railway, only `Free` is permitted; `Hobby`, `Pro`, Enterprise, card entry, and subscription actions are prohibited.
   - Expected result: Every required production path runs on a $0/month plan with no fixed minimum and no automatic paid overage. A free-tier outage or limit has a tested $0 failover or a clearly bounded `NOT_VERIFIED` state; paid upgrade is not a launch prerequisite.
   - Evidence to save: Sanitized plan/usage screenshot or primary-source URL, provider/service name, capture timestamp, free limits, overage behavior, and production smoke result. Never save card data or secret values.
   - Stop if: Any required/recommended path depends on a paid plan, fixed minimum, paid overage, card registration, or an unverified billing assumption. Redesign to a free provider, client/local execution, or failover before launch; do not request a paid upgrade.
+  - Current evidence: `artifacts/production-go/2026-08-26/production/youtube-zero-cost-production.md` — Railway Free and Render Free public production smokes passed with no paid-plan/card/subscription action.
 
 ## 1. Pre-commit / diff freeze
 
