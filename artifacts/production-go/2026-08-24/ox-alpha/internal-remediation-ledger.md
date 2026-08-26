@@ -266,10 +266,14 @@ STATUS: INCOMPLETE_REVIEW for external/device gates only (unchanged classificati
 - Oxローカル実走: public video `jNQXAC9IVRw` をdelegate/cookie/PO tokenなしでInnertube解決し、約0.3秒、MP4 asset 1件。`python3 -m unittest tests.test_media_resolver_backend` は44件PASS、YAML parseは `plan=free` / delegate未設定、`git diff --check` PASS。
 - Oxが未検証として残した境界: RenderデータセンターIPからのInnertube、本番Free cold start、512MB同時実行、実デプロイ。
 - 主任による独立した本番実走: Render認証済み画面で実サービスが既にFreeであることを確認し、失効したdelegate環境変数だけを削除して同一HEADを再デプロイ。デプロイは成功したが、Render本番のInnertubeは `failed`、`/resolve` は45.193秒でtimeout。したがってOxのローカル成功を本番成功には昇格しない。
-- Railway認証済み画面: workspaceをTrialからFreeへ切替済み。Free上限は1 vCPU / 0.512GB、Serverless有効。Hobby/Pro/カード/購読操作は不使用。GitHub `miyamibu/URL` `main` 接続はRailway Freeのピーク時間制限解除後に適用・実走する。
+- Railway認証済み画面: workspaceをTrialからFreeへ切替済み。Free上限は1 vCPU / 0.512GB、Serverless有効。Hobby/Pro/カード/購読操作は不使用。
+- Railway Free初回build `2cd02c87-cf55-476a-8cae-585f8967c544` はモノレポをJava/Gradleとして検出し `python: not found` で失敗。主任が専用Dockerfileへ修正し、Nemotron同一公式セッションが追加差分を `DOCKER_FIX_REVIEW_STATUS: PASS` と独立監査した。
+- Railway Free本番deploy `94a41e6e-b7ba-4e19-8f63-3c0ba2ea5b36` は `Active / Deployment successful`。公開 `/health` HTTP 200、public video `jNQXAC9IVRw` の `/resolve` は0.818秒でMP4 1件、`/proxy` はHTTP 206で1,024 bytes（全体629,172 bytes）を返した。
+- Render Freeへ公開delegate URLだけを復元し、deploy `dep-da75n5id0e5s73ddra10` が43.1秒でLive。Render公開 `/resolve` は1.327秒で同MP4 1件、delegate `/proxy` からHTTP 206 / 1,024 bytesを取得した。
 
 ```
 OX_STATUS: PASS (implementation/local scope)
 PRODUCTION_RENDER_DIRECT_YOUTUBE: NO_GO
-PRODUCTION_RAILWAY_FREE_DELEGATE: RETEST_PENDING_FREE_WINDOW
+PRODUCTION_RAILWAY_FREE_DELEGATE: GO
+PRODUCTION_RENDER_TO_RAILWAY_FREE_YOUTUBE: GO
 ```

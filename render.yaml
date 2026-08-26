@@ -13,7 +13,7 @@ services:
         value: /tmp/rinbam-media-cache
       - key: MEDIA_RESOLVER_YOUTUBE_CLI_TIMEOUT_SECONDS
         value: "55"
-      # MEDIA_RESOLVER_YOUTUBE_DELEGATE_URL is intentionally unset: the resolver
-      # attempts public-YouTube resolution on this host via the Innertube
-      # fallback. Production GO still requires a live smoke from Render. If that
-      # smoke fails, delegate only to a production-proven Railway Free instance.
+      - key: MEDIA_RESOLVER_YOUTUBE_DELEGATE_URL
+        value: https://rinbam-youtube-resolver-production.up.railway.app
+      # This delegate is permitted only while the target service remains on
+      # Railway Free and its production /health, /resolve, and proxy smoke pass.

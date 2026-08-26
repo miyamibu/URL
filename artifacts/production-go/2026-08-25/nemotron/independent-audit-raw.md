@@ -540,3 +540,11 @@ PUBLIC_LAUNCH: NO_GO
 Confirmed P0/P1/P2: none
 DOCKER_FIX_REVIEW_STATUS: PASS
 ```
+
+Coordinator production execution after the review: Railway Free deployment
+`94a41e6e-b7ba-4e19-8f63-3c0ba2ea5b36` became Active; its public health,
+YouTube resolve, and ranged media-byte fetch passed. Render Free deployment
+`dep-da75n5id0e5s73ddra10` then passed the same end-to-end flow through the
+Railway Free delegate. This is coordinator-held external evidence gathered
+after Nemotron's read-only review; it is not retroactively claimed as a direct
+Nemotron observation.

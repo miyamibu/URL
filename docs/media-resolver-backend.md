@@ -130,6 +130,11 @@ combination is:
   error and retain `YOUTUBE_PRODUCTION_NO_GO`; never convert a local success or
   a successful deploy into production media-resolution proof.
 
+The current production-proven zero-cost arrangement is Render Free as the
+app-facing host and Railway Free as the YouTube-only delegate. Keep the public
+delegate URL in `render.yaml` only while the Railway service stays on Free and
+the end-to-end Render `/resolve` plus media-byte smoke continues to pass.
+
 The Innertube fallback (`_resolve_youtube_innertube_asset`, ANDROID player API)
 needs no secrets: it requests the public player endpoint with fixed client
 headers, accepts only combined video+audio MP4 candidates served from
