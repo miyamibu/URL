@@ -527,3 +527,16 @@ FINDINGS: NONE — P0/P1/P2 Confirmed 不備なし。
 CORRECTED_REVIEW_STATUS: PASS
 PUBLIC_LAUNCH: NO_GO
 ```
+
+## Railway Free Docker fix re-audit
+
+- Model/session: `opencode/nemotron-3-ultra-free` / `ses_fcbb44eb5ffel29kLsqL9guhrg`
+- Mode: read-only。編集、commit、push、deploy、外部操作、質問なし。
+- Trigger: Railway Free deployment `2cd02c87-cf55-476a-8cae-585f8967c544` used Railpack, detected the monorepo as Java/Gradle, and failed with `python: not found`.
+- Reviewed fix: `railway.json` explicit Dockerfile builder, resolver-only `Railway.Dockerfile`, minimal `.dockerignore`, documentation and readiness-gate updates.
+- Coordinator validation supplied to the reviewer: official schema PASS, local Docker build PASS, container `/health` HTTP 200, idle memory 21.55 MiB, 58 tests PASS, diff check PASS.
+
+```text
+Confirmed P0/P1/P2: none
+DOCKER_FIX_REVIEW_STATUS: PASS
+```

@@ -1,0 +1,6 @@
+**
+!Railway.Dockerfile
+!requirements-media-resolver.txt
+!scripts/
+!scripts/install_deno_for_nixpacks.py
+!scripts/media_resolver_backend.py

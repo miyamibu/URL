@@ -55,11 +55,13 @@ Use a server-style host such as Render or Railway.
 For Render Blueprint deploys, `render.yaml` defines the service, build command,
 start command, and `/health` check for `rinbam-media-resolver`.
 
-For Railway deploys, `railway.json` uses the current Railpack builder. The root
-`requirements.txt` points to `requirements-media-resolver.txt`, allowing
-Railpack to detect Python and install the existing resolver dependencies without
-duplicating their versions. The script reads Railway's `PORT` and
-`RAILWAY_PUBLIC_DOMAIN` automatically.
+For Railway deploys, `railway.json` selects the dedicated
+`Railway.Dockerfile`. This avoids monorepo language-detection ambiguity and
+installs only Python, the existing resolver dependencies, Deno, and the resolver
+script. The root `requirements.txt` still points to
+`requirements-media-resolver.txt` for generic Python tooling without duplicating
+versions. The script reads Railway's `PORT` and `RAILWAY_PUBLIC_DOMAIN`
+automatically.
 
 Recommended start command:
 

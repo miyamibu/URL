@@ -130,6 +130,12 @@ if [[ -f render.yaml ]]; then
   fi
 fi
 
+if [[ -f railway.json ]]; then
+  require_policy_marker "railway.json" '"builder": "DOCKERFILE"' "Railway uses an explicit Dockerfile builder"
+  require_policy_marker "railway.json" '"dockerfilePath": "Railway.Dockerfile"' "Railway uses the resolver-only Dockerfile"
+  require_file "Railway.Dockerfile"
+fi
+
 if grep -q "Final status: REPO_GO" docs/release/repo-go-evidence.md 2>/dev/null; then
   ok "REPO_GO evidence status recorded"
 else

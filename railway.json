@@ -1,11 +1,10 @@
 {
   "$schema": "https://railway.com/railway.schema.json",
   "build": {
-    "builder": "RAILPACK",
-    "buildCommand": "DENO_INSTALL=$PWD/.deno python scripts/install_deno_for_nixpacks.py"
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Railway.Dockerfile"
   },
   "deploy": {
-    "startCommand": "PATH=$PWD/.deno/bin:$PATH python scripts/media_resolver_backend.py",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",
