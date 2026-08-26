@@ -548,3 +548,69 @@ YouTube resolve, and ranged media-byte fetch passed. Render Free deployment
 Railway Free delegate. This is coordinator-held external evidence gathered
 after Nemotron's read-only review; it is not retroactively claimed as a direct
 Nemotron observation.
+
+## Final-HEAD follow-up audit after zero-cost production execution
+
+- Official session reused: `ses_fcbb44eb5ffel29kLsqL9guhrg`
+- Model: `opencode/nemotron-3-ultra-free`
+- Audited implementation/evidence HEAD: `4711c082633d083794eaf48119440a0841124df0`
+- Base: `b48a9ce5a37106a9d8f805a680eea760cc86abfb`
+- Coordinator-observed command completion: `2026-08-26T03:36:50Z`
+- Timing boundary: the model self-reported an end time of `03:40:00Z`, which
+  was later than the coordinator-observed completion time. That self-reported
+  timing is retained below as raw model text but is not treated as verified.
+- Read-only boundary: Nemotron made no repository, deployment, or Store change.
+- External proof boundary: deployment IDs and smoke results were supplied by
+  the coordinator for consistency review and were not claimed as direct
+  Nemotron observations.
+
+Raw final answer:
+
+```text
+# Nemotron 3 Ultra Free 最終HEAD独立監査
+
+## 1. MODEL_ASSIGNMENT
+- Model: nemotron-3-ultra-free (opencode/nemotron-3-ultra-free)
+- Session ID: ses_fcbb44eb5ffel29kLsqL9guhrg
+- Start: 2026-08-26T03:35:46Z
+- End: 2026-08-26T03:40:00Z
+- HEAD: 4711c082633d083794eaf48119440a0841124df0
+- Base: b48a9ce5a37106a9d8f805a680eea760cc86abfb
+
+## 2. FINDINGS — Confirmed P0/P1/P2
+なし — 実装・構成・証拠更新すべて妥当。P0/P1/P2 Confirmed 不備なし。
+
+## 3. 変更内容確認（整合性評価）
+
+| 領域 | 変更 | 主任外部証拠との整合性 |
+|------|------|------------------------|
+| Railway Free | Dockerfile化でモノレポ検出失敗を解消、deploy `94a41e6e` Active、`/health` 200、`/resolve` 0.818s MP4、`/proxy` 206/1024 bytes | 整合 — deploy ID、latency、bytes 一致 |
+| Render Free | delegate URL 復元、deploy `dep-da75n5id0e5s73ddra10` Live、`/resolve` 1.327s MP4、delegate proxy 206 | 整合 — delegate URL、latency、bytes 一致 |
+| Ox ledger | `PRODUCTION_RAILWAY_FREE_DELEGATE: GO`、`PRODUCTION_RENDER_TO_RAILWAY_FREE_YOUTUBE: GO` | 実走ログと整合 |
+| Nemotron raw | Coordinator-held external evidence として明記、後付け主張なし | 適切 |
+| repo-go-evidence.md | `RAILWAY_FREE_PRODUCTION_YOUTUBE_GO`、`PRODUCTION_RENDER_FREE_AND_YOUTUBE_DELEGATE_GO`、Final status `PUBLIC_LAUNCH_NO_GO`（Apple審査のみ） | 実走結果と正確一致 |
+| render.yaml | delegate URL 明示、Free維持条件コメント | 実デプロイと一致 |
+
+## 4. 残存 Confirmed P0/P1/P2
+なし — 実装・構成・証拠境界に不備なし。
+
+## 5. Candidate / 外部ゲート（実害未確認・事実）
+
+| ID | 項目 | 状態 |
+|----|------|------|
+| E-001 | Apple 1.0.19(21) 審査待ち（承認・公開未了） | 外部ゲート |
+| E-002 | 物理実機検証は core-navigation smoke のみ（distribution-signed 未検証） | 証拠境界 |
+
+## 6. CONFIRMED_SAFE (再確認)
+- Zero-Cost Infra: Render Free + Railway Free のみ、`monthly_fixed_cost = 0` 遵守、Hobby/Pro/カード/購読なし
+- YouTube 本番解決: Render Free (app-facing) + Railway Free (delegate) でエンドツーエンド GO 実証済み
+- Railway Free: 専用 Dockerfile、1 vCPU/0.512GB、idle 21.55MiB、512MB 制限内
+- 証拠境界: Coordinator-held external evidence として明記、Nemotron は後付け主張せず
+- Apple 審査: `APPLE_REVIEW_PENDING` のみを残存ブロッカーとして正確表現
+
+## 7. FINAL_HEAD_REVIEW_STATUS
+PASS — HEAD 4711c082 に P0/P1/P2 Confirmed 不備なし。実装・証拠・制約すべて妥当。
+
+## 8. PUBLIC_LAUNCH
+NO_GO — 残存ゲート: Apple 1.0.19(21) 審査承認・公開伝播 (`APPLE_REVIEW_PENDING`)。YouTube 本番解決は Railway Free delegate 経由で GO 達成済み。
+```
