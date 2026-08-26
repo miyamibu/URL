@@ -245,6 +245,33 @@ def _mime_type(path: pathlib.Path) -> str:
     return "image/jpeg"
 
 
+def _single_byte_range(value: str, size: int) -> tuple[int, int] | None:
+    """Parse one HTTP bytes range and clamp its inclusive end to the file."""
+    match = re.fullmatch(r"bytes=(\d*)-(\d*)", value.strip())
+    if match is None or size <= 0:
+        return None
+    start_text, end_text = match.groups()
+    # Bound integer parsing so a maliciously large Range header cannot spend
+    # disproportionate CPU or trigger Python's decimal conversion limit.
+    if len(start_text) > 20 or len(end_text) > 20:
+        return None
+    if not start_text:
+        if not end_text:
+            return None
+        suffix_length = int(end_text)
+        if suffix_length <= 0:
+            return None
+        return max(0, size - suffix_length), size - 1
+
+    start = int(start_text)
+    if start >= size:
+        return None
+    end = int(end_text) if end_text else size - 1
+    if end < start:
+        return None
+    return start, min(end, size - 1)
+
+
 def _yt_dlp_cookie_options(provider: str) -> dict:
     provider_key = provider.upper().replace("-", "_")
     provider_cookie_file = _env_value(
@@ -2034,13 +2061,38 @@ class Handler(BaseHTTPRequestHandler):
             if path is None:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
-            self.send_response(HTTPStatus.OK)
+            file_size = path.stat().st_size
+            incoming_range = self.headers.get("Range")
+            selected_range = (
+                _single_byte_range(incoming_range, file_size)
+                if incoming_range
+                else None
+            )
+            if incoming_range and selected_range is None:
+                self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                self.send_header("Content-Range", f"bytes */{file_size}")
+                self.send_header("Accept-Ranges", "bytes")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+
+            start, end = selected_range or (0, max(0, file_size - 1))
+            content_length = end - start + 1 if file_size else 0
+            self.send_response(
+                HTTPStatus.PARTIAL_CONTENT if selected_range else HTTPStatus.OK
+            )
             self.send_header("Content-Type", _mime_type(path))
-            self.send_header("Content-Length", str(path.stat().st_size))
+            self.send_header("Content-Length", str(content_length))
+            self.send_header("Accept-Ranges", "bytes")
+            if selected_range:
+                self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
             self.end_headers()
             with path.open("rb") as file:
-                while chunk := file.read(1024 * 1024):
+                file.seek(start)
+                remaining = content_length
+                while remaining > 0 and (chunk := file.read(min(1024 * 1024, remaining))):
                     self.wfile.write(chunk)
+                    remaining -= len(chunk)
             return
         if self.path.startswith("/proxy/"):
             token = pathlib.Path(unquote(self.path.removeprefix("/proxy/"))).name

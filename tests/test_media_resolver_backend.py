@@ -920,6 +920,16 @@ class HandlerTest(unittest.TestCase):
     def setUp(self):
         media_resolver_backend.DIRECT_MEDIA_PROXIES.clear()
 
+    def test_single_byte_range_supports_open_suffix_and_clamped_ranges(self):
+        self.assertEqual(media_resolver_backend._single_byte_range("bytes=8-", 10), (8, 9))
+        self.assertEqual(media_resolver_backend._single_byte_range("bytes=-3", 10), (7, 9))
+        self.assertEqual(media_resolver_backend._single_byte_range("bytes=0-99", 10), (0, 9))
+
+    def test_single_byte_range_rejects_oversized_integers(self):
+        huge = "9" * 10_000
+        self.assertIsNone(media_resolver_backend._single_byte_range(f"bytes={huge}-", 10))
+        self.assertIsNone(media_resolver_backend._single_byte_range(f"bytes=-{huge}", 10))
+
     def test_head_health_returns_ok_for_render_readiness(self):
         with tempfile.TemporaryDirectory() as tmp:
             media_resolver_backend.Handler.resolver = media_resolver_backend.MediaResolver(
@@ -970,6 +980,63 @@ class HandlerTest(unittest.TestCase):
                 self.assertEqual(body["youtube"]["innertube"], {"status": "failed", "at": 123})
                 self.assertNotIn("sensitive diagnostic", repr(body))
                 connection.close()
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+    def test_cached_file_supports_bounded_byte_range(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_dir = pathlib.Path(tmp)
+            (cache_dir / "video.mp4").write_bytes(b"0123456789")
+            media_resolver_backend.Handler.resolver = media_resolver_backend.MediaResolver(
+                cache_dir,
+                "https://example.test",
+            )
+            server = media_resolver_backend.ThreadingHTTPServer(
+                ("127.0.0.1", 0),
+                media_resolver_backend.Handler,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                connection.request("GET", "/files/video.mp4", headers={"Range": "bytes=2-5"})
+                response = connection.getresponse()
+                self.assertEqual(response.status, 206)
+                self.assertEqual(response.getheader("Content-Range"), "bytes 2-5/10")
+                self.assertEqual(response.getheader("Accept-Ranges"), "bytes")
+                self.assertEqual(response.getheader("Content-Length"), "4")
+                self.assertEqual(response.read(), b"2345")
+                connection.close()
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+    def test_cached_file_rejects_unsatisfiable_or_multiple_ranges(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_dir = pathlib.Path(tmp)
+            (cache_dir / "video.mp4").write_bytes(b"0123456789")
+            media_resolver_backend.Handler.resolver = media_resolver_backend.MediaResolver(
+                cache_dir,
+                "https://example.test",
+            )
+            server = media_resolver_backend.ThreadingHTTPServer(
+                ("127.0.0.1", 0),
+                media_resolver_backend.Handler,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                for value in ("bytes=10-12", "bytes=0-1,4-5"):
+                    connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                    connection.request("GET", "/files/video.mp4", headers={"Range": value})
+                    response = connection.getresponse()
+                    self.assertEqual(response.status, 416)
+                    self.assertEqual(response.getheader("Content-Range"), "bytes */10")
+                    self.assertEqual(response.read(), b"")
+                    connection.close()
             finally:
                 server.shutdown()
                 thread.join(timeout=5)
