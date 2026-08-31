@@ -56,6 +56,13 @@ Phase 1a/1b の URL 保存契約をコア不変条件として守りつつ、承
 - Prefer emulator, throwaway test device/user profile, or a separate test-only application id for destructive instrumentation.
 - If physical-device validation is requested, first state whether the planned commands preserve app data. If they do not, stop and ask before running them.
 
+## Android Production-Only User Verification
+- The user's normal Android verification path is the publicly released Google Play production app for `jp.miyamibu.urlalbum`, operated as an ordinary user after launch.
+- Do not enroll or retain the user in internal, closed, or open testing; do not install tester-track builds or Debug APKs; and do not use debug entitlement overrides, mock/test models, or test-only states for future user verification.
+- Do not use `connectedDebugAndroidTest`, instrumentation DB resets, `clearAllTables()`, `pm clear`, uninstall/reinstall, signature-changing replacement, or any other operation that can erase or replace the normal user's app sandbox.
+- Treat saved URLs, history, tags, profile/settings, downloads, and local databases on the physical Android device as irreplaceable user data. Use only non-destructive read-only inspection and ordinary production-app interaction unless the user explicitly changes this policy in a later conversation.
+- After launch, verify behavior on the live production build. Do not reintroduce internal-test gates or excessive prelaunch test procedures as a prerequisite for ordinary user confirmation.
+
 ## Device Install
 - When installing on a physical iPhone, use `.agents/skills/iphone-device-install/SKILL.md` first. Prefer the existing signed `Debug-iphoneos/URLSaveriOS.app` + `devicectl device install app` route before trying a fresh Xcode device build.
 
