@@ -1,0 +1,14 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e3]:
+      - heading "りんばむ 管理" [level=1] [ref=e4]
+      - paragraph [ref=e5]: 優待コード管理には管理者アカウントでのサインインが必要です。
+      - generic [ref=e6]:
+        - generic [ref=e7]:
+          - text: メール
+          - textbox "メール" [ref=e8]
+        - generic [ref=e9]:
+          - text: パスワード
+          - textbox "パスワード" [ref=e10]
+        - button "サインイン" [ref=e11] [cursor=pointer]
+  - alert [ref=e12]

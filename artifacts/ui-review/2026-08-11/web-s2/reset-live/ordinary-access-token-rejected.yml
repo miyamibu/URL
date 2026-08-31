@@ -1,0 +1,5 @@
+- main [ref=e2]:
+  - generic [ref=e3]:
+    - heading "パスワード再設定" [level=1] [ref=e4]
+    - paragraph [ref=e5]: 新しいパスワードを入力してください。
+    - status [ref=e6]: 再設定リンクの有効期限が切れているか、リンクが正しくありません。もう一度メールを送信してください。

@@ -1,0 +1,19 @@
+### Page
+- Page URL: https://miyamibu.xyz/auth/reset-password
+- Page Title: りんばむ パスワード再設定
+### Snapshot
+```yaml
+- main [ref=e2]:
+  - generic [ref=e3]:
+    - heading "パスワード再設定" [level=1] [ref=e4]
+    - paragraph [ref=e5]: 新しいパスワードを入力してください。
+    - status [ref=e6]: リンク確認が完了しました。新しいパスワードを設定できます。
+    - generic [ref=e7]:
+      - generic [ref=e8]:
+        - text: 新しいパスワード
+        - textbox "新しいパスワード" [active] [ref=e9]
+      - generic [ref=e10]:
+        - text: 新しいパスワード（確認）
+        - textbox "新しいパスワード（確認）" [ref=e11]
+      - button "パスワードを変更する" [ref=e12] [cursor=pointer]
+```

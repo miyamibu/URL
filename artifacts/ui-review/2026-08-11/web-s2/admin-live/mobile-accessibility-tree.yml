@@ -1,0 +1,750 @@
+- generic [active] [ref=e1]:
+  - link "本文へ移動" [ref=e2] [cursor=pointer]:
+    - /url: "#main-content"
+  - banner [ref=e3]:
+    - generic [ref=e4]:
+      - link "りんばむ 使い方の先頭へ" [ref=e5] [cursor=pointer]:
+        - /url: "#top"
+        - generic [ref=e6]: り
+        - generic [ref=e7]: りんばむ
+        - generic [ref=e8]: 使い方
+      - navigation "サイト内ナビゲーション" [ref=e9]:
+        - link "はじめる" [ref=e10] [cursor=pointer]:
+          - /url: "#quick-start"
+        - link "機能を探す" [ref=e11] [cursor=pointer]:
+          - /url: "#feature-index"
+        - link "共有と権限" [ref=e12] [cursor=pointer]:
+          - /url: "#sharing"
+        - link "困ったとき" [ref=e13] [cursor=pointer]:
+          - /url: "#help"
+  - generic [ref=e14]:
+    - complementary "ページ内目次" [ref=e15]:
+      - generic [ref=e16]: GUIDE MAP
+      - navigation [ref=e17]:
+        - link "りんばむとは" [ref=e18] [cursor=pointer]:
+          - /url: "#top"
+        - link "まず1件保存する" [ref=e19] [cursor=pointer]:
+          - /url: "#quick-start"
+        - link "やりたいことから探す" [ref=e20] [cursor=pointer]:
+          - /url: "#feature-index"
+        - link "AndroidとiPhone" [ref=e21] [cursor=pointer]:
+          - /url: "#differences"
+        - link "共有・権限" [ref=e22] [cursor=pointer]:
+          - /url: "#sharing"
+        - link "データとExport" [ref=e23] [cursor=pointer]:
+          - /url: "#data"
+        - link "困ったとき" [ref=e24] [cursor=pointer]:
+          - /url: "#help"
+        - link "用語集" [ref=e25] [cursor=pointer]:
+          - /url: "#glossary"
+      - generic [ref=e26]:
+        - generic [ref=e27]: 要点
+        - paragraph [ref=e28]: 必要な記事だけ開けます。説明は「場所・手順・結果・注意」の順です。
+    - main [ref=e29]:
+      - region [ref=e30]:
+        - generic [ref=e31]:
+          - generic [ref=e32]:
+            - generic [ref=e33]: 保存から再発見までの操作ガイド
+            - heading "保存したリンクを、 あとで迷わず見つける。" [level=1] [ref=e35]:
+              - generic [ref=e36]: 保存したリンクを、
+              - emphasis [ref=e37]: あとで迷わず見つける。
+            - paragraph [ref=e38]: りんばむは、共有や手入力でリンクを保存し、必要なときに検索して開き直すアプリです。いま知りたい操作だけを選んで進めます。
+            - group "説明する端末を選ぶ" [ref=e39]:
+              - generic [ref=e40]: あなたの端末に合わせる
+              - generic [ref=e41]:
+                - button "Android" [pressed] [ref=e42] [cursor=pointer]
+                - button "iPhone" [ref=e43] [cursor=pointer]
+            - generic [ref=e44]:
+              - link "最初の1件を保存する" [ref=e45] [cursor=pointer]:
+                - /url: "#quick-start"
+              - link "目的から探す" [ref=e46] [cursor=pointer]:
+                - /url: "#feature-index"
+          - complementary "りんばむの最短ルート" [ref=e47]:
+            - generic [ref=e48]:
+              - generic [ref=e49]: 最短ルート
+              - strong [ref=e50]: 3つだけ覚える
+            - list [ref=e51]:
+              - listitem [ref=e52]:
+                - generic [ref=e53]: "01"
+                - generic [ref=e54]:
+                  - strong [ref=e55]: 保存
+                  - generic [ref=e56]: 共有または「＋」から
+              - listitem [ref=e57]:
+                - generic [ref=e58]: "02"
+                - generic [ref=e59]:
+                  - strong [ref=e60]: 整理
+                  - generic [ref=e61]: 必要なら自作タグで
+              - listitem [ref=e62]:
+                - generic [ref=e63]: "03"
+                - generic [ref=e64]:
+                  - strong [ref=e65]: 再発見
+                  - generic [ref=e66]: 検索 → 詳細 → 開く
+            - link "3ステップを見る" [ref=e67] [cursor=pointer]:
+              - /url: "#quick-start"
+      - search "使い方を検索" [ref=e68]:
+        - generic [ref=e69]: ガイド内検索
+        - generic [ref=e70]: やりたいことをそのまま入力
+        - searchbox "やりたいことをそのまま入力" [ref=e71]
+      - region [ref=e72]:
+        - generic [ref=e73]:
+          - generic [ref=e74]:
+            - generic [ref=e75]: START HERE
+            - heading "保存から再発見まで、3ステップ" [level=2] [ref=e76]
+          - paragraph [ref=e77]: 整理は任意です。まず保存し、あとから必要なときに探せれば十分です。
+        - figure "保存 → 整理 → 再発見 りんばむの役割を1枚で確認できます。" [ref=e78]:
+          - img "リンクを保存し、タグで整理し、検索で見つけ直す流れの図解" [ref=e79]
+          - generic [ref=e80]:
+            - strong [ref=e81]: 保存 → 整理 → 再発見
+            - generic [ref=e82]: りんばむの役割を1枚で確認できます。
+        - generic [ref=e83]:
+          - link "STEP 01 リンクを保存 共有 → りんばむ → 保存先タグ（任意） → 保存 手順を見る" [ref=e84] [cursor=pointer]:
+            - /url: "#share-save"
+            - generic [ref=e85]: STEP 01
+            - heading "リンクを保存" [level=3] [ref=e86]
+            - paragraph [ref=e87]: 共有 → りんばむ → 保存先タグ（任意） → 保存
+            - generic [ref=e88]: 手順を見る
+          - link "STEP 02 必要なら整理 タグ管理 → 自作タグを作る → リンクに付ける 手順を見る" [ref=e89] [cursor=pointer]:
+            - /url: "#local-tags"
+            - generic [ref=e90]: STEP 02
+            - heading "必要なら整理" [level=3] [ref=e91]
+            - paragraph [ref=e92]: タグ管理 → 自作タグを作る → リンクに付ける
+            - generic [ref=e93]: 手順を見る
+          - link "STEP 03 探して開く 検索 → カード → 詳細 → 「開く」 手順を見る" [ref=e94] [cursor=pointer]:
+            - /url: "#find-open"
+            - generic [ref=e95]: STEP 03
+            - heading "探して開く" [level=3] [ref=e96]
+            - paragraph [ref=e97]: 検索 → カード → 詳細 → 「開く」
+            - generic [ref=e98]: 手順を見る
+        - generic [ref=e99]:
+          - strong [ref=e100]: 重要
+          - paragraph [ref=e101]: 共有でりんばむを選んだだけでは確定しません。「保存先タグ」のあとに、必ず「保存」を押してください。
+      - region [ref=e102]:
+        - generic [ref=e103]:
+          - generic [ref=e104]:
+            - generic [ref=e105]: FIND YOUR WAY
+            - heading "やりたいことから探す" [level=2] [ref=e106]
+          - paragraph [ref=e107]: 条件がある機能は、カードの先頭に表示しています。
+        - generic [ref=e108]:
+          - generic [ref=e109]: 目的・利用条件
+          - group "目的と利用条件で絞り込む" [ref=e110]:
+            - button "すべて" [pressed] [ref=e111] [cursor=pointer]
+            - button "アカウント不要" [ref=e112] [cursor=pointer]
+            - button "条件付き" [ref=e113] [cursor=pointer]
+            - button "サインイン必須" [ref=e114] [cursor=pointer]
+            - button "共有機能" [ref=e115] [cursor=pointer]
+            - button "整理" [ref=e116] [cursor=pointer]
+            - button "探す" [ref=e117] [cursor=pointer]
+            - button "データ管理" [ref=e118] [cursor=pointer]
+        - generic [ref=e119]:
+          - strong [ref=e120]: "14"
+          - text: 件の説明
+          - generic [ref=e121]: ／ Androidの手順を表示中
+        - generic [ref=e122]:
+          - generic [ref=e123]:
+            - heading "保存する" [level=3] [ref=e124]
+            - generic [ref=e125]:
+              - link "01 アカウント不要 他のアプリからリンクを保存する 共有メニューからりんばむを選び、最後に「保存」を押します。タグ選びはあとからでも大丈夫です。 開く" [ref=e126] [cursor=pointer]:
+                - /url: "#share-save"
+                - generic [ref=e127]: "01"
+                - generic [ref=e128]:
+                  - generic [ref=e130]:
+                    - generic [ref=e131]: ●
+                    - text: アカウント不要
+                  - strong [ref=e132]: 他のアプリからリンクを保存する
+                  - generic [ref=e133]: 共有メニューからりんばむを選び、最後に「保存」を押します。タグ選びはあとからでも大丈夫です。
+                - generic [ref=e134]: 開く
+              - link "02 アカウント不要 「＋」からURLやテキストを保存する 共有メニューが見つからないときは、ホーム下部中央の「＋」から直接入力できます。 開く" [ref=e135] [cursor=pointer]:
+                - /url: "#manual-save"
+                - generic [ref=e136]: "02"
+                - generic [ref=e137]:
+                  - generic [ref=e139]:
+                    - generic [ref=e140]: ●
+                    - text: アカウント不要
+                  - strong [ref=e141]: 「＋」からURLやテキストを保存する
+                  - generic [ref=e142]: 共有メニューが見つからないときは、ホーム下部中央の「＋」から直接入力できます。
+                - generic [ref=e143]: 開く
+          - generic [ref=e144]:
+            - heading "探して開く" [level=3] [ref=e145]
+            - link "03 アカウント不要 保存したリンクを探して開く カードをタップしただけでは外部ページは開きません。詳細画面で内容を確認してから「開く」を押します。 開く" [ref=e147] [cursor=pointer]:
+              - /url: "#find-open"
+              - generic [ref=e148]: "03"
+              - generic [ref=e149]:
+                - generic [ref=e151]:
+                  - generic [ref=e152]: ●
+                  - text: アカウント不要
+                - strong [ref=e153]: 保存したリンクを探して開く
+                - generic [ref=e154]: カードをタップしただけでは外部ページは開きません。詳細画面で内容を確認してから「開く」を押します。
+              - generic [ref=e155]: 開く
+          - generic [ref=e156]:
+            - heading "整理する" [level=3] [ref=e157]
+            - generic [ref=e158]:
+              - link "04 アカウント不要 自作タグで整理する 自作タグは端末内でリンクを分類するための整理道具です。共有タグとは別に扱います。 開く" [ref=e159] [cursor=pointer]:
+                - /url: "#local-tags"
+                - generic [ref=e160]: "04"
+                - generic [ref=e161]:
+                  - generic [ref=e163]:
+                    - generic [ref=e164]: ●
+                    - text: アカウント不要
+                  - strong [ref=e165]: 自作タグで整理する
+                  - generic [ref=e166]: 自作タグは端末内でリンクを分類するための整理道具です。共有タグとは別に扱います。
+                - generic [ref=e167]: 開く
+              - link "10 アカウント不要 タイトルとメモを整える 保存後の詳細画面で、あとから見つけやすいタイトルと補足メモを追加できます。 開く" [ref=e168] [cursor=pointer]:
+                - /url: "#edit-title-memo"
+                - generic [ref=e169]: "10"
+                - generic [ref=e170]:
+                  - generic [ref=e172]:
+                    - generic [ref=e173]: ●
+                    - text: アカウント不要
+                  - strong [ref=e174]: タイトルとメモを整える
+                  - generic [ref=e175]: 保存後の詳細画面で、あとから見つけやすいタイトルと補足メモを追加できます。
+                - generic [ref=e176]: 開く
+          - generic [ref=e177]:
+            - heading "しまう・消す・戻す" [level=3] [ref=e178]
+            - link "05 アカウント不要 しまう・消す・元に戻す 右と左のスワイプは意味が違います。迷ったら選択モードのボタン操作も使えます。 開く" [ref=e180] [cursor=pointer]:
+              - /url: "#archive-delete"
+              - generic [ref=e181]: "05"
+              - generic [ref=e182]:
+                - generic [ref=e184]:
+                  - generic [ref=e185]: ●
+                  - text: アカウント不要
+                - strong [ref=e186]: しまう・消す・元に戻す
+                - generic [ref=e187]: 右と左のスワイプは意味が違います。迷ったら選択モードのボタン操作も使えます。
+              - generic [ref=e188]: 開く
+          - generic [ref=e189]:
+            - heading "データ管理" [level=3] [ref=e190]
+            - link "06 アカウント不要（共有タグは除外条件あり） 保存データを書き出す エクスポートは、選んだ保存リンクをファイルに書き出す機能です。AI-safe Exportは復元バックアップではありません。 開く" [ref=e192] [cursor=pointer]:
+              - /url: "#export"
+              - generic [ref=e193]: "06"
+              - generic [ref=e194]:
+                - generic [ref=e196]:
+                  - generic [ref=e197]: ●
+                  - text: アカウント不要（共有タグは除外条件あり）
+                - strong [ref=e198]: 保存データを書き出す
+                - generic [ref=e199]: エクスポートは、選んだ保存リンクをファイルに書き出す機能です。AI-safe Exportは復元バックアップではありません。
+              - generic [ref=e200]: 開く
+          - generic [ref=e201]:
+            - heading "共有・権限" [level=3] [ref=e202]
+            - generic [ref=e203]:
+              - link "07 サインイン・クラウド設定・権限が必要 共有タグ・グループ・招待を使う 共有機能は、端末内の自作タグとは別のクラウド機能です。条件を満たさない場合は表示されない/利用できないことがあります。 開く" [ref=e204] [cursor=pointer]:
+                - /url: "#shared-access"
+                - generic [ref=e205]: "07"
+                - generic [ref=e206]:
+                  - generic [ref=e208]:
+                    - generic [ref=e209]: ●
+                    - text: サインイン・クラウド設定・権限が必要
+                  - strong [ref=e210]: 共有タグ・グループ・招待を使う
+                  - generic [ref=e211]: 共有機能は、端末内の自作タグとは別のクラウド機能です。条件を満たさない場合は表示されない/利用できないことがあります。
+                - generic [ref=e212]: 開く
+              - link "08 有効な招待リンク・サインインが必要 招待を受けて共有タグに参加する 招待リンクを開き、必要ならサインインしてから参加します。サインイン前に開いた招待は保留してあとで再開できます。 開く" [ref=e213] [cursor=pointer]:
+                - /url: "#shared-invite"
+                - generic [ref=e214]: "08"
+                - generic [ref=e215]:
+                  - generic [ref=e217]:
+                    - generic [ref=e218]: ●
+                    - text: 有効な招待リンク・サインインが必要
+                  - strong [ref=e219]: 招待を受けて共有タグに参加する
+                  - generic [ref=e220]: 招待リンクを開き、必要ならサインインしてから参加します。サインイン前に開いた招待は保留してあとで再開できます。
+                - generic [ref=e221]: 開く
+              - link "11 サインイン・オーナー権限・クラウド設定が必要 共有タグの招待を発行する 共有タグのオーナーが、参加者向けの招待を発行する手順です。招待情報は秘密として扱います。 開く" [ref=e222] [cursor=pointer]:
+                - /url: "#shared-tag-invite-create"
+                - generic [ref=e223]: "11"
+                - generic [ref=e224]:
+                  - generic [ref=e226]:
+                    - generic [ref=e227]: ●
+                    - text: サインイン・オーナー権限・クラウド設定が必要
+                  - strong [ref=e228]: 共有タグの招待を発行する
+                  - generic [ref=e229]: 共有タグのオーナーが、参加者向けの招待を発行する手順です。招待情報は秘密として扱います。
+                - generic [ref=e230]: 開く
+              - link "12 サインイン・ロールにより操作が異なる 退出・削除・所有権移譲を選ぶ 共有タグから自分だけ退出する操作と、タグ自体を削除する操作を分けて確認します。 開く" [ref=e231] [cursor=pointer]:
+                - /url: "#shared-tag-leave-delete-transfer"
+                - generic [ref=e232]: "12"
+                - generic [ref=e233]:
+                  - generic [ref=e235]:
+                    - generic [ref=e236]: ●
+                    - text: サインイン・ロールにより操作が異なる
+                  - strong [ref=e237]: 退出・削除・所有権移譲を選ぶ
+                  - generic [ref=e238]: 共有タグから自分だけ退出する操作と、タグ自体を削除する操作を分けて確認します。
+                - generic [ref=e239]: 開く
+              - link "13 サインイン・確認操作が必要 アカウント削除と端末内クリーンアップを確認する アカウント削除は共有データの所有権や端末内の後処理に影響するため、状態を分けて確認します。 開く" [ref=e240] [cursor=pointer]:
+                - /url: "#account-auth-delete"
+                - generic [ref=e241]: "13"
+                - generic [ref=e242]:
+                  - generic [ref=e244]:
+                    - generic [ref=e245]: ●
+                    - text: サインイン・確認操作が必要
+                  - strong [ref=e246]: アカウント削除と端末内クリーンアップを確認する
+                  - generic [ref=e247]: アカウント削除は共有データの所有権や端末内の後処理に影響するため、状態を分けて確認します。
+                - generic [ref=e248]: 開く
+          - generic [ref=e249]:
+            - heading "困ったとき" [level=3] [ref=e250]
+            - generic [ref=e251]:
+              - link "09 アカウント不要 保存結果・重複を確認する 保存後の通知を読み、新規・重複・アーカイブ済み・失敗を切り分けます。 開く" [ref=e252] [cursor=pointer]:
+                - /url: "#save-result-duplicate"
+                - generic [ref=e253]: "09"
+                - generic [ref=e254]:
+                  - generic [ref=e256]:
+                    - generic [ref=e257]: ●
+                    - text: アカウント不要
+                  - strong [ref=e258]: 保存結果・重複を確認する
+                  - generic [ref=e259]: 保存後の通知を読み、新規・重複・アーカイブ済み・失敗を切り分けます。
+                - generic [ref=e260]: 開く
+              - link "14 アカウント不要（一部の共有機能を除く） 保存・検索・取得で困ったとき 表示された文言から、次に確認する場所を切り分けます。 開く" [ref=e261] [cursor=pointer]:
+                - /url: "#troubleshooting"
+                - generic [ref=e262]: "14"
+                - generic [ref=e263]:
+                  - generic [ref=e265]:
+                    - generic [ref=e266]: ●
+                    - text: アカウント不要（一部の共有機能を除く）
+                  - strong [ref=e267]: 保存・検索・取得で困ったとき
+                  - generic [ref=e268]: 表示された文言から、次に確認する場所を切り分けます。
+                - generic [ref=e269]: 開く
+      - region [ref=e270]:
+        - generic [ref=e271]:
+          - generic [ref=e272]:
+            - generic [ref=e273]: STEP BY STEP
+            - heading "詳しい使い方" [level=2] [ref=e274]
+            - paragraph [ref=e275]: Androidのボタン名と手順です。必要な記事だけ開いてください。
+          - generic [ref=e276]:
+            - button "すべて開く" [ref=e277] [cursor=pointer]
+            - button "すべて閉じる" [ref=e278] [cursor=pointer]
+        - generic [ref=e279]:
+          - article [ref=e280]:
+            - generic [ref=e281]:
+              - generic [ref=e282]:
+                - generic [ref=e283]: "01"
+                - generic [ref=e284]:
+                  - generic [ref=e285]: 保存する
+                  - heading "他のアプリからリンクを保存する" [level=3] [ref=e286]
+                  - paragraph [ref=e287]: 共有メニューからりんばむを選び、最後に「保存」を押します。タグ選びはあとからでも大丈夫です。
+              - button "手順を閉じる" [expanded] [ref=e288] [cursor=pointer]
+            - generic [ref=e289]:
+              - generic [ref=e290]:
+                - generic [ref=e291]: ●
+                - text: アカウント不要
+              - generic [ref=e292]: Androidの手順
+            - generic [ref=e293]:
+              - generic [ref=e294]:
+                - generic [ref=e295]:
+                  - generic [ref=e296]:
+                    - generic [ref=e297]: STEP 1・はじめる場所
+                    - strong [ref=e298]: 共有を開く
+                    - paragraph [ref=e299]: 保存したいURLが表示されているアプリで、共有ボタンをタップします。
+                  - generic [ref=e300]: 続きの操作
+                  - list [ref=e302]:
+                    - listitem [ref=e303]:
+                      - strong [ref=e304]: りんばむを選ぶ
+                      - generic [ref=e305]: 共有先の一覧から「りんばむ」を選びます。
+                    - listitem [ref=e306]:
+                      - strong [ref=e307]: 保存を確定する
+                      - generic [ref=e308]: 「保存先タグ」が表示されます。タグは任意で選び、最後に「保存」をタップします。
+                  - generic [ref=e309]:
+                    - generic [ref=e310]: 操作後
+                    - paragraph [ref=e311]: 「保存しました」と表示され、ホームにカードが追加されます。複数URLの場合は新規・既存・復元・失敗の集計が表示されます。
+                  - generic [ref=e312]:
+                    - generic [ref=e313]: 注意
+                    - paragraph [ref=e314]: Androidでは共有受信後に保存先タグ画面が開きます。りんばむを選んだだけでは保存確定になりません。
+                - complementary "画面画像の証拠状態" [ref=e315]:
+                  - generic [ref=e316]: 画像証拠
+                  - strong [ref=e317]: 実画面ではありません
+                  - paragraph [ref=e318]: 現行UI契約と一致しない旧版画像は掲載していません。以下の本文手順を正本として確認してください。
+                  - generic [ref=e319]: 画像がなくても、左側の手順だけで操作できます。
+              - generic [ref=e320]:
+                - generic [ref=e321]: iPhoneとの違い
+                - paragraph [ref=e322]: iPhoneでは共有拡張の画面から保存します。画像は公開可能な現行サニタイズ版が未取得のため、本文で操作を案内しています。
+          - article [ref=e323]:
+            - generic [ref=e324]:
+              - generic [ref=e325]:
+                - generic [ref=e326]: "02"
+                - generic [ref=e327]:
+                  - generic [ref=e328]: 保存する
+                  - heading "「＋」からURLやテキストを保存する" [level=3] [ref=e329]
+                  - paragraph [ref=e330]: 共有メニューが見つからないときは、ホーム下部中央の「＋」から直接入力できます。
+              - button "手順を見る" [ref=e331] [cursor=pointer]
+            - generic [ref=e332]:
+              - generic [ref=e333]:
+                - generic [ref=e334]: ●
+                - text: アカウント不要
+              - generic [ref=e335]: Androidの手順
+          - article [ref=e336]:
+            - generic [ref=e337]:
+              - generic [ref=e338]:
+                - generic [ref=e339]: "03"
+                - generic [ref=e340]:
+                  - generic [ref=e341]: 探して開く
+                  - heading "保存したリンクを探して開く" [level=3] [ref=e342]
+                  - paragraph [ref=e343]: カードをタップしただけでは外部ページは開きません。詳細画面で内容を確認してから「開く」を押します。
+              - button "手順を見る" [ref=e344] [cursor=pointer]
+            - generic [ref=e345]:
+              - generic [ref=e346]:
+                - generic [ref=e347]: ●
+                - text: アカウント不要
+              - generic [ref=e348]: Androidの手順
+          - article [ref=e349]:
+            - generic [ref=e350]:
+              - generic [ref=e351]:
+                - generic [ref=e352]: "04"
+                - generic [ref=e353]:
+                  - generic [ref=e354]: 整理する
+                  - heading "自作タグで整理する" [level=3] [ref=e355]
+                  - paragraph [ref=e356]: 自作タグは端末内でリンクを分類するための整理道具です。共有タグとは別に扱います。
+              - button "手順を見る" [ref=e357] [cursor=pointer]
+            - generic [ref=e358]:
+              - generic [ref=e359]:
+                - generic [ref=e360]: ●
+                - text: アカウント不要
+              - generic [ref=e361]: Androidの手順
+          - article [ref=e362]:
+            - generic [ref=e363]:
+              - generic [ref=e364]:
+                - generic [ref=e365]: "05"
+                - generic [ref=e366]:
+                  - generic [ref=e367]: しまう・消す・戻す
+                  - heading "しまう・消す・元に戻す" [level=3] [ref=e368]
+                  - paragraph [ref=e369]: 右と左のスワイプは意味が違います。迷ったら選択モードのボタン操作も使えます。
+              - button "手順を見る" [ref=e370] [cursor=pointer]
+            - generic [ref=e371]:
+              - generic [ref=e372]:
+                - generic [ref=e373]: ●
+                - text: アカウント不要
+              - generic [ref=e374]: Androidの手順
+          - article [ref=e375]:
+            - generic [ref=e376]:
+              - generic [ref=e377]:
+                - generic [ref=e378]: "06"
+                - generic [ref=e379]:
+                  - generic [ref=e380]: データ管理
+                  - heading "保存データを書き出す" [level=3] [ref=e381]
+                  - paragraph [ref=e382]: エクスポートは、選んだ保存リンクをファイルに書き出す機能です。AI-safe Exportは復元バックアップではありません。
+              - button "手順を見る" [ref=e383] [cursor=pointer]
+            - generic [ref=e384]:
+              - generic [ref=e385]:
+                - generic [ref=e386]: ●
+                - text: アカウント不要（共有タグは除外条件あり）
+              - generic [ref=e387]: Androidの手順
+          - article [ref=e388]:
+            - generic [ref=e389]:
+              - generic [ref=e390]:
+                - generic [ref=e391]: "07"
+                - generic [ref=e392]:
+                  - generic [ref=e393]: 共有・権限
+                  - heading "共有タグ・グループ・招待を使う" [level=3] [ref=e394]
+                  - paragraph [ref=e395]: 共有機能は、端末内の自作タグとは別のクラウド機能です。条件を満たさない場合は表示されない/利用できないことがあります。
+              - button "手順を見る" [ref=e396] [cursor=pointer]
+            - generic [ref=e397]:
+              - generic [ref=e398]:
+                - generic [ref=e399]: ●
+                - text: サインイン・クラウド設定・権限が必要
+              - generic [ref=e400]: Androidの手順
+          - article [ref=e401]:
+            - generic [ref=e402]:
+              - generic [ref=e403]:
+                - generic [ref=e404]: "08"
+                - generic [ref=e405]:
+                  - generic [ref=e406]: 共有・権限
+                  - heading "招待を受けて共有タグに参加する" [level=3] [ref=e407]
+                  - paragraph [ref=e408]: 招待リンクを開き、必要ならサインインしてから参加します。サインイン前に開いた招待は保留してあとで再開できます。
+              - button "手順を見る" [ref=e409] [cursor=pointer]
+            - generic [ref=e410]:
+              - generic [ref=e411]:
+                - generic [ref=e412]: ●
+                - text: 有効な招待リンク・サインインが必要
+              - generic [ref=e413]: Androidの手順
+          - article [ref=e414]:
+            - generic [ref=e415]:
+              - generic [ref=e416]:
+                - generic [ref=e417]: "09"
+                - generic [ref=e418]:
+                  - generic [ref=e419]: 困ったとき
+                  - heading "保存結果・重複を確認する" [level=3] [ref=e420]
+                  - paragraph [ref=e421]: 保存後の通知を読み、新規・重複・アーカイブ済み・失敗を切り分けます。
+              - button "手順を見る" [ref=e422] [cursor=pointer]
+            - generic [ref=e423]:
+              - generic [ref=e424]:
+                - generic [ref=e425]: ●
+                - text: アカウント不要
+              - generic [ref=e426]: Androidの手順
+          - article [ref=e427]:
+            - generic [ref=e428]:
+              - generic [ref=e429]:
+                - generic [ref=e430]: "10"
+                - generic [ref=e431]:
+                  - generic [ref=e432]: 整理する
+                  - heading "タイトルとメモを整える" [level=3] [ref=e433]
+                  - paragraph [ref=e434]: 保存後の詳細画面で、あとから見つけやすいタイトルと補足メモを追加できます。
+              - button "手順を見る" [ref=e435] [cursor=pointer]
+            - generic [ref=e436]:
+              - generic [ref=e437]:
+                - generic [ref=e438]: ●
+                - text: アカウント不要
+              - generic [ref=e439]: Androidの手順
+          - article [ref=e440]:
+            - generic [ref=e441]:
+              - generic [ref=e442]:
+                - generic [ref=e443]: "11"
+                - generic [ref=e444]:
+                  - generic [ref=e445]: 共有・権限
+                  - heading "共有タグの招待を発行する" [level=3] [ref=e446]
+                  - paragraph [ref=e447]: 共有タグのオーナーが、参加者向けの招待を発行する手順です。招待情報は秘密として扱います。
+              - button "手順を見る" [ref=e448] [cursor=pointer]
+            - generic [ref=e449]:
+              - generic [ref=e450]:
+                - generic [ref=e451]: ●
+                - text: サインイン・オーナー権限・クラウド設定が必要
+              - generic [ref=e452]: Androidの手順
+          - article [ref=e453]:
+            - generic [ref=e454]:
+              - generic [ref=e455]:
+                - generic [ref=e456]: "12"
+                - generic [ref=e457]:
+                  - generic [ref=e458]: 共有・権限
+                  - heading "退出・削除・所有権移譲を選ぶ" [level=3] [ref=e459]
+                  - paragraph [ref=e460]: 共有タグから自分だけ退出する操作と、タグ自体を削除する操作を分けて確認します。
+              - button "手順を見る" [ref=e461] [cursor=pointer]
+            - generic [ref=e462]:
+              - generic [ref=e463]:
+                - generic [ref=e464]: ●
+                - text: サインイン・ロールにより操作が異なる
+              - generic [ref=e465]: Androidの手順
+          - article [ref=e466]:
+            - generic [ref=e467]:
+              - generic [ref=e468]:
+                - generic [ref=e469]: "13"
+                - generic [ref=e470]:
+                  - generic [ref=e471]: 共有・権限
+                  - heading "アカウント削除と端末内クリーンアップを確認する" [level=3] [ref=e472]
+                  - paragraph [ref=e473]: アカウント削除は共有データの所有権や端末内の後処理に影響するため、状態を分けて確認します。
+              - button "手順を見る" [ref=e474] [cursor=pointer]
+            - generic [ref=e475]:
+              - generic [ref=e476]:
+                - generic [ref=e477]: ●
+                - text: サインイン・確認操作が必要
+              - generic [ref=e478]: Androidの手順
+          - article [ref=e479]:
+            - generic [ref=e480]:
+              - generic [ref=e481]:
+                - generic [ref=e482]: "14"
+                - generic [ref=e483]:
+                  - generic [ref=e484]: 困ったとき
+                  - heading "保存・検索・取得で困ったとき" [level=3] [ref=e485]
+                  - paragraph [ref=e486]: 表示された文言から、次に確認する場所を切り分けます。
+              - button "手順を見る" [ref=e487] [cursor=pointer]
+            - generic [ref=e488]:
+              - generic [ref=e489]:
+                - generic [ref=e490]: ●
+                - text: アカウント不要（一部の共有機能を除く）
+              - generic [ref=e491]: Androidの手順
+      - region [ref=e492]:
+        - generic [ref=e493]:
+          - generic [ref=e494]:
+            - generic [ref=e495]: PLATFORM NOTES
+            - heading "AndroidとiPhoneの違い" [level=2] [ref=e496]
+          - paragraph [ref=e497]: 同じ目的でも、入口と画面遷移が異なります。
+        - generic "AndroidとiPhoneの操作比較。横にスクロールできます" [ref=e498]:
+          - table [ref=e499]:
+            - rowgroup [ref=e500]:
+              - row [ref=e501]:
+                - columnheader "やりたいこと" [ref=e502]
+                - columnheader "Android" [ref=e503]
+                - columnheader "iPhone" [ref=e505]
+            - rowgroup [ref=e507]:
+              - row [ref=e508]:
+                - rowheader "ほかのアプリから保存" [ref=e509]
+                - cell "共有先でりんばむを選び、「保存先タグ」から保存します。" [ref=e510]
+                - cell "共有先でりんばむを選び、Share Extension内で保存します。" [ref=e511]
+              - row [ref=e512]:
+                - rowheader "招待リンクを開く" [ref=e513]
+                - cell "リンクからアプリへ進み、参加内容を確認します。" [ref=e514]
+                - cell "Universal Linkからアプリへ進み、参加内容を確認します。" [ref=e515]
+              - row [ref=e516]:
+                - rowheader "このガイドの画像" [ref=e517]
+                - cell "旧版の参考画像がある記事では、撮影時期を明記して掲載します。" [ref=e518]
+                - cell "現在の公開版と照合できる安全な画像がないため、文章と図解で案内します。" [ref=e519]
+        - paragraph [ref=e520]: ボタン名はアプリ版やOSによって少し異なる場合があります。上部の端末切替で、自分の端末の手順を表示できます。
+      - region [ref=e521]:
+        - generic [ref=e522]:
+          - generic [ref=e523]:
+            - generic [ref=e524]: ACCOUNT & ACCESS
+            - heading "アカウント・共有・権限" [level=2] [ref=e525]
+          - paragraph [ref=e526]: 見えないときは「未実装」ではなく、条件が未成立の場合があります。
+        - generic "端末内の整理とクラウド共有の境界" [ref=e527]:
+          - generic [ref=e528]:
+            - generic [ref=e529]: 端末内
+            - heading "自作タグ" [level=3] [ref=e530]
+            - paragraph [ref=e531]: 自分だけの整理。新しいタグはここから始まります。
+            - list [ref=e532]:
+              - listitem [ref=e533]: 通常の保存URL
+              - listitem [ref=e534]: 自作タグ
+              - listitem [ref=e535]: タイトル・メモ・取得情報
+          - generic [ref=e536]:
+            - strong [ref=e537]: 明示的に共有へ
+            - generic [ref=e538]: 自動では移りません
+          - generic [ref=e539]:
+            - generic [ref=e540]: クラウド
+            - heading "共有タグ" [level=3] [ref=e541]
+            - paragraph [ref=e542]: 参加者と共有するURL一覧。サインインなどの条件があります。
+            - list [ref=e543]:
+              - listitem [ref=e544]: 共有タグ内のURL一覧
+              - listitem [ref=e545]: メンバーとロール
+              - listitem [ref=e546]: 招待と同期状態
+        - generic [ref=e547]:
+          - generic [ref=e548]:
+            - text: 4 STEPS
+            - heading "共有を始める4段階" [level=3] [ref=e549]
+            - paragraph [ref=e550]: 入口が見えても、条件が揃うまでは作成・参加・同期が制限されます。
+          - list [ref=e551]:
+            - listitem [ref=e552]:
+              - generic [ref=e553]: "01"
+              - generic [ref=e554]:
+                - strong [ref=e555]: サインイン
+                - generic [ref=e556]: プロフィールから認証
+            - listitem [ref=e557]:
+              - generic [ref=e558]: "02"
+              - generic [ref=e559]:
+                - strong [ref=e560]: 共有タグを用意
+                - generic [ref=e561]: 新規作成または移行
+            - listitem [ref=e562]:
+              - generic [ref=e563]: "03"
+              - generic [ref=e564]:
+                - strong [ref=e565]: 招待
+                - generic [ref=e566]: リンクを発行・受け取る
+            - listitem [ref=e567]:
+              - generic [ref=e568]: "04"
+              - generic [ref=e569]:
+                - strong [ref=e570]: 同期
+                - generic [ref=e571]: 件数と状態を確認
+        - generic "共有タグの権限比較。横にスクロールできます" [ref=e572]:
+          - table [ref=e573]:
+            - caption [ref=e574]: 共有タグでできること
+            - rowgroup [ref=e575]:
+              - row [ref=e576]:
+                - columnheader "操作" [ref=e577]
+                - columnheader "オーナー" [ref=e578]
+                - columnheader "編集者" [ref=e579]
+                - columnheader "閲覧者" [ref=e580]
+            - rowgroup [ref=e581]:
+              - row [ref=e582]:
+                - rowheader "URLを見る" [ref=e583]
+                - cell "できる" [ref=e584]
+                - cell "できる" [ref=e585]
+                - cell "できる" [ref=e586]
+              - row [ref=e587]:
+                - rowheader "URLを追加・削除" [ref=e588]
+                - cell "できる" [ref=e589]
+                - cell "できる" [ref=e590]
+                - cell "できない" [ref=e591]
+              - row [ref=e592]:
+                - rowheader "招待・メンバー管理" [ref=e593]
+                - cell "できる" [ref=e594]
+                - cell "できない" [ref=e595]
+                - cell "できない" [ref=e596]
+              - row [ref=e597]:
+                - rowheader "共有タグの削除" [ref=e598]
+                - cell "できる" [ref=e599]
+                - cell "できない" [ref=e600]
+                - cell "できない" [ref=e601]
+        - generic "共有と同期で表示される主な状態" [ref=e602]:
+          - generic [ref=e603]:
+            - text: 未認証
+            - strong [ref=e604]: まずサインイン
+            - paragraph [ref=e605]: 認証後に保留中の招待を再開できる場合があります。
+          - generic [ref=e606]:
+            - text: 同期中
+            - strong [ref=e607]: 完了を待つ
+            - paragraph [ref=e608]: 起動・復帰・変更時に同期を試みます。
+          - generic [ref=e609]:
+            - text: 通信失敗
+            - strong [ref=e610]: 前回内容の可能性
+            - paragraph [ref=e611]: 再同期後に件数と最終更新を確認します。
+          - generic [ref=e612]:
+            - text: 無効な招待
+            - strong [ref=e613]: 再発行を依頼
+            - paragraph [ref=e614]: 期限切れや使用済みの招待では参加できません。
+      - region [ref=e615]:
+        - generic [ref=e616]:
+          - generic [ref=e617]:
+            - generic [ref=e618]: YOUR DATA
+            - heading "データの保存とExport" [level=2] [ref=e619]
+          - paragraph [ref=e620]: 書き出し・同期・バックアップは別のものです。
+        - generic "データが移動する範囲" [ref=e621]:
+          - generic [ref=e622]:
+            - text: DEVICE
+            - heading "端末に保存" [level=3] [ref=e623]
+            - paragraph [ref=e624]: URL、タイトル、メモ、自作タグ、アーカイブ状態などを端末内で扱います。
+            - generic [ref=e625]: 通常の保存先
+          - generic [ref=e626]:
+            - strong [ref=e627]: 自分で書き出す
+            - generic [ref=e628]: 内容確認 → 手動共有
+          - generic [ref=e629]:
+            - text: EXPORT
+            - heading "AI-safe Export" [level=3] [ref=e630]
+            - paragraph [ref=e631]: ZIP/JSONなどへ書き出します。URL、タイトル、本文やメモの一部が含まれる場合があるため、共有前に内容と伏せ字処理の確認レポートを確認します。
+            - generic [ref=e632]: 復元バックアップではなく、自動匿名化も保証しません
+        - generic [ref=e633]:
+          - generic [ref=e634]: DIRECT SYNC
+          - generic [ref=e635]:
+            - heading "ChatGPTへの直接同期" [level=3] [ref=e636]
+            - paragraph [ref=e637]: 現行通常リリースで利用可能とは確認できません。このガイドではExportと分け、掲載対象外としています。
+        - generic [ref=e638]:
+          - strong [ref=e639]: 共有前の確認：
+          - text: 招待トークン、パスワード、秘密鍵、実ユーザー情報をガイドや共有ファイルへ貼り付けないでください。
+      - region [ref=e640]:
+        - generic [ref=e641]:
+          - generic [ref=e642]:
+            - generic [ref=e643]: WHEN STUCK
+            - heading "困ったとき" [level=2] [ref=e644]
+          - paragraph [ref=e645]: 保存・取得・検索・共有を別々に確認します。
+        - generic [ref=e646]:
+          - group [ref=e647]:
+            - generic "保存できない" [ref=e648] [cursor=pointer]:
+              - text: 保存できない
+              - generic [ref=e649]: ＋
+          - group [ref=e650]:
+            - generic "タイトルや画像が取得されない" [ref=e651] [cursor=pointer]:
+              - text: タイトルや画像が取得されない
+              - generic [ref=e652]: ＋
+          - group [ref=e653]:
+            - generic "検索で見つからない" [ref=e654] [cursor=pointer]:
+              - text: 検索で見つからない
+              - generic [ref=e655]: ＋
+          - group [ref=e656]:
+            - generic "共有機能を使えない" [ref=e657] [cursor=pointer]:
+              - text: 共有機能を使えない
+              - generic [ref=e658]: ＋
+          - group [ref=e659]:
+            - generic "招待に参加できない" [ref=e660] [cursor=pointer]:
+              - text: 招待に参加できない
+              - generic [ref=e661]: ＋
+          - group [ref=e662]:
+            - generic "共有タグが更新されない" [ref=e663] [cursor=pointer]:
+              - text: 共有タグが更新されない
+              - generic [ref=e664]: ＋
+      - region [ref=e665]:
+        - generic [ref=e667]:
+          - generic [ref=e668]: WORDS TO KNOW
+          - heading "用語集" [level=2] [ref=e669]
+        - generic [ref=e670]:
+          - generic [ref=e671]:
+            - term [ref=e672]: 自作タグ
+            - definition [ref=e673]: 端末内でリンクを整理するタグ。アカウントは不要です。
+          - generic [ref=e674]:
+            - term [ref=e675]: 共有タグ
+            - definition [ref=e676]: クラウドを通じて参加者とURL一覧を共有するタグ。条件があります。
+          - generic [ref=e677]:
+            - term [ref=e678]: グループ
+            - definition [ref=e679]: 複数の共有タグと参加者をまとめる単位。参加後の同期対象はグループ内の共有タグです。
+          - generic [ref=e680]:
+            - term [ref=e681]: 保留中の招待
+            - definition [ref=e682]: サインイン前に受け取った招待情報を、認証後に参加できるよう一時保存した状態です。
+          - generic [ref=e683]:
+            - term [ref=e684]: アーカイブ
+            - definition [ref=e685]: 削除せずに一覧からしまう状態。あとでアーカイブ一覧から確認できます。
+          - generic [ref=e686]:
+            - term [ref=e687]: AI-safe Export
+            - definition [ref=e688]: 選択した保存リンクをAIが扱いやすいファイルへ書き出す機能。復元用バックアップではありません。
+  - contentinfo [ref=e689]:
+    - generic [ref=e690]:
+      - generic [ref=e691]: り
+      - strong [ref=e692]: りんばむ 使い方
+    - paragraph [ref=e693]: 画面や機能の条件は、利用中のアプリ版・設定・アカウント状態によって変わることがあります。
+    - link "ページの先頭へ戻る" [ref=e694] [cursor=pointer]:
+      - /url: "#top"
