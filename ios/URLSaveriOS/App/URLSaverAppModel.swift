@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import SwiftUI
 import UserNotifications
 
@@ -559,7 +560,7 @@ final class URLSaverAppModel: ObservableObject {
         if failed > 0 {
             enqueueNotification(
                 AppNotification(
-                    message: "URLは保存しましたが、一部の共有タグへの追加に失敗しました",
+                    message: "URLの端末保存のみ完了し、一部の共有タグへの追加は完了していません",
                     actionLabel: nil,
                     action: nil,
                     autoDismissAfter: 5
@@ -936,6 +937,8 @@ final class URLSaverAppModel: ObservableObject {
                 return
             }
             incomingLocalTagID = tagID
+        case .sharedTags:
+            NotificationCenter.default.post(name: .openSharedTagCloudFromNotification, object: nil)
         case .unknown:
             break
         }
@@ -1239,6 +1242,10 @@ final class URLSaverAppModel: ObservableObject {
         await refreshSharedTagCloudState()
         await refreshEntitlements()
         if !sharedTagCloudState.isSignedIn {
+            UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+            UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+            UserDefaults.standard.removeObject(forKey: "pendingOpenSharedTagCloudFromNotification")
+            UserDefaults.standard.removeObject(forKey: "pendingSharedTagRemoteIDFromNotification")
             profileStatusMessage = "サインアウトしました。プロフィールはこのiPhoneに残ります。"
             enqueueNotification(AppNotification(message: "共有タグクラウドからサインアウトしました", actionLabel: nil, action: nil, autoDismissAfter: 4))
             await reload()
@@ -1260,10 +1267,17 @@ final class URLSaverAppModel: ObservableObject {
     @discardableResult
     func syncSharedTagCloud(showFailureNotification: Bool = true) async -> Bool {
         let beforeSync = (try? services.sharedTagCloud.loadVisibleTags()) ?? []
+        let beforeEvents = (try? services.sharedTagCloud.loadSharedTagURLNotificationEvents()) ?? []
         let success = await services.sharedTagCloud.syncCurrentSession()
         await refreshSharedTagCloudState()
         if success {
-            await notifySharedTagUpdates(before: beforeSync, after: sharedTags)
+            let afterEvents = (try? services.sharedTagCloud.loadSharedTagURLNotificationEvents()) ?? []
+            await notifySharedTagUpdates(
+                beforeTags: beforeSync,
+                beforeEvents: beforeEvents,
+                afterEvents: afterEvents,
+                authUserID: services.sharedTagCloud.currentSession()?.authUserID
+            )
             await processMetadataBacklog()
         }
         if !success && showFailureNotification {
@@ -1273,32 +1287,43 @@ final class URLSaverAppModel: ObservableObject {
     }
 
     private func notifySharedTagUpdates(
-        before: [SharedTagSummary],
-        after: [SharedTagSummary]
+        beforeTags: [SharedTagSummary],
+        beforeEvents: [SharedTagURLNotificationEvent],
+        afterEvents: [SharedTagURLNotificationEvent],
+        authUserID: String?
     ) async {
-        let beforeCounts = Dictionary(uniqueKeysWithValues: before.map { ($0.remoteTagID, $0.activeURLCount) })
-        let increases = after.compactMap { tag -> (String, Int)? in
-            guard let previous = beforeCounts[tag.remoteTagID], tag.activeURLCount > previous else {
-                return nil
-            }
-            return (tag.name, tag.activeURLCount - previous)
-        }
-        let count = increases.reduce(0) { $0 + $1.1 }
+        let increases = sharedTagNotificationCandidates(
+            beforeTags: beforeTags,
+            beforeEvents: beforeEvents,
+            afterEvents: afterEvents,
+            authUserID: authUserID
+        )
+        let count = increases.count
         guard count > 0 else { return }
 
         let settings = await UNUserNotificationCenter.current().notificationSettings()
         guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
             return
         }
-        let tagNames = increases.map(\.0).prefix(3).joined(separator: "、")
+        let tagNames = Array(Set(increases.map(\.tagName))).sorted().prefix(3).joined(separator: "、")
+        let stableEventKey = increases
+            .map(\.remoteURLID)
+            .sorted()
+            .joined(separator: "|")
+        let stableEventDigest = SHA256.hash(data: Data(stableEventKey.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
         let content = UNMutableNotificationContent()
         content.title = "共有タグに新着があります"
         content.body = "\(tagNames)に新しいURLが\(count)件追加されました"
         content.sound = .default
-        content.userInfo = ["route": "shared-tag-cloud"]
+        content.userInfo = [
+            "route": "shared-tag-cloud",
+            "remoteTagID": increases.first?.remoteTagID ?? "",
+        ]
         try? await UNUserNotificationCenter.current().add(
             UNNotificationRequest(
-                identifier: "shared-tag-update-\(UUID().uuidString)",
+                identifier: "shared-tag-update-\(stableEventDigest)",
                 content: content,
                 trigger: nil
             )
@@ -2448,6 +2473,7 @@ private enum IncomingURLRoute {
     case invite(String)
     case promo(String)
     case tag(String)
+    case sharedTags
     case save(String, ShareDegradationNotice?)
     case unknown
 
@@ -2483,6 +2509,8 @@ private enum IncomingURLRoute {
             self = .promo(Self.promoCode(from: url))
         case "tag":
             self = .tag(token)
+        case "shared-tags":
+            self = .sharedTags
         case "save":
             let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
             let rawURL = components?.queryItems?.first(where: { $0.name == "url" })?.value

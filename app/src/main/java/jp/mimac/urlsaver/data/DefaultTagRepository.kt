@@ -64,6 +64,7 @@ class DefaultTagRepository(
     private val remoteConfig: SharedTagSyncRemoteConfig,
     private val usageSummaryDataSource: UsageSummaryDataSource,
     private val aiLocalDataClearer: AiLocalDataClearer,
+    private val sharedTagNotificationCleaner: SharedTagNotificationCleaner = NoopSharedTagNotificationCleaner,
     private val localAccountCleanupStore: LocalAccountCleanupStore = NoopLocalAccountCleanupStore,
     private val json: Json = Json {
         ignoreUnknownKeys = true
@@ -706,6 +707,7 @@ class DefaultTagRepository(
     override suspend fun signOut() {
         authSessionProvider.session.value?.authUserId?.let { syncScheduler?.cancel(it) }
         authSessionProvider.updateSession(null)
+        sharedTagNotificationCleaner.clear()
     }
 
     override suspend fun deleteAccount(): SharedTagAccountDeletionResult {

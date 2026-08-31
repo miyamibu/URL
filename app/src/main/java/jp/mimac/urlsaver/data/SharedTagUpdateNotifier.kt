@@ -18,10 +18,20 @@ import jp.mimac.urlsaver.R
 data class SharedTagUpdateNotice(
     val newUrlCount: Int,
     val tagNames: List<String>,
+    val eventIds: List<String>,
+    val localTagId: Long?,
 )
 
 fun interface SharedTagUpdateNotifier {
     fun notify(notice: SharedTagUpdateNotice)
+}
+
+fun interface SharedTagNotificationCleaner {
+    fun clear()
+}
+
+object NoopSharedTagNotificationCleaner : SharedTagNotificationCleaner {
+    override fun clear() = Unit
 }
 
 object NoopSharedTagUpdateNotifier : SharedTagUpdateNotifier {
@@ -30,7 +40,7 @@ object NoopSharedTagUpdateNotifier : SharedTagUpdateNotifier {
 
 class AndroidSharedTagUpdateNotifier(
     private val context: Context,
-) : SharedTagUpdateNotifier {
+) : SharedTagUpdateNotifier, SharedTagNotificationCleaner {
     @SuppressLint("MissingPermission")
     override fun notify(notice: SharedTagUpdateNotice) {
         if (notice.newUrlCount <= 0 || !canPostNotifications()) return
@@ -41,15 +51,17 @@ class AndroidSharedTagUpdateNotifier(
         } else {
             "${tagLabel}に新しいURLが${notice.newUrlCount}件追加されました"
         }
+        val stableEventKey = notice.eventIds.sorted().joinToString("|")
         val notificationId = NOTIFICATION_ID_BASE +
-            ((notice.tagNames.joinToString("|").hashCode() and Int.MAX_VALUE) % 1_000)
+            ((stableEventKey.hashCode() and Int.MAX_VALUE) % 100_000)
         val pendingIntent = PendingIntent.getActivity(
             context,
             notificationId,
             Intent(context, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                putExtra(EXTRA_OPEN_SHARED_TAG_CLOUD, true)
-                putExtra(EXTRA_MAIN_INTENT_EVENT_TOKEN, "shared-tag-notification-$notificationId-${System.currentTimeMillis()}")
+                notice.localTagId?.let { putExtra(EXTRA_DEEP_LINK_TAG_ID, it) }
+                    ?: putExtra(EXTRA_OPEN_SHARED_TAG_CLOUD, true)
+                putExtra(EXTRA_MAIN_INTENT_EVENT_TOKEN, "shared-tag-notification-$stableEventKey")
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
@@ -63,6 +75,14 @@ class AndroidSharedTagUpdateNotifier(
             .setOnlyAlertOnce(true)
             .build()
         NotificationManagerCompat.from(context).notify(notificationId, notification)
+    }
+
+    override fun clear() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val manager = context.getSystemService(NotificationManager::class.java)
+        manager.activeNotifications
+            .filter { notification -> notification.notification.channelId == CHANNEL_ID }
+            .forEach { notification -> manager.cancel(notification.id) }
     }
 
     private fun canPostNotifications(): Boolean {

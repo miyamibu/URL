@@ -138,6 +138,19 @@ final class URLRulesTests: XCTestCase {
         )
     }
 
+    func testSharedTextTrimsSentencePunctuationAfterURL() {
+        let groups = ShareCandidateGroups(
+            providerTextCandidates: [
+                "このリールをチェックしてください https://www.instagram.com/reel/ABC123/?igsh=test。"
+            ]
+        )
+
+        XCTAssertEqual(
+            URLRules.extractFromCandidateGroups(groups),
+            .found("https://www.instagram.com/reel/ABC123/?igsh=test")
+        )
+    }
+
     func testShareHandoffReportDecodesLegacyPayloadWithoutSharedTagFields() throws {
         let payload = """
         {

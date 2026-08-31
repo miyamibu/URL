@@ -232,6 +232,7 @@ private fun ShareReceiverContent(
 ) {
     val context = LocalContext.current
     val allTags by container.tagRepository.observeAllTagsWithCount().collectAsState(initial = emptyList())
+    val sharedTagSession by container.sharedTagAuthSessionProvider.session.collectAsState()
     val localTags = remember(allTags) {
         allTags
             .filter { tag -> tag.scope == SharedTagScope.LOCAL_ONLY }
@@ -311,6 +312,7 @@ private fun ShareReceiverContent(
                         ShareReceiverPendingContent(
                             localTags = localTags,
                             sharedTags = assignableSharedTags,
+                            isSharedTagSignedIn = sharedTagSession != null,
                             selectedTagIds = selectedTagIds,
                             newTagName = newTagName,
                             tagCreateError = tagCreateError,
@@ -352,6 +354,15 @@ private fun ShareReceiverContent(
                                 }
                             },
                             onCancel = onFinish,
+                            onOpenSharedTagLogin = {
+                                context.startActivity(
+                                    Intent(context, MainActivity::class.java).apply {
+                                        putExtra(jp.mimac.urlsaver.data.EXTRA_OPEN_SHARED_TAG_CLOUD, true)
+                                        addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                                    },
+                                )
+                                onFinish()
+                            },
                             onSave = {
                                 scope.launch {
                                     isSaving = true
@@ -424,6 +435,7 @@ private fun ShareReceiverTagImportContent(
 private fun ShareReceiverPendingContent(
     localTags: List<TagWithCount>,
     sharedTags: List<TagWithCount>,
+    isSharedTagSignedIn: Boolean,
     selectedTagIds: Set<Long>,
     newTagName: String,
     tagCreateError: String?,
@@ -432,6 +444,7 @@ private fun ShareReceiverPendingContent(
     onNewTagNameChange: (String) -> Unit,
     onCreateTag: () -> Unit,
     onCancel: () -> Unit,
+    onOpenSharedTagLogin: () -> Unit,
     onSave: () -> Unit,
 ) {
     Text(
@@ -493,6 +506,24 @@ private fun ShareReceiverPendingContent(
                     onClick = { onToggleTag(tag.id) },
                 )
             }
+        }
+    } else if (!isSharedTagSignedIn) {
+        Spacer(Modifier.height(24.dp))
+        Text(
+            text = "共有タグ",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+        )
+        Text(
+            text = "共有タグを保存先にするにはログインしてください。",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        TextButton(
+            onClick = onOpenSharedTagLogin,
+            modifier = Modifier.heightIn(min = 48.dp),
+        ) {
+            Text("ログイン画面を開く")
         }
     }
     Spacer(Modifier.height(40.dp))
@@ -730,7 +761,7 @@ private suspend fun savePendingShare(
     val message = buildString {
         append("${payload.urls.size}件を処理しました（新規$created / 既存$duplicate / 復元$restored / 失敗$failed）")
         payload.degradationNotice?.let { append("\n").append(degradationMessage(it)) }
-        if (tagAssignmentFailed) append("\n保存しましたが、一部のタグ付けに失敗しました")
+        if (tagAssignmentFailed) append("\nURLの端末保存のみ完了し、一部の共有タグへの追加は完了していません")
     }
     return ShareReceiverSaveOutcome(message = message, meaningfulAction = created > 0 || restored > 0)
 }
@@ -792,7 +823,7 @@ private fun shareReceiverResultMessage(
             },
         )
         degradationNotice?.let { append("\n").append(degradationMessage(it)) }
-        if (tagAssignmentFailed) append("\n保存しましたが、一部のタグ付けに失敗しました")
+        if (tagAssignmentFailed) append("\nURLの端末保存のみ完了し、一部の共有タグへの追加は完了していません")
     }
 }
 

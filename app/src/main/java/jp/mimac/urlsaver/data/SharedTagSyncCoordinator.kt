@@ -88,11 +88,16 @@ class SharedTagSyncCoordinator(
             syncDao.deleteCompletedOutbox(session.authUserId)
             if (newRemoteUrls.isNotEmpty()) {
                 val tagNamesById = snapshot.tags.associate { it.id to it.name }
+                val firstRemoteTagId = newRemoteUrls.firstOrNull()?.tagId
+                val firstLocalTagId = firstRemoteTagId
+                    ?.let { remoteTagId -> tagDao.findSyncedTagByRemoteId(session.authUserId, remoteTagId)?.id }
                 runCatching {
                     updateNotifier.notify(
                         SharedTagUpdateNotice(
                             newUrlCount = newRemoteUrls.size,
                             tagNames = newRemoteUrls.mapNotNull { tagNamesById[it.tagId] },
+                            eventIds = newRemoteUrls.map { it.id },
+                            localTagId = firstLocalTagId,
                         ),
                     )
                 }

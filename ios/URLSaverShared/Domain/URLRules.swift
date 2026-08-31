@@ -375,9 +375,11 @@ enum URLRules {
     private static func extractURLCandidates(from text: String) -> [String] {
         let nsText = text as NSString
         return extractURLCandidateRanges(from: text).map {
-            nsText.substring(with: $0)
-        }
+            nsText.substring(with: $0).trimmingCharacters(in: shareTrailingPunctuation)
+        }.filter { !$0.isEmpty }
     }
+
+    private static let shareTrailingPunctuation = CharacterSet(charactersIn: ".,、。!！?？;；")
 
     private static func extractURLCandidateRanges(from text: String) -> [NSRange] {
         let pattern = #"https?://[^\s<>()\[\]"']+"#

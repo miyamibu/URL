@@ -215,10 +215,50 @@ class SharedTagSyncRepositoryTest {
         )
 
         assertTrue(coordinator.syncCurrentSession())
-        assertEquals(
-            listOf(SharedTagUpdateNotice(newUrlCount = 1, tagNames = listOf("Team Links"))),
-            updateNotifier.notices,
+        assertEquals(1, updateNotifier.notices.size)
+        assertEquals(1, updateNotifier.notices.single().newUrlCount)
+        assertEquals(listOf("Team Links"), updateNotifier.notices.single().tagNames)
+        assertEquals(listOf("remote-url-1"), updateNotifier.notices.single().eventIds)
+        assertTrue(updateNotifier.notices.single().localTagId != null)
+    }
+
+    @Test
+    fun sync_doesNotNotifyForNewSharedUrlAddedByCurrentUser() = runBlocking {
+        authProvider.updateSession(SharedTagAuthSession(USER_A, "token-a"))
+        val tag = RemoteSharedTag(
+            id = "remote-self-tag",
+            name = "My shared links",
+            createdBy = USER_A,
+            createdAt = "2026-04-20T00:00:00Z",
+            updatedAt = "2026-04-20T00:00:00Z",
+            version = 1,
         )
+        remote.snapshot = PullSharedTagSnapshotResponse(
+            pulledAt = "2026-04-20T00:00:00Z",
+            normalizationVersion = 1,
+            tags = listOf(tag),
+            members = emptyList(),
+            urls = emptyList(),
+        )
+        assertTrue(coordinator.syncCurrentSession())
+
+        remote.snapshot = remote.snapshot.copy(
+            urls = listOf(
+                RemoteSharedTagUrl(
+                    id = "remote-self-url",
+                    tagId = tag.id,
+                    rawUrl = "https://example.com/from-self",
+                    normalizedUrl = "https://example.com/from-self",
+                    normalizationVersion = 1,
+                    addedBy = USER_A,
+                    createdAt = "2026-04-20T00:01:00Z",
+                    updatedAt = "2026-04-20T00:01:00Z",
+                ),
+            ),
+        )
+
+        assertTrue(coordinator.syncCurrentSession())
+        assertTrue(updateNotifier.notices.isEmpty())
     }
 
     @Test

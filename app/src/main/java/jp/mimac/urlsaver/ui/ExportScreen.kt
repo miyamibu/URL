@@ -320,6 +320,7 @@ fun ExportScreen(
 fun ChatGptExportScreen(
     viewModel: ExportViewModel,
     onBack: () -> Unit,
+    provider: AiHandoffProvider = AiHandoffProvider.CHAT_GPT,
 ) {
     val uiState by viewModel.chatGptUiState.collectAsStateWithLifecycle()
     val availableTags by viewModel.availableChatGptTags.collectAsStateWithLifecycle()
@@ -335,7 +336,7 @@ fun ChatGptExportScreen(
         if (!shareRequested || archive == null) return@LaunchedEffect
         shareRequested = false
         runCatching {
-            shareChatGptArchive(context, archive)
+            shareAiArchive(context, archive, provider)
         }.onFailure { throwable ->
             shareError = throwable.message
                 ?: "共有画面を開けませんでした。もう一度お試しください。"
@@ -361,7 +362,7 @@ fun ChatGptExportScreen(
             TopAppBar(
                 title = {
                     Text(
-                        text = "ChatGPT",
+                        text = provider.displayName,
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                     )
@@ -454,9 +455,9 @@ fun ChatGptExportScreen(
                     )
                     Text(
                         text = if (targetCount > 0) {
-                            "${targetCount}件をChatGPTに送る"
+                            "${targetCount}件を${provider.displayName}に送る"
                         } else {
-                            "ChatGPTに送る"
+                            "${provider.displayName}に送る"
                         },
                         modifier = Modifier.padding(start = 8.dp),
                     )
@@ -1310,6 +1311,17 @@ private enum class ExportMode(val label: String) {
     CHAT_GPT("ChatGPT"),
 }
 
+enum class AiHandoffProvider(
+    val displayName: String,
+    val officialDestination: String,
+    val officialAssetAvailable: Boolean,
+) {
+    CHAT_GPT("ChatGPT", "https://chatgpt.com/", true),
+    GEMINI("Gemini", "https://gemini.google.com/", false),
+    CLAUDE("Claude", "https://claude.ai/new", true),
+    DEEP_SEEK("DeepSeek", "https://chat.deepseek.com/", false),
+}
+
 private val servicePresetOrder = listOf(
     ServiceType.TIKTOK,
     ServiceType.INSTAGRAM,
@@ -1387,26 +1399,29 @@ private suspend fun shareExportArchive(
     context.startActivity(Intent.createChooser(shareIntent, "エクスポートを共有"))
 }
 
-private suspend fun shareChatGptArchive(
+private suspend fun shareAiArchive(
     context: Context,
     archive: PreparedExportArchive,
+    provider: AiHandoffProvider,
 ) {
     val uri = cacheExportArchive(context, archive)
-    val directIntent = buildChatGptDirectShareIntent(context, archive, uri)
-    val directOutcome = try {
-        context.startActivity(directIntent)
-        ChatGptDirectShareOutcome.STARTED
-    } catch (_: ActivityNotFoundException) {
-        ChatGptDirectShareOutcome.ACTIVITY_NOT_FOUND
-    } catch (_: SecurityException) {
-        ChatGptDirectShareOutcome.SECURITY_ERROR
-    } catch (_: RuntimeException) {
-        ChatGptDirectShareOutcome.OTHER_ERROR
+    if (provider == AiHandoffProvider.CHAT_GPT) {
+        val directIntent = buildChatGptDirectShareIntent(context, archive, uri)
+        val directOutcome = try {
+            context.startActivity(directIntent)
+            ChatGptDirectShareOutcome.STARTED
+        } catch (_: ActivityNotFoundException) {
+            ChatGptDirectShareOutcome.ACTIVITY_NOT_FOUND
+        } catch (_: SecurityException) {
+            ChatGptDirectShareOutcome.SECURITY_ERROR
+        } catch (_: RuntimeException) {
+            ChatGptDirectShareOutcome.OTHER_ERROR
+        }
+        if (!shouldFallbackToChatGptChooser(directOutcome)) return
     }
-    if (!shouldFallbackToChatGptChooser(directOutcome)) return
 
     val fallbackIntent = buildArchiveShareIntent(context, archive, uri)
-    val chooser = Intent.createChooser(fallbackIntent, "ChatGPT用ZIPを共有").apply {
+    val chooser = Intent.createChooser(fallbackIntent, "${provider.displayName}へ渡すZIPを共有").apply {
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
     context.startActivity(chooser)

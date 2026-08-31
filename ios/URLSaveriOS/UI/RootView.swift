@@ -33,7 +33,9 @@ struct RootView: View {
     @State private var isShowingSharedTagCreateSheet = false
     @State private var isShowingSharedTagGroupCreateSheet = false
     @State private var isShowingExportSheet = false
+    @State private var isShowingAIProviderChooser = false
     @State private var isShowingChatGptSheet = false
+    @State private var selectedAIProvider: AIHandoffProvider = .chatGPT
     @State private var isShowingShareSheet = false
     @State private var isShowingPrivacyInfoSheet = false
     @State private var shareItems: [Any] = []
@@ -47,6 +49,7 @@ struct RootView: View {
     @State private var selectedMainEntryIDs: Set<Int64> = []
     @AppStorage("hasSeenOnboardingGuideV2") private var hasSeenOnboardingGuide = false
     @AppStorage("pendingOpenSharedTagCloudFromNotification") private var pendingOpenSharedTagCloudFromNotification = false
+    @AppStorage("pendingSharedTagRemoteIDFromNotification") private var pendingSharedTagRemoteIDFromNotification = ""
     @State private var onboardingGuidePageIndex = 0
 
     private var displayMode: EntryListDisplayMode {
@@ -229,7 +232,7 @@ struct RootView: View {
                             BottomHomeActionBar(
                                 onOpenGroups: { model.selectedTab = .groups },
                                 onOpenExport: { isShowingExportSheet = true },
-                                onOpenChatGpt: { isShowingChatGptSheet = true },
+                                onOpenChatGpt: { isShowingAIProviderChooser = true },
                                 onAddURL: { isShowingManualSheet = true },
                                 onOpenTags: { isShowingLocalTagManagementSheet = true },
                                 onOpenArchive: { model.selectedTab = .archive }
@@ -409,10 +412,21 @@ struct RootView: View {
                     .presentationCornerRadius(32)
             }
             .sheet(isPresented: $isShowingChatGptSheet) {
-                ChatGptExportSheet(model: model)
+                ChatGptExportSheet(model: model, provider: selectedAIProvider)
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
                     .presentationCornerRadius(32)
+            }
+            .confirmationDialog("AIを選ぶ", isPresented: $isShowingAIProviderChooser, titleVisibility: .visible) {
+                ForEach(AIHandoffProvider.allCases) { provider in
+                    Button(provider.displayName) {
+                        selectedAIProvider = provider
+                        isShowingChatGptSheet = true
+                    }
+                }
+                Button("キャンセル", role: .cancel) {}
+            } message: {
+                Text("各サービスのロゴは、公式配布条件を確認できた場合だけ表示します。")
             }
             .sheet(isPresented: $isShowingShareSheet) {
                 ActivityShareSheet(items: shareItems)
@@ -551,7 +565,12 @@ struct RootView: View {
     private func openSharedTagCloudFromNotification() {
         pendingOpenSharedTagCloudFromNotification = false
         model.selectedTab = .main
-        isShowingSharedTagCloudSheet = true
+        if !pendingSharedTagRemoteIDFromNotification.isEmpty {
+            selectedSharedTagID = pendingSharedTagRemoteIDFromNotification
+            pendingSharedTagRemoteIDFromNotification = ""
+        } else {
+            isShowingSharedTagCloudSheet = true
+        }
     }
 
     private func toggleMainSelection(_ entryID: Int64) {
@@ -974,14 +993,9 @@ private struct BottomHomeActionBar: View {
             .accessibilityLabel("URLを追加")
 
             Button(action: onOpenChatGpt) {
-                HStack(spacing: 8) {
-                    Image(systemName: "bubble.left.and.text.bubble.right")
-                        .font(.system(size: 17, weight: .bold))
-                    Text("ChatGPT")
-                        .font(.system(size: 14, weight: .heavy, design: .rounded))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.78)
-                }
+                Text("AI")
+                    .font(.system(size: 14, weight: .heavy, design: .rounded))
+                    .lineLimit(1)
                 .foregroundStyle(AppPalette.textPrimary)
                 .padding(.horizontal, 16)
                 .frame(minHeight: 48)
@@ -992,7 +1006,7 @@ private struct BottomHomeActionBar: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
             .padding(.top, 8)
             .padding(.trailing, 14)
-            .accessibilityLabel("ChatGPT")
+            .accessibilityLabel("AI")
         }
         .frame(height: 156)
         .frame(maxWidth: .infinity)

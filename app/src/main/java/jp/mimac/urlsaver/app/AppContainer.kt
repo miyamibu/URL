@@ -193,6 +193,9 @@ class AppContainer(context: Context) {
     private val sharedTagSyncScheduler: SharedTagSyncScheduler by lazy {
         WorkManagerSharedTagSyncScheduler(WorkManager.getInstance(appContext))
     }
+    private val sharedTagUpdateNotifier: AndroidSharedTagUpdateNotifier by lazy {
+        AndroidSharedTagUpdateNotifier(appContext)
+    }
     private val sharedTagSyncCoordinator: SharedTagSyncCoordinator by lazy {
         SharedTagSyncCoordinator(
             database = database,
@@ -203,7 +206,7 @@ class AppContainer(context: Context) {
             remoteDataSource = sharedTagSyncRemoteDataSource,
             clock = clock,
             metadataScheduler = scheduler,
-            updateNotifier = AndroidSharedTagUpdateNotifier(appContext),
+            updateNotifier = sharedTagUpdateNotifier,
         )
     }
     private val usageSummaryDataSource: UsageSummaryDataSource by lazy {
@@ -280,6 +283,7 @@ class AppContainer(context: Context) {
             remoteConfig = sharedTagSyncRemoteConfig,
             usageSummaryDataSource = usageSummaryDataSource,
             aiLocalDataClearer = aiTransparencyRepository,
+            sharedTagNotificationCleaner = sharedTagUpdateNotifier,
             localAccountCleanupStore = localAccountCleanupStore,
         )
     }

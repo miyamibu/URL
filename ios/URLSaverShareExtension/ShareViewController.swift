@@ -27,6 +27,7 @@ final class ShareViewController: UIViewController {
     private let tagFlowView = TagFlowView()
     private let createTagField = UITextField()
     private let createTagButton = UIButton(type: .system)
+    private let sharedTagLoginButton = UIButton(type: .system)
     private let saveButton = UIButton(type: .system)
     private let cancelButton = UIButton(type: .system)
     private let pickerActionsStack = UIStackView()
@@ -36,10 +37,13 @@ final class ShareViewController: UIViewController {
     private var panelHeightConstraint: NSLayoutConstraint?
     private var tagAreaHeightConstraint: NSLayoutConstraint?
     private var tagFlowHeightConstraint: NSLayoutConstraint?
+    private var sharedTagLoginHeightConstraint: NSLayoutConstraint?
+    private var sharedTagLoginTopConstraint: NSLayoutConstraint?
     private var resultDirectConstraints: [NSLayoutConstraint] = []
     private var repository: URLRepository?
     private var localTags: [LocalTagSummary] = []
     private var sharedTags: [SharedTagSummary] = []
+    private var isSharedTagSignedIn = false
     private var pendingShare: PendingExtensionShare?
     private var selectedTagKeys = Set<String>()
 
@@ -140,6 +144,7 @@ final class ShareViewController: UIViewController {
 
         createTagField.translatesAutoresizingMaskIntoConstraints = false
         createTagButton.translatesAutoresizingMaskIntoConstraints = false
+        sharedTagLoginButton.translatesAutoresizingMaskIntoConstraints = false
         saveButton.translatesAutoresizingMaskIntoConstraints = false
         cancelButton.translatesAutoresizingMaskIntoConstraints = false
         pickerActionsStack.translatesAutoresizingMaskIntoConstraints = false
@@ -164,6 +169,7 @@ final class ShareViewController: UIViewController {
         pickerContainerView.addSubview(tagAreaView)
         pickerContainerView.addSubview(createTagField)
         pickerContainerView.addSubview(createTagButton)
+        pickerContainerView.addSubview(sharedTagLoginButton)
         pickerContainerView.addSubview(pickerActionsStack)
         pickerBottomConstraint = contentStack.bottomAnchor.constraint(
             equalTo: panelView.safeAreaLayoutGuide.bottomAnchor,
@@ -174,6 +180,8 @@ final class ShareViewController: UIViewController {
             constant: Layout.resultBottomOffset
         )
         panelHeightConstraint = panelView.heightAnchor.constraint(equalToConstant: Layout.minimumPickerHeight)
+        sharedTagLoginHeightConstraint = sharedTagLoginButton.heightAnchor.constraint(equalToConstant: 48)
+        sharedTagLoginTopConstraint = sharedTagLoginButton.topAnchor.constraint(equalTo: createTagButton.bottomAnchor, constant: 10)
         resultBottomConstraint?.isActive = false
         NSLayoutConstraint.activate([
             panelView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -200,13 +208,17 @@ final class ShareViewController: UIViewController {
             pickerMessageLabel.topAnchor.constraint(equalTo: pickerTitleLabel.bottomAnchor, constant: 8),
             pickerActionsStack.leadingAnchor.constraint(equalTo: pickerContainerView.leadingAnchor),
             pickerActionsStack.trailingAnchor.constraint(equalTo: pickerContainerView.trailingAnchor),
-            pickerActionsStack.topAnchor.constraint(equalTo: createTagButton.bottomAnchor, constant: 22),
+            pickerActionsStack.topAnchor.constraint(equalTo: sharedTagLoginButton.bottomAnchor, constant: 22),
             pickerActionsStack.bottomAnchor.constraint(equalTo: pickerContainerView.bottomAnchor),
             pickerActionsStack.heightAnchor.constraint(greaterThanOrEqualToConstant: 58),
             createTagButton.leadingAnchor.constraint(equalTo: pickerContainerView.leadingAnchor),
             createTagButton.trailingAnchor.constraint(equalTo: pickerContainerView.trailingAnchor),
             createTagButton.topAnchor.constraint(equalTo: createTagField.bottomAnchor, constant: 18),
             createTagButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 54),
+            sharedTagLoginButton.leadingAnchor.constraint(equalTo: pickerContainerView.leadingAnchor),
+            sharedTagLoginButton.trailingAnchor.constraint(equalTo: pickerContainerView.trailingAnchor),
+            sharedTagLoginTopConstraint!,
+            sharedTagLoginHeightConstraint!,
             createTagField.leadingAnchor.constraint(equalTo: pickerContainerView.leadingAnchor),
             createTagField.trailingAnchor.constraint(equalTo: pickerContainerView.trailingAnchor),
             createTagField.topAnchor.constraint(equalTo: tagAreaView.bottomAnchor, constant: 14),
@@ -383,9 +395,11 @@ final class ShareViewController: UIViewController {
         let syncedTags: [SharedTagSummary]
         if let authUserID = SharedTagExtensionAuthContextStore().loadAuthUserID(),
            let store = try? SharedTagStore(database: repository.database) {
+            isSharedTagSignedIn = true
             syncedTags = ((try? store.loadVisibleTags(authUserID: authUserID)) ?? [])
                 .filter { $0.currentUserRole == .owner || $0.currentUserRole == .editor }
         } else {
+            isSharedTagSignedIn = false
             syncedTags = []
         }
         await MainActor.run {
@@ -462,6 +476,15 @@ final class ShareViewController: UIViewController {
         createTagButton.removeTarget(nil, action: nil, for: .allEvents)
         createTagButton.addTarget(self, action: #selector(createLocalTagFromInput), for: .touchUpInside)
 
+        sharedTagLoginButton.setTitle("りんばむでログイン", for: .normal)
+        sharedTagLoginButton.titleLabel?.font = .preferredFont(forTextStyle: .headline)
+        sharedTagLoginButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        sharedTagLoginButton.removeTarget(nil, action: nil, for: .allEvents)
+        sharedTagLoginButton.addTarget(self, action: #selector(openSharedTagLogin), for: .touchUpInside)
+        sharedTagLoginButton.isHidden = isSharedTagSignedIn
+        sharedTagLoginHeightConstraint?.constant = isSharedTagSignedIn ? 0 : 48
+        sharedTagLoginTopConstraint?.constant = isSharedTagSignedIn ? 0 : 10
+
         saveButton.setTitle("保存", for: .normal)
         saveButton.titleLabel?.font = .preferredFont(forTextStyle: .title2)
         saveButton.titleLabel?.adjustsFontForContentSizeCategory = true
@@ -479,13 +502,30 @@ final class ShareViewController: UIViewController {
         tagAreaHeightConstraint = tagAreaView.heightAnchor.constraint(equalToConstant: preferredTagAreaHeight())
         tagAreaHeightConstraint?.isActive = true
 
-        if localTags.isEmpty {
-            pickerMessageLabel.text = sharedTags.isEmpty
-                ? "タグがまだありません。必要なら自作タグを作成できます。"
-                : "共有タグを選べます。必要なら自作タグも作成できます。"
+        if !isSharedTagSignedIn || localTags.isEmpty {
+            pickerMessageLabel.text = !isSharedTagSignedIn
+                ? "共有タグを保存先にするにはログインが必要です。端末内の自作タグはログインなしで選べます。"
+                : (sharedTags.isEmpty
+                    ? "タグがまだありません。必要なら自作タグを作成できます。"
+                    : "共有タグを選べます。必要なら自作タグも作成できます。")
             pickerMessageLabel.isHidden = false
         }
         updatePickerLayoutHeight()
+    }
+
+    @objc
+    private func openSharedTagLogin() {
+        guard let url = URL(string: "urlsaver://shared-tags") else { return }
+        Task {
+            if await openHostApp(url) {
+                await MainActor.run { finishExtension() }
+            } else {
+                await MainActor.run {
+                    pickerMessageLabel.text = "りんばむを開けませんでした。アプリを直接開いてログインしてください。"
+                    pickerMessageLabel.isHidden = false
+                }
+            }
+        }
     }
 
     @MainActor
@@ -529,6 +569,7 @@ final class ShareViewController: UIViewController {
         let messageHeight = pickerMessageLabel.isHidden ? 0 : fittingHeight(for: pickerMessageLabel, width: contentWidth)
         let messageGap: CGFloat = pickerMessageLabel.isHidden ? 0 : 8
         let tagGap: CGFloat = localTags.isEmpty && sharedTags.isEmpty ? 0 : 18
+        let loginRouteHeight: CGFloat = isSharedTagSignedIn ? 0 : 58
         let contentHeight = Layout.pickerTopInset +
             titleHeight +
             messageGap +
@@ -539,6 +580,7 @@ final class ShareViewController: UIViewController {
             58 +
             18 +
             54 +
+            loginRouteHeight +
             22 +
             58 +
             abs(Layout.pickerBottomOffset)

@@ -129,6 +129,22 @@ class UrlRulesTest {
     }
 
     @Test
+    fun extractIntent_trimsSentencePunctuationAfterSharedUrl() {
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(
+                Intent.EXTRA_TEXT,
+                "このリールをチェックしてください https://www.instagram.com/reel/ABC123/?igsh=test。",
+            )
+        }
+
+        assertEquals(
+            ShareExtractionResult.Found("https://www.instagram.com/reel/ABC123/?igsh=test"),
+            UrlRules.extractFromIntent(intent),
+        )
+    }
+
+    @Test
     fun extractAllFromIntent_collectsUniqueNormalizedUrls_forSendMultiple() {
         val first = "HTTPS://Example.com:443/path?x=1"
         val duplicate = "https://example.com/path?x=1"

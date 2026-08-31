@@ -29,6 +29,10 @@ final class URLSaverNotificationDelegate: NSObject, UIApplicationDelegate, UNUse
         guard response.notification.request.content.userInfo["route"] as? String == "shared-tag-cloud" else {
             return
         }
+        if let remoteTagID = response.notification.request.content.userInfo["remoteTagID"] as? String,
+           !remoteTagID.isEmpty {
+            UserDefaults.standard.set(remoteTagID, forKey: "pendingSharedTagRemoteIDFromNotification")
+        }
         UserDefaults.standard.set(true, forKey: "pendingOpenSharedTagCloudFromNotification")
         await MainActor.run {
             NotificationCenter.default.post(name: .openSharedTagCloudFromNotification, object: nil)

@@ -120,13 +120,13 @@ def main() -> int:
         ),
         lambda: require(
             "docs/mobile-ui-regression-contract.md",
-            "ホーム右下の `タグ` / `アーカイブ` より上に置く独立した `ChatGPT`",
-            "manual ChatGPT handoff must remain a dedicated home route",
+            "ホーム右下の `タグ` / `アーカイブ` より上に置く独立した `AI`",
+            "manual AI handoff must remain a dedicated home route",
         ),
         lambda: require(
             "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
-            'contentDescription = "ChatGPT"',
-            "Android home must expose the dedicated ChatGPT action",
+            'contentDescription = "AI"',
+            "Android home must expose the dedicated AI action",
         ),
         lambda: require(
             "app/src/main/java/jp/mimac/urlsaver/ui/ExportScreen.kt",
@@ -142,6 +142,42 @@ def main() -> int:
             "ios/URLSaveriOS/UI/ExportSheet.swift",
             "struct ChatGptExportSheet: View",
             "iPhone ChatGPT handoff must remain a dedicated sheet",
+        ),
+        lambda: require_order(
+            "app/src/main/java/jp/mimac/urlsaver/ui/ExportScreen.kt",
+            'CHAT_GPT("ChatGPT"',
+            'GEMINI("Gemini"',
+            "Android AI provider order must start with ChatGPT then Gemini",
+        ),
+        lambda: require_order(
+            "app/src/main/java/jp/mimac/urlsaver/ui/ExportScreen.kt",
+            'GEMINI("Gemini"',
+            'CLAUDE("Claude"',
+            "Android AI provider order must keep Gemini before Claude",
+        ),
+        lambda: require_order(
+            "app/src/main/java/jp/mimac/urlsaver/ui/ExportScreen.kt",
+            'CLAUDE("Claude"',
+            'DEEP_SEEK("DeepSeek"',
+            "Android AI provider order must end with Claude then DeepSeek",
+        ),
+        lambda: require_order(
+            "ios/URLSaveriOS/UI/ExportSheet.swift",
+            'case chatGPT = "ChatGPT"',
+            'case gemini = "Gemini"',
+            "iPhone AI provider order must start with ChatGPT then Gemini",
+        ),
+        lambda: require_order(
+            "ios/URLSaveriOS/UI/ExportSheet.swift",
+            'case gemini = "Gemini"',
+            'case claude = "Claude"',
+            "iPhone AI provider order must keep Gemini before Claude",
+        ),
+        lambda: require_order(
+            "ios/URLSaveriOS/UI/ExportSheet.swift",
+            'case claude = "Claude"',
+            'case deepSeek = "DeepSeek"',
+            "iPhone AI provider order must end with Claude then DeepSeek",
         ),
         lambda: require(
             "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",

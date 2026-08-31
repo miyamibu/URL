@@ -24,6 +24,7 @@ import jp.mimac.urlsaver.data.SharedTagAuthSession
 import jp.mimac.urlsaver.data.SharedTagAuthSessionProvider
 import jp.mimac.urlsaver.data.SharedTagSyncCoordinator
 import jp.mimac.urlsaver.data.SharedTagMemberEntity
+import jp.mimac.urlsaver.data.SharedTagNotificationCleaner
 import jp.mimac.urlsaver.data.SharedTagSyncRemoteConfig
 import jp.mimac.urlsaver.data.SharedTagSyncRemoteDataSource
 import jp.mimac.urlsaver.data.SharedTagSyncScheduler
@@ -92,6 +93,7 @@ class TagRepositoryTest {
     private lateinit var aiTransparencyRepository: AiTransparencyRepository
     private lateinit var aiLocalDataClearer: CountingAiLocalDataClearer
     private lateinit var localAccountCleanupStore: InMemoryLocalAccountCleanupStore
+    private lateinit var notificationCleaner: CountingNotificationCleaner
     private val scheduler = FakeScheduler()
     private val clock = FakeClock(1_000L)
 
@@ -105,6 +107,7 @@ class TagRepositoryTest {
         syncScheduler = FakeSyncScheduler()
         remote = FakeRemoteDataSource()
         localAccountCleanupStore = InMemoryLocalAccountCleanupStore()
+        notificationCleaner = CountingNotificationCleaner()
         aiTransparencyRepository = AiTransparencyRepository(
             database = db,
             aiTransparencyDao = db.aiTransparencyDao(),
@@ -149,12 +152,31 @@ class TagRepositoryTest {
             ),
             aiLocalDataClearer = aiLocalDataClearer,
             localAccountCleanupStore = localAccountCleanupStore,
+            sharedTagNotificationCleaner = notificationCleaner,
         )
     }
 
     @After
     fun tearDown() {
         db.close()
+    }
+
+    @Test
+    fun signOut_clearsSessionStopsUserSyncAndRemovesSharedTagNotifications() = runBlocking {
+        authProvider.updateSession(
+            SharedTagAuthSession(
+                authUserId = "logout-user",
+                accessToken = "access",
+                refreshToken = "refresh",
+                userEmail = "logout@example.com",
+            ),
+        )
+
+        repository.signOut()
+
+        assertNull(authProvider.session.value)
+        assertEquals(listOf("logout-user"), syncScheduler.cancelled)
+        assertEquals(1, notificationCleaner.clearCallCount)
     }
 
     @Test
@@ -1051,9 +1073,22 @@ class TagRepositoryTest {
 
     private class FakeSyncScheduler : SharedTagSyncScheduler {
         val enqueued = mutableListOf<String>()
+        val cancelled = mutableListOf<String>()
 
         override fun enqueue(authUserId: String) {
             enqueued += authUserId
+        }
+
+        override fun cancel(authUserId: String) {
+            cancelled += authUserId
+        }
+    }
+
+    private class CountingNotificationCleaner : SharedTagNotificationCleaner {
+        var clearCallCount = 0
+
+        override fun clear() {
+            clearCallCount += 1
         }
     }
 }
