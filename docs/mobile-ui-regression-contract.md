@@ -108,9 +108,9 @@ Android/iPhone のホーム、カード一覧、タグ管理、詳細タグ欄�
 - Android の実機データはユーザーデータとして扱う。`pm clear`、uninstall、destructive migration で消さない。
 - 過去状態へコードを戻す場合でも、実機DBの schema が進んでいたら、保存済みデータを残す forward migration を先に用意する。
 - schema 差分を吸収する必要がある場合は、追加列を落とすだけで済むかを確認し、URL/タグ本体を削除しない。
-- 退役する Collection / 保存先 / Android UserLabel の既存テーブル、列、過去migrationはDB互換殻として保持する。
-- Collection / UserLabel の作成、改名、並べ替え、削除、割当、保存先選択、ローカルタグ連携をactive UI/業務経路へ戻さない。
-- 退役コードは `.repo-trash/20260713/collections-userlabels/` に元パスと復元手順を記録し、DBの既存行は書き換えたり削除したりしない。
+- Collectionは `../AGENTS.md` に従い、承認済みの現在機能として扱う。既存のテーブル、列、migration、保存済みデータを保持する。
+- 個別のCollection UI、保存先選択、Android UserLabel連携を変更する場合は、現行仕様と今回の依頼範囲を確認する。現在機能という分類だけで未依頼のUI追加や既存データの消去を行わない。
+- `.repo-trash/20260713/collections-userlabels/` は過去の退役時点の資料であり、現行のCollectionを一律禁止する根拠にはしない。
 
 ## Verification
 必須の静的ガード:

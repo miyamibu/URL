@@ -2,7 +2,7 @@
 
 ## Repository Purpose
 Android / iOS / Web / Supabase を含む「共有された URL をあとで開き直す」ための実装を維持する。
-Phase 1a/1b の URL 保存契約をコア不変条件として守りつつ、承認済みの検索・タグ・コレクション・共有タグ・AI-friendly export・課金/権限まわりの後続機能は現在機能として扱う。
+Phase 1a/1b の URL 保存契約をコア不変条件として守りつつ、検索・タグ・コレクション・共有タグ・AI-friendly export・課金/権限まわりは、承認済みの現在機能として扱う。
 
 ## Phase 1a Scope
 - `ACTION_SEND` の単一 URL 共有受信
