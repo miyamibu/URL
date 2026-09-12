@@ -83,8 +83,10 @@ class AppContainer(context: Context) {
     private val metadataFetcher: MetadataFetcher by lazy {
         MetadataFetcher(
             userAgent = "UrlSaver/${BuildConfig.VERSION_NAME}",
+            xHtmlMetadataEndpointBuilder = { it },
             instagramPublicOEmbedEndpointBuilder = instagramPublicOEmbedEndpointBuilder,
             instagramCaptionedEmbedEndpointBuilder = instagramCaptionedEmbedEndpointBuilder,
+            youtubePlayerEndpointBuilder = { YOUTUBE_PLAYER_ENDPOINT },
         )
     }
     private val scheduler: MetadataScheduler by lazy {
@@ -324,6 +326,7 @@ class AppContainer(context: Context) {
     private companion object {
         const val TAG = "AppContainer"
         const val INSTAGRAM_PUBLIC_OEMBED_ENDPOINT = "https://www.instagram.com/api/v1/oembed/"
+        const val YOUTUBE_PLAYER_ENDPOINT = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
 
         fun buildInstagramCaptionedEmbedUrl(targetUrl: String): String {
             val uri = URI(targetUrl)

@@ -4914,6 +4914,7 @@ private fun DetailScreen(
         userTitle = current.userTitle,
         fetchedTitle = current.fetchedTitle,
         serviceType = current.serviceType,
+        contentContext = current.contentContext,
         normalizedHost = current.normalizedHost,
         bodySummary = current.bodySummary,
         fetchedBody = current.fetchedBody,
@@ -4966,6 +4967,8 @@ private fun DetailScreen(
         bodySummary = current.bodySummary,
         fetchedBody = current.fetchedBody,
     )
+    val hasMeaningfulMetadata = !current.fetchedTitle.isNullOrBlank() ||
+        !current.thumbnailUrl.isNullOrBlank()
     val missingXBadge = current.metadataState == MetadataState.READY &&
         current.serviceType == ServiceType.X &&
         current.badgeImageUrl.isNullOrBlank()
@@ -4975,7 +4978,10 @@ private fun DetailScreen(
             body = "再取得すると、取得できる場合は投稿者のプロフィール画像を表示します。",
         )
     } else if (readyWithoutFetchedContent) {
-        metadataReadyWithoutContentMessage(current.serviceType)
+        metadataReadyWithoutContentMessage(
+            serviceType = current.serviceType,
+            hasMeaningfulMetadata = hasMeaningfulMetadata,
+        )
     } else {
         metadataDetailMessage(
             state = current.metadataState,

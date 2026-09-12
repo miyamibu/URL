@@ -183,6 +183,7 @@ fun EntryCard(
                                 userTitle = entry.userTitle,
                                 fetchedTitle = entry.fetchedTitle,
                                 serviceType = entry.serviceType,
+                                contentContext = entry.contentContext,
                                 normalizedHost = entry.normalizedHost,
                                 bodySummary = entry.bodySummary,
                                 fetchedBody = entry.fetchedBody,

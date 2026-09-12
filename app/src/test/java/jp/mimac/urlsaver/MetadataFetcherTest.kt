@@ -62,6 +62,74 @@ class MetadataFetcherTest {
     }
 
     @Test
+    fun fetch_largeHtml_preservesHeadMetadata() {
+        withServer { server ->
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "text/html; charset=utf-8")
+                    .setBody(
+                        """
+                        <html>
+                          <head>
+                            <title>Large page</title>
+                            <meta property="og:title" content="Large page" />
+                            <meta property="og:image" content="https://cdn.example/large.jpg" />
+                            <link rel="icon" href="/icon.png" />
+                          </head>
+                          <body>${"x".repeat(513 * 1024)}</body>
+                        </html>
+                        """.trimIndent(),
+                    ),
+            )
+
+            val result = MetadataFetcher(allowLocalTestUrls = true).fetch(server.url("/large-html").toString())
+
+            assertTrue(result is FetchOutcome.Ready)
+            result as FetchOutcome.Ready
+            assertEquals("Large page", result.fetchedTitle)
+            assertEquals("https://cdn.example/large.jpg", result.thumbnailUrl)
+            assertEquals(server.url("/icon.png").toString(), result.badgeImageUrl)
+        }
+    }
+
+    @Test
+    fun fetch_redirect_usesFinalUriForMetadataHost() {
+        withServer { server ->
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(302)
+                    .addHeader("Location", "https://example.com/final"),
+            )
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "text/html; charset=utf-8")
+                    .setBody("<html><head><title>Final page</title></head><body>ok</body></html>"),
+            )
+
+            val fetcher = MetadataFetcher(
+                allowLocalTestUrls = true,
+                connectionFactory = { requestedUrl ->
+                    val mapped = if (requestedUrl.startsWith("https://example.com/")) {
+                        server.url("/final").toString()
+                    } else {
+                        requestedUrl
+                    }
+                    URL(mapped).openConnection() as HttpURLConnection
+                },
+            )
+
+            val result = fetcher.fetch(server.url("/redirect-start").toString())
+
+            assertTrue(result is FetchOutcome.Ready)
+            result as FetchOutcome.Ready
+            assertEquals("example.com", result.normalizedHost)
+            assertEquals("example.com", result.rawSourceHost)
+        }
+    }
+
+    @Test
     fun fetch_redirectLoop_returnsTooManyRedirects() {
         withServer { server ->
             val loopUrl = server.url("/loop").toString()
@@ -437,6 +505,66 @@ class MetadataFetcherTest {
             assertEquals("https://x.com/openai/status/111222333", firstRequest.requestUrl?.queryParameter("url"))
             assertTrue(secondRequest.path.orEmpty().startsWith("/syndication/111222333"))
             assertEquals(2, server.requestCount)
+        }
+    }
+
+    @Test
+    fun fetch_xStatus_htmlSupplementsOEmbedMedia() {
+        withServer { server ->
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "application/json")
+                    .setBody(
+                        """
+                        {
+                          "author_name": "Sam Altman",
+                          "html": "<blockquote class=\"twitter-tweet\"><p>Post body.</p></blockquote>"
+                        }
+                        """.trimIndent(),
+                    ),
+            )
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "text/html; charset=utf-8")
+                    .setBody(
+                        """
+                        <html>
+                          <head>
+                            <title>Sam Altman (@sama) on X</title>
+                            <meta property="og:title" content="Sam Altman (@sama) on X" />
+                            <meta property="og:image" content="https://pbs.twimg.com/media/post.jpg" />
+                            <link rel="icon" href="/x-icon.ico" />
+                          </head>
+                          <body>post</body>
+                        </html>
+                        """.trimIndent(),
+                    ),
+            )
+
+            val fetcher = MetadataFetcher(
+                allowLocalTestUrls = true,
+                xHtmlMetadataEndpointBuilder = { "https://x.test/status" },
+                oEmbedEndpointBuilder = { "https://oembed.x.test/status" },
+                connectionFactory = { requestedUrl ->
+                    val mapped = when {
+                        requestedUrl.startsWith("https://oembed.x.test/") -> server.url("/x-oembed").toString()
+                        requestedUrl.startsWith("https://x.test/") -> server.url("/x-html").toString()
+                        else -> requestedUrl
+                    }
+                    URL(mapped).openConnection() as HttpURLConnection
+                },
+            )
+
+            val result = fetcher.fetch("https://x.com/sama/status/1234567890123")
+
+            assertTrue(result is FetchOutcome.Ready)
+            result as FetchOutcome.Ready
+            assertEquals("Sam Altman", result.fetchedTitle)
+            assertEquals("Post body.", result.fetchedBody)
+            assertEquals("https://pbs.twimg.com/media/post.jpg", result.thumbnailUrl)
+            assertEquals("https://x.test/x-icon.ico", result.badgeImageUrl)
         }
     }
 
@@ -1063,6 +1191,162 @@ class MetadataFetcherTest {
     }
 
     @Test
+    fun fetch_youtubeEmbed_reusesCanonicalWatchOEmbedUrl() {
+        withServer { server ->
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "application/json")
+                    .setBody(
+                        """
+                        {
+                          "title": "Embed title",
+                          "thumbnail_url": "https://img.youtube.com/vi/embed123/hqdefault.jpg"
+                        }
+                        """.trimIndent(),
+                    ),
+            )
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "text/html; charset=utf-8")
+                    .setBody("<html><head></head><body>channel badge probe</body></html>"),
+            )
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "text/html; charset=utf-8")
+                    .setBody("<html><head><title>YouTube</title></head><body></body></html>"),
+            )
+
+            var requestedTarget: String? = null
+            val fetcher = MetadataFetcher(
+                allowLocalTestUrls = true,
+                youtubeOEmbedEndpointBuilder = { targetUrl ->
+                    requestedTarget = targetUrl
+                    "https://oembed.youtube.test/video"
+                },
+                connectionFactory = { requestedUrl ->
+                    val mapped = when {
+                        requestedUrl.startsWith("https://oembed.youtube.test/") -> server.url("/youtube-oembed").toString()
+                        requestedUrl.startsWith("https://www.youtube.com/") -> server.url("/youtube-html").toString()
+                        else -> requestedUrl
+                    }
+                    URL(mapped).openConnection() as HttpURLConnection
+                },
+            )
+
+            val result = fetcher.fetch("https://www.youtube.com/embed/embed123")
+
+            assertTrue(result is FetchOutcome.Ready)
+            result as FetchOutcome.Ready
+            assertEquals("https://www.youtube.com/watch?v=embed123", requestedTarget)
+            assertEquals("Embed title", result.fetchedTitle)
+            assertEquals("https://img.youtube.com/vi/embed123/hqdefault.jpg", result.thumbnailUrl)
+        }
+    }
+
+    @Test
+    fun fetch_youtubeGenericTitle_isNotAcceptedAsMetadata() {
+        withServer { server ->
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "application/json")
+                    .setBody("{}"),
+            )
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "text/html; charset=utf-8")
+                    .setBody("<html><head></head><body>channel badge probe</body></html>"),
+            )
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "text/html; charset=utf-8")
+                    .setBody(
+                        """
+                        <html>
+                          <head>
+                            <title>YouTube</title>
+                            <meta name="description" content="作成した動画を友だち、家族、世界中の人たちと共有" />
+                          </head>
+                        </html>
+                        """.trimIndent(),
+                    ),
+            )
+
+            val fetcher = MetadataFetcher(
+                allowLocalTestUrls = true,
+                youtubeOEmbedEndpointBuilder = { "https://oembed.youtube.test/generic" },
+                connectionFactory = { requestedUrl ->
+                    val mapped = if (requestedUrl.startsWith("https://oembed.youtube.test/")) {
+                        server.url("/youtube-oembed-generic").toString()
+                    } else {
+                        server.url("/youtube-html-generic").toString()
+                    }
+                    URL(mapped).openConnection() as HttpURLConnection
+                },
+            )
+
+            val result = fetcher.fetch("https://www.youtube.com/clip/clip123")
+
+            assertEquals(FetchOutcome.Unavailable(MetadataError.PARSE_FAILED), result)
+        }
+    }
+
+    @Test
+    fun fetch_youtubeLocalizedGenericDescriptionAndPlaceholderArtwork_areUnavailable() {
+        withServer { server ->
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "application/json")
+                    .setBody("{}"),
+            )
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "text/html; charset=utf-8")
+                    .setBody("<html><head></head><body>channel badge probe</body></html>"),
+            )
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "text/html; charset=utf-8")
+                    .setBody(
+                        """
+                        <html>
+                          <head>
+                            <meta name="description" content="YouTube でお気に入りの動画や音楽を楽しみ、オリジナルのコンテンツをアップロードして友だちや家族、世界中の人たちと共有しましょう。" />
+                            <meta property="og:image" content="https://www.youtube.com/img/desktop/yt_1200.png" />
+                          </head>
+                        </html>
+                        """.trimIndent(),
+                    ),
+            )
+
+            val fetcher = MetadataFetcher(
+                allowLocalTestUrls = true,
+                youtubeOEmbedEndpointBuilder = { "https://oembed.youtube.test/localized-generic" },
+                connectionFactory = { requestedUrl ->
+                    val mapped = if (requestedUrl.startsWith("https://oembed.youtube.test/")) {
+                        server.url("/youtube-oembed-localized-generic").toString()
+                    } else {
+                        server.url("/youtube-html-localized-generic").toString()
+                    }
+                    URL(mapped).openConnection() as HttpURLConnection
+                },
+            )
+
+            val result = fetcher.fetch("https://www.youtube.com/clip/localized-generic")
+
+            assertEquals(FetchOutcome.Unavailable(MetadataError.PARSE_FAILED), result)
+        }
+    }
+
+    @Test
     fun fetch_youtube_htmlChannelBadgeFallback_isUsedWhenAuthorUrlIsMissing() {
         withServer { server ->
             server.enqueue(
@@ -1452,6 +1736,154 @@ class MetadataFetcherTest {
     }
 
     @Test
+    fun fetch_instagramLoginShell_doesNotBecomeReadyFromGenericTitleBodyOrArtwork() {
+        withServer { server ->
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "text/html; charset=utf-8")
+                    .setBody(
+                        """
+                        <html>
+                          <head>
+                            <meta property="og:title" content="Instagram" />
+                            <meta name="description" content="Create an account or log in to Instagram - Share what you're into with the people you follow." />
+                            <meta property="og:image" content="https://static.cdninstagram.com/rsrc.php/v4/yD/r/R0fBIMurK8v.png" />
+                          </head>
+                        </html>
+                        """.trimIndent(),
+                    ),
+            )
+
+            val fetcher = createInstagramFetcher(
+                server = server,
+                htmlPath = "/instagram/explore/tags/nasa",
+                oEmbedPath = null,
+            )
+
+            val result = fetcher.fetch("https://www.instagram.com/explore/tags/nasa/")
+
+            assertEquals(FetchOutcome.Unavailable(MetadataError.PARSE_FAILED), result)
+        }
+    }
+
+    @Test
+    fun fetch_instagram_genericSupplements_doNotRestoreFilteredMetadata() {
+        for (source in listOf("public", "graph", "embed")) {
+            for (htmlCase in listOf("title", "empty", "retryable")) {
+                withServer { server ->
+                    val genericImage = "https://static.cdninstagram.com/rsrc.php/v4/example.png"
+                    val genericBody = "Log in to Instagram to see this post."
+                    val payload = if (source == "embed") {
+                        """
+                        <html><body>
+                          <div class="HeaderText"><span class="Username">Instagram</span></div>
+                          <div class="Caption">$genericBody</div>
+                          <img class="EmbeddedMediaImage" src="$genericImage" />
+                        </body></html>
+                        """.trimIndent()
+                    } else {
+                        """{"author_name":"Instagram","title":"$genericBody","thumbnail_url":"$genericImage"}"""
+                    }
+                    server.enqueue(
+                        MockResponse().setResponseCode(200)
+                            .addHeader("Content-Type", if (source == "embed") "text/html" else "application/json")
+                            .setBody(payload),
+                    )
+                    server.enqueue(
+                        MockResponse().setResponseCode(if (htmlCase == "retryable") 503 else 200)
+                            .addHeader("Content-Type", "text/html")
+                            .setBody(if (htmlCase == "title") "<html><head><title>Actual post</title></head></html>" else "<html></html>"),
+                    )
+                    val fetcher = createInstagramFetcher(
+                        server = server,
+                        htmlPath = "/post",
+                        oEmbedPath = "/public".takeIf { source == "public" },
+                        embedPath = "/embed".takeIf { source == "embed" },
+                        graphOEmbedPath = "/graph".takeIf { source == "graph" },
+                    )
+
+                    val result = fetcher.fetch("https://www.instagram.com/p/FILTERED/")
+                    val context = "$source / $htmlCase"
+                    when (htmlCase) {
+                        "title" -> {
+                            assertTrue(context, result is FetchOutcome.Ready)
+                            result as FetchOutcome.Ready
+                            assertEquals(context, "Actual post", result.fetchedTitle)
+                            assertEquals(context, null, result.fetchedAuthorName)
+                            assertEquals(context, null, result.fetchedBody)
+                            assertEquals(context, null, result.description)
+                            assertEquals(context, null, result.bodySummary)
+                            assertEquals(context, null, result.thumbnailUrl)
+                        }
+                        "retryable" -> assertEquals(context, FetchOutcome.FailedRetryable(MetadataError.HTTP_5XX), result)
+                        else -> assertEquals(context, FetchOutcome.Unavailable(MetadataError.PARSE_FAILED), result)
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun fetch_instagram_genericPublicOEmbed_doesNotHideValidFallbackMetadata() {
+        for (source in listOf("graph", "embed")) {
+            withServer { server ->
+                server.enqueue(
+                    MockResponse().addHeader("Content-Type", "application/json")
+                        .setBody("""{"author_name":"Instagram","title":"Log in to Instagram","thumbnail_url":"https://static.cdninstagram.com/rsrc.php/v4/generic.png"}"""),
+                )
+                val payload = if (source == "embed") {
+                    """
+                    <html><body>
+                      <div class="HeaderText"><span class="Username">actual.author</span></div>
+                      <div class="Caption">Actual caption.</div>
+                      <img class="EmbeddedMediaImage" src="https://instagram.example/actual.jpg" />
+                    </body></html>
+                    """.trimIndent()
+                } else {
+                    """{"author_name":"actual.author","title":"Actual caption.","thumbnail_url":"https://instagram.example/actual.jpg"}"""
+                }
+                server.enqueue(
+                    MockResponse().addHeader("Content-Type", if (source == "embed") "text/html" else "application/json")
+                        .setBody(payload),
+                )
+                server.enqueue(MockResponse().setResponseCode(503))
+                val fetcher = createInstagramFetcher(
+                    server = server,
+                    htmlPath = "/post",
+                    oEmbedPath = "/public",
+                    embedPath = "/embed".takeIf { source == "embed" },
+                    graphOEmbedPath = "/graph".takeIf { source == "graph" },
+                )
+
+                val result = fetcher.fetch("https://www.instagram.com/p/FALLBACK/")
+
+                assertTrue(source, result is FetchOutcome.Ready)
+                result as FetchOutcome.Ready
+                assertEquals(source, "actual.author", result.fetchedTitle)
+                assertEquals(source, "Actual caption.", result.fetchedBody)
+                assertEquals(source, MetadataBodyKind.INSTAGRAM_CAPTION, result.fetchedBodyKind)
+                assertEquals(source, "https://instagram.example/actual.jpg", result.thumbnailUrl)
+            }
+        }
+    }
+
+    @Test
+    fun fetch_instagram_placeholderOnlyOEmbed_doesNotBecomeReady() {
+        withServer { server ->
+            server.enqueue(
+                MockResponse().addHeader("Content-Type", "application/json")
+                    .setBody("""{"thumbnail_url":"https://static.cdninstagram.com/rsrc.php/v4/generic.png"}"""),
+            )
+            server.enqueue(MockResponse().addHeader("Content-Type", "text/html").setBody("<html></html>"))
+            val result = createInstagramFetcher(server, "/post", "/public")
+                .fetch("https://www.instagram.com/p/PLACEHOLDER/")
+
+            assertEquals(FetchOutcome.Unavailable(MetadataError.PARSE_FAILED), result)
+        }
+    }
+
+    @Test
     fun fetch_instagram_authorUrlFetchFailure_doesNotBreakHtmlSuccess() {
         withServer { server ->
             server.enqueue(
@@ -1776,6 +2208,54 @@ class MetadataFetcherTest {
             assertTrue(request.path.orEmpty().startsWith("/tiktok/oembed"))
             assertEquals(originalUrl, request.requestUrl?.queryParameter("url"))
             assertEquals(1, server.requestCount)
+        }
+    }
+
+    @Test
+    fun fetch_tiktokNonVideoOEmbedTitle_isStoredAsTitle() {
+        withServer { server ->
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "application/json")
+                    .setBody(
+                        """
+                        {
+                          "title": "#nasa",
+                          "author_name": "",
+                          "author_url": "",
+                          "thumbnail_url": ""
+                        }
+                        """.trimIndent(),
+                    ),
+            )
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "text/html; charset=utf-8")
+                    .setBody("<html><head><title>TikTok - Make Your Day</title></head><body></body></html>"),
+            )
+
+            val fetcher = MetadataFetcher(
+                allowLocalTestUrls = true,
+                tiktokOEmbedEndpointBuilder = { "https://oembed.tiktok.test/tag" },
+                tiktokFallbackEndpointBuilder = null,
+                connectionFactory = { requestedUrl ->
+                    val mapped = if (requestedUrl.startsWith("https://oembed.tiktok.test/")) {
+                        server.url("/tiktok-oembed").toString()
+                    } else {
+                        server.url("/tiktok-html").toString()
+                    }
+                    URL(mapped).openConnection() as HttpURLConnection
+                },
+            )
+
+            val result = fetcher.fetch("https://www.tiktok.com/tag/nasa")
+
+            assertTrue(result is FetchOutcome.Ready)
+            result as FetchOutcome.Ready
+            assertEquals("#nasa", result.fetchedTitle)
+            assertEquals(null, result.fetchedBody)
         }
     }
 
@@ -2337,6 +2817,7 @@ class MetadataFetcherTest {
         htmlPath: String,
         oEmbedPath: String?,
         embedPath: String? = null,
+        graphOEmbedPath: String? = null,
     ): MetadataFetcher {
         return MetadataFetcher(
             allowLocalTestUrls = true,
@@ -2351,6 +2832,9 @@ class MetadataFetcherTest {
                     val encoded = URLEncoder.encode(targetUrl, StandardCharsets.UTF_8)
                     server.url("$path?url=$encoded").toString()
                 }
+            },
+            instagramOEmbedEndpointBuilder = graphOEmbedPath?.let { path ->
+                { _ -> server.url(path).toString() }
             },
             connectionFactory = { requestedUrl ->
                 val mapped = if (requestedUrl.startsWith("https://www.instagram.com/")) {

@@ -424,13 +424,27 @@ object UrlRules {
             ServiceType.YOUTUBE -> when {
                 path.startsWith("/shorts/") -> ContentContext.SHORTS
                 path.startsWith("/live/") -> ContentContext.LIVE
-                path.startsWith("/watch") || uri.query?.contains("v=") == true -> ContentContext.VIDEO
+                path.startsWith("/post/") -> ContentContext.POST
+                path.startsWith("/@") ||
+                    path.startsWith("/channel/") ||
+                    path.startsWith("/c/") ||
+                    path.startsWith("/user/") -> ContentContext.PROFILE
+                path.startsWith("/clip/") ||
+                    path.startsWith("/embed/") ||
+                    path.startsWith("/watch") ||
+                    uri.query?.contains("v=") == true -> ContentContext.VIDEO
                 else -> ContentContext.STANDARD
             }
             ServiceType.TIKTOK -> when {
-                path.contains("/video/") -> ContentContext.VIDEO
-                path.contains("/music/") -> ContentContext.MUSIC
+                path.contains("/video/") ||
+                    path.startsWith("/player/v1/") -> ContentContext.VIDEO
+                path.startsWith("/playlist/") ||
+                    path.contains("/playlist/") ||
+                    path.startsWith("/playlist-music/") ||
+                    path.startsWith("/share/music/") ||
+                    path.contains("/music/") -> ContentContext.MUSIC
                 path.contains("/tag/") -> ContentContext.HASHTAG
+                path.startsWith("/@") -> ContentContext.PROFILE
                 else -> ContentContext.STANDARD
             }
             ServiceType.X -> when {
@@ -440,7 +454,9 @@ object UrlRules {
             ServiceType.INSTAGRAM -> when {
                 path.startsWith("/reel/") -> ContentContext.REEL
                 path.startsWith("/p/") -> ContentContext.POST
-                path.startsWith("/@") -> ContentContext.PROFILE
+                path.startsWith("/reels/audio/") -> ContentContext.SOUND
+                path.startsWith("/explore/tags/") -> ContentContext.HASHTAG
+                path.startsWith("/@") || path.startsWith("/channel/") -> ContentContext.PROFILE
                 else -> ContentContext.STANDARD
             }
             ServiceType.WEB -> ContentContext.STANDARD
@@ -454,11 +470,10 @@ object UrlRules {
         serviceType: ServiceType,
         normalizedHost: String,
     ): String {
-        val titleService = if (serviceType == ServiceType.TIKTOK) ServiceType.WEB else serviceType
         return when {
             !userTitle.isNullOrBlank() -> userTitle
             !fetchedTitle.isNullOrBlank() -> fetchedTitle
-            titleService != ServiceType.WEB -> "${titleService.displayName}のリンク"
+            serviceType != ServiceType.WEB -> "${serviceType.displayName}のリンク"
             normalizedHost.isNotBlank() -> normalizedHost
             else -> "保存したリンク"
         }

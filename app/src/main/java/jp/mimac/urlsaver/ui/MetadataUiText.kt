@@ -3,6 +3,7 @@ package jp.mimac.urlsaver.ui
 import jp.mimac.urlsaver.domain.MetadataError
 import jp.mimac.urlsaver.domain.MetadataBodyKind
 import jp.mimac.urlsaver.domain.MetadataState
+import jp.mimac.urlsaver.domain.ContentContext
 import jp.mimac.urlsaver.domain.ServiceType
 import jp.mimac.urlsaver.domain.UrlRules
 
@@ -99,6 +100,19 @@ fun metadataSummaryUnavailableMessage(): String {
 }
 
 fun metadataReadyWithoutContentMessage(serviceType: ServiceType): MetadataDetailMessage {
+    return metadataReadyWithoutContentMessage(serviceType, hasMeaningfulMetadata = false)
+}
+
+fun metadataReadyWithoutContentMessage(
+    serviceType: ServiceType,
+    hasMeaningfulMetadata: Boolean,
+): MetadataDetailMessage {
+    if (hasMeaningfulMetadata) {
+        return MetadataDetailMessage(
+            title = "タイトルや画像を保存しました",
+            body = "${serviceType.displayName}の本文は公開されていないか、取得できない場合があります。",
+        )
+    }
     return MetadataDetailMessage(
         title = metadataUnavailableTitle(serviceType),
         body = metadataBodyUnavailableMessage(serviceType),
@@ -151,6 +165,7 @@ fun preferredDisplayTitle(
     userTitle: String?,
     fetchedTitle: String?,
     serviceType: ServiceType,
+    contentContext: ContentContext = ContentContext.STANDARD,
     normalizedHost: String,
     bodySummary: String?,
     fetchedBody: String?,
@@ -167,7 +182,14 @@ fun preferredDisplayTitle(
             ?: "テキスト"
     }
 
-    if (serviceType == ServiceType.X || serviceType == ServiceType.INSTAGRAM || serviceType == ServiceType.TIKTOK) {
+    val contentFirst = contentContext in setOf(
+        ContentContext.VIDEO,
+        ContentContext.SHORTS,
+        ContentContext.LIVE,
+        ContentContext.POST,
+        ContentContext.REEL,
+    )
+    if (contentFirst && serviceType in setOf(ServiceType.X, ServiceType.INSTAGRAM, ServiceType.TIKTOK)) {
         preferredMetadataContentText(
             fetchedBody = fetchedBody,
             bodySummary = bodySummary,
@@ -265,6 +287,7 @@ private fun isMajorSocialService(serviceType: ServiceType?): Boolean {
         ServiceType.YOUTUBE,
         ServiceType.X,
         ServiceType.INSTAGRAM,
+        ServiceType.TIKTOK,
     )
 }
 
@@ -273,7 +296,7 @@ private fun serviceLabelForRestriction(serviceType: ServiceType?): String {
         ServiceType.YOUTUBE -> "YouTube"
         ServiceType.X -> "X"
         ServiceType.INSTAGRAM -> "Instagram"
-        ServiceType.TIKTOK -> "このサイト"
+        ServiceType.TIKTOK -> "TikTok"
         ServiceType.WEB,
         ServiceType.ALL,
         null,
