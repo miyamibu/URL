@@ -1,36 +1,32 @@
-# Codex Prompt Docs Index
+# Codex 作業ルール・手順の索引
 
-## Goal
-Codex 向け prompt ドキュメントを 1 か所で発見できるようにし、既存資産を置き換えず再利用しやすくする。
+現行の作業ルールと繰り返し使う手順への入口。仕様と承認境界は `AGENTS.md` を正とし、個別手順は関連するSkillと契約文書を参照する。
 
-## Context
-- このリポジトリでは Codex 用の実装/レビュー prompt を `docs/codex-*.md` に保持している。
-- 本 README はインデックス専用であり、各 prompt 本文は元ファイル側を正とする。
+## 現行の参照先
 
-## Constraints
-- 既存の `CODEX_INSTRUCTIONS.md`、`AGENTS.md`、`.codex/` 設定は上書きしない。
-- 既存の `docs/codex-*.md` を改変せず、リンクと短い用途メモのみを管理する。
-- 追加時は短い目的説明を 1 行添える。
+- [AGENTS.md](../../AGENTS.md): プロジェクトの仕様、作業範囲、承認境界。
+- [CODEX_INSTRUCTIONS.md](../../CODEX_INSTRUCTIONS.md): Codex向けの互換入口。
+- [DESIGN.md](../../DESIGN.md): UI/UXの設計方針。
+- [Mobile UI Regression Contract](../mobile-ui-regression-contract.md): Android/iOSの画面・データ互換性の回帰契約。
+- [Rinbam Single Route](../../.agents/skills/rinbam-single-route/SKILL.md): モバイル変更・検証の共通手順。
+- [UI Design Brief](../../.agents/skills/ui-design-brief/SKILL.md): UI設計前の要件整理。
+- [Image to UI Implementation](../../.agents/skills/image-to-ui-implementation/SKILL.md): 画像から実装仕様へ変換する手順。
+- [Frontend Visual Review](../../.agents/skills/frontend-visual-review/SKILL.md): 変更後の画面レビュー。
+- [ローカル制作物・検証資料](../local-artifacts.md): Git管理外に保持している資料と保管方針。
 
-## Done when
-- 現在存在する `docs/codex-*.md` がすべてリンク付きで列挙されている。
-- 各エントリに短い用途メモがある。
-- 参照リンクがファイル存在チェックで解決できる。
+## 旧プロンプト
 
-## Output format
-- 変更報告は `Changes made` / `Files touched` / `Validation` / `Open issues` の順で記載する。
+2026-09-12の整理で、以下の旧資料の削除差分を確定した。現行仕様の入口としては使わない。本文は削除前のGit履歴に保持されている。
 
-## Validation method
-- `docs/codex-*.md` の実ファイル一覧と index 記載が一致することを確認する。
-- index 内リンクが相対パスとして解決可能であることを確認する。
+- `docs/codex-cross-platform-review-prompt.md`
+- `docs/codex-dark-ui-implementation-prompt.md`
+- `docs/codex-ios-port-prompt.md`
+- `docs/codex-shared-tag-invite-sync-prompt.md`
+- `docs/codex-swipe-list-actions-prompt.md`
+- `docs/understand-anything/08-image2-final-prompt.md`
 
-## Failure-handling behavior
-- 対象ファイルが見つからない場合は追加せず、欠落名と探索パターンを明記して停止する。
-- 記載済みリンクが解決しない場合はリンクを一時削除せず、正しいパスを確定してから更新する。
+これら6件は `bb06744e` に存在するため、必要時は `git show bb06744e:<path>` で本文を参照できる。過去の実行記録に残るファイル名は履歴として保持する。
 
-## Prompt Files (`docs/codex-*.md`)
-- [`../codex-cross-platform-review-prompt.md`](../codex-cross-platform-review-prompt.md): Android/iOS の差分、回帰、リスクを防御的に洗い出すレビュー実行 prompt。
-- [`../codex-dark-ui-implementation-prompt.md`](../codex-dark-ui-implementation-prompt.md): HTML mock に合わせて挙動を変えずに Dark UI を実装する prompt。
-- [`../codex-ios-port-prompt.md`](../codex-ios-port-prompt.md): historical な Android Phase 1a/1b native iOS 移植 prompt。現在の parity では `AGENTS.md` と canonical QA tracker も参照する。
-- [`../codex-shared-tag-invite-sync-prompt.md`](../codex-shared-tag-invite-sync-prompt.md): shared tag invite sync MVP を段階導入する実装 prompt。
-- [`../codex-swipe-list-actions-prompt.md`](../codex-swipe-list-actions-prompt.md): Main 一覧の swipe archive/delete を安全に実装する prompt。
+## 索引の更新
+
+参照先を追加・変更したときは、リンクが実在することと、その文書の役割が現行仕様と一致することを確認する。長い実行手順や仕様をこの索引へ重複記載しない。
