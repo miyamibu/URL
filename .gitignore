@@ -10,6 +10,14 @@ app/build/
 .claude/
 .codex/
 .understand-anything/
+/.firecrawl/
+
+# Local creative projects (sources, renders, exports, and QA stay on this Mac).
+# Inventory and retention notes: docs/local-artifacts.md
+/deliverables/
+/deliverables_v2/
+/deliverables_v3/
+/deliverables_sns_h3/
 
 # Generated evidence and temporary outputs
 artifacts/pre-edit/
@@ -27,6 +35,8 @@ artifacts/ui-review/**/*.jpeg
 artifacts/ui-review/**/*.png
 artifacts/ui-review/**/*.xml
 artifacts/tiktok-live/
+/artifacts/git-review/
+/artifacts/ui-review/2026-09-12/
 __pycache__/
 tmp_main.png
 
