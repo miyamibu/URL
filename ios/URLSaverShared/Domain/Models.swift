@@ -490,12 +490,18 @@ enum ContentContext: String, Codable, Sendable {
     case video
     case shorts
     case live
+    case space
+    case list
     case music
+    case playlist
     case post
     case reel
     case profile
+    case channel
     case sound
+    case highlight
     case hashtag
+    case shortURL
 }
 
 enum RecordState: String, Codable, Sendable {
@@ -523,6 +529,9 @@ enum MetadataError: String, Codable, Sendable {
     case nonHTML = "NON_HTML"
     case oversized = "OVERSIZED"
     case tooManyRedirects = "TOO_MANY_REDIRECTS"
+    case loginRequired = "LOGIN_REQUIRED"
+    case providerUnavailable = "PROVIDER_UNAVAILABLE"
+    case wrongFixture = "WRONG_FIXTURE"
 }
 
 enum MetadataBodyKind: String, Codable, Sendable {
@@ -698,6 +707,41 @@ struct MetadataUpdate: Equatable, Sendable {
     let canonicalID: String?
     let normalizedHost: String?
     let rawSourceHost: String?
+    let clearExistingMetadata: Bool
+
+    init(
+        fetchedTitle: String?,
+        fetchedAuthorName: String? = nil,
+        fetchedBody: String?,
+        fetchedBodyKind: MetadataBodyKind?,
+        bodySummary: String?,
+        description: String?,
+        thumbnailURL: String?,
+        badgeImageURL: String?,
+        metadataState: MetadataState,
+        metadataFetchedAt: Date?,
+        metadataError: MetadataError?,
+        canonicalID: String?,
+        normalizedHost: String?,
+        rawSourceHost: String?,
+        clearExistingMetadata: Bool = false
+    ) {
+        self.fetchedTitle = fetchedTitle
+        self.fetchedAuthorName = fetchedAuthorName
+        self.fetchedBody = fetchedBody
+        self.fetchedBodyKind = fetchedBodyKind
+        self.bodySummary = bodySummary
+        self.description = description
+        self.thumbnailURL = thumbnailURL
+        self.badgeImageURL = badgeImageURL
+        self.metadataState = metadataState
+        self.metadataFetchedAt = metadataFetchedAt
+        self.metadataError = metadataError
+        self.canonicalID = canonicalID
+        self.normalizedHost = normalizedHost
+        self.rawSourceHost = rawSourceHost
+        self.clearExistingMetadata = clearExistingMetadata
+    }
 }
 
 struct URLRecord: Identifiable, Equatable, Sendable {
@@ -918,10 +962,25 @@ enum MetadataStatusText {
             return "ページが大きいため、内容の自動取得はできませんでした。"
         case .tooManyRedirects:
             return "リダイレクトが多すぎて取得できません (\(error.rawValue))"
+        case .loginRequired:
+            return "ログインが必要なため取得できません (\(error.rawValue))"
+        case .providerUnavailable:
+            return "提供元で利用できません (\(error.rawValue))"
+        case .wrongFixture:
+            return "URLの種類が想定と異なります (\(error.rawValue))"
         }
     }
 
     private static func unavailableShortText(for record: URLRecord) -> String {
+        if case .loginRequired? = record.metadataError {
+            return "ログインが必要です"
+        }
+        if case .wrongFixture? = record.metadataError {
+            return "URLの種類が異なります"
+        }
+        if case .providerUnavailable? = record.metadataError {
+            return "提供元で利用できません"
+        }
         switch record.serviceType {
         case .x, .instagram:
             return "自動取得に制限あり"
@@ -931,6 +990,15 @@ enum MetadataStatusText {
     }
 
     private static func unavailableDetailText(for record: URLRecord) -> String {
+        if case .loginRequired? = record.metadataError {
+            return "ログインが必要なため自動取得できません"
+        }
+        if case .wrongFixture? = record.metadataError {
+            return "このURLは想定したコンテンツ種類ではありません"
+        }
+        if case .providerUnavailable? = record.metadataError {
+            return "提供元でこのURLの情報を利用できません"
+        }
         switch record.serviceType {
         case .x:
             return "Xの投稿はアクセス制限により自動取得に制限があります"

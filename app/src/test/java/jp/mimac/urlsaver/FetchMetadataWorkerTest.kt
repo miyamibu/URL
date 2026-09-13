@@ -23,6 +23,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import java.net.HttpURLConnection
+import java.net.URL
 
 @RunWith(RobolectricTestRunner::class)
 class FetchMetadataWorkerTest {
@@ -213,10 +215,143 @@ class FetchMetadataWorkerTest {
         }
     }
 
+    @Test
+    fun semanticUnavailable_canClearStaleProviderShellMetadata() {
+        withServer { server ->
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "text/html; charset=utf-8")
+                    .setBody(
+                        """
+                        <html>
+                          <head>
+                            <meta property="og:title" content="Join my group chat:" />
+                            <meta property="og:image" content="https://www.instagram.com/images/assets_DO_NOT_HARDCODE/instagram_group_links/Sheet-Preview-Image.png" />
+                          </head>
+                        </html>
+                        """.trimIndent(),
+                    ),
+            )
+
+            val context = ApplicationProvider.getApplicationContext<Context>()
+            val repository = (context as UrlSaverApp).container.repository
+            val entryId = runBlocking {
+                repository.saveFromManualInput("https://www.instagram.com/channel/STALE001/").entryId!!
+            }
+            runBlocking {
+                repository.applyMetadataUpdate(
+                    entryId,
+                    MetadataUpdate(
+                        fetchedTitle = "Join my group chat:",
+                        fetchedBody = "old provider shell",
+                        bodySummary = "old provider shell",
+                        description = "old provider shell",
+                        thumbnailUrl = "https://www.instagram.com/images/assets_DO_NOT_HARDCODE/instagram_group_links/Sheet-Preview-Image.png",
+                        badgeImageUrl = null,
+                        metadataState = MetadataState.READY,
+                        metadataFetchedAt = 1L,
+                        metadataError = null,
+                        canonicalId = null,
+                        normalizedHost = "www.instagram.com",
+                        rawSourceHost = "www.instagram.com",
+                    ),
+                )
+            }
+
+            val fetcher = MetadataFetcher(
+                allowLocalTestUrls = true,
+                connectionFactory = {
+                    URL(server.url("/channel-clear").toString()).openConnection() as HttpURLConnection
+                },
+            )
+            val worker = buildWorker(context, entryId, runAttemptCount = 0, fetcher = fetcher)
+
+            assertEquals(ListenableWorker.Result.success(), runBlocking { worker.doWork() })
+
+            val updated = runBlocking { repository.loadEntry(entryId) }!!
+            assertEquals(MetadataState.UNAVAILABLE, updated.metadataState)
+            assertEquals(MetadataError.PROVIDER_UNAVAILABLE, updated.metadataError)
+            assertEquals(null, updated.fetchedTitle)
+            assertEquals(null, updated.fetchedBody)
+            assertEquals(null, updated.bodySummary)
+            assertEquals(null, updated.description)
+            assertEquals(null, updated.thumbnailUrl)
+            assertEquals(null, updated.badgeImageUrl)
+        }
+    }
+
+    @Test
+    fun semanticReady_canClearStaleGenericBodyMetadata() {
+        withServer { server ->
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "text/html; charset=utf-8")
+                    .setBody(
+                        """
+                        <html>
+                          <head>
+                            <meta property="og:title" content="nasajohnson | Original audio on Instagram" />
+                            <meta property="og:description" content="Listen to nasajohnson on Instagram and watch reels with original audio" />
+                            <meta property="og:image" content="https://scontent.example/nasajohnson-profile.jpg" />
+                          </head>
+                        </html>
+                        """.trimIndent(),
+                    ),
+            )
+
+            val context = ApplicationProvider.getApplicationContext<Context>()
+            val repository = (context as UrlSaverApp).container.repository
+            val entryId = runBlocking {
+                repository.saveFromManualInput("https://www.instagram.com/reels/audio/STALE002/").entryId!!
+            }
+            runBlocking {
+                repository.applyMetadataUpdate(
+                    entryId,
+                    MetadataUpdate(
+                        fetchedTitle = "old audio title",
+                        fetchedBody = "old generic audio body",
+                        bodySummary = "old generic audio body",
+                        description = "old generic audio body",
+                        thumbnailUrl = "https://scontent.example/old-image.jpg",
+                        badgeImageUrl = null,
+                        metadataState = MetadataState.READY,
+                        metadataFetchedAt = 1L,
+                        metadataError = null,
+                        canonicalId = null,
+                        normalizedHost = "www.instagram.com",
+                        rawSourceHost = "www.instagram.com",
+                    ),
+                )
+            }
+
+            val fetcher = MetadataFetcher(
+                allowLocalTestUrls = true,
+                connectionFactory = {
+                    URL(server.url("/sound-clear").toString()).openConnection() as HttpURLConnection
+                },
+            )
+            val worker = buildWorker(context, entryId, runAttemptCount = 0, fetcher = fetcher)
+
+            assertEquals(ListenableWorker.Result.success(), runBlocking { worker.doWork() })
+
+            val updated = runBlocking { repository.loadEntry(entryId) }!!
+            assertEquals(MetadataState.READY, updated.metadataState)
+            assertEquals("nasajohnson | Original audio on Instagram", updated.fetchedTitle)
+            assertEquals(null, updated.fetchedBody)
+            assertEquals(null, updated.bodySummary)
+            assertEquals(null, updated.description)
+            assertEquals(null, updated.thumbnailUrl)
+            assertEquals("https://scontent.example/nasajohnson-profile.jpg", updated.badgeImageUrl)
+        }
+    }
+
     private fun buildWorker(
         context: Context,
         entryId: Long,
         runAttemptCount: Int,
+        fetcher: MetadataFetcher = MetadataFetcher(allowLocalTestUrls = true),
     ): FetchMetadataWorker {
         return TestListenableWorkerBuilder<FetchMetadataWorker>(context)
             .setWorkerFactory(object : WorkerFactory() {
@@ -230,7 +365,7 @@ class FetchMetadataWorkerTest {
                         appContext = appContext,
                         workerParams = workerParameters,
                         repository = (context as UrlSaverApp).container.repository,
-                        fetcher = MetadataFetcher(allowLocalTestUrls = true),
+                        fetcher = fetcher,
                         clock = SystemAppClock,
                     )
                 }

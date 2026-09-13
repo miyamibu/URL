@@ -1011,8 +1011,8 @@ final class ExportArchiveBuilderTests: XCTestCase {
         XCTAssertNil(source.range(of: #"\bcase\s+csv\b"#, options: .regularExpression))
         XCTAssertNil(source.range(of: #"\bcase\s+html\b"#, options: .regularExpression))
         XCTAssertNil(source.range(of: #"\bcase\s+copy\b"#, options: .regularExpression))
-        XCTAssertTrue(source.contains("Text(exportMode == .chatGpt ? \"ChatGPT\" : \"エクスポート\")"))
-        XCTAssertTrue(source.contains("ChatGPTに送る"))
+        XCTAssertTrue(source.contains("Text(exportMode == .chatGpt ? aiProvider.displayName : \"エクスポート\")"))
+        XCTAssertTrue(source.contains("Text(\"\\(aiProvider.displayName)に送る\")"))
         XCTAssertTrue(source.contains("自作タグを1つ以上選んでください"))
         XCTAssertTrue(source.contains("ZIPに入る自作タグ名（伏せ字後）"))
         XCTAssertTrue(source.contains("Toggle(isOn: $hasConfirmedChatGptPreview)"))
@@ -1043,8 +1043,8 @@ final class ExportArchiveBuilderTests: XCTestCase {
 
         let rootSource = try String(contentsOf: rootViewSourceURL(), encoding: .utf8)
         XCTAssertTrue(rootSource.contains("onOpenChatGpt"))
-        XCTAssertTrue(rootSource.contains("ChatGptExportSheet(model: model)"))
-        XCTAssertTrue(rootSource.contains("Text(\"ChatGPT\")"))
+        XCTAssertTrue(rootSource.contains("ChatGptExportSheet(model: model, provider: selectedAIProvider)"))
+        XCTAssertTrue(rootSource.contains("Text(\"AI\")"))
     }
 
     func testShareSaveRefreshesWhenTheAppReturnsToForeground() throws {

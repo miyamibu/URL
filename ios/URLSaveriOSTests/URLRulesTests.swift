@@ -57,6 +57,46 @@ final class URLRulesTests: XCTestCase {
         XCTAssertEqual(display, "www.youtube.com/watch?v=abc123")
     }
 
+    func testClassifiesTheThirtyAndroidMetadataLinkKindsForIOS() {
+        let cases: [(String, ContentContext)] = [
+            ("https://www.youtube.com/watch?v=MAZyQ-38b8M", .video),
+            ("https://www.youtube.com/shorts/2wjdNG_sBnw", .shorts),
+            ("https://www.youtube.com/live/iYmvCUonukw", .live),
+            ("https://youtube.com/clip/UgkxU2HSeGL_NvmDJ-nQJrlLwllwMDBdGZFs", .video),
+            ("https://www.youtube.com/playlist?list=PLbpi6ZahtOH6Blw3RGYpWkSByi_T7Rygb", .standard),
+            ("https://www.youtube.com/post/UgkxspDXAu888uYflWUcy9sq7Ok0tkke0Ys_", .post),
+            ("https://www.youtube.com/@OpenAI", .profile),
+            ("https://youtu.be/MAZyQ-38b8M", .standard),
+            ("https://www.youtube.com/embed/MAZyQ-38b8M", .video),
+            ("https://x.com/sama/status/2097410967978324010", .post),
+            ("https://x.com/OpenAI", .standard),
+            ("https://x.com/i/lists/84839422", .list),
+            ("https://x.com/i/communities/1493446837214187523", .standard),
+            ("https://x.com/i/article/2044111546129756383", .standard),
+            ("https://www.instagram.com/p/DWx_-qMFAzY", .post),
+            ("https://www.instagram.com/reel/DcMXl1IPNtB", .reel),
+            ("https://www.instagram.com/stories/highlights/18195781759377100", .highlight),
+            ("https://www.instagram.com/channel/AbZ19cL4AVphbig9", .channel),
+            ("https://www.instagram.com/reels/audio/28532324479739746", .sound),
+            ("https://www.instagram.com/nasa", .profile),
+            ("https://www.instagram.com/explore/tags/nasa", .hashtag),
+            ("https://www.tiktok.com/@scout2015/video/6718335390845095173", .video),
+            ("https://www.tiktok.com/@tiktok", .profile),
+            ("https://www.tiktok.com/@tiktok/playlist/In-The-Mix-7516638364301265695", .playlist),
+            ("https://www.tiktok.com/share/music/7120258950676154369", .music),
+            ("https://www.tiktok.com/music/original-sound-7536694526191127327", .music),
+            ("https://www.tiktok.com/tag/nasa", .hashtag),
+            ("https://www.tiktok.com/sticker/MGS-Alert-274011806", .standard),
+            ("https://www.tiktok.com/player/v1/6718335390845095173", .video),
+            ("https://www.tiktok.com/t/ZSun1U11T", .shortURL),
+        ]
+
+        XCTAssertEqual(cases.count, 30)
+        for (url, expectedContext) in cases {
+            XCTAssertEqual(URLRules.parseURL(url)?.contentContext, expectedContext, url)
+        }
+    }
+
     func testExtractFromCandidateGroupsFallsBackByPriority() {
         let groups = ShareCandidateGroups(
             extraCandidates: ["broken https:///oops"],

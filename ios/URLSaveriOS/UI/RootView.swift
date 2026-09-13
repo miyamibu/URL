@@ -35,7 +35,9 @@ struct RootView: View {
     @State private var isShowingSharedTagCreateSheet = false
     @State private var isShowingSharedTagGroupCreateSheet = false
     @State private var isShowingExportSheet = false
+    @State private var isShowingAIProviderChooser = false
     @State private var isShowingChatGptSheet = false
+    @State private var selectedAIProvider: AIHandoffProvider = .chatGPT
     @State private var isShowingShareSheet = false
     @State private var isShowingPrivacyInfoSheet = false
     @State private var shareItems: [Any] = []
@@ -84,6 +86,7 @@ struct RootView: View {
            !isShowingUsageGuide,
            !isShowingSharedTagCloudSheet,
            !isShowingExportSheet,
+           !isShowingAIProviderChooser,
            !isShowingChatGptSheet {
             OnboardingGuideOverlay(
                 pageIndex: firstRunOnboardingPageIndex,
@@ -277,7 +280,7 @@ struct RootView: View {
                             BottomHomeActionBar(
                                 onOpenGroups: { model.selectedTab = .groups },
                                 onOpenExport: { isShowingExportSheet = true },
-                                onOpenChatGpt: { isShowingChatGptSheet = true },
+                                onOpenChatGpt: { isShowingAIProviderChooser = true },
                                 onAddURL: { isShowingManualSheet = true },
                                 onOpenTags: { isShowingLocalTagManagementSheet = true },
                                 onOpenArchive: { model.selectedTab = .archive },
@@ -406,10 +409,21 @@ struct RootView: View {
                     .presentationCornerRadius(32)
             }
             .sheet(isPresented: $isShowingChatGptSheet) {
-                ChatGptExportSheet(model: model)
+                ChatGptExportSheet(model: model, provider: selectedAIProvider)
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
                     .presentationCornerRadius(32)
+            }
+            .confirmationDialog("AIを選ぶ", isPresented: $isShowingAIProviderChooser, titleVisibility: .visible) {
+                ForEach(AIHandoffProvider.allCases) { provider in
+                    Button(provider.displayName) {
+                        selectedAIProvider = provider
+                        isShowingChatGptSheet = true
+                    }
+                }
+                Button("キャンセル", role: .cancel) {}
+            } message: {
+                Text("各サービスのロゴは、公式配布条件を確認できた場合だけ表示します。")
             }
             .sheet(isPresented: $isShowingShareSheet) {
                 ActivityShareSheet(items: shareItems)
@@ -1017,13 +1031,9 @@ private struct BottomHomeActionBar: View {
             .accessibilityLabel("URLを追加")
 
             Button(action: onOpenChatGpt) {
-                HStack(spacing: 8) {
-                    Image(systemName: "bubble.left.and.text.bubble.right")
-                        .font(.system(.body, design: .rounded).weight(.bold))
-                    Text("ChatGPT")
-                        .font(.system(.subheadline, design: .rounded).weight(.heavy))
-                        .lineLimit(2)
-                }
+                Text("AI")
+                    .font(.system(size: 14, weight: .heavy, design: .rounded))
+                    .lineLimit(1)
                 .foregroundStyle(AppPalette.textPrimary)
                 .padding(.horizontal, 16)
                 .frame(minHeight: min(scaledChatGptMinimumHeight, 64))
@@ -1033,7 +1043,7 @@ private struct BottomHomeActionBar: View {
             .buttonStyle(.plain)
             .offset(x: -14, y: -(barBackgroundHeight - 24))
             .frame(maxWidth: .infinity, alignment: .trailing)
-            .accessibilityLabel("ChatGPT")
+            .accessibilityLabel("AI")
         }
         .frame(height: totalHeight + bottomSafeAreaInset)
         .frame(maxWidth: .infinity)
@@ -1187,10 +1197,6 @@ private struct UsageGuideView: View {
                 UsageGuideRow(marker: "7", markerColor: AppPalette.primaryStrong, icon: "tray.and.arrow.up", iconColor: AppPalette.primaryStrong, iconBackground: AppPalette.primaryStrong.opacity(0.12), title: "エクスポートでAIに渡す", body: "エクスポートしたデータをClaudeやChatGPTに渡して活用できます。", layout: .stacked) {
                     GuideAIExportPreview()
                 }
-                UsageGuideRow(marker: "8", markerColor: AppPalette.primaryStrong, icon: "bubble.left.and.text.bubble.right", iconColor: AppPalette.primaryStrong, iconBackground: AppPalette.primaryStrong.opacity(0.12), title: "確認してChatGPTへ渡す", body: "自作タグを選び、伏せ字後の全内容と除外項目を確認してチェックします。作成したZIPだけをChatGPTへ渡し、質問はChatGPT側で入力します。", layout: .stacked) {
-                    GuideChatGptPreview()
-                }
-
                 UsageGuideNote()
                     .padding(.top, 12)
                     .padding(.bottom, 24)
@@ -1519,20 +1525,6 @@ private struct GuideAIExportPreview: View {
                 )
             }
         }
-    }
-}
-
-private struct GuideChatGptPreview: View {
-    var body: some View {
-        GuidePreviewSurface {
-            Label("伏せ字後の全内容を確認", systemImage: "doc.text.magnifyingglass")
-                .font(.system(.caption, design: .rounded).weight(.bold))
-            Label("未知の秘密がないことを確認してチェック", systemImage: "checkmark.square")
-                .font(.system(.caption2, design: .rounded).weight(.semibold))
-            Label("ZIPを作成して共有", systemImage: "doc.zipper")
-                .font(.system(.caption2, design: .rounded).weight(.semibold))
-        }
-        .foregroundStyle(AppPalette.textPrimary)
     }
 }
 
@@ -1879,7 +1871,7 @@ let onboardingGuidePages: [OnboardingGuidePage] = [
     ),
     OnboardingGuidePage(
         title: "使い方はいつでも確認",
-        body: "右上のメニューにある「使い方」は、初回説明とは別の詳しいガイドです。共有やChatGPTへの渡し方も確認できます。",
+        body: "右上のメニューにある「使い方」は、初回説明とは別の詳しいガイドです。共有やAIへの渡し方も確認できます。",
         spotlight: { size in CGRect(x: max(size.width - 72, 0), y: 42, width: 58, height: 58) },
         arrow: { rect in CGPoint(x: rect.midX - 24, y: rect.maxY + 22) },
         arrowText: "↑",

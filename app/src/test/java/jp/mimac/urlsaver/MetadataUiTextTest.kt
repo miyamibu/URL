@@ -3,6 +3,7 @@ package jp.mimac.urlsaver
 import jp.mimac.urlsaver.domain.MetadataError
 import jp.mimac.urlsaver.domain.MetadataBodyKind
 import jp.mimac.urlsaver.domain.MetadataState
+import jp.mimac.urlsaver.domain.ContentContext
 import jp.mimac.urlsaver.domain.ServiceType
 import jp.mimac.urlsaver.ui.isDelayedPendingMetadata
 import jp.mimac.urlsaver.ui.isReadyWithoutFetchedContent
@@ -28,6 +29,7 @@ class MetadataUiTextTest {
             userTitle = null,
             fetchedTitle = "OpenAI",
             serviceType = ServiceType.X,
+            contentContext = ContentContext.POST,
             normalizedHost = "x.com",
             bodySummary = "要点",
             fetchedBody = "これは投稿本文です",
@@ -58,6 +60,7 @@ class MetadataUiTextTest {
             userTitle = null,
             fetchedTitle = "author_name",
             serviceType = ServiceType.INSTAGRAM,
+            contentContext = ContentContext.POST,
             normalizedHost = "instagram.com",
             bodySummary = "短い要点",
             fetchedBody = "これはInstagramの投稿内容です",
@@ -73,6 +76,7 @@ class MetadataUiTextTest {
             userTitle = null,
             fetchedTitle = "creator",
             serviceType = ServiceType.TIKTOK,
+            contentContext = ContentContext.VIDEO,
             normalizedHost = "tiktok.com",
             bodySummary = "短い要点",
             fetchedBody = "これはTikTokの投稿内容です",
@@ -80,6 +84,22 @@ class MetadataUiTextTest {
         )
 
         assertEquals("これはTikTokの投稿内容です", title)
+    }
+
+    @Test
+    fun preferredDisplayTitle_prefersProfileTitleForNonPostContext() {
+        val title = preferredDisplayTitle(
+            userTitle = null,
+            fetchedTitle = "OpenAI (@OpenAI)",
+            serviceType = ServiceType.X,
+            contentContext = ContentContext.PROFILE,
+            normalizedHost = "x.com",
+            bodySummary = "企業紹介",
+            fetchedBody = "OpenAIのミッションです",
+            description = "説明文",
+        )
+
+        assertEquals("OpenAI (@OpenAI)", title)
     }
 
     @Test
@@ -96,6 +116,22 @@ class MetadataUiTextTest {
             ),
         )
         assertNull(metadataListStatusText(MetadataState.READY))
+    }
+
+    @Test
+    fun metadataListStatusText_distinguishesExternalTerminalStates() {
+        assertEquals(
+            "ログインが必要",
+            metadataListStatusText(MetadataState.UNAVAILABLE, MetadataError.LOGIN_REQUIRED, ServiceType.X),
+        )
+        assertEquals(
+            "提供元で利用できません",
+            metadataListStatusText(MetadataState.UNAVAILABLE, MetadataError.PROVIDER_UNAVAILABLE, ServiceType.TIKTOK),
+        )
+        assertEquals(
+            "URL種別を確認",
+            metadataListStatusText(MetadataState.UNAVAILABLE, MetadataError.WRONG_FIXTURE, ServiceType.TIKTOK),
+        )
     }
 
     @Test
@@ -153,6 +189,9 @@ class MetadataUiTextTest {
         assertEquals("リダイレクトが多すぎました", metadataErrorDisplay(MetadataError.TOO_MANY_REDIRECTS))
         assertEquals("情報取得機能を開始できませんでした", metadataErrorDisplay(MetadataError.SCHEDULER_UNAVAILABLE))
         assertEquals("このURL形式は情報取得対象外です", metadataErrorDisplay(MetadataError.UNSUPPORTED_SCHEME))
+        assertEquals("ログインが必要です", metadataErrorDisplay(MetadataError.LOGIN_REQUIRED))
+        assertEquals("提供元で利用できません", metadataErrorDisplay(MetadataError.PROVIDER_UNAVAILABLE))
+        assertEquals("テスト対象のURL種別と異なります", metadataErrorDisplay(MetadataError.WRONG_FIXTURE))
     }
 
     @Test
@@ -206,6 +245,16 @@ class MetadataUiTextTest {
         assertEquals(
             "Instagramの公開範囲やページ構成により、投稿内容を取得できない場合があります。",
             message.body,
+        )
+
+        val partial = metadataReadyWithoutContentMessage(
+            serviceType = ServiceType.YOUTUBE,
+            hasMeaningfulMetadata = true,
+        )
+        assertEquals("タイトルや画像を保存しました", partial.title)
+        assertEquals(
+            "YouTubeの本文は公開されていないか、取得できない場合があります。",
+            partial.body,
         )
 
         assertEquals(

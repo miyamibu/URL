@@ -358,6 +358,112 @@ final class MetadataFetcherTests: XCTestCase {
         XCTAssertEqual(update.fetchedAuthorName, "mana")
     }
 
+    func testXListUsesOfficialOEmbedMetadataAndServiceIcon() async {
+        let oEmbed = URL(string: "https://mock.local/x-list-oembed")!
+        MockURLProtocol.responses[oEmbed.absoluteString] = .json(
+            #"{"title":"Official Twitter Accounts","description":"Official accounts","url":"https://x.com/i/lists/84839422","html":"<a>An X List by X</a>"}"#
+        )
+
+        let update = await makeFetcher(
+            xOEmbedEndpointBuilder: { _ in oEmbed },
+            xSyndicationEndpointBuilder: { _ in XCTFail("X List must not use tweet syndication"); return nil }
+        ).fetch(for: makeRecord(
+            serviceType: .x,
+            url: "https://x.com/i/lists/84839422",
+            contentContext: .list
+        ))
+
+        XCTAssertEqual(update.metadataState, .ready)
+        XCTAssertEqual(update.fetchedTitle, "Official Twitter Accounts")
+        XCTAssertEqual(update.fetchedAuthorName, "X")
+        XCTAssertEqual(update.fetchedBody, "Official accounts")
+        XCTAssertEqual(update.badgeImageURL, "https://x.com/apple-touch-icon.png")
+        XCTAssertEqual(update.canonicalID, "84839422")
+    }
+
+    func testXSpaceWithoutRuntimeBearerTokenIsLoginRequiredAndClearsMetadata() async {
+        let update = await makeFetcher(
+            xSpaceMetadataEndpointBuilder: { _ in XCTFail("No endpoint should be called without a token"); return nil },
+            xPublicBearerToken: nil
+        ).fetch(for: makeRecord(
+            serviceType: .x,
+            url: "https://x.com/i/spaces/1vJpPrZrbEaJE",
+            contentContext: .space
+        ))
+
+        XCTAssertEqual(update.metadataState, .unavailable)
+        XCTAssertEqual(update.metadataError, .loginRequired)
+        XCTAssertTrue(update.clearExistingMetadata)
+        XCTAssertNil(update.fetchedTitle)
+        XCTAssertNil(update.thumbnailURL)
+        XCTAssertNil(update.badgeImageURL)
+    }
+
+    func testTikTokUnavailablePlaylistDoesNotBecomeReadyWithGenericPageMetadata() async {
+        let original = URL(string: "https://www.tiktok.com/playlist-music/Buzz-Tracker-7081543689138391809")!
+        MockURLProtocol.responses[original.absoluteString] = .html(
+            "<html><head><title>TikTok - Make Your Day</title></head><body><div>Page not available</div></body></html>"
+        )
+
+        let update = await makeFetcher().fetch(for: makeRecord(
+            serviceType: .tiktok,
+            url: original.absoluteString,
+            contentContext: .playlist
+        ))
+
+        XCTAssertEqual(update.metadataState, .unavailable)
+        XCTAssertEqual(update.metadataError, .providerUnavailable)
+        XCTAssertTrue(update.clearExistingMetadata)
+        XCTAssertNil(update.fetchedTitle)
+        XCTAssertNil(update.fetchedBody)
+        XCTAssertNil(update.thumbnailURL)
+        XCTAssertNil(update.badgeImageURL)
+    }
+
+    func testTikTokProfileUsesOEmbedWhenTheHTMLShellHasNoProfileMetadata() async {
+        let oEmbed = URL(string: "https://mock.local/tiktok-profile-oembed")!
+        let original = URL(string: "https://www.tiktok.com/@tiktok")!
+        MockURLProtocol.responses[oEmbed.absoluteString] = .json(
+            #"{"title":"TikTok's Creator Profile","author_name":"TikTok","author_url":"https://www.tiktok.com/@tiktok","embed_product_id":"tiktok"}"#
+        )
+        MockURLProtocol.responses[original.absoluteString] = .html(
+            #"<html><head><title>TikTok - Make Your Day</title></head></html>"#
+        )
+
+        let update = await makeFetcher(
+            tiktokOEmbedEndpointBuilder: { _ in oEmbed }
+        ).fetch(for: makeRecord(
+            serviceType: .tiktok,
+            url: original.absoluteString,
+            contentContext: .profile
+        ))
+
+        XCTAssertEqual(update.metadataState, .ready)
+        XCTAssertEqual(update.fetchedTitle, "TikTok's Creator Profile")
+        XCTAssertNil(update.fetchedBody)
+        XCTAssertEqual(update.canonicalID, "@tiktok")
+        XCTAssertNotNil(update.badgeImageURL)
+    }
+
+    func testTikTokPlaylistIgnoresHiddenUnavailableCopyWhenPlaylistShellHasContentSpecificTitle() async {
+        let original = URL(string: "https://www.tiktok.com/@tiktok/playlist/In-The-Mix-7516638364301265695")!
+        MockURLProtocol.responses[original.absoluteString] = .html(
+            #"<html><head><title>@tiktokが作成したプレイリストIn The Mix</title><meta name="description" content="Enjoy a curated video list and find more videos on TikTok!"></head><body><div hidden>Page not available</div></body></html>"#
+        )
+
+        let update = await makeFetcher().fetch(for: makeRecord(
+            serviceType: .tiktok,
+            url: original.absoluteString,
+            contentContext: .playlist
+        ))
+
+        XCTAssertEqual(update.metadataState, .ready)
+        XCTAssertNil(update.fetchedBody)
+        XCTAssertEqual(update.fetchedTitle, "In The Mix")
+        XCTAssertEqual(update.canonicalID, "In-The-Mix-7516638364301265695")
+        XCTAssertNotNil(update.badgeImageURL)
+    }
+
     func testInstagramUsesPublicOEmbedMetadataWhenHTMLIsUnavailable() async {
         let oEmbed = URL(string: "https://mock.local/instagram-oembed")!
         let original = URL(string: "https://www.instagram.com/p/fA9uwTtkSN")!
@@ -459,6 +565,107 @@ final class MetadataFetcherTests: XCTestCase {
         XCTAssertEqual(update.fetchedTitle, "Rick Astley - Never Gonna Give You Up")
         XCTAssertEqual(update.thumbnailURL, "https://images.example/youtube.jpg")
         XCTAssertEqual(update.badgeImageURL, "https://yt3.googleusercontent.com/profile.jpg")
+    }
+
+    func testYouTubeEmbedUsesCanonicalWatchPageForDescription() async {
+        let oEmbed = URL(string: "https://mock.local/youtube-embed-oembed")!
+        let embed = URL(string: "https://www.youtube.com/embed/abc123")!
+        let watch = URL(string: "https://www.youtube.com/watch?v=abc123")!
+        MockURLProtocol.responses[oEmbed.absoluteString] = .json(
+            #"{"title":"Canonical video title","author_name":"Canonical author","thumbnail_url":"https://images.example/embed.jpg"}"#
+        )
+        MockURLProtocol.responses[embed.absoluteString] = .html(
+            #"<html><head><title>Embed</title></head></html>"#
+        )
+        MockURLProtocol.responses[watch.absoluteString] = .html(
+            #"<html><head><meta name="description" content="Canonical description"></head></html>"#
+        )
+
+        let update = await makeFetcher(
+            youtubeOEmbedEndpointBuilder: { _ in oEmbed }
+        ).fetch(for: makeRecord(
+            serviceType: .youtube,
+            url: embed.absoluteString,
+            contentContext: .video
+        ))
+
+        XCTAssertEqual(update.metadataState, .ready)
+        XCTAssertEqual(update.fetchedTitle, "Canonical video title")
+        XCTAssertEqual(update.fetchedAuthorName, "Canonical author")
+        XCTAssertEqual(update.fetchedBody, "Canonical description")
+        XCTAssertEqual(update.thumbnailURL, "https://images.example/embed.jpg")
+    }
+
+    func testInstagramSoundDoesNotPersistLocalizedGenericLoginTitle() async {
+        let original = URL(string: "https://www.instagram.com/reels/audio/28532324479739746")!
+        MockURLProtocol.responses[original.absoluteString] = .html(
+            #"<html><head><meta property="og:title" content="Instagramでnasajohnsonを聴いて、オリジナル音源を使ったリール動画を見よう"><meta name="description" content="Instagramをまたご利用いただきありがとうございます。ログインして、友達や家族のコンテンツをチェックしよう。"></head></html>"#
+        )
+
+        let update = await makeFetcher().fetch(for: makeRecord(
+            serviceType: .instagram,
+            url: original.absoluteString,
+            contentContext: .sound
+        ))
+
+        XCTAssertEqual(update.metadataState, .ready)
+        XCTAssertNil(update.fetchedTitle)
+        XCTAssertNil(update.fetchedBody)
+        XCTAssertNil(update.description)
+        XCTAssertEqual(update.badgeImageURL, "https://www.google.com/s2/favicons?domain=instagram.com&sz=128")
+    }
+
+    func testInstagramSoundUsesContentSpecificTitleTagWhenOgTitleIsLocalizedGeneric() async {
+        let original = URL(string: "https://www.instagram.com/reels/audio/28532324479739746")!
+        MockURLProtocol.responses[original.absoluteString] = .html(
+            #"<html><head><title>nasajohnson | オリジナル音源(Instagram)</title><meta property="og:title" content="Instagramでnasajohnsonを聴いて、オリジナル音源を使ったリール動画を見よう"><meta name="description" content="Instagramでnasajohnsonを聴いて、オリジナル音源を使ったリール動画を見よう"></head></html>"#
+        )
+
+        let update = await makeFetcher().fetch(for: makeRecord(
+            serviceType: .instagram,
+            url: original.absoluteString,
+            contentContext: .sound
+        ))
+
+        XCTAssertEqual(update.metadataState, .ready)
+        XCTAssertEqual(update.fetchedTitle, "nasajohnson | オリジナル音源(Instagram)")
+        XCTAssertNil(update.fetchedBody)
+        XCTAssertNil(update.description)
+    }
+
+    func testInstagramSoundPrefersContentSpecificOEmbedTitleOverLocalizedGenericPageTitle() async {
+        let original = URL(string: "https://www.instagram.com/reels/audio/28532324479739746")!
+        let oEmbed = URL(string: "https://mock.local/instagram-sound-oembed")!
+        let author = URL(string: "https://www.instagram.com/nasajohnson")!
+        MockURLProtocol.responses[oEmbed.absoluteString] = .json(
+            """
+            {
+              "author_name": "nasajohnson | オリジナル音源(Instagram)",
+              "author_url": "https://www.instagram.com/nasajohnson",
+              "title": "Instagramでnasajohnsonを聴いて、オリジナル音源を使ったリール動画を見よう"
+            }
+            """
+        )
+        MockURLProtocol.responses[author.absoluteString] = .html(
+            #"<html><head><meta property="og:image" content="https://images.example/nasajohnson.jpg"></head></html>"#
+        )
+        MockURLProtocol.responses[original.absoluteString] = .html(
+            #"<html><head><meta property="og:title" content="Instagramでnasajohnsonを聴いて、オリジナル音源を使ったリール動画を見よう"><meta name="description" content="Instagramをまたご利用いただきありがとうございます。ログインして、友達や家族のコンテンツをチェックしよう。"></head></html>"#
+        )
+
+        let update = await makeFetcher(
+            instagramPublicOEmbedEndpointBuilder: { _ in oEmbed }
+        ).fetch(for: makeRecord(
+            serviceType: .instagram,
+            url: original.absoluteString,
+            contentContext: .sound
+        ))
+
+        XCTAssertEqual(update.metadataState, .ready)
+        XCTAssertEqual(update.fetchedTitle, "nasajohnson | オリジナル音源(Instagram)")
+        XCTAssertNil(update.fetchedAuthorName)
+        XCTAssertNil(update.fetchedBody)
+        XCTAssertEqual(update.badgeImageURL, "https://images.example/nasajohnson.jpg")
     }
 
     func testYouTubeUsesChannelBadgeFromAuthorPageWhenOgImageIsUnavailable() async {
@@ -638,7 +845,8 @@ final class MetadataFetcherTests: XCTestCase {
         xSyndicationEndpointBuilder: @escaping @Sendable (String) -> URL? = { _ in nil },
         xGuestActivationEndpoint: URL? = nil,
         xArticleGraphQLEndpointBuilder: @escaping @Sendable (String) -> URL? = { _ in nil },
-        xPublicBearerToken: String = "public-test-token",
+        xSpaceMetadataEndpointBuilder: @escaping @Sendable (String) -> URL? = { _ in nil },
+        xPublicBearerToken: String? = "public-test-token",
         instagramPublicOEmbedEndpointBuilder: @escaping @Sendable (URL) -> URL? = { _ in nil },
         instagramCaptionedEmbedEndpointBuilder: @escaping @Sendable (URL) -> URL? = { _ in nil }
     ) -> MetadataFetcher {
@@ -653,13 +861,18 @@ final class MetadataFetcherTests: XCTestCase {
             xSyndicationEndpointBuilder: xSyndicationEndpointBuilder,
             xGuestActivationEndpoint: xGuestActivationEndpoint,
             xArticleGraphQLEndpointBuilder: xArticleGraphQLEndpointBuilder,
+            xSpaceMetadataEndpointBuilder: xSpaceMetadataEndpointBuilder,
             xPublicBearerToken: xPublicBearerToken,
             instagramPublicOEmbedEndpointBuilder: instagramPublicOEmbedEndpointBuilder,
             instagramCaptionedEmbedEndpointBuilder: instagramCaptionedEmbedEndpointBuilder
         )
     }
 
-    private func makeRecord(serviceType: ServiceType, url: String) -> URLRecord {
+    private func makeRecord(
+        serviceType: ServiceType,
+        url: String,
+        contentContext: ContentContext = .standard
+    ) -> URLRecord {
         let host = URL(string: url)?.host ?? "example.com"
         return URLRecord(
             id: 1,
@@ -671,7 +884,7 @@ final class MetadataFetcherTests: XCTestCase {
             rawSourceHost: host,
             collectionID: 1,
             serviceType: serviceType,
-            contentContext: .standard,
+            contentContext: contentContext,
             userTitle: nil,
             fetchedTitle: nil,
             fetchedBody: nil,

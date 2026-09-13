@@ -422,6 +422,58 @@ final class URLRepositoryTests: XCTestCase {
         XCTAssertEqual(after.fetchedTitle, "title")
     }
 
+    func testMetadataUnavailableCanClearStaleFetchedBadge() throws {
+        let created = try repository.saveFromManualInput("https://www.tiktok.com/playlist-music/stale")
+        let entryID = try XCTUnwrap(created.entryID)
+
+        try repository.applyMetadataUpdate(
+            entryID: entryID,
+            metadata: MetadataUpdate(
+                fetchedTitle: "stale title",
+                fetchedBody: "stale body",
+                fetchedBodyKind: .webDescription,
+                bodySummary: "stale body",
+                description: "stale body",
+                thumbnailURL: "https://images.example/stale.jpg",
+                badgeImageURL: "https://www.tiktok.com/favicon.ico",
+                metadataState: .ready,
+                metadataFetchedAt: Date(timeIntervalSince1970: 500),
+                metadataError: nil,
+                canonicalID: "stale",
+                normalizedHost: nil,
+                rawSourceHost: nil
+            )
+        )
+
+        try repository.applyMetadataUpdate(
+            entryID: entryID,
+            metadata: MetadataUpdate(
+                fetchedTitle: nil,
+                fetchedBody: nil,
+                fetchedBodyKind: nil,
+                bodySummary: nil,
+                description: nil,
+                thumbnailURL: nil,
+                badgeImageURL: nil,
+                metadataState: .unavailable,
+                metadataFetchedAt: Date(timeIntervalSince1970: 600),
+                metadataError: .providerUnavailable,
+                canonicalID: nil,
+                normalizedHost: nil,
+                rawSourceHost: nil,
+                clearExistingMetadata: true
+            )
+        )
+
+        let after = try XCTUnwrap(repository.loadEntry(id: entryID))
+        XCTAssertEqual(after.metadataState, .unavailable)
+        XCTAssertEqual(after.metadataError, .providerUnavailable)
+        XCTAssertNil(after.fetchedTitle)
+        XCTAssertNil(after.fetchedBody)
+        XCTAssertNil(after.thumbnailURL)
+        XCTAssertNil(after.badgeImageURL)
+    }
+
     func testRetryMetadataAcceptsFailedUnavailableAndReadyWithoutFetchedContent() throws {
         let failed = try repository.saveFromManualInput("https://example.com/retry-failed")
         try repository.applyMetadataUpdate(

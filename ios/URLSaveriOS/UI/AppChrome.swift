@@ -1701,18 +1701,30 @@ func contentContextLabel(for contentContext: ContentContext) -> String {
         return "ショート"
     case .live:
         return "ライブ"
+    case .space:
+        return "スペース"
+    case .list:
+        return "リスト"
     case .music:
         return "音楽"
+    case .playlist:
+        return "プレイリスト"
     case .post:
         return "投稿"
     case .reel:
         return "リール"
     case .profile:
         return "プロフィール"
+    case .channel:
+        return "チャンネル"
     case .sound:
         return "サウンド"
+    case .highlight:
+        return "ハイライト"
     case .hashtag:
         return "ハッシュタグ"
+    case .shortURL:
+        return "短縮URL"
     }
 }
 

@@ -418,25 +418,56 @@ enum URLRules {
         case .youtube:
             if path.hasPrefix("/shorts/") { return .shorts }
             if path.hasPrefix("/live/") { return .live }
-            if path.hasPrefix("/watch") || components.queryItems?.contains(where: { $0.name == "v" }) == true {
-                return .video
-            }
+            if path.hasPrefix("/post/") { return .post }
+            if path.hasPrefix("/@") ||
+                path.hasPrefix("/channel/") ||
+                path.hasPrefix("/c/") ||
+                path.hasPrefix("/user/") { return .profile }
+            if path.hasPrefix("/clip/") ||
+                path.hasPrefix("/embed/") ||
+                path.hasPrefix("/watch") ||
+                components.queryItems?.contains(where: { $0.name == "v" }) == true { return .video }
             return .standard
         case .tiktok:
-            if path.contains("/video/") { return .video }
-            if path.contains("/music/") { return .music }
+            if path.contains("/video/") || path.hasPrefix("/player/v1/") { return .video }
+            if isTikTokShortURL(components) { return .shortURL }
+            if path.hasPrefix("/playlist/") || path.contains("/playlist/") || path.hasPrefix("/playlist-music/") { return .playlist }
+            if path.hasPrefix("/share/music/") || path.contains("/music/") { return .music }
             if path.contains("/tag/") { return .hashtag }
+            if path.hasPrefix("/@") { return .profile }
             return .standard
         case .x:
-            return path.contains("/status/") ? .post : .standard
+            if path.contains("/status/") { return .post }
+            if path.hasPrefix("/i/spaces/") { return .space }
+            if path.hasPrefix("/i/lists/") { return .list }
+            return .standard
         case .instagram:
             if path.hasPrefix("/reel/") { return .reel }
             if path.hasPrefix("/p/") { return .post }
-            if path.hasPrefix("/@") { return .profile }
+            if path.hasPrefix("/reels/audio/") { return .sound }
+            if path.hasPrefix("/stories/highlights/") { return .highlight }
+            if path.hasPrefix("/explore/tags/") { return .hashtag }
+            if path.hasPrefix("/channel/") { return .channel }
+            if path.hasPrefix("/@") || isInstagramProfilePath(path) { return .profile }
             return .standard
         case .web, .all:
             return .standard
         }
+    }
+
+    private static func isTikTokShortURL(_ components: URLComponents) -> Bool {
+        let host = components.host?.lowercased() ?? ""
+        let path = components.path.lowercased()
+        return path.hasPrefix("/t/") || host == "vm.tiktok.com" || host == "vt.tiktok.com"
+    }
+
+    private static func isInstagramProfilePath(_ path: String) -> Bool {
+        let segments = path.split(separator: "/").map(String.init)
+        guard segments.count == 1 else { return false }
+        return ![
+            "about", "accounts", "channel", "direct", "directory", "emails",
+            "explore", "legal", "privacy", "reels", "stories", "terms"
+        ].contains(segments[0].lowercased())
     }
 }
 

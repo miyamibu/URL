@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.core.content.IntentCompat
 import androidx.test.core.app.ApplicationProvider
 import jp.mimac.urlsaver.data.PreparedExportArchive
+import jp.mimac.urlsaver.ui.AiHandoffProvider
 import jp.mimac.urlsaver.ui.exportTodayDateInput
 import jp.mimac.urlsaver.ui.ChatGptDirectShareOutcome
 import jp.mimac.urlsaver.ui.CachedExportFileInfo
@@ -31,6 +32,23 @@ import kotlinx.coroutines.runBlocking
 
 @RunWith(RobolectricTestRunner::class)
 class ExportScreenTest {
+    @Test
+    fun aiHandoffProvider_keepsApprovedOrderAndDestinations() {
+        assertEquals(
+            listOf(
+                AiHandoffProvider.CHAT_GPT,
+                AiHandoffProvider.GEMINI,
+                AiHandoffProvider.CLAUDE,
+                AiHandoffProvider.DEEP_SEEK,
+            ),
+            AiHandoffProvider.entries,
+        )
+        assertEquals("https://chatgpt.com/", AiHandoffProvider.CHAT_GPT.officialDestination)
+        assertEquals("https://gemini.google.com/", AiHandoffProvider.GEMINI.officialDestination)
+        assertEquals("https://claude.ai/new", AiHandoffProvider.CLAUDE.officialDestination)
+        assertEquals("https://chat.deepseek.com/", AiHandoffProvider.DEEP_SEEK.officialDestination)
+    }
+
     @Test
     fun exportTodayDateInput_formatsProvidedDateWithoutStaleFixtureDate() {
         assertEquals("2026-07-09", exportTodayDateInput(LocalDate.of(2026, 7, 9)))

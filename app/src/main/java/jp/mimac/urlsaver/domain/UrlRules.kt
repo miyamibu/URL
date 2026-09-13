@@ -375,9 +375,35 @@ object UrlRules {
         return digest.joinToString("") { byte -> "%02x".format(byte) }
     }
 
+    private fun isTikTokShortUrl(uri: URI): Boolean {
+        val host = uri.host.orEmpty().lowercase(Locale.ROOT)
+        val path = uri.path.orEmpty().lowercase(Locale.ROOT)
+        return path.startsWith("/t/") ||
+            host == "vm.tiktok.com" ||
+            host == "vt.tiktok.com"
+    }
+
     private fun isXHost(host: String): Boolean {
         val lowered = host.lowercase(Locale.ROOT)
         return lowered == "x.com" || lowered.endsWith("twitter.com")
+    }
+
+    private fun isInstagramProfilePath(path: String): Boolean {
+        val segments = path.split('/').filter { it.isNotBlank() }
+        if (segments.size != 1) return false
+        return segments[0] !in setOf(
+            "about",
+            "accounts",
+            "direct",
+            "directory",
+            "emails",
+            "explore",
+            "legal",
+            "privacy",
+            "reels",
+            "stories",
+            "terms",
+        )
     }
 
     private fun isXStatusProviderHost(host: String): Boolean {
@@ -421,23 +447,45 @@ object UrlRules {
             ServiceType.YOUTUBE -> when {
                 path.startsWith("/shorts/") -> ContentContext.SHORTS
                 path.startsWith("/live/") -> ContentContext.LIVE
-                path.startsWith("/watch") || uri.query?.contains("v=") == true -> ContentContext.VIDEO
+                path.startsWith("/post/") -> ContentContext.POST
+                path.startsWith("/@") ||
+                    path.startsWith("/channel/") ||
+                    path.startsWith("/c/") ||
+                    path.startsWith("/user/") -> ContentContext.PROFILE
+                path.startsWith("/clip/") ||
+                    path.startsWith("/embed/") ||
+                    path.startsWith("/watch") ||
+                    uri.query?.contains("v=") == true -> ContentContext.VIDEO
                 else -> ContentContext.STANDARD
             }
             ServiceType.TIKTOK -> when {
-                path.contains("/video/") -> ContentContext.VIDEO
-                path.contains("/music/") -> ContentContext.MUSIC
+                path.contains("/video/") ||
+                    path.startsWith("/player/v1/") -> ContentContext.VIDEO
+                isTikTokShortUrl(uri) -> ContentContext.SHORT_URL
+                path.startsWith("/playlist/") ||
+                    path.contains("/playlist/") ||
+                    path.startsWith("/playlist-music/") -> ContentContext.PLAYLIST
+                path.startsWith("/share/music/") ||
+                    path.contains("/music/") -> ContentContext.MUSIC
                 path.contains("/tag/") -> ContentContext.HASHTAG
+                path.startsWith("/@") -> ContentContext.PROFILE
                 else -> ContentContext.STANDARD
             }
             ServiceType.X -> when {
                 path.contains("/status/") -> ContentContext.POST
+                path.startsWith("/i/spaces/") -> ContentContext.SPACE
+                path.startsWith("/i/lists/") -> ContentContext.LIST
                 else -> ContentContext.STANDARD
             }
             ServiceType.INSTAGRAM -> when {
                 path.startsWith("/reel/") -> ContentContext.REEL
                 path.startsWith("/p/") -> ContentContext.POST
-                path.startsWith("/@") -> ContentContext.PROFILE
+                path.startsWith("/reels/audio/") -> ContentContext.SOUND
+                path.startsWith("/stories/highlights/") -> ContentContext.HIGHLIGHT
+                path.startsWith("/explore/tags/") -> ContentContext.HASHTAG
+                path.startsWith("/channel/") -> ContentContext.CHANNEL
+                path.startsWith("/@") ||
+                    isInstagramProfilePath(path) -> ContentContext.PROFILE
                 else -> ContentContext.STANDARD
             }
             ServiceType.WEB -> ContentContext.STANDARD
@@ -451,11 +499,10 @@ object UrlRules {
         serviceType: ServiceType,
         normalizedHost: String,
     ): String {
-        val titleService = if (serviceType == ServiceType.TIKTOK) ServiceType.WEB else serviceType
         return when {
             !userTitle.isNullOrBlank() -> userTitle
             !fetchedTitle.isNullOrBlank() -> fetchedTitle
-            titleService != ServiceType.WEB -> "${titleService.displayName}のリンク"
+            serviceType != ServiceType.WEB -> "${serviceType.displayName}のリンク"
             normalizedHost.isNotBlank() -> normalizedHost
             else -> "保存したリンク"
         }

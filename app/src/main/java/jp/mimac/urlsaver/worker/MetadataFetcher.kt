@@ -36,9 +36,13 @@ sealed interface FetchOutcome {
         val canonicalId: String? = null,
         val normalizedHost: String? = null,
         val rawSourceHost: String? = null,
+        val clearExistingMetadata: Boolean = false,
     ) : FetchOutcome
 
-    data class Unavailable(val error: MetadataError) : FetchOutcome
+    data class Unavailable(
+        val error: MetadataError,
+        val clearExistingMetadata: Boolean = false,
+    ) : FetchOutcome
     data class FailedRetryable(val error: MetadataError) : FetchOutcome
 }
 
@@ -53,6 +57,11 @@ class MetadataFetcher(
         buildXArticleGraphQLEndpoint(statusId)
     },
     private val xPublicBearerToken: String? = null,
+    private val xSpaceMetadataEndpointBuilder: ((String) -> String)? = { spaceId ->
+        buildXSpaceMetadataEndpoint(spaceId)
+    },
+    private val xTimelineOEmbedEndpointBuilder: ((String) -> String)? = null,
+    private val xHtmlMetadataEndpointBuilder: ((String) -> String)? = null,
     private val youtubeOEmbedEndpointBuilder: (String) -> String = { targetUrl ->
         "$YOUTUBE_OEMBED_ENDPOINT?format=json&url=${URLEncoder.encode(targetUrl, Charsets.UTF_8.name())}"
     },
@@ -103,6 +112,21 @@ class MetadataFetcher(
             return fetchXMetadata(inputUrl, xStatusId)
         }
 
+        if (xTimelineOEmbedEndpointBuilder != null && isXListUri(initialUri)) {
+            return fetchXListMetadata(inputUrl, initialUri)
+        }
+
+        if (xSpaceMetadataEndpointBuilder != null &&
+            !xPublicBearerToken.isNullOrBlank() &&
+            isXSpaceUri(initialUri)
+        ) {
+            return fetchXSpaceMetadata(initialUri)
+        }
+
+        if (xHtmlMetadataEndpointBuilder != null && isXHost(initialUri.host)) {
+            return fetchXPageMetadata(inputUrl)
+        }
+
         return when (classifyHtmlMetadataService(initialUri.host)) {
             HtmlMetadataService.YOUTUBE -> fetchYouTubeMetadata(inputUrl)
             HtmlMetadataService.TIKTOK -> fetchTikTokMetadata(inputUrl)
@@ -111,27 +135,196 @@ class MetadataFetcher(
         }
     }
 
+    private fun fetchXSpaceMetadata(inputUri: URI): FetchOutcome {
+        val bearerToken = xPublicBearerToken?.trim()?.takeIf { it.isNotBlank() }
+            ?: return FetchOutcome.Unavailable(MetadataError.LOGIN_REQUIRED)
+        val spaceId = extractXSpaceId(inputUri)
+            ?: return FetchOutcome.Unavailable(MetadataError.PARSE_FAILED)
+        val endpoint = xSpaceMetadataEndpointBuilder?.invoke(spaceId)
+            ?: return FetchOutcome.Unavailable(MetadataError.PARSE_FAILED)
+        val outcome = fetchJsonPayload(
+            initialUrl = endpoint,
+            authorizationBearer = bearerToken,
+        ) { payload ->
+            val data = payload.jsonObjectOrNull("data")
+                ?: return@fetchJsonPayload FetchOutcome.Unavailable(
+                    error = MetadataError.PROVIDER_UNAVAILABLE,
+                    clearExistingMetadata = true,
+                )
+            val title = normalizeTitleText(data.firstNonBlankString("title"))
+            val creatorId = data.firstNonBlankString("creator_id")
+            val firstHostId = data.firstArrayString("host_ids")
+            val users = payload.jsonObjectOrNull("includes")
+                ?.jsonArrayOrNull("users")
+                ?.mapNotNull { it as? JsonObject }
+                .orEmpty()
+            val host = users.firstOrNull { user ->
+                val userId = user.firstNonBlankString("id")
+                userId == creatorId || userId == firstHostId
+            } ?: users.firstOrNull()
+            val authorName = host?.firstNonBlankString("name", "username")
+            val profileImage = host?.firstNonBlankString("profile_image_url")
+                ?.let(::normalizeUrlAttribute)
+            val canonicalId = data.firstNonBlankString("id") ?: spaceId
+
+            if (title == null && authorName == null) {
+                return@fetchJsonPayload FetchOutcome.Unavailable(
+                    error = MetadataError.PROVIDER_UNAVAILABLE,
+                    clearExistingMetadata = true,
+                )
+            }
+
+            FetchOutcome.Ready(
+                fetchedTitle = title ?: authorName,
+                fetchedAuthorName = authorName,
+                badgeImageUrl = profileImage,
+                canonicalId = canonicalId,
+                normalizedHost = inputUri.host,
+                rawSourceHost = inputUri.host,
+            )
+        }
+        return when (outcome) {
+            is FetchOutcome.Unavailable -> when (outcome.error) {
+                MetadataError.HTTP_404 -> FetchOutcome.Unavailable(
+                    error = MetadataError.PROVIDER_UNAVAILABLE,
+                    clearExistingMetadata = true,
+                )
+                MetadataError.HTTP_4XX -> FetchOutcome.Unavailable(MetadataError.LOGIN_REQUIRED)
+                else -> outcome
+            }
+            else -> outcome
+        }
+    }
+
+    private fun fetchXListMetadata(inputUrl: String, inputUri: URI): FetchOutcome {
+        val endpoint = xTimelineOEmbedEndpointBuilder?.invoke(inputUrl)
+            ?: return FetchOutcome.Unavailable(MetadataError.PARSE_FAILED)
+        return fetchJsonPayload(endpoint) { payload ->
+            val title = normalizeXTitleText(payload.firstNonBlankString("title"))
+            val html = payload.firstNonBlankString("html")
+            val ownerName = extractXListOwnerName(html)
+            val body = normalizeFetchedBodyText(payload.firstNonBlankString("description"))
+            val canonicalUrl = payload.firstNonBlankString("url")
+                ?: extractXListUrl(html)
+            val listId = extractXListId(inputUri)
+            val resolvedTitle = title
+
+            if (resolvedTitle == null || (canonicalUrl == null && listId == null)) {
+                return@fetchJsonPayload FetchOutcome.Unavailable(MetadataError.PARSE_FAILED)
+            }
+
+            FetchOutcome.Ready(
+                fetchedTitle = resolvedTitle,
+                fetchedAuthorName = ownerName,
+                fetchedBody = body,
+                fetchedBodyKind = body?.let { MetadataBodyKind.X_POST_TEXT },
+                bodySummary = body?.let(::buildRuleSummary),
+                description = body,
+                badgeImageUrl = X_SERVICE_ICON_URL,
+                canonicalId = listId,
+                normalizedHost = inputUri.host,
+                rawSourceHost = inputUri.host,
+            )
+        }
+    }
+
     private fun fetchXMetadata(inputUrl: String, statusId: String): FetchOutcome {
         val oEmbedOutcome = fetchOEmbedMetadata(inputUrl, statusId)
-        if (oEmbedOutcome is FetchOutcome.Ready) {
-            val syndicationOutcome = fetchSyndicationMetadata(statusId)
-            return if (syndicationOutcome is FetchOutcome.Ready) {
+        val syndicationOutcome = fetchSyndicationMetadata(statusId)
+        val primary = when {
+            oEmbedOutcome is FetchOutcome.Ready && syndicationOutcome is FetchOutcome.Ready -> {
                 mergeXPrimaryWithSyndicationSupplement(
                     primary = oEmbedOutcome,
                     supplement = syndicationOutcome,
                 )
-            } else {
-                oEmbedOutcome
             }
+            oEmbedOutcome is FetchOutcome.Ready -> oEmbedOutcome
+            syndicationOutcome is FetchOutcome.Ready -> syndicationOutcome
+            else -> combineXFallbackOutcomes(oEmbedOutcome, syndicationOutcome)
         }
-        val syndicationOutcome = fetchSyndicationMetadata(statusId)
-        if (syndicationOutcome is FetchOutcome.Ready) {
-            return syndicationOutcome
+        val htmlOutcome = xHtmlMetadataEndpointBuilder?.let { fetchXPageMetadata(inputUrl) }
+        return when {
+            primary is FetchOutcome.Ready && htmlOutcome is FetchOutcome.Ready -> {
+                mergeXPrimaryWithHtml(
+                    primary = primary,
+                    supplement = htmlOutcome,
+                )
+            }
+            primary is FetchOutcome.Ready -> primary
+            htmlOutcome is FetchOutcome.Ready -> htmlOutcome
+            htmlOutcome == null -> primary
+            else -> combineXFallbackOutcomes(primary, htmlOutcome)
         }
+    }
 
-        return combineXFallbackOutcomes(
-            primary = oEmbedOutcome,
-            fallback = syndicationOutcome,
+    private fun fetchXPageMetadata(inputUrl: String): FetchOutcome {
+        val endpoint = xHtmlMetadataEndpointBuilder?.invoke(inputUrl)
+            ?: return FetchOutcome.Unavailable(MetadataError.PARSE_FAILED)
+        val inputUri = runCatching { URI(inputUrl) }.getOrNull()
+        return fetchHtmlMetadata(endpoint, X_WEB_USER_AGENT) { document, finalUri ->
+            val title = normalizeXTitleText(
+                firstNonBlank(
+                    extractMetaContent(document, "meta[property=og:title]", "meta[name=og:title]"),
+                    extractTitleTag(document),
+                ),
+            )
+            val body = extractDescription(document)
+            val thumbnail = extractOgImage(document)
+            val badgeImage = extractFavicon(document, finalUri)
+            val authorName = if (
+                isXArticleUri(inputUri) || isXArticleUri(finalUri)
+            ) {
+                extractXAuthorName(document)
+            } else {
+                null
+            }
+            if (
+                title == null &&
+                    body == null &&
+                    thumbnail == null &&
+                    (
+                        isXLoginDocument(document, finalUri) ||
+                            inputUri?.let(::isXAuthRestrictedUri) == true
+                        )
+            ) {
+                return@fetchHtmlMetadata FetchOutcome.Unavailable(MetadataError.LOGIN_REQUIRED)
+            }
+            if (title == null && body == null && thumbnail == null) {
+                return@fetchHtmlMetadata FetchOutcome.Unavailable(MetadataError.PARSE_FAILED)
+            }
+
+            FetchOutcome.Ready(
+                fetchedTitle = title,
+                fetchedAuthorName = authorName,
+                fetchedBody = body,
+                fetchedBodyKind = body?.let { MetadataBodyKind.X_POST_TEXT },
+                bodySummary = body?.let(::buildRuleSummary),
+                description = body,
+                thumbnailUrl = thumbnail,
+                badgeImageUrl = badgeImage,
+                canonicalId = extractCanonical(document, finalUri),
+                normalizedHost = finalUri.host,
+                rawSourceHost = finalUri.host,
+            )
+        }
+    }
+
+    private fun mergeXPrimaryWithHtml(
+        primary: FetchOutcome.Ready,
+        supplement: FetchOutcome.Ready,
+    ): FetchOutcome.Ready {
+        return primary.copy(
+            fetchedTitle = primary.fetchedTitle ?: supplement.fetchedTitle,
+            fetchedAuthorName = primary.fetchedAuthorName ?: supplement.fetchedAuthorName,
+            fetchedBody = primary.fetchedBody ?: supplement.fetchedBody,
+            fetchedBodyKind = primary.fetchedBodyKind ?: supplement.fetchedBodyKind,
+            bodySummary = primary.bodySummary ?: supplement.bodySummary,
+            description = primary.description ?: supplement.description,
+            thumbnailUrl = primary.thumbnailUrl ?: supplement.thumbnailUrl,
+            badgeImageUrl = primary.badgeImageUrl ?: supplement.badgeImageUrl,
+            canonicalId = primary.canonicalId ?: supplement.canonicalId,
+            normalizedHost = primary.normalizedHost ?: supplement.normalizedHost,
+            rawSourceHost = primary.rawSourceHost ?: supplement.rawSourceHost,
         )
     }
 
@@ -165,22 +358,39 @@ class MetadataFetcher(
     }
 
     private fun fetchYouTubeMetadata(inputUrl: String): FetchOutcome {
-        val oEmbedMetadata = fetchYouTubeOEmbedMetadata(inputUrl)
+        val parsedInput = runCatching { URI(inputUrl) }.getOrNull()
+        val oEmbedTargetUrl = youtubeOEmbedTargetUrl(inputUrl)
+        val oEmbedMetadata = fetchYouTubeOEmbedMetadata(oEmbedTargetUrl)
         val channelBadgeImageUrl = oEmbedMetadata.authorUrl?.let(::fetchSingleOgImage)
             ?: fetchSingleYouTubeBadge(inputUrl)
         val htmlOutcome = fetchHtmlMetadata(inputUrl) { document, finalUri ->
+            val isProfile = isYouTubeProfileUri(parsedInput) || isYouTubeProfileUri(finalUri)
             val title = oEmbedMetadata.title ?: extractTitleForYouTube(document)
+            val authorName = firstNonBlank(
+                oEmbedMetadata.authorName,
+                extractYouTubeAuthorName(document),
+                extractYouTubePostAuthorFromTitle(title),
+            )
             val body = extractYouTubeBody(document)
-            val description = extractDescription(document) ?: body
-            val thumbnail = oEmbedMetadata.thumbnailUrl ?: extractOgImage(document)
-            val badgeImage = channelBadgeImageUrl ?: extractYouTubeChannelBadge(document)
-            if (title == null && body == null && thumbnail == null) {
+            val description = extractDescription(document)?.let(::normalizeYouTubeDescriptionText) ?: body
+            val pageImage = normalizeYouTubeThumbnailUrl(extractOgImage(document))
+            val thumbnail = if (isProfile) {
+                null
+            } else {
+                oEmbedMetadata.thumbnailUrl ?: pageImage
+            }
+            val badgeImage = firstNonBlank(
+                channelBadgeImageUrl,
+                extractYouTubeChannelBadge(document),
+                pageImage.takeIf { isProfile },
+            )
+            if (title == null && body == null && thumbnail == null && badgeImage == null) {
                 return@fetchHtmlMetadata FetchOutcome.Unavailable(MetadataError.PARSE_FAILED)
             }
 
             FetchOutcome.Ready(
                 fetchedTitle = title,
-                fetchedAuthorName = oEmbedMetadata.authorName,
+                fetchedAuthorName = authorName,
                 fetchedBody = body,
                 fetchedBodyKind = body?.let { MetadataBodyKind.YOUTUBE_DESCRIPTION },
                 bodySummary = body?.let(::buildRuleSummary),
@@ -246,13 +456,16 @@ class MetadataFetcher(
     }
 
     private fun fetchInstagramMetadata(inputUrl: String): FetchOutcome {
-        val publicOEmbedMetadata = fetchInstagramPublicOEmbedMetadata(inputUrl)
-        val graphOEmbedMetadata = fetchInstagramOEmbedMetadata(inputUrl)
+        val parsedInput = runCatching { URI(inputUrl) }.getOrNull()
+        val inputIsProfileLike = isInstagramProfileLikeUri(parsedInput)
+        val inputIsHighlight = isInstagramHighlightUri(parsedInput)
+        val publicOEmbedMetadata = normalizeInstagramSupplement(fetchInstagramPublicOEmbedMetadata(inputUrl))
+        val graphOEmbedMetadata = normalizeInstagramSupplement(fetchInstagramOEmbedMetadata(inputUrl))
         val oEmbedMetadata = mergeInstagramOEmbedMetadata(
             primary = publicOEmbedMetadata,
             supplement = graphOEmbedMetadata,
         )
-        val embedMetadata = fetchInstagramCaptionedEmbedMetadata(inputUrl)
+        val embedMetadata = normalizeInstagramSupplement(fetchInstagramCaptionedEmbedMetadata(inputUrl))
         val supplementalBody = firstNonBlank(
             oEmbedMetadata.body,
             embedMetadata.body,
@@ -268,10 +481,26 @@ class MetadataFetcher(
         val profileBadgeImageUrl = firstNonBlank(
             embedMetadata.badgeImageUrl,
             oEmbedMetadata.authorUrl?.let(::fetchSingleOgImage),
+            supplementalThumbnail.takeIf { inputIsProfileLike },
         )
+        val contentSupplementalThumbnail = supplementalThumbnail.takeUnless { inputIsProfileLike }
         val htmlOutcome = fetchHtmlMetadata(inputUrl) { document, finalUri ->
             if (isInstagramErrorDocument(document)) {
-                return@fetchHtmlMetadata FetchOutcome.Unavailable(MetadataError.PARSE_FAILED)
+                return@fetchHtmlMetadata FetchOutcome.Unavailable(MetadataError.PROVIDER_UNAVAILABLE)
+            }
+            val isProfileLike = inputIsProfileLike || isInstagramProfileLikeUri(finalUri)
+            val isHighlight = inputIsHighlight || isInstagramHighlightUri(finalUri)
+            val isSound = isInstagramSoundUri(parsedInput) || isInstagramSoundUri(finalUri)
+            val isChannel = isInstagramChannelUri(parsedInput) || isInstagramChannelUri(finalUri)
+            val normalizeBodyCandidate: (String?) -> String? = if (isSound) {
+                ::normalizeInstagramSoundBodyText
+            } else {
+                ::normalizeInstagramBodyText
+            }
+            val normalizeTitleCandidate: (String?) -> String? = if (isChannel) {
+                ::normalizeInstagramChannelTitleText
+            } else {
+                ::normalizeInstagramTitleText
             }
             val jsonLdMetadata = extractInstagramJsonLdMetadata(document)
             val descriptionFromMeta = extractMetaContent(
@@ -282,24 +511,49 @@ class MetadataFetcher(
                 "meta[name=twitter:description]",
             )
             val body = firstNonBlank(
-                jsonLdMetadata.body,
-                extractInstagramEmbeddedCaption(document),
-                extractInstagramQuotedCaptionFromDescription(descriptionFromMeta),
-                descriptionFromMeta,
-                supplementalBody,
-            )?.let(::normalizeFetchedBodyText)
+                normalizeBodyCandidate(jsonLdMetadata.body),
+                normalizeBodyCandidate(extractInstagramEmbeddedCaption(document)),
+                normalizeBodyCandidate(extractInstagramQuotedCaptionFromDescription(descriptionFromMeta)),
+                normalizeBodyCandidate(descriptionFromMeta),
+                normalizeBodyCandidate(supplementalBody),
+            )
 
             val title = firstNonBlank(
-                extractMetaContent(document, "meta[property=og:title]", "meta[name=og:title]"),
-                jsonLdMetadata.titleCandidate,
-                extractInstagramEmbeddedUsername(document)?.let { "@$it" },
-                supplementalTitle,
-                extractTitleTag(document),
+                normalizeTitleCandidate(extractMetaContent(document, "meta[property=og:title]", "meta[name=og:title]")),
+                normalizeTitleCandidate(jsonLdMetadata.titleCandidate),
+                normalizeTitleCandidate(extractInstagramEmbeddedUsername(document)?.let { "@$it" }),
+                normalizeTitleCandidate(supplementalTitle),
+                normalizeTitleCandidate(extractTitleTag(document)),
             )
-            val thumbnail = extractOgImage(document) ?: supplementalThumbnail
+            val pageImage = normalizeInstagramThumbnailUrl(extractOgImage(document))
+            val thumbnail = if (isProfileLike) {
+                null
+            } else {
+                firstNonBlank(
+                    pageImage,
+                    contentSupplementalThumbnail,
+                    extractInstagramHighlightImage(document).takeIf { isHighlight },
+                )
+            }
+            val badgeImage = firstNonBlank(
+                profileBadgeImageUrl,
+                pageImage.takeIf { isProfileLike },
+                extractInstagramHighlightBadgeImage(document).takeIf { isHighlight },
+            )
 
-            if (title == null && body == null && thumbnail == null) {
-                return@fetchHtmlMetadata FetchOutcome.Unavailable(MetadataError.PARSE_FAILED)
+            if (title == null && body == null && thumbnail == null && badgeImage == null) {
+                return@fetchHtmlMetadata FetchOutcome.Unavailable(
+                    error = if (
+                        isInstagramChannelUri(parsedInput) ||
+                            isInstagramChannelUri(finalUri)
+                    ) {
+                        MetadataError.PROVIDER_UNAVAILABLE
+                    } else {
+                        MetadataError.PARSE_FAILED
+                    },
+                    clearExistingMetadata = isInstagramChannelUri(parsedInput) ||
+                        isInstagramChannelUri(finalUri),
+                )
             }
 
             FetchOutcome.Ready(
@@ -308,16 +562,19 @@ class MetadataFetcher(
                 fetchedBodyKind = body?.let { MetadataBodyKind.INSTAGRAM_CAPTION },
                 bodySummary = body?.let(::buildRuleSummary),
                 thumbnailUrl = thumbnail,
-                badgeImageUrl = profileBadgeImageUrl,
+                badgeImageUrl = badgeImage,
                 canonicalId = extractCanonical(document, finalUri),
                 normalizedHost = finalUri.host,
                 rawSourceHost = finalUri.host,
+                clearExistingMetadata = isSound,
             )
         }
 
         if (htmlOutcome is FetchOutcome.Ready) {
             if (!oEmbedMetadata.hasAnyMetadata && !embedMetadata.hasAnyMetadata) {
-                return htmlOutcome.copy(badgeImageUrl = profileBadgeImageUrl)
+                return htmlOutcome.copy(
+                    badgeImageUrl = firstNonBlank(htmlOutcome.badgeImageUrl, profileBadgeImageUrl),
+                )
             }
             return htmlOutcome.copy(
                 fetchedTitle = htmlOutcome.fetchedTitle ?: supplementalTitle,
@@ -327,8 +584,8 @@ class MetadataFetcher(
                     ?: supplementalBody?.let { MetadataBodyKind.INSTAGRAM_CAPTION },
                 bodySummary = htmlOutcome.bodySummary ?: supplementalBody?.let(::buildRuleSummary),
                 description = htmlOutcome.description ?: supplementalBody,
-                thumbnailUrl = htmlOutcome.thumbnailUrl ?: supplementalThumbnail,
-                badgeImageUrl = profileBadgeImageUrl,
+                thumbnailUrl = htmlOutcome.thumbnailUrl ?: contentSupplementalThumbnail,
+                badgeImageUrl = firstNonBlank(htmlOutcome.badgeImageUrl, profileBadgeImageUrl),
             )
         }
 
@@ -341,11 +598,24 @@ class MetadataFetcher(
                 fetchedBodyKind = supplementalBody?.let { MetadataBodyKind.INSTAGRAM_CAPTION },
                 bodySummary = supplementalBody?.let(::buildRuleSummary),
                 description = supplementalBody,
-                thumbnailUrl = supplementalThumbnail,
+                thumbnailUrl = contentSupplementalThumbnail,
                 badgeImageUrl = profileBadgeImageUrl,
                 canonicalId = parsed?.let(::extractServiceCanonical),
                 normalizedHost = parsed?.host,
                 rawSourceHost = parsed?.host,
+                clearExistingMetadata = isInstagramSoundUri(parsedInput),
+            )
+        }
+
+        val hashtagName = instagramHashtagName(parsedInput)
+        if (hashtagName != null) {
+            val host = parsedInput?.host ?: "www.instagram.com"
+            return FetchOutcome.Ready(
+                fetchedTitle = "#$hashtagName",
+                badgeImageUrl = "https://$host/favicon.ico",
+                canonicalId = hashtagName,
+                normalizedHost = host,
+                rawSourceHost = host,
             )
         }
 
@@ -455,10 +725,30 @@ class MetadataFetcher(
         oEmbedMetadata: TikTokOEmbedMetadata,
         profileBadgeImageUrl: String?,
     ): FetchOutcome {
+        val parsedInput = runCatching { URI(inputUrl) }.getOrNull()
         return fetchHtmlMetadata(inputUrl, TIKTOK_BROWSER_USER_AGENT) { document, finalUri ->
+            val isMusic = parsedInput?.let(::isTikTokMusicUri) == true || isTikTokMusicUri(finalUri)
+            if (isTikTokCreatorMarketplaceUri(finalUri)) {
+                return@fetchHtmlMetadata FetchOutcome.Unavailable(
+                    error = MetadataError.WRONG_FIXTURE,
+                    clearExistingMetadata = true,
+                )
+            }
+            if (isTikTokProviderUnavailableDocument(document)) {
+                return@fetchHtmlMetadata FetchOutcome.Unavailable(
+                    error = MetadataError.PROVIDER_UNAVAILABLE,
+                    clearExistingMetadata = isMusic,
+                )
+            }
+            val normalizeTitleCandidate: (String?) -> String? = if (isMusic) {
+                ::normalizeTikTokMusicTitleText
+            } else {
+                ::normalizeTikTokTitleText
+            }
             val embeddedMetadata = extractTikTokEmbeddedMetadata(document)
             val webBody = extractWebBodyWithKind(document)
             val htmlDescription = extractDescription(document)
+            val playlistTitle = extractTikTokPlaylistTitle(finalUri)
             val body = firstNonBlank(
                 embeddedMetadata.body,
                 oEmbedMetadata.body,
@@ -474,12 +764,17 @@ class MetadataFetcher(
                 else -> null
             }
             val title = firstNonBlank(
-                embeddedMetadata.title,
-                oEmbedMetadata.title,
-                normalizeTikTokTitleText(extractMetaContent(document, "meta[property=og:title]", "meta[name=og:title]")),
-                normalizeTikTokTitleText(extractTitleTag(document)),
+                playlistTitle,
+                normalizeTitleCandidate(embeddedMetadata.title),
+                normalizeTitleCandidate(oEmbedMetadata.title),
+                normalizeTitleCandidate(extractMetaContent(document, "meta[property=og:title]", "meta[name=og:title]")),
+                normalizeTitleCandidate(extractTitleTag(document)),
             )
-            val thumbnail = firstNonBlank(embeddedMetadata.thumbnailUrl, oEmbedMetadata.thumbnailUrl, extractOgImage(document))
+            val thumbnail = if (isMusic) {
+                null
+            } else {
+                firstNonBlank(embeddedMetadata.thumbnailUrl, oEmbedMetadata.thumbnailUrl, extractOgImage(document))
+            }
             val badgeImage = firstNonBlank(
                 embeddedMetadata.badgeImageUrl,
                 profileBadgeImageUrl,
@@ -491,8 +786,11 @@ class MetadataFetcher(
                 extractCanonical(document, finalUri),
             )
 
-            if (title == null && body == null && thumbnail == null && canonicalId == null) {
-                return@fetchHtmlMetadata FetchOutcome.Unavailable(MetadataError.PARSE_FAILED)
+            if (title == null && body == null && thumbnail == null) {
+                return@fetchHtmlMetadata FetchOutcome.Unavailable(
+                    error = MetadataError.PARSE_FAILED,
+                    clearExistingMetadata = isMusic,
+                )
             }
 
             FetchOutcome.Ready(
@@ -691,7 +989,7 @@ class MetadataFetcher(
         val endpoint = youtubeOEmbedEndpointBuilder(targetUrl)
         var authorUrl: String? = null
         val outcome = fetchJsonPayload(endpoint) { payload ->
-            val title = payload.firstNonBlankString("title")
+            val title = normalizeYouTubeTitleText(payload.firstNonBlankString("title"))
             val authorName = normalizeTitleText(payload.firstNonBlankString("author_name"))
             val thumbnail = payload.firstNonBlankString("thumbnail_url")
             authorUrl = payload.firstNonBlankString("author_url")
@@ -747,10 +1045,10 @@ class MetadataFetcher(
                 videoDetails?.firstNonBlankString("shortDescription"),
                 microformat?.jsonObjectOrNull("description")?.richTextString(),
             )?.let(::normalizeYouTubeDescriptionText)
-            val thumbnail = firstNonBlank(
+            val thumbnail = normalizeYouTubeThumbnailUrl(firstNonBlank(
                 videoDetails?.jsonObjectOrNull("thumbnail")?.bestThumbnailUrl(),
                 microformat?.jsonObjectOrNull("thumbnail")?.bestThumbnailUrl(),
-            )
+            ))
 
             if (title == null && body == null && thumbnail == null) {
                 return@fetchJsonPayloadPost FetchOutcome.Unavailable(MetadataError.PARSE_FAILED)
@@ -798,10 +1096,30 @@ class MetadataFetcher(
         val outcome = fetchJsonPayload(endpoint) { payload ->
             val authorName = normalizeTikTokTitleText(payload.firstNonBlankString("author_name"))
             val html = payload.firstNonBlankString("html")
-            val body = firstNonBlank(
-                payload.firstNonBlankString("title"),
-                extractTikTokCaptionFromOEmbedHtml(html),
-            )?.let(::normalizeTikTokBodyText)
+            val isVideo = parsedUri.path.orEmpty().lowercase(Locale.ROOT).let { path ->
+                path.contains("/video/") ||
+                    path.startsWith("/player/v1/") ||
+                    path.startsWith("/t/")
+            }
+            val isMusic = isTikTokMusicUri(parsedUri)
+            val oEmbedTitle = if (isMusic) {
+                normalizeTikTokMusicTitleText(payload.firstNonBlankString("title"))
+            } else {
+                normalizeTikTokTitleText(payload.firstNonBlankString("title"))
+            }
+            val body = if (isVideo) {
+                firstNonBlank(
+                    oEmbedTitle,
+                    extractTikTokCaptionFromOEmbedHtml(html),
+                )?.let(::normalizeTikTokBodyText)
+            } else {
+                null
+            }
+            val title = when {
+                isVideo -> authorName
+                isMusic -> oEmbedTitle
+                else -> oEmbedTitle ?: authorName
+            }
             val thumbnail = normalizeUrlAttribute(payload.firstNonBlankString("thumbnail_url"))
             authorUrl = normalizeTikTokAuthorUrl(payload.firstNonBlankString("author_url"))
             val canonicalFromPayload = firstNonBlank(
@@ -809,12 +1127,18 @@ class MetadataFetcher(
                 extractTikTokVideoIdFromOEmbedHtml(html),
             )
 
-            if (authorName == null && body == null && thumbnail == null && canonicalFromPayload == null) {
+            if (isMusic && title == null && body == null && thumbnail == null) {
+                return@fetchJsonPayload FetchOutcome.Unavailable(
+                    error = MetadataError.PARSE_FAILED,
+                    clearExistingMetadata = true,
+                )
+            }
+            if (title == null && body == null && thumbnail == null && canonicalFromPayload == null) {
                 return@fetchJsonPayload FetchOutcome.Unavailable(MetadataError.PARSE_FAILED)
             }
 
             FetchOutcome.Ready(
-                fetchedTitle = authorName,
+                fetchedTitle = title,
                 fetchedBody = body,
                 bodySummary = body?.let(::buildRuleSummary),
                 description = body,
@@ -910,7 +1234,7 @@ class MetadataFetcher(
                 payload.firstNonBlankString("title"),
                 extractInstagramCaptionFromOEmbedHtml(payload.firstNonBlankString("html")),
             )?.let(::normalizeFetchedBodyText)
-            val thumbnail = payload.firstNonBlankString("thumbnail_url")
+            val thumbnail = normalizeInstagramThumbnailUrl(payload.firstNonBlankString("thumbnail_url"))
             authorUrl = payload.firstNonBlankString("author_url")
             if (authorName == null && body == null && thumbnail == null) {
                 return@fetchJsonPayload FetchOutcome.Unavailable(MetadataError.PARSE_FAILED)
@@ -1113,6 +1437,20 @@ class MetadataFetcher(
     }
 
     private fun combineTikTokFallbackOutcomes(primary: FetchOutcome, fallback: FetchOutcome): FetchOutcome {
+        val clearExistingMetadata = sequenceOf(primary, fallback)
+            .filterIsInstance<FetchOutcome.Unavailable>()
+            .firstOrNull { it.clearExistingMetadata }
+        if (clearExistingMetadata != null) {
+            return clearExistingMetadata
+        }
+
+        val providerUnavailable = sequenceOf(primary, fallback)
+            .filterIsInstance<FetchOutcome.Unavailable>()
+            .firstOrNull { it.error == MetadataError.PROVIDER_UNAVAILABLE }
+        if (providerUnavailable != null) {
+            return providerUnavailable
+        }
+
         val nonParseUnavailable = sequenceOf(primary, fallback)
             .filterIsInstance<FetchOutcome.Unavailable>()
             .firstOrNull { it.error != MetadataError.PARSE_FAILED }
@@ -1135,6 +1473,7 @@ class MetadataFetcher(
 
     private fun fetchJsonPayload(
         initialUrl: String,
+        authorizationBearer: String? = null,
         mapPayload: (JsonObject) -> FetchOutcome,
     ): FetchOutcome {
         var current = initialUrl
@@ -1154,6 +1493,10 @@ class MetadataFetcher(
                 requestMethod = "GET"
                 setRequestProperty("User-Agent", userAgent)
                 setRequestProperty("Accept", "application/json,text/plain,*/*")
+                authorizationBearer
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { setRequestProperty("Authorization", "Bearer $it") }
             }
 
             try {
@@ -1307,22 +1650,45 @@ class MetadataFetcher(
                         if (redirects > 5) {
                             return FetchOutcome.Unavailable(MetadataError.TOO_MANY_REDIRECTS)
                         }
-                        current = currentUri.resolve(location).toString()
+                        val nextUri = currentUri.resolve(location)
+                        if (isXAuthRestrictedUri(currentUri) && isXLoginUri(nextUri)) {
+                            return FetchOutcome.Unavailable(MetadataError.LOGIN_REQUIRED)
+                        }
+                        if (isTikTokCreatorMarketplaceUri(nextUri)) {
+                            return FetchOutcome.Unavailable(
+                                error = MetadataError.WRONG_FIXTURE,
+                                clearExistingMetadata = true,
+                            )
+                        }
+                        current = nextUri.toString()
                         continue
                     }
 
-                    code == 404 -> return FetchOutcome.Unavailable(MetadataError.HTTP_404)
-                    code in 400..499 -> return FetchOutcome.Unavailable(MetadataError.HTTP_4XX)
+                    code == 404 -> return FetchOutcome.Unavailable(
+                        if (isXAuthRestrictedUri(currentUri) || isXLoginUri(currentUri)) {
+                            MetadataError.LOGIN_REQUIRED
+                        } else if (isTikTokPlaylistMusicUri(currentUri)) {
+                            MetadataError.PROVIDER_UNAVAILABLE
+                        } else {
+                            MetadataError.HTTP_404
+                        },
+                    )
+                    code in 400..499 -> return FetchOutcome.Unavailable(
+                        if (isXAuthRestrictedUri(currentUri) || isXLoginUri(currentUri)) {
+                            MetadataError.LOGIN_REQUIRED
+                        } else if (isTikTokPlaylistMusicUri(currentUri)) {
+                            MetadataError.PROVIDER_UNAVAILABLE
+                        } else {
+                            MetadataError.HTTP_4XX
+                        },
+                    )
                     code in 500..599 -> return FetchOutcome.FailedRetryable(MetadataError.HTTP_5XX)
                 }
 
-                if (connection.contentLengthLong > BODY_LIMIT_BYTES) {
-                    return FetchOutcome.Unavailable(MetadataError.OVERSIZED)
+                val htmlBody = BufferedInputStream(connection.inputStream).use { input ->
+                    readHtmlBody(input, connection.contentLengthLong)
                 }
-
-                val body = BufferedInputStream(connection.inputStream).use { input ->
-                    readLimitedBody(input, BODY_LIMIT_BYTES)
-                }
+                val body = htmlBody.body
                 if (body == null) {
                     return FetchOutcome.Unavailable(MetadataError.OVERSIZED)
                 }
@@ -1336,11 +1702,25 @@ class MetadataFetcher(
 
                 val isHtml = if (contentType.isBlank()) looksHtml else isHtmlByHeader
                 if (!isHtml) {
-                    return FetchOutcome.Unavailable(MetadataError.NON_HTML)
+                    return if (htmlBody.exceededBodyLimit) {
+                        FetchOutcome.Unavailable(MetadataError.OVERSIZED)
+                    } else {
+                        FetchOutcome.Unavailable(MetadataError.NON_HTML)
+                    }
                 }
 
                 val document = Jsoup.parse(bodyText, current)
-                return mapDocument(document, currentUri)
+                val mapped = mapDocument(document, URI(current))
+                if (
+                    htmlBody.exceededBodyLimit &&
+                    mapped is FetchOutcome.Unavailable &&
+                    mapped.error == MetadataError.PARSE_FAILED &&
+                    !bodyText.contains("PolarisErrorRoute") &&
+                    !bodyText.contains("httpErrorPage")
+                ) {
+                    return FetchOutcome.Unavailable(MetadataError.OVERSIZED)
+                }
+                return mapped
             } finally {
                 connection.disconnect()
             }
@@ -1355,11 +1735,22 @@ class MetadataFetcher(
         val title = firstNonBlank(
             extractMetaContent(document, "meta[property=og:title]", "meta[name=og:title]"),
             extractTitleTag(document),
-        ) ?: return null
-        return title
-            .replace(Regex("\\s*-\\s*YouTube(?:\\s+Music)?$", RegexOption.IGNORE_CASE), "")
-            .trim()
-            .takeIf { it.isNotBlank() }
+        )
+        return normalizeYouTubeTitleText(title)
+    }
+
+    private fun youtubeOEmbedTargetUrl(inputUrl: String): String {
+        val parsed = runCatching { URI(inputUrl) }.getOrNull() ?: return inputUrl
+        val videoId = extractServiceCanonical(parsed) ?: return inputUrl
+        return "https://www.youtube.com/watch?v=$videoId"
+    }
+
+    private fun isYouTubeProfileUri(uri: URI?): Boolean {
+        val path = uri?.path.orEmpty().lowercase(Locale.ROOT)
+        return path.startsWith("/@") ||
+            path.startsWith("/channel/") ||
+            path.startsWith("/c/") ||
+            path.startsWith("/user/")
     }
 
     private fun extractYouTubeBody(document: Document): String? {
@@ -1410,9 +1801,8 @@ class MetadataFetcher(
 
             val combined = runTexts.joinToString("")
             val normalized = normalizeFetchedBodyText(combined)
-            if (normalized != null) {
-                return normalized
-            }
+            if (normalized == null) continue
+            return normalized
         }
         return null
     }
@@ -1594,10 +1984,9 @@ class MetadataFetcher(
             ?.let(::normalizeTikTokBodyText)
         if (quoted != null) return quoted
 
-        val withoutStats = source
-            .replace(TIKTOK_SHARE_STATS_PREFIX_PATTERN, "")
-            .trim()
-        return normalizeTikTokBodyText(withoutStats)
+        return normalizeTikTokBodyText(
+            source.replace(TIKTOK_SHARE_STATS_PREFIX_PATTERN, "").trim(),
+        )
     }
 
     private fun extractTikTokRegexMetadata(html: String): TikTokEmbeddedMetadata {
@@ -1711,6 +2100,36 @@ class MetadataFetcher(
             ?: candidates.first()
     }
 
+    private fun extractYouTubeAuthorName(document: Document): String? {
+        for (link in document.select("a[href]")) {
+            val href = link.absUrl("href").ifBlank { link.attr("href") }
+            val uri = runCatching { URI(href) }.getOrNull() ?: continue
+            val host = uri.host?.lowercase(Locale.ROOT).orEmpty()
+            if (!host.endsWith("youtube.com")) continue
+            val path = uri.path.orEmpty().lowercase(Locale.ROOT)
+            val isChannelLink = path.startsWith("/@") ||
+                path.startsWith("/channel/") ||
+                path.startsWith("/c/") ||
+                path.startsWith("/user/")
+            if (!isChannelLink) {
+                continue
+            }
+            normalizeTitleText(link.text())?.let { return it }
+        }
+        return null
+    }
+
+    private fun extractYouTubePostAuthorFromTitle(title: String?): String? {
+        val normalized = normalizeTitleText(title) ?: return null
+        return firstNonBlank(
+            Regex("^(.+?)\\s+さんからの投稿$").find(normalized)?.groupValues?.getOrNull(1),
+            Regex("^Post from\\s+(.+)$", RegexOption.IGNORE_CASE)
+                .find(normalized)
+                ?.groupValues
+                ?.getOrNull(1),
+        )
+    }
+
     private fun findVideoObjectDescription(element: JsonElement): String? {
         return when (element) {
             is JsonObject -> {
@@ -1778,6 +2197,32 @@ class MetadataFetcher(
             body = normalizeFetchedBodyText(bodyCandidate),
             titleCandidate = normalizeTitleText(titleCandidate),
         )
+    }
+
+    private fun extractInstagramHighlightImage(document: Document): String? {
+        return document.select("script")
+            .asSequence()
+            .map { it.data().ifBlank { it.html() } }
+            .flatMap { payload ->
+                INSTAGRAM_HIGHLIGHT_IMAGE_PATTERN.findAll(payload).mapNotNull { match ->
+                    decodeJsonEscapedString(match.groupValues[1])
+                        ?.let(::normalizeUrlAttribute)
+                }
+            }
+            .firstOrNull()
+    }
+
+    private fun extractInstagramHighlightBadgeImage(document: Document): String? {
+        return document.select("script")
+            .asSequence()
+            .map { it.data().ifBlank { it.html() } }
+            .flatMap { payload ->
+                INSTAGRAM_PROFILE_IMAGE_PATTERN.findAll(payload).mapNotNull { match ->
+                    decodeJsonEscapedString(match.groupValues[1])
+                        ?.let(::normalizeUrlAttribute)
+                }
+            }
+            .firstOrNull()
     }
 
     private fun extractInstagramEmbeddedCaption(document: Document): String? {
@@ -2062,11 +2507,18 @@ class MetadataFetcher(
                     segments[0] in setOf("p", "reel", "tv")
                 ) {
                     segments[1]
+                } else if (segments.size >= 3 &&
+                    segments[0].equals("stories", ignoreCase = true) &&
+                    segments[1].equals("highlights", ignoreCase = true)
+                ) {
+                    segments[2]
                 } else {
                     null
                 }
             }
-            host.endsWith("tiktok.com") -> path.substringAfterLast('/', "").ifBlank { null }
+            host.endsWith("tiktok.com") -> path.substringAfterLast('/', "")
+                .removePrefix("-")
+                .ifBlank { null }
             else -> UrlRules.extractXStatusId(uri.toString())
         }
     }
@@ -2085,6 +2537,14 @@ class MetadataFetcher(
             out.write(buffer, 0, read)
         }
         return out.toByteArray()
+    }
+
+    private fun readHtmlBody(input: BufferedInputStream, contentLength: Long): HtmlBodyRead {
+        val body = readPrefixBody(input, HTML_METADATA_PREFIX_LIMIT_BYTES)
+        return HtmlBodyRead(
+            body = body,
+            exceededBodyLimit = contentLength > BODY_LIMIT_BYTES || body.size.toLong() > BODY_LIMIT_BYTES,
+        )
     }
 
     private fun readPrefixBody(input: BufferedInputStream, maxBytes: Int): ByteArray {
@@ -2117,6 +2577,143 @@ class MetadataFetcher(
             ?.takeIf { it.isNotBlank() }
     }
 
+    private fun normalizeYouTubeTitleText(raw: String?): String? {
+        val normalized = normalizeTitleText(raw)
+            ?.replace(Regex("\\s*-\\s*YouTube(?:\\s+Music)?$", RegexOption.IGNORE_CASE), "")
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: return null
+        return normalized.takeUnless {
+            it.equals("YouTube", ignoreCase = true) ||
+                it.equals("YouTube Music", ignoreCase = true)
+        }
+    }
+
+    private fun normalizeYouTubeThumbnailUrl(raw: String?): String? {
+        val normalized = normalizeUrlAttribute(raw) ?: return null
+        val uri = runCatching { URI(normalized) }.getOrNull() ?: return normalized
+        val host = uri.host?.lowercase(Locale.ROOT).orEmpty()
+        val path = uri.path.orEmpty().trimEnd('/')
+        val isGenericYouTubeArtwork = host.endsWith("youtube.com") &&
+            path.equals("/img/desktop/yt_1200.png", ignoreCase = true)
+        return normalized.takeUnless { isGenericYouTubeArtwork }
+    }
+
+    private fun normalizeInstagramSupplement(metadata: InstagramOEmbedMetadata): InstagramOEmbedMetadata {
+        // Filter before merging so generic primary values cannot hide valid fallbacks.
+        return metadata.copy(
+            title = normalizeInstagramTitleText(metadata.title),
+            body = normalizeInstagramBodyText(metadata.body),
+            thumbnailUrl = normalizeInstagramThumbnailUrl(metadata.thumbnailUrl),
+        )
+    }
+
+    private fun normalizeInstagramTitleText(raw: String?): String? {
+        val normalized = normalizeTitleText(raw) ?: return null
+        return normalized.takeUnless {
+            it.equals("Instagram", ignoreCase = true) ||
+                it.equals("Instagram photos and videos", ignoreCase = true) ||
+                it.equals("Join my group chat:", ignoreCase = true)
+        }
+    }
+
+    private fun normalizeInstagramChannelTitleText(raw: String?): String? {
+        val normalized = normalizeInstagramTitleText(raw) ?: return null
+        return normalized
+            .removePrefix("Join my channel:")
+            .removePrefix("Join my group chat:")
+            .trim()
+            .takeIf { it.isNotBlank() }
+    }
+
+    private fun normalizeInstagramBodyText(raw: String?): String? {
+        val normalized = normalizeFetchedBodyText(raw) ?: return null
+        return normalized.takeUnless {
+            it.startsWith("Create an account or log in to Instagram", ignoreCase = true) ||
+                it.startsWith("Log in to Instagram", ignoreCase = true) ||
+                it.startsWith("Instagramでログイン", ignoreCase = true)
+        }
+    }
+
+    private fun normalizeInstagramSoundBodyText(raw: String?): String? {
+        val normalized = normalizeInstagramBodyText(raw) ?: return null
+        return normalized.takeUnless {
+            Regex("^Listen to .+ on Instagram and watch reels with original audio$", RegexOption.IGNORE_CASE)
+                .matches(it)
+        }
+    }
+
+    private fun normalizeInstagramThumbnailUrl(raw: String?): String? {
+        val normalized = normalizeUrlAttribute(raw) ?: return null
+        val uri = runCatching { URI(normalized) }.getOrNull() ?: return normalized
+        val host = uri.host?.lowercase(Locale.ROOT).orEmpty()
+        val path = uri.path.orEmpty()
+        val isGenericInstagramArtwork = host == "static.cdninstagram.com" &&
+            path.contains("/rsrc.php/", ignoreCase = true)
+        val isGenericInstagramGroupLinkArtwork = host.endsWith("instagram.com") &&
+            path.contains("/images/assets_do_not_hardcode/instagram_group_links/", ignoreCase = true)
+        return normalized.takeUnless { isGenericInstagramArtwork || isGenericInstagramGroupLinkArtwork }
+    }
+
+    private fun isInstagramProfileLikeUri(uri: URI?): Boolean {
+        return isInstagramAccountProfileUri(uri) || isInstagramSoundUri(uri)
+    }
+
+    private fun isInstagramAccountProfileUri(uri: URI?): Boolean {
+        val segments = uri?.path.orEmpty().split('/').filter { it.isNotBlank() }
+        if (segments.size != 1) return false
+        return segments[0].lowercase(Locale.ROOT) !in setOf(
+            "about",
+            "accounts",
+            "channel",
+            "direct",
+            "directory",
+            "emails",
+            "explore",
+            "legal",
+            "privacy",
+            "reels",
+            "stories",
+            "terms",
+        )
+    }
+
+    private fun isInstagramSoundUri(uri: URI?): Boolean {
+        return uri?.path.orEmpty().lowercase(Locale.ROOT).startsWith("/reels/audio/")
+    }
+
+    private fun isInstagramHighlightUri(uri: URI?): Boolean {
+        return uri?.path.orEmpty().lowercase(Locale.ROOT).startsWith("/stories/highlights/")
+    }
+
+    private fun instagramHashtagName(uri: URI?): String? {
+        val segments = uri?.path.orEmpty().split('/').filter { it.isNotBlank() }
+        if (segments.size != 3) return null
+        if (!segments[0].equals("explore", ignoreCase = true) ||
+            !segments[1].equals("tags", ignoreCase = true)
+        ) {
+            return null
+        }
+        return segments[2].trim().trimStart('#').takeIf { it.isNotBlank() }
+    }
+
+    private fun isInstagramChannelUri(uri: URI?): Boolean {
+        return uri?.path.orEmpty().lowercase(Locale.ROOT).startsWith("/channel/")
+    }
+
+    private fun normalizeXTitleText(raw: String?): String? {
+        val normalized = normalizeTitleText(raw)
+            ?.removeSuffix(" / X")
+            ?.removeSuffix(" on X")
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: return null
+        return normalized.takeUnless {
+            it.equals("X", ignoreCase = true) ||
+                it.equals("Twitter", ignoreCase = true)
+        }
+    }
+
     private fun normalizeTikTokTitleText(raw: String?): String? {
         val normalized = normalizeTitleText(raw)
             ?.removePrefix("TikTok · ")
@@ -2128,6 +2725,63 @@ class MetadataFetcher(
                 title.equals("TikTok", ignoreCase = true) ||
                 title.equals("TikTok - Make Your Day", ignoreCase = true)
         }
+    }
+
+    private fun normalizeTikTokMusicTitleText(raw: String?): String? {
+        val normalized = normalizeTikTokTitleText(raw) ?: return null
+        return normalized.takeUnless {
+            Regex("^♬\\s*-\\s*.+$").matches(it)
+        }
+    }
+
+    private fun isTikTokMusicUri(uri: URI): Boolean {
+        val path = uri.path.orEmpty().lowercase(Locale.ROOT)
+        return path.startsWith("/playlist/") ||
+            path.contains("/playlist/") ||
+            path.startsWith("/playlist-music/") ||
+            path.startsWith("/share/music/") ||
+            path.startsWith("/music/")
+    }
+
+    private fun extractTikTokPlaylistTitle(uri: URI): String? {
+        val segments = uri.path.orEmpty().split('/').filter { it.isNotBlank() }
+        val playlistIndex = segments.indexOfFirst { it.equals("playlist", ignoreCase = true) }
+        if (playlistIndex < 0 || playlistIndex + 1 >= segments.size) return null
+        val rawSlug = segments[playlistIndex + 1]
+            .replace(Regex("-\\d{10,}$"), "")
+            .trim('-')
+            .takeIf { it.isNotBlank() }
+            ?: return null
+        return rawSlug
+            .replace('_', ' ')
+            .replace('-', ' ')
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .takeIf { it.isNotBlank() }
+    }
+
+    private fun isTikTokCreatorMarketplaceUri(uri: URI): Boolean {
+        val host = uri.host.orEmpty().lowercase(Locale.ROOT)
+        val path = uri.path.orEmpty().lowercase(Locale.ROOT)
+        return path.contains("/creative/creatorlink/share-link") ||
+            (host == "inapp.tiktokv.com" && path.contains("/creative/creatormarketplace/"))
+    }
+
+    private fun isTikTokPlaylistMusicUri(uri: URI): Boolean {
+        val host = uri.host.orEmpty().lowercase(Locale.ROOT)
+        val path = uri.path.orEmpty().lowercase(Locale.ROOT)
+        return host.endsWith("tiktok.com") && path.startsWith("/playlist-music/")
+    }
+
+    private fun isTikTokProviderUnavailableDocument(document: Document): Boolean {
+        val text = document.text().lowercase(Locale.ROOT)
+        return text.contains("page not available") ||
+            text.contains("this page isn't available") ||
+            text.contains("this sound isn't available") ||
+            text.contains("playlist is invalid") ||
+            text.contains("プレイリストが無効") ||
+            (text.contains("著作権表記なし") && text.contains("プレイリスト")) ||
+            text.contains("この楽曲は見つかりませんでした")
     }
 
     private fun normalizeBodyText(raw: String?): String? {
@@ -2158,10 +2812,11 @@ class MetadataFetcher(
     }
 
     private fun normalizeYouTubeDescriptionText(raw: String?): String? {
-        val normalized = normalizeFetchedBodyText(raw) ?: return null
-        return normalized.takeUnless { body ->
+        return normalizeFetchedBodyText(raw)?.takeUnless { body ->
             body == "作成した動画を友だち、家族、世界中の人たちと共有" ||
-                body.equals("Enjoy the videos and music you love, upload original content, and share it all with friends, family, and the world on YouTube.", ignoreCase = true)
+                body.startsWith("YouTube でお気に入りの動画や音楽を楽しみ") ||
+                body.startsWith("YouTubeでお気に入りの動画や音楽を楽しみ") ||
+                body.startsWith("Enjoy the videos and music you love", ignoreCase = true)
         }
     }
 
@@ -2430,6 +3085,109 @@ class MetadataFetcher(
         }
     }
 
+    private fun isXHost(host: String?): Boolean {
+        val lowered = host?.lowercase(Locale.ROOT).orEmpty()
+        return lowered == "x.com" || lowered.endsWith("twitter.com")
+    }
+
+    private fun isXLoginDocument(document: Document, finalUri: URI): Boolean {
+        val path = finalUri.path.orEmpty().lowercase(Locale.ROOT)
+        if (path.contains("/login") || path.contains("/onboarding")) return true
+
+        val html = document.outerHtml().lowercase(Locale.ROOT)
+        return html.contains("redirect_after_login") ||
+            (html.contains("log in") && html.contains("sign up")) ||
+            html.contains("ログインまたは登録")
+    }
+
+    private fun isXAuthRestrictedUri(uri: URI): Boolean {
+        if (!isXHost(uri.host)) return false
+        val path = uri.path.orEmpty().lowercase(Locale.ROOT)
+        return path.startsWith("/i/spaces/") || path.startsWith("/i/lists/")
+    }
+
+    private fun isXListUri(uri: URI): Boolean {
+        if (!isXHost(uri.host)) return false
+        val segments = uri.path.orEmpty().split('/').filter { it.isNotBlank() }
+        return segments.size >= 3 &&
+            segments[0].equals("i", ignoreCase = true) &&
+            segments[1].equals("lists", ignoreCase = true)
+    }
+
+    private fun isXSpaceUri(uri: URI): Boolean {
+        if (!isXHost(uri.host)) return false
+        val segments = uri.path.orEmpty().split('/').filter { it.isNotBlank() }
+        return segments.size >= 3 &&
+            segments[0].equals("i", ignoreCase = true) &&
+            segments[1].equals("spaces", ignoreCase = true)
+    }
+
+    private fun extractXSpaceId(uri: URI): String? {
+        val segments = uri.path.orEmpty().split('/').filter { it.isNotBlank() }
+        val spaceIndex = segments.indexOfFirst { it.equals("spaces", ignoreCase = true) }
+        return segments.getOrNull(spaceIndex + 1)
+            ?.takeIf { it.matches(Regex("[A-Za-z0-9]{8,30}")) }
+    }
+
+    private fun extractXListId(uri: URI): String? {
+        val segments = uri.path.orEmpty().split('/').filter { it.isNotBlank() }
+        val listIndex = segments.indexOfFirst { it.equals("lists", ignoreCase = true) }
+        return segments.getOrNull(listIndex + 1)
+            ?.takeIf { it.matches(Regex("\\d{1,19}")) }
+    }
+
+    private fun extractXListOwnerName(html: String?): String? {
+        val text = html
+            ?.let { Jsoup.parseBodyFragment(it).text() }
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: return null
+        return Regex("(?:An|A)\\s+X\\s+List\\s+by\\s+(.+)$", RegexOption.IGNORE_CASE)
+            .find(text)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+    }
+
+    private fun extractXListUrl(html: String?): String? {
+        return html
+            ?.let { Jsoup.parseBodyFragment(it).select("a[href]").firstOrNull()?.let { link ->
+                link.absUrl("href").ifBlank { link.attr("href") }
+            } }
+            ?.takeIf { it.isNotBlank() }
+    }
+
+    private fun isXArticleUri(uri: URI?): Boolean {
+        val segments = uri?.path.orEmpty().split('/').filter { it.isNotBlank() }
+        return segments.any { it.equals("article", ignoreCase = true) }
+    }
+
+    private fun extractXAuthorName(document: Document): String? {
+        for (link in document.select("a[href]")) {
+            val href = link.absUrl("href").ifBlank { link.attr("href") }
+            val uri = runCatching { URI(href) }.getOrNull() ?: continue
+            if (!isXHost(uri.host)) continue
+            val segments = uri.path.orEmpty().split('/').filter { it.isNotBlank() }
+            if (segments.size != 1) continue
+            val text = normalizeXTitleText(link.text()) ?: continue
+            if (text.equals("X", ignoreCase = true)) continue
+            return text
+        }
+        val pageTitle = normalizeTitleText(document.title()) ?: return null
+        return Regex("\\|\\s*(.+?)\\s+\\(@[^)]+\\)\\s+on X$", RegexOption.IGNORE_CASE)
+            .find(pageTitle)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+    }
+
+    private fun isXLoginUri(uri: URI): Boolean {
+        val path = uri.path.orEmpty().lowercase(Locale.ROOT)
+        return path.contains("/login") || path.contains("/onboarding") || path.contains("/flow/")
+    }
+
     private fun classifyHtmlMetadataService(host: String?): HtmlMetadataService {
         val lowered = host?.lowercase(Locale.ROOT).orEmpty()
         return when {
@@ -2525,6 +3283,11 @@ class MetadataFetcher(
         val kind: MetadataBodyKind?,
     )
 
+    private data class HtmlBodyRead(
+        val body: ByteArray?,
+        val exceededBodyLimit: Boolean,
+    )
+
     private enum class HtmlMetadataService {
         YOUTUBE,
         TIKTOK,
@@ -2534,6 +3297,7 @@ class MetadataFetcher(
 
     companion object {
         private const val BODY_LIMIT_BYTES = 512L * 1024L
+        private const val HTML_METADATA_PREFIX_LIMIT_BYTES = 2 * 1024 * 1024
         private const val OG_IMAGE_PROBE_LIMIT_BYTES = 2 * 1024 * 1024
         private const val BODY_TEXT_MAX_LENGTH = 4000
         private const val MIN_WEB_PARAGRAPH_LENGTH = 24
@@ -2545,6 +3309,8 @@ class MetadataFetcher(
         private const val TIKTOK_BROWSER_USER_AGENT =
             "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
         private const val OEMBED_ENDPOINT = "https://publish.twitter.com/oembed"
+        private const val X_SERVICE_ICON_URL = "https://abs.twimg.com/favicons/twitter.2.ico"
+        private const val X_SPACE_API_ENDPOINT = "https://api.x.com/2/spaces"
         private const val X_GUEST_ACTIVATION_ENDPOINT = "https://api.x.com/1.1/guest/activate.json"
         private const val X_ARTICLE_GRAPHQL_ENDPOINT =
             "https://api.x.com/graphql/-4_LMahNlI4MuLJ-EAFEog/TweetResultByRestId"
@@ -2565,6 +3331,11 @@ class MetadataFetcher(
             val features = """{"creator_subscriptions_tweet_preview_api_enabled":true,"premium_content_api_read_enabled":false,"communities_web_enable_tweet_community_results_fetch":true,"c9s_tweet_anatomy_moderator_badge_enabled":true,"articles_preview_enabled":true,"responsive_web_edit_tweet_api_enabled":true,"graphql_is_translatable_rweb_tweet_is_translatable_enabled":true,"view_counts_everywhere_api_enabled":true,"longform_notetweets_consumption_enabled":true,"responsive_web_twitter_article_tweet_consumption_enabled":true,"creator_subscriptions_quote_tweet_preview_enabled":false,"freedom_of_speech_not_reach_fetch_enabled":true,"tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled":true,"longform_notetweets_rich_text_read_enabled":true,"longform_notetweets_inline_media_enabled":true,"responsive_web_graphql_exclude_directive_enabled":true,"verified_phone_label_enabled":false,"responsive_web_graphql_skip_user_profile_image_extensions_enabled":false,"responsive_web_graphql_timeline_navigation_enabled":true,"responsive_web_enhance_cards_enabled":false}"""
             val toggles = """{"withAuxiliaryUserLabels":false,"withArticleRichContentState":true,"withArticlePlainText":true,"withGrokAnalyze":false,"withDisallowedReplyControls":false}"""
             return "$X_ARTICLE_GRAPHQL_ENDPOINT?variables=${urlEncode(variables)}&features=${urlEncode(features)}&fieldToggles=${urlEncode(toggles)}"
+        }
+
+        private fun buildXSpaceMetadataEndpoint(spaceId: String): String {
+            return "$X_SPACE_API_ENDPOINT/$spaceId?space.fields=title,state,creator_id,host_ids,participant_count,scheduled_start,started_at,ended_at&" +
+                "expansions=creator_id,host_ids&user.fields=id,name,username,profile_image_url,verified"
         }
 
         private fun urlEncode(value: String): String = URLEncoder.encode(value, Charsets.UTF_8.name())
@@ -2594,6 +3365,14 @@ class MetadataFetcher(
         private val INSTAGRAM_USERNAME_PATTERNS = listOf(
             Regex("\"username\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"", RegexOption.DOT_MATCHES_ALL),
             Regex("\"ownerUsername\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"", RegexOption.DOT_MATCHES_ALL),
+        )
+        private val INSTAGRAM_HIGHLIGHT_IMAGE_PATTERN = Regex(
+            "\"image_versions2\"\\s*:\\s*\\{.*?\"candidates\"\\s*:\\s*\\[.*?\"url\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"",
+            RegexOption.DOT_MATCHES_ALL,
+        )
+        private val INSTAGRAM_PROFILE_IMAGE_PATTERN = Regex(
+            "\"profile_pic_url\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"",
+            RegexOption.DOT_MATCHES_ALL,
         )
         private val TIKTOK_QUOTED_TEXT_PATTERN =
             Regex("[\"“「『]((?:.|\\n){1,4000}?)[\"”」』]")

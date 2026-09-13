@@ -68,7 +68,6 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ChecklistRtl
-import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
@@ -824,7 +823,9 @@ private fun MainScreen(
     var selectedSharedTagGroupId by rememberSaveable { mutableStateOf<Long?>(null) }
     var showExportSheet by rememberSaveable { mutableStateOf(false) }
     val exportSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var showAiProviderChooser by rememberSaveable { mutableStateOf(false) }
     var showChatGptSheet by rememberSaveable { mutableStateOf(false) }
+    var selectedAiProvider by rememberSaveable { mutableStateOf(AiHandoffProvider.CHAT_GPT) }
     val chatGptSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showProfileSheet by rememberSaveable { mutableStateOf(false) }
     val profileSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -1514,8 +1515,20 @@ private fun MainScreen(
             ChatGptExportScreen(
                 viewModel = exportVm,
                 onBack = { showChatGptSheet = false },
+                provider = selectedAiProvider,
             )
         }
+    }
+
+    if (showAiProviderChooser) {
+        AiProviderChooserDialog(
+            onDismiss = { showAiProviderChooser = false },
+            onSelect = { provider ->
+                selectedAiProvider = provider
+                showAiProviderChooser = false
+                showChatGptSheet = true
+            },
+        )
     }
 
     if (showProfileSheet) {
@@ -1877,7 +1890,7 @@ private fun MainScreen(
                     selectedSharedTagGroupId = null
                 },
                 onExport = { showExportSheet = true },
-                onOpenChatGpt = { showChatGptSheet = true },
+                onOpenChatGpt = { showAiProviderChooser = true },
                 onAdd = { openManualInput() },
                 onTagManage = { showLocalTagManagerSheet = true },
                 onOpenArchive = onOpenArchive,
@@ -2339,17 +2352,6 @@ private fun UsageGuideContent(
             ) {
                 GuideAIExportPreview()
             }
-            UsageGuideRow(
-                marker = "8",
-                markerColor = MaterialTheme.colorScheme.primary,
-                icon = { Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null) },
-                iconColor = MaterialTheme.colorScheme.primary,
-                iconBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                title = "確認してChatGPTへ渡す",
-                body = "自作タグを選び、伏せ字後の全内容と除外項目を確認してチェックします。作成したZIPだけをChatGPTへ渡し、質問はChatGPT側で入力します。",
-            ) {
-                GuideChatGptPreview()
-            }
             UsageGuideNote(onOpenExternalGuide = onOpenExternalGuide)
         }
     }
@@ -2590,29 +2592,6 @@ private fun GuideAIExportPreview() {
                 Text("Claude", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.ExtraBold)
                 Text("ChatGPT など", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.ExtraBold)
             }
-        }
-    }
-}
-
-@Composable
-private fun GuideChatGptPreview() {
-    GuidePreviewSurface {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                text = "1 伏せ字後の全内容を確認",
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                text = "2 未知の秘密が残っていないか確認してチェック",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                text = "3 ZIPを作成して共有",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }
@@ -4946,6 +4925,7 @@ private fun DetailScreen(
         userTitle = current.userTitle,
         fetchedTitle = current.fetchedTitle,
         serviceType = current.serviceType,
+        contentContext = current.contentContext,
         normalizedHost = current.normalizedHost,
         bodySummary = current.bodySummary,
         fetchedBody = current.fetchedBody,
@@ -4998,6 +4978,8 @@ private fun DetailScreen(
         bodySummary = current.bodySummary,
         fetchedBody = current.fetchedBody,
     )
+    val hasMeaningfulMetadata = !current.fetchedTitle.isNullOrBlank() ||
+        !current.thumbnailUrl.isNullOrBlank()
     val missingXBadge = current.metadataState == MetadataState.READY &&
         current.serviceType == ServiceType.X &&
         current.badgeImageUrl.isNullOrBlank()
@@ -5007,7 +4989,10 @@ private fun DetailScreen(
             body = "再取得すると、取得できる場合は投稿者のプロフィール画像を表示します。",
         )
     } else if (readyWithoutFetchedContent) {
-        metadataReadyWithoutContentMessage(current.serviceType)
+        metadataReadyWithoutContentMessage(
+            serviceType = current.serviceType,
+            hasMeaningfulMetadata = hasMeaningfulMetadata,
+        )
     } else {
         metadataDetailMessage(
             state = current.metadataState,
@@ -6951,7 +6936,7 @@ private fun MainBottomNavBar(
                     .align(Alignment.TopEnd)
                     .padding(top = 8.dp, end = 14.dp)
                     .heightIn(min = 48.dp)
-                    .semantics { contentDescription = "ChatGPT" },
+                    .semantics { contentDescription = "AI" },
                 shape = RoundedCornerShape(24.dp),
                 color = MaterialTheme.colorScheme.primaryContainer,
                 shadowElevation = 3.dp,
@@ -6961,14 +6946,8 @@ private fun MainBottomNavBar(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(
-                        imageVector = Icons.Outlined.ChatBubbleOutline,
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp),
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                    )
                     Text(
-                        text = "ChatGPT",
+                        text = "AI",
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -6979,6 +6958,45 @@ private fun MainBottomNavBar(
             }
         }
     }
+}
+
+@Composable
+private fun AiProviderChooserDialog(
+    onDismiss: () -> Unit,
+    onSelect: (AiHandoffProvider) -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("AIを選ぶ") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                AiHandoffProvider.entries.forEach { provider ->
+                    TextButton(
+                        onClick = { onSelect(provider) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp),
+                    ) {
+                        Text(
+                            text = provider.displayName,
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = TextAlign.Start,
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                    }
+                }
+                Text(
+                    text = "各サービスのロゴは、公式配布条件を確認できた場合だけ表示します。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("キャンセル") }
+        },
+    )
 }
 
 @Composable
@@ -7179,7 +7197,7 @@ private val onboardingGuidePages = listOf(
     ),
     OnboardingGuidePage(
         title = "詳しい操作は「使い方」へ",
-        body = "右上のメニューに、保存・整理・共有・ChatGPT用ZIPの手順があります。この初回案内とは別なので、いつでも開き直せます。",
+        body = "右上のメニューに、保存・整理・共有・AIへの渡し方があります。この初回案内とは別なので、いつでも開き直せます。",
         spotlight = { size -> Rect(left = size.width - 92f, top = 28f, right = size.width - 12f, bottom = 116f) },
         arrowOffset = { size -> Offset(size.width - 132f, 112f) },
         arrowText = "↑",

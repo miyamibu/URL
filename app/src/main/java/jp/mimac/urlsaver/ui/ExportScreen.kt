@@ -356,6 +356,7 @@ fun ExportScreen(
 fun ChatGptExportScreen(
     viewModel: ExportViewModel,
     onBack: () -> Unit,
+    provider: AiHandoffProvider = AiHandoffProvider.CHAT_GPT,
 ) {
     val uiState by viewModel.chatGptUiState.collectAsStateWithLifecycle()
     val availableTags by viewModel.availableChatGptTags.collectAsStateWithLifecycle()
@@ -377,7 +378,7 @@ fun ChatGptExportScreen(
         if (!shareRequested || archive == null) return@LaunchedEffect
         shareRequested = false
         try {
-            shareChatGptArchive(context, archive)
+            shareAiArchive(context, archive, provider)
         } catch (throwable: Exception) {
             shareError = throwable.message
                 ?: "共有画面を開けませんでした。もう一度お試しください。"
@@ -396,7 +397,7 @@ fun ChatGptExportScreen(
             TopAppBar(
                 title = {
                     Text(
-                        text = "ChatGPT",
+                        text = provider.displayName,
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                     )
@@ -431,8 +432,9 @@ fun ChatGptExportScreen(
                 isPreparingArchive = uiState.isArchivePreparing,
                 error = shareError ?: uiState.archiveError,
                 successMessage = uiState.preparedArchive?.let {
-                    "${it.entryCount}件のZIPを作成しました。内容を変えずに共有します。"
+                    "${it.entryCount}件のZIPを${provider.displayName}へ渡す準備ができました。内容を変えずに共有します。"
                 },
+                providerDisplayName = provider.displayName,
                 onToggleTag = { tagID ->
                     shareError = null
                     viewModel.toggleChatGptTagSelection(tagID)
@@ -538,6 +540,7 @@ private fun ChatGptExportContent(
     isPreparingArchive: Boolean,
     error: String?,
     successMessage: String?,
+    providerDisplayName: String,
     onToggleTag: (Long) -> Unit,
     onRetryPreview: () -> Unit,
     onContentConfirmedChange: (Boolean) -> Unit,
@@ -558,12 +561,12 @@ private fun ChatGptExportContent(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                text = "ChatGPT",
+                text = providerDisplayName,
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                text = "りんばむでは質問を入力しません。確認したリンクをZIPにして渡し、質問とモデル選択はChatGPTの通常のトーク画面で行います。",
+                text = "りんばむでは質問を入力しません。確認したリンクをZIPにして渡し、質問とモデル選択は${providerDisplayName}の通常のトーク画面で行います。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -646,7 +649,7 @@ private fun ChatGptExportContent(
             }
             if (preview.entries.isEmpty()) {
                 Text(
-                    text = "選択した自作タグに、ChatGPTへ渡せるURLがありません。",
+                    text = "選択した自作タグに、${providerDisplayName}へ渡せるURLがありません。",
                     color = MaterialTheme.colorScheme.error,
                 )
             } else {
@@ -691,7 +694,7 @@ private fun ChatGptExportContent(
         }
     }
 
-    ExportSectionLabel("3. ChatGPT用ファイルを作成")
+    ExportSectionLabel("3. ${providerDisplayName}用ファイルを作成")
     Button(
         onClick = onPrepareArchive,
         enabled = isChatGptZipCreationEnabled(
@@ -712,7 +715,7 @@ private fun ChatGptExportContent(
                 modifier = Modifier.padding(start = 10.dp),
             )
         } else {
-            Text("ChatGPT用ZIPを作成")
+            Text("${providerDisplayName}用ZIPを作成")
         }
     }
 
@@ -726,7 +729,7 @@ private fun ChatGptExportContent(
         )
     }
 
-    ExportSectionLabel("4. ChatGPTに送る")
+    ExportSectionLabel("4. ${providerDisplayName}に送る")
     if (preparedArchive == null) {
         Text(
             text = "先に対象を確認してZIPを作成してください。作成しただけでは共有されません。",
@@ -748,7 +751,7 @@ private fun ChatGptExportContent(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = "生成時点の対象 ${preparedArchive.entryCount}件。送信後、ChatGPTで質問を入力してください。",
+                    text = "生成時点の対象 ${preparedArchive.entryCount}件。送信後、${providerDisplayName}で質問を入力してください。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -766,7 +769,7 @@ private fun ChatGptExportContent(
                 modifier = Modifier.size(20.dp),
             )
             Text(
-                text = "ChatGPTに送る",
+                text = "${providerDisplayName}に送る",
                 modifier = Modifier.padding(start = 8.dp),
             )
         }
@@ -1229,6 +1232,17 @@ private enum class ExportMode(val label: String) {
     CHAT_GPT("ChatGPT"),
 }
 
+enum class AiHandoffProvider(
+    val displayName: String,
+    val officialDestination: String,
+    val officialAssetAvailable: Boolean,
+) {
+    CHAT_GPT("ChatGPT", "https://chatgpt.com/", true),
+    GEMINI("Gemini", "https://gemini.google.com/", false),
+    CLAUDE("Claude", "https://claude.ai/new", true),
+    DEEP_SEEK("DeepSeek", "https://chat.deepseek.com/", false),
+}
+
 private val servicePresetOrder = listOf(
     ServiceType.TIKTOK,
     ServiceType.INSTAGRAM,
@@ -1326,6 +1340,24 @@ private suspend fun shareChatGptArchive(
 
     val fallbackIntent = buildArchiveShareIntent(context, archive, uri)
     val chooser = Intent.createChooser(fallbackIntent, "ChatGPT用ZIPを共有").apply {
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(chooser)
+}
+
+private suspend fun shareAiArchive(
+    context: Context,
+    archive: PreparedExportArchive,
+    provider: AiHandoffProvider,
+) {
+    if (provider == AiHandoffProvider.CHAT_GPT) {
+        shareChatGptArchive(context, archive)
+        return
+    }
+
+    val uri = cacheExportArchive(context, archive)
+    val shareIntent = buildArchiveShareIntent(context, archive, uri)
+    val chooser = Intent.createChooser(shareIntent, "${provider.displayName}へ渡すZIPを共有").apply {
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
     context.startActivity(chooser)

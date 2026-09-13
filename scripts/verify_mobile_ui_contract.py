@@ -105,13 +105,23 @@ def main() -> int:
         ),
         lambda: require(
             "docs/mobile-ui-regression-contract.md",
-            "ホーム右下の `タグ` / `アーカイブ` より上に置く独立した `ChatGPT`",
-            "manual ChatGPT handoff must remain a dedicated home route",
+            "ホーム右下の `タグ` / `アーカイブ` より上に置く独立した `AI`",
+            "manual AI handoff must remain a dedicated home route",
         ),
         lambda: require(
             "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
-            'contentDescription = "ChatGPT"',
-            "Android home must expose the dedicated ChatGPT action",
+            'contentDescription = "AI"',
+            "Android home must expose the dedicated AI action",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
+            "AiProviderChooserDialog",
+            "Android home AI action must open the provider chooser",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/ExportScreen.kt",
+            "enum class AiHandoffProvider",
+            "Android AI handoff must define the provider contract",
         ),
         lambda: require(
             "app/src/main/java/jp/mimac/urlsaver/ui/ExportScreen.kt",
@@ -120,8 +130,13 @@ def main() -> int:
         ),
         lambda: require(
             "ios/URLSaveriOS/UI/RootView.swift",
-            "onOpenChatGpt",
-            "iPhone home must expose the dedicated ChatGPT action",
+            "isShowingAIProviderChooser",
+            "iPhone home must expose the dedicated AI action",
+        ),
+        lambda: require(
+            "ios/URLSaveriOS/UI/ExportSheet.swift",
+            "enum AIHandoffProvider",
+            "iPhone AI handoff must define the provider contract",
         ),
         lambda: require(
             "ios/URLSaveriOS/UI/ExportSheet.swift",

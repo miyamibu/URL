@@ -63,6 +63,14 @@ Exportはユーザー操作で生成されるローカルartifact。現在の実
 - りんばむの責務は自作タグ選択、対象/出力内容preview、ZIP生成、共有インテント/共有シート起動まで。質問入力欄、質問文の自動入力/送信、OpenAI API/OAuth/login、MCP/provider接続、model設定は行わない。共有先の最終選択、ChatGPTでの質問入力と送信はユーザーが行う。
 - ChatGPT手動ファイル共有は、read-only MCP、ChatGPT個人リンク同期、将来のproduction AI provider接続とは別機能。MCP/provider/APIの有効化、認証、deploy、OpenAI審査を手動共有の完了条件にしない。
 
+## Multi-provider chooser
+
+- ホームの独立した入口は `AI` と表示し、providerは `ChatGPT`、`Gemini`、`Claude`、`DeepSeek` の順で選択する。
+- 4 providerは同じ自作タグ選択、eligible判定、preview、redaction、snapshot再検証、ZIP生成、OS共有を再利用する。provider別に出力対象や安全判定を緩めない。
+- AndroidのChatGPTは既存のアプリ直接共有を試し、利用できない場合はOS共有へfallbackする。Gemini / Claude / DeepSeekはOS共有を使用する。
+- iOSは全providerでOS共有シートを使用する。共有先の最終選択、質問入力、添付送信はユーザーが行い、自動添付や送信成功とは扱わない。
+- provider API、OAuth、MCP、質問の自動入力、自動送信、非公式private URL schemeは追加しない。ブランドassetは `docs/ai/ai-provider-brand-and-handoff.md` のtext-only境界を守る。
+
 ## Validation method
 - Android: `ExportRepositoryTest.prepareExport_zipIncludesAiSafeFilesAndExcludesRawFetchedBody`
 - Android: `ExportRepositoryTest.prepareExport_sharedTagEntryIsMarkedAiIneligibleByDefault`

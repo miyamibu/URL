@@ -36,6 +36,7 @@ class FetchMetadataWorker(
 
         return when (outcome) {
             is FetchOutcome.Ready -> {
+                val preserveMissingMetadata = !outcome.clearExistingMetadata
                 val resolvedNormalizedHost = if (entry.serviceType == ServiceType.X) {
                     entry.normalizedHost
                 } else {
@@ -50,13 +51,19 @@ class FetchMetadataWorker(
                     entryId,
                     MetadataUpdate(
                         fetchedTitle = outcome.fetchedTitle,
-                        fetchedAuthorName = outcome.fetchedAuthorName ?: entry.fetchedAuthorName,
-                        fetchedBody = outcome.fetchedBody ?: entry.fetchedBody,
-                        fetchedBodyKind = outcome.fetchedBodyKind ?: entry.fetchedBodyKind,
-                        bodySummary = outcome.bodySummary ?: entry.bodySummary,
-                        description = outcome.description ?: entry.description,
+                        fetchedAuthorName = outcome.fetchedAuthorName
+                            ?: entry.fetchedAuthorName.takeIf { preserveMissingMetadata },
+                        fetchedBody = outcome.fetchedBody
+                            ?: entry.fetchedBody.takeIf { preserveMissingMetadata },
+                        fetchedBodyKind = outcome.fetchedBodyKind
+                            ?: entry.fetchedBodyKind.takeIf { preserveMissingMetadata },
+                        bodySummary = outcome.bodySummary
+                            ?: entry.bodySummary.takeIf { preserveMissingMetadata },
+                        description = outcome.description
+                            ?: entry.description.takeIf { preserveMissingMetadata },
                         thumbnailUrl = outcome.thumbnailUrl,
-                        badgeImageUrl = outcome.badgeImageUrl ?: entry.badgeImageUrl,
+                        badgeImageUrl = outcome.badgeImageUrl
+                            ?: entry.badgeImageUrl.takeIf { preserveMissingMetadata },
                         metadataState = MetadataState.READY,
                         metadataFetchedAt = clock.nowEpochMillis(),
                         metadataError = null,
@@ -72,14 +79,14 @@ class FetchMetadataWorker(
                 repository.applyMetadataUpdate(
                     entryId,
                     MetadataUpdate(
-                        fetchedTitle = entry.fetchedTitle,
-                        fetchedAuthorName = entry.fetchedAuthorName,
-                        fetchedBody = entry.fetchedBody,
-                        fetchedBodyKind = entry.fetchedBodyKind,
-                        bodySummary = entry.bodySummary,
-                        description = entry.description,
-                        thumbnailUrl = entry.thumbnailUrl,
-                        badgeImageUrl = entry.badgeImageUrl,
+                        fetchedTitle = if (outcome.clearExistingMetadata) null else entry.fetchedTitle,
+                        fetchedAuthorName = if (outcome.clearExistingMetadata) null else entry.fetchedAuthorName,
+                        fetchedBody = if (outcome.clearExistingMetadata) null else entry.fetchedBody,
+                        fetchedBodyKind = if (outcome.clearExistingMetadata) null else entry.fetchedBodyKind,
+                        bodySummary = if (outcome.clearExistingMetadata) null else entry.bodySummary,
+                        description = if (outcome.clearExistingMetadata) null else entry.description,
+                        thumbnailUrl = if (outcome.clearExistingMetadata) null else entry.thumbnailUrl,
+                        badgeImageUrl = if (outcome.clearExistingMetadata) null else entry.badgeImageUrl,
                         metadataState = MetadataState.UNAVAILABLE,
                         metadataFetchedAt = clock.nowEpochMillis(),
                         metadataError = outcome.error,

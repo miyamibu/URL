@@ -82,14 +82,21 @@ class AppContainer(context: Context) {
         val encodedUrl = URLEncoder.encode(targetUrl, Charsets.UTF_8.name())
         "$INSTAGRAM_PUBLIC_OEMBED_ENDPOINT?omitscript=true&url=$encodedUrl"
     }
+    private val xTimelineOEmbedEndpointBuilder: (String) -> String = { targetUrl ->
+        val encodedUrl = URLEncoder.encode(targetUrl, Charsets.UTF_8.name())
+        "$X_TIMELINE_OEMBED_ENDPOINT?omit_script=true&dnt=true&url=$encodedUrl"
+    }
     private val instagramCaptionedEmbedEndpointBuilder: (String) -> String = { targetUrl ->
         buildInstagramCaptionedEmbedUrl(targetUrl)
     }
     private val metadataFetcher: MetadataFetcher by lazy {
         MetadataFetcher(
             userAgent = "UrlSaver/${BuildConfig.VERSION_NAME}",
+            xTimelineOEmbedEndpointBuilder = xTimelineOEmbedEndpointBuilder,
+            xHtmlMetadataEndpointBuilder = { it },
             instagramPublicOEmbedEndpointBuilder = instagramPublicOEmbedEndpointBuilder,
             instagramCaptionedEmbedEndpointBuilder = instagramCaptionedEmbedEndpointBuilder,
+            youtubePlayerEndpointBuilder = { YOUTUBE_PLAYER_ENDPOINT },
         )
     }
     private val scheduler: MetadataScheduler by lazy {
@@ -348,7 +355,9 @@ class AppContainer(context: Context) {
 
     private companion object {
         const val TAG = "AppContainer"
+        const val X_TIMELINE_OEMBED_ENDPOINT = "https://publish.x.com/oembed"
         const val INSTAGRAM_PUBLIC_OEMBED_ENDPOINT = "https://www.instagram.com/api/v1/oembed/"
+        const val YOUTUBE_PLAYER_ENDPOINT = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
 
         fun buildInstagramCaptionedEmbedUrl(targetUrl: String): String {
             val uri = URI(targetUrl)

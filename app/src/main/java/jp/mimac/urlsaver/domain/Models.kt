@@ -14,12 +14,18 @@ enum class ContentContext(val label: String) {
     VIDEO("動画"),
     SHORTS("ショート"),
     LIVE("ライブ"),
+    SPACE("スペース"),
+    LIST("リスト"),
     MUSIC("音楽"),
+    PLAYLIST("プレイリスト"),
     POST("投稿"),
     REEL("リール"),
     PROFILE("プロフィール"),
+    CHANNEL("チャンネル"),
     SOUND("音源"),
+    HIGHLIGHT("ハイライト"),
     HASHTAG("ハッシュタグ"),
+    SHORT_URL("短縮URL"),
 }
 
 enum class RecordState {
@@ -47,6 +53,9 @@ enum class MetadataError {
     NON_HTML,
     OVERSIZED,
     TOO_MANY_REDIRECTS,
+    LOGIN_REQUIRED,
+    PROVIDER_UNAVAILABLE,
+    WRONG_FIXTURE,
 }
 
 enum class MetadataBodyKind {

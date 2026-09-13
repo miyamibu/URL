@@ -9,7 +9,8 @@ struct MetadataFetcher: Sendable {
     private let xSyndicationEndpointBuilder: @Sendable (String) -> URL?
     private let xGuestActivationEndpoint: URL?
     private let xArticleGraphQLEndpointBuilder: @Sendable (String) -> URL?
-    private let xPublicBearerToken: String
+    private let xSpaceMetadataEndpointBuilder: @Sendable (String) -> URL?
+    private let xPublicBearerToken: String?
     private let instagramPublicOEmbedEndpointBuilder: @Sendable (URL) -> URL?
     private let instagramCaptionedEmbedEndpointBuilder: @Sendable (URL) -> URL?
 
@@ -22,7 +23,8 @@ struct MetadataFetcher: Sendable {
         xSyndicationEndpointBuilder: @escaping @Sendable (String) -> URL? = MetadataFetcher.xSyndicationURL(for:),
         xGuestActivationEndpoint: URL? = URL(string: "https://api.x.com/1.1/guest/activate.json"),
         xArticleGraphQLEndpointBuilder: @escaping @Sendable (String) -> URL? = MetadataFetcher.xArticleGraphQLURL(for:),
-        xPublicBearerToken: String = MetadataFetcher.xPublicBearerToken,
+        xSpaceMetadataEndpointBuilder: @escaping @Sendable (String) -> URL? = MetadataFetcher.xSpaceMetadataURL(for:),
+        xPublicBearerToken: String? = nil,
         instagramPublicOEmbedEndpointBuilder: @escaping @Sendable (URL) -> URL? = MetadataFetcher.instagramPublicOEmbedURL(for:),
         instagramCaptionedEmbedEndpointBuilder: @escaping @Sendable (URL) -> URL? = MetadataFetcher.instagramCaptionedEmbedURL(for:)
     ) {
@@ -34,6 +36,7 @@ struct MetadataFetcher: Sendable {
         self.xSyndicationEndpointBuilder = xSyndicationEndpointBuilder
         self.xGuestActivationEndpoint = xGuestActivationEndpoint
         self.xArticleGraphQLEndpointBuilder = xArticleGraphQLEndpointBuilder
+        self.xSpaceMetadataEndpointBuilder = xSpaceMetadataEndpointBuilder
         self.xPublicBearerToken = xPublicBearerToken
         self.instagramPublicOEmbedEndpointBuilder = instagramPublicOEmbedEndpointBuilder
         self.instagramCaptionedEmbedEndpointBuilder = instagramCaptionedEmbedEndpointBuilder
@@ -74,46 +77,166 @@ struct MetadataFetcher: Sendable {
     }
 
     private func fetchYouTubeMetadata(inputURL: URL) async -> MetadataUpdate {
-        let oEmbedMetadata = await fetchYouTubeOEmbedMetadata(inputURL: inputURL)
-        let htmlUpdate = await fetchHTMLMetadataUpdate(url: inputURL, service: .youtube)
+        let oEmbedTargetURL = youtubeOEmbedTargetURL(for: inputURL)
+        let oEmbedMetadata = await fetchYouTubeOEmbedMetadata(inputURL: oEmbedTargetURL)
+        let inputHTMLUpdate = await fetchHTMLMetadataUpdate(url: inputURL, service: .youtube)
+        let htmlUpdate: MetadataUpdate
+        if inputHTMLUpdate.normalizedHost != oEmbedTargetURL.host?.lowercased() ||
+            inputURL.absoluteString != oEmbedTargetURL.absoluteString {
+            let canonicalHTMLUpdate = await fetchHTMLMetadataUpdate(url: oEmbedTargetURL, service: .youtube)
+            htmlUpdate = merge(primary: inputHTMLUpdate, supplement: canonicalHTMLUpdate)
+        } else {
+            htmlUpdate = inputHTMLUpdate
+        }
 
         if htmlUpdate.metadataState == .ready {
-            return merge(update: htmlUpdate, with: oEmbedMetadata)
+            return mergeYouTubeMetadata(update: htmlUpdate, with: oEmbedMetadata)
         }
         if oEmbedMetadata.hasAnyContent {
             return readyUpdate(from: oEmbedMetadata, finalURL: inputURL)
         }
         return htmlUpdate
+    }
+
+    private func mergeYouTubeMetadata(
+        update: MetadataUpdate,
+        with supplement: ExtractedMetadata
+    ) -> MetadataUpdate {
+        let merged = merge(update: update, with: supplement)
+        return MetadataUpdate(
+            fetchedTitle: supplement.title ?? merged.fetchedTitle,
+            fetchedAuthorName: supplement.authorName ?? merged.fetchedAuthorName,
+            fetchedBody: merged.fetchedBody,
+            fetchedBodyKind: merged.fetchedBodyKind,
+            bodySummary: merged.bodySummary,
+            description: merged.description,
+            thumbnailURL: merged.thumbnailURL,
+            badgeImageURL: merged.badgeImageURL,
+            metadataState: merged.metadataState,
+            metadataFetchedAt: merged.metadataFetchedAt,
+            metadataError: merged.metadataError,
+            canonicalID: merged.canonicalID,
+            normalizedHost: update.normalizedHost,
+            rawSourceHost: update.rawSourceHost,
+            clearExistingMetadata: merged.clearExistingMetadata
+        )
+    }
+
+    private func youtubeOEmbedTargetURL(for inputURL: URL) -> URL {
+        let pathSegments = inputURL.path.split(separator: "/").map(String.init)
+        let path = inputURL.path.lowercased()
+        let videoID: String?
+        if inputURL.host?.lowercased() == "youtu.be" {
+            videoID = pathSegments.first
+        } else if path.hasPrefix("/shorts/") || path.hasPrefix("/live/") || path.hasPrefix("/embed/") {
+            videoID = pathSegments[safe: 1]
+        } else {
+            videoID = inputURL.query.flatMap { query in
+                URLComponents(string: "https://example.com/?\(query)")?.queryItems?
+                    .first(where: { $0.name == "v" })?.value
+            }
+        }
+        guard let videoID, !videoID.isEmpty else { return inputURL }
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "www.youtube.com"
+        components.path = "/watch"
+        components.queryItems = [URLQueryItem(name: "v", value: videoID)]
+        return components.url ?? inputURL
     }
 
     private func fetchTikTokMetadata(inputURL: URL) async -> MetadataUpdate {
+        let isMusicInput = isTikTokMusicURL(inputURL)
+        let isProfileInput = isTikTokProfileURL(inputURL)
         let oEmbedMetadata = await fetchTikTokOEmbedMetadata(inputURL: inputURL)
+
+        if isProfileInput && hasMeaningfulTikTokMetadata(oEmbedMetadata, isMusic: false) {
+            return readyUpdate(from: oEmbedMetadata, finalURL: inputURL)
+        }
+
         let htmlUpdate = await fetchHTMLMetadataUpdate(url: inputURL, service: .tiktok)
 
+        if case .wrongFixture? = htmlUpdate.metadataError {
+            return htmlUpdate
+        }
+
         if htmlUpdate.metadataState == .ready, htmlUpdate.fetchedBody != nil {
-            return merge(update: htmlUpdate, with: oEmbedMetadata)
+            return normalizeTikTokUpdate(
+                merge(
+                    update: normalizeTikTokUpdate(htmlUpdate, isMusic: isMusicInput),
+                    with: oEmbedMetadata
+                ),
+                isMusic: isMusicInput
+            )
         }
 
         let fallbackMetadata = await fetchTikTokFallbackMetadata(inputURL: inputURL)
-        if fallbackMetadata.hasAnyContent {
+        if hasMeaningfulTikTokMetadata(fallbackMetadata, isMusic: isMusicInput) {
             var fallbackUpdate = readyUpdate(from: fallbackMetadata, finalURL: inputURL)
+            fallbackUpdate = normalizeTikTokUpdate(fallbackUpdate, isMusic: isMusicInput)
             if htmlUpdate.metadataState == .ready {
                 fallbackUpdate = merge(primary: fallbackUpdate, supplement: htmlUpdate)
             }
-            return merge(update: fallbackUpdate, with: oEmbedMetadata)
+            return normalizeTikTokUpdate(
+                merge(update: fallbackUpdate, with: oEmbedMetadata),
+                isMusic: isMusicInput
+            )
         }
 
         if htmlUpdate.metadataState == .ready {
-            return merge(update: htmlUpdate, with: oEmbedMetadata)
+            return normalizeTikTokUpdate(
+                merge(
+                    update: normalizeTikTokUpdate(htmlUpdate, isMusic: isMusicInput),
+                    with: oEmbedMetadata
+                ),
+                isMusic: isMusicInput
+            )
         }
-        if oEmbedMetadata.hasAnyContent {
-            return readyUpdate(from: oEmbedMetadata, finalURL: inputURL)
+        if hasMeaningfulTikTokMetadata(oEmbedMetadata, isMusic: isMusicInput) {
+            return normalizeTikTokUpdate(
+                readyUpdate(from: oEmbedMetadata, finalURL: inputURL),
+                isMusic: isMusicInput
+            )
         }
 
         return htmlUpdate
     }
 
+    private func normalizeTikTokUpdate(_ update: MetadataUpdate, isMusic: Bool) -> MetadataUpdate {
+        guard isMusic else { return update }
+        return MetadataUpdate(
+            fetchedTitle: update.fetchedTitle,
+            fetchedAuthorName: update.fetchedAuthorName,
+            fetchedBody: update.fetchedBody,
+            fetchedBodyKind: update.fetchedBodyKind,
+            bodySummary: update.bodySummary,
+            description: update.description,
+            thumbnailURL: nil,
+            badgeImageURL: update.badgeImageURL,
+            metadataState: update.metadataState,
+            metadataFetchedAt: update.metadataFetchedAt,
+            metadataError: update.metadataError,
+            canonicalID: update.canonicalID,
+            normalizedHost: update.normalizedHost,
+            rawSourceHost: update.rawSourceHost,
+            clearExistingMetadata: update.clearExistingMetadata
+        )
+    }
+
+    private func hasMeaningfulTikTokMetadata(_ metadata: ExtractedMetadata, isMusic: Bool) -> Bool {
+        metadata.title != nil ||
+            metadata.body != nil ||
+            metadata.badgeImageURL != nil ||
+            (!isMusic && metadata.thumbnail != nil)
+    }
+
     private func fetchXMetadata(inputURL: URL) async -> MetadataUpdate {
+        if isXListURL(inputURL) {
+            return await fetchXListMetadata(inputURL: inputURL)
+        }
+        if isXSpaceURL(inputURL) {
+            return await fetchXSpaceMetadata(inputURL: inputURL)
+        }
         guard let statusID = URLRules.extractXStatusID(from: inputURL.absoluteString) else {
             return await fetchHTMLMetadataUpdate(url: inputURL, service: .x)
         }
@@ -134,28 +257,243 @@ struct MetadataFetcher: Sendable {
         return await fetchHTMLMetadataUpdate(url: inputURL, service: .x)
     }
 
+    private func fetchXListMetadata(inputURL: URL) async -> MetadataUpdate {
+        guard let endpoint = xOEmbedEndpointBuilder(inputURL),
+              let payload = await fetchJSONObject(url: endpoint) else {
+            return unavailableUpdate(error: .parseFailed, clearExistingMetadata: true)
+        }
+
+        let title = normalizeXTitleText(stringField(payload, "title"))
+        let html = stringField(payload, "html")
+        let ownerName = extractXListOwnerName(from: html)
+        let body = normalizeFetchedBodyText(stringField(payload, "description"))
+        let listID = extractXListID(from: inputURL)
+        let canonicalURL = stringField(payload, "url")
+        guard let title, canonicalURL != nil || listID != nil else {
+            return unavailableUpdate(error: .parseFailed, clearExistingMetadata: true)
+        }
+
+        return MetadataUpdate(
+            fetchedTitle: title,
+            fetchedAuthorName: ownerName,
+            fetchedBody: body,
+            fetchedBodyKind: body == nil ? nil : .xPostText,
+            bodySummary: summarize(body),
+            description: body,
+            thumbnailURL: nil,
+            badgeImageURL: Self.xServiceIconURL,
+            metadataState: .ready,
+            metadataFetchedAt: Date(),
+            metadataError: nil,
+            canonicalID: listID,
+            normalizedHost: inputURL.host?.lowercased(),
+            rawSourceHost: inputURL.host?.lowercased()
+        )
+    }
+
+    private func fetchXSpaceMetadata(inputURL: URL) async -> MetadataUpdate {
+        guard let bearerToken = xPublicBearerToken?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !bearerToken.isEmpty,
+              let spaceID = extractXSpaceID(from: inputURL),
+              let endpoint = xSpaceMetadataEndpointBuilder(spaceID),
+              let payload = await fetchJSONObject(url: endpoint, authorizationBearer: bearerToken),
+              let data = payload["data"] as? [String: Any] else {
+            return unavailableUpdate(error: .loginRequired, clearExistingMetadata: true)
+        }
+
+        let creatorID = stringField(data, "creator_id")
+        let hostIDs = data["host_ids"] as? [String] ?? []
+        let users = (payload["includes"] as? [String: Any])?["users"] as? [[String: Any]] ?? []
+        let host = users.first { user in
+            let userID = stringField(user, "id")
+            return userID == creatorID || hostIDs.contains(userID ?? "")
+        } ?? users.first
+        let title = normalizeXTitleText(stringField(data, "title"))
+        let authorName = firstNonBlank(
+            stringField(host ?? [:], "name", "username"),
+            creatorID
+        )
+        let profileImage = normalizeURLAttribute(stringField(host ?? [:], "profile_image_url"))
+        guard title != nil || authorName != nil else {
+            return unavailableUpdate(error: .providerUnavailable, clearExistingMetadata: true)
+        }
+
+        return MetadataUpdate(
+            fetchedTitle: title ?? authorName,
+            fetchedAuthorName: authorName,
+            fetchedBody: nil,
+            fetchedBodyKind: nil,
+            bodySummary: nil,
+            description: nil,
+            thumbnailURL: nil,
+            badgeImageURL: profileImage,
+            metadataState: .ready,
+            metadataFetchedAt: Date(),
+            metadataError: nil,
+            canonicalID: stringField(data, "id") ?? spaceID,
+            normalizedHost: inputURL.host?.lowercased(),
+            rawSourceHost: inputURL.host?.lowercased()
+        )
+    }
+
     private func fetchInstagramMetadata(inputURL: URL) async -> MetadataUpdate {
+        let inputIsProfileLike = isInstagramProfileLikeURL(inputURL)
+        let inputIsSound = isInstagramSoundURL(inputURL)
+        let inputIsChannel = isInstagramChannelURL(inputURL)
         let oEmbedMetadata = await fetchInstagramPublicOEmbedMetadata(inputURL: inputURL)
         let captionedEmbedMetadata = await fetchInstagramCaptionedEmbedMetadata(inputURL: inputURL)
-        let supplementalMetadata = mergeInstagramMetadata(
+        let supplementalMetadata = normalizeInstagramMetadata(
+            mergeInstagramMetadata(
             oEmbedMetadata: oEmbedMetadata,
             captionedEmbedMetadata: captionedEmbedMetadata
+            ),
+            profileLike: inputIsProfileLike,
+            sound: inputIsSound,
+            channel: inputIsChannel
         )
         let htmlUpdate = await fetchHTMLMetadataUpdate(url: inputURL, service: .instagram)
 
         if htmlUpdate.metadataState == .ready {
-            return merge(update: htmlUpdate, with: supplementalMetadata)
+            let title = normalizeInstagramTitleText(
+                htmlUpdate.fetchedTitle,
+                channel: inputIsChannel,
+                sound: inputIsSound
+            )
+            let body = inputIsSound
+                ? normalizeInstagramSoundBodyText(htmlUpdate.fetchedBody)
+                : normalizeInstagramBodyText(htmlUpdate.fetchedBody)
+            let description = inputIsSound
+                ? normalizeInstagramSoundBodyText(htmlUpdate.description)
+                : normalizeInstagramBodyText(htmlUpdate.description)
+            let thumbnail = inputIsProfileLike
+                ? nil
+                : normalizeInstagramThumbnailURL(htmlUpdate.thumbnailURL) ?? supplementalMetadata.thumbnail
+            let badgeImageURL = firstNonBlank(
+                htmlUpdate.badgeImageURL,
+                supplementalMetadata.badgeImageURL,
+                inputIsProfileLike ? supplementalMetadata.thumbnail : nil,
+                Self.instagramServiceIconURL
+            )
+            if let hashtagName = instagramHashtagName(from: inputURL),
+               title == nil,
+               body == nil,
+               thumbnail == nil {
+                return MetadataUpdate(
+                    fetchedTitle: "#\(hashtagName)",
+                    fetchedAuthorName: nil,
+                    fetchedBody: nil,
+                    fetchedBodyKind: nil,
+                    bodySummary: nil,
+                    description: nil,
+                    thumbnailURL: nil,
+                    badgeImageURL: Self.instagramServiceIconURL,
+                    metadataState: .ready,
+                    metadataFetchedAt: Date(),
+                    metadataError: nil,
+                    canonicalID: hashtagName,
+                    normalizedHost: inputURL.host?.lowercased(),
+                    rawSourceHost: inputURL.host?.lowercased()
+                )
+            }
+            return MetadataUpdate(
+                fetchedTitle: title ?? supplementalMetadata.title,
+                fetchedAuthorName: htmlUpdate.fetchedAuthorName ?? supplementalMetadata.authorName,
+                fetchedBody: body ?? supplementalMetadata.body,
+                fetchedBodyKind: (body ?? supplementalMetadata.body).map { _ in .instagramCaption },
+                bodySummary: summarize(body ?? supplementalMetadata.body),
+                description: description ?? supplementalMetadata.description,
+                thumbnailURL: thumbnail,
+                badgeImageURL: badgeImageURL,
+                metadataState: .ready,
+                metadataFetchedAt: Date(),
+                metadataError: nil,
+                canonicalID: htmlUpdate.canonicalID ?? supplementalMetadata.canonicalID,
+                normalizedHost: htmlUpdate.normalizedHost ?? inputURL.host?.lowercased(),
+                rawSourceHost: htmlUpdate.rawSourceHost ?? inputURL.host?.lowercased()
+            )
         }
         if supplementalMetadata.hasAnyContent {
             return readyUpdate(from: supplementalMetadata, finalURL: inputURL)
         }
 
+        if let hashtagName = instagramHashtagName(from: inputURL) {
+            return MetadataUpdate(
+                fetchedTitle: "#\(hashtagName)",
+                fetchedAuthorName: nil,
+                fetchedBody: nil,
+                fetchedBodyKind: nil,
+                bodySummary: nil,
+                description: nil,
+                thumbnailURL: nil,
+                badgeImageURL: nil,
+                metadataState: .ready,
+                metadataFetchedAt: Date(),
+                metadataError: nil,
+                canonicalID: hashtagName,
+                normalizedHost: inputURL.host?.lowercased(),
+                rawSourceHost: inputURL.host?.lowercased()
+            )
+        }
+
         return htmlUpdate
+    }
+
+    private func normalizeInstagramMetadata(
+        _ metadata: ExtractedMetadata,
+        profileLike: Bool,
+        sound: Bool,
+        channel: Bool
+    ) -> ExtractedMetadata {
+        let title = normalizeInstagramTitleText(metadata.title, channel: channel, sound: sound)
+        let body = sound
+            ? normalizeInstagramSoundBodyText(metadata.body)
+            : normalizeInstagramBodyText(metadata.body)
+        let description = sound
+            ? normalizeInstagramSoundBodyText(metadata.description)
+            : normalizeInstagramBodyText(metadata.description)
+        let thumbnail = profileLike ? nil : normalizeInstagramThumbnailURL(metadata.thumbnail)
+        let badgeImageURL = firstNonBlank(
+            metadata.badgeImageURL,
+            profileLike ? normalizeInstagramThumbnailURL(metadata.thumbnail) : nil
+        )
+        return ExtractedMetadata(
+            title: title,
+            authorName: metadata.authorName,
+            body: body,
+            bodyKind: body == nil ? nil : .instagramCaption,
+            summary: summarize(body),
+            description: description ?? body,
+            thumbnail: thumbnail,
+            badgeImageURL: badgeImageURL,
+            canonicalID: metadata.canonicalID
+        )
     }
 
     private func fetchHTMLMetadataUpdate(url: URL, service: ServiceType) async -> MetadataUpdate {
         do {
-            let document = try await fetchHTMLDocument(url: url)
+            let requestUserAgent = service == .tiktok
+                ? Self.tiktokBrowserLikeUserAgent
+                : Self.browserLikeUserAgent
+            let document = try await fetchHTMLDocument(url: url, userAgent: requestUserAgent)
+            if service == .instagram && isInstagramErrorDocument(html: document.html) {
+                return unavailableUpdate(error: .providerUnavailable, clearExistingMetadata: true)
+            }
+            if service == .tiktok {
+                if isTikTokCreatorMarketplaceURL(document.finalURL) {
+                    return unavailableUpdate(error: .wrongFixture, clearExistingMetadata: true)
+                }
+                let providerUnavailable = isTikTokProviderUnavailableDocument(
+                    html: document.html,
+                    url: url,
+                    finalURL: document.finalURL
+                )
+                if providerUnavailable {
+                    return unavailableUpdate(
+                        error: .providerUnavailable,
+                        clearExistingMetadata: true
+                    )
+                }
+            }
             let metadata = extractMetadata(html: document.html, url: document.finalURL, service: service)
             let state: MetadataState = metadata.hasAnyContent ? .ready : .unavailable
             let error: MetadataError? = metadata.hasAnyContent ? nil : .parseFailed
@@ -168,7 +506,9 @@ struct MetadataFetcher: Sendable {
                 bodySummary: metadata.summary,
                 description: metadata.description,
                 thumbnailURL: metadata.thumbnail,
-                badgeImageURL: metadata.badgeImageURL,
+                badgeImageURL: service == .x
+                    ? (metadata.badgeImageURL ?? Self.xServiceIconURL)
+                    : metadata.badgeImageURL,
                 metadataState: state,
                 metadataFetchedAt: Date(),
                 metadataError: error,
@@ -189,10 +529,13 @@ struct MetadataFetcher: Sendable {
         }
     }
 
-    private func fetchHTMLDocument(url: URL) async throws -> HTMLDocument {
+    private func fetchHTMLDocument(
+        url: URL,
+        userAgent: String = MetadataFetcher.browserLikeUserAgent
+    ) async throws -> HTMLDocument {
         var request = URLRequest(url: url)
         request.timeoutInterval = 30
-        request.setValue(Self.browserLikeUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("text/html,application/xhtml+xml", forHTTPHeaderField: "Accept")
         request.setValue(Locale.preferredLanguages.first ?? "ja-JP", forHTTPHeaderField: "Accept-Language")
 
@@ -258,12 +601,19 @@ struct MetadataFetcher: Sendable {
         return extractYouTubeChannelBadge(html: document.html)
     }
 
-    private func fetchJSONObject(url: URL) async -> [String: Any]? {
+    private func fetchJSONObject(
+        url: URL,
+        authorizationBearer: String? = nil,
+        userAgent: String = MetadataFetcher.browserLikeUserAgent
+    ) async -> [String: Any]? {
         var request = URLRequest(url: url)
         request.timeoutInterval = 30
-        request.setValue(Self.browserLikeUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("application/json,text/plain,*/*", forHTTPHeaderField: "Accept")
         request.setValue(Locale.preferredLanguages.first ?? "ja-JP", forHTTPHeaderField: "Accept-Language")
+        if let authorizationBearer, !authorizationBearer.isEmpty {
+            request.setValue("Bearer \(authorizationBearer)", forHTTPHeaderField: "Authorization")
+        }
 
         return await fetchJSONObject(request: request)
     }
@@ -293,7 +643,7 @@ struct MetadataFetcher: Sendable {
     }
 
     private func failedUpdate(error: MetadataError) -> MetadataUpdate {
-        MetadataUpdate(
+        return MetadataUpdate(
             fetchedTitle: nil,
             fetchedAuthorName: nil,
             fetchedBody: nil,
@@ -311,7 +661,7 @@ struct MetadataFetcher: Sendable {
         )
     }
 
-    private func unavailableUpdate(error: MetadataError) -> MetadataUpdate {
+    private func unavailableUpdate(error: MetadataError, clearExistingMetadata: Bool = false) -> MetadataUpdate {
         MetadataUpdate(
             fetchedTitle: nil,
             fetchedAuthorName: nil,
@@ -326,7 +676,8 @@ struct MetadataFetcher: Sendable {
             metadataError: error,
             canonicalID: nil,
             normalizedHost: nil,
-            rawSourceHost: nil
+            rawSourceHost: nil,
+            clearExistingMetadata: clearExistingMetadata
         )
     }
 
@@ -364,26 +715,36 @@ struct MetadataFetcher: Sendable {
     }
 
     private func fetchTikTokOEmbedMetadata(inputURL: URL) async -> ExtractedMetadata {
-        guard let endpoint = tiktokOEmbedEndpointBuilder(inputURL),
-              let payload = await fetchJSONObject(url: endpoint) else {
+        guard let endpoint = tiktokOEmbedEndpointBuilder(inputURL) else {
             return .empty
         }
 
+        let payload = await fetchJSONObject(url: endpoint, userAgent: Self.tiktokBrowserLikeUserAgent)
+        guard let payload else { return .empty }
+
+        let isProfile = isTikTokProfileURL(inputURL)
         let body = firstNonBlank(
             stringField(payload, "title"),
             oEmbedParagraphBody(from: stringField(payload, "html"))
-        ).flatMap(normalizeTikTokBodyText)
+        ).flatMap(normalizeTikTokBodyText).flatMap { isProfile ? nil : $0 }
         let badgeImageURL = await fetchBadgeImageURL(from: normalizeTikTokAuthorURL(stringField(payload, "author_url")))
 
         return ExtractedMetadata(
-            title: normalizeTikTokTitleText(stringField(payload, "author_name")),
+            title: isProfile
+                ? firstNonBlank(
+                    normalizeTikTokTitleText(stringField(payload, "title")),
+                    normalizeTikTokTitleText(stringField(payload, "author_name"))
+                )
+                : normalizeTikTokTitleText(stringField(payload, "author_name")),
             body: body,
             bodyKind: body == nil ? nil : .webDescription,
             summary: summarize(body),
             description: body,
             thumbnail: normalizeURLAttribute(stringField(payload, "thumbnail_url")),
             badgeImageURL: badgeImageURL,
-            canonicalID: stringField(payload, "embed_product_id")
+            canonicalID: isProfile
+                ? extractTikTokProfileID(from: inputURL)
+                : stringField(payload, "embed_product_id")
         )
     }
 
@@ -428,7 +789,7 @@ struct MetadataFetcher: Sendable {
 
     private func fetchTikTokFallbackJSONObject(url: URL) async -> [String: Any]? {
         for attempt in 0..<3 {
-            guard let payload = await fetchJSONObject(url: url) else {
+            guard let payload = await fetchJSONObject(url: url, userAgent: Self.tiktokBrowserLikeUserAgent) else {
                 return nil
             }
             if isTikTokFallbackRateLimited(payload), attempt < 2 {
@@ -501,7 +862,9 @@ struct MetadataFetcher: Sendable {
     }
 
     private func fetchXArticlePlainText(statusID: String) async -> String? {
-        guard let guestToken = await fetchXGuestToken(),
+        guard let bearerToken = xPublicBearerToken?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !bearerToken.isEmpty,
+              let guestToken = await fetchXGuestToken(),
               let endpoint = xArticleGraphQLEndpointBuilder(statusID) else {
             return nil
         }
@@ -509,7 +872,7 @@ struct MetadataFetcher: Sendable {
         request.timeoutInterval = 30
         request.setValue(Self.browserLikeUserAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("Bearer \(xPublicBearerToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
         request.setValue(guestToken, forHTTPHeaderField: "X-Guest-Token")
         request.setValue("yes", forHTTPHeaderField: "X-Twitter-Active-User")
         request.setValue("ja", forHTTPHeaderField: "X-Twitter-Client-Language")
@@ -521,14 +884,16 @@ struct MetadataFetcher: Sendable {
     }
 
     private func fetchXGuestToken() async -> String? {
-        guard let endpoint = xGuestActivationEndpoint else { return nil }
+        guard let bearerToken = xPublicBearerToken?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !bearerToken.isEmpty,
+              let endpoint = xGuestActivationEndpoint else { return nil }
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.httpBody = Data()
         request.timeoutInterval = 30
         request.setValue(Self.browserLikeUserAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("Bearer \(xPublicBearerToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
         return await fetchJSONObject(request: request).flatMap { stringField($0, "guest_token") }
     }
 
@@ -645,8 +1010,17 @@ struct MetadataFetcher: Sendable {
             )
         case .instagram:
             let body = ogDescription ?? twitterDescription ?? metaDescription
+            let instagramTitle: String?
+            if isInstagramSoundURL(url) {
+                instagramTitle = firstNonBlank(
+                    normalizeInstagramTitleText(titleTag(in: html), sound: true),
+                    normalizeInstagramTitleText(title, sound: true)
+                )
+            } else {
+                instagramTitle = title
+            }
             return ExtractedMetadata(
-                title: title,
+                title: instagramTitle,
                 body: body,
                 bodyKind: body == nil ? nil : .instagramCaption,
                 summary: summarize(body),
@@ -668,6 +1042,7 @@ struct MetadataFetcher: Sendable {
                 canonicalID: canonicalID
             )
         case .tiktok:
+            let isMusic = isTikTokMusicURL(url)
             let embedded = extractTikTokEmbeddedMetadata(html: html)
             let excerpt = articleExcerpt(in: html)
             let body = firstNonBlank(
@@ -677,8 +1052,10 @@ struct MetadataFetcher: Sendable {
                 normalizeTikTokBodyText(excerpt)
             )
             let favicon = faviconURL(in: html, pageURL: url)
+            let urlCanonicalID = extractTikTokCanonicalID(from: url.absoluteString)
             return ExtractedMetadata(
                 title: firstNonBlank(
+                    extractTikTokPlaylistTitle(from: url),
                     embedded.title,
                     normalizeTikTokTitleText(title)
                 ),
@@ -686,13 +1063,11 @@ struct MetadataFetcher: Sendable {
                 bodyKind: body == nil ? nil : .webDescription,
                 summary: summarize(body),
                 description: firstNonBlank(embedded.description, body, ogDescription, twitterDescription, metaDescription),
-                thumbnail: firstNonBlank(embedded.thumbnail, normalizeURLAttribute(thumbnail)),
+                thumbnail: isMusic ? nil : firstNonBlank(embedded.thumbnail, normalizeURLAttribute(thumbnail)),
                 badgeImageURL: firstNonBlank(embedded.badgeImageURL, favicon),
-                canonicalID: firstNonBlank(
-                    embedded.canonicalID,
-                    extractTikTokVideoID(from: canonicalURL),
-                    extractTikTokVideoID(from: url.absoluteString)
-                )
+                canonicalID: isMusic
+                    ? firstNonBlank(urlCanonicalID, embedded.canonicalID, extractTikTokCanonicalID(from: canonicalURL))
+                    : firstNonBlank(embedded.canonicalID, extractTikTokCanonicalID(from: canonicalURL), urlCanonicalID)
             )
         case .web, .all:
             let excerpt = articleExcerpt(in: html)
@@ -1152,7 +1527,9 @@ struct MetadataFetcher: Sendable {
     private func normalizeTikTokBodyText(_ raw: String?) -> String? {
         guard let body = normalizeText(raw) else { return nil }
         guard body.caseInsensitiveCompare("TikTok - Make Your Day") != .orderedSame,
-              body.caseInsensitiveCompare("Discover more on TikTok") != .orderedSame else {
+              body.caseInsensitiveCompare("Discover more on TikTok") != .orderedSame,
+              body.caseInsensitiveCompare("Watch, follow, and discover more trending content.") != .orderedSame,
+              body.caseInsensitiveCompare("Enjoy a curated video list and find more videos on TikTok!") != .orderedSame else {
             return nil
         }
         return body
@@ -1169,6 +1546,275 @@ struct MetadataFetcher: Sendable {
             return nil
         }
         return url
+    }
+
+    private func normalizeFetchedBodyText(_ raw: String?) -> String? {
+        guard let normalized = normalizeText(raw) else { return nil }
+        guard normalized.count <= Self.xArticleBodyMaxLength else {
+            return String(normalized.prefix(Self.xArticleBodyMaxLength - 1)).trimmingCharacters(in: .whitespacesAndNewlines) + "…"
+        }
+        return normalized
+    }
+
+    private func normalizeXTitleText(_ raw: String?) -> String? {
+        let normalized = normalizeText(raw)?
+            .replacingOccurrences(of: " / X", with: "")
+            .replacingOccurrences(of: " on X", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let normalized, !normalized.isEmpty else { return nil }
+        return normalized.caseInsensitiveCompare("X") == .orderedSame ||
+            normalized.caseInsensitiveCompare("Twitter") == .orderedSame ? nil : normalized
+    }
+
+    private func extractXListOwnerName(from html: String?) -> String? {
+        guard let html,
+              let text = normalizeText(stripHTMLTags(html)) else {
+            return nil
+        }
+        return firstRawMatch(
+            pattern: #"(?:An|A)\s+X\s+List\s+by\s+(.+)$"#,
+            html: text
+        )
+        .flatMap(normalizeText)
+    }
+
+    private func extractXListID(from url: URL) -> String? {
+        let segments = url.path.split(separator: "/").map(String.init)
+        guard let index = segments.firstIndex(where: { $0.caseInsensitiveCompare("lists") == .orderedSame }),
+              let value = segments[safe: index + 1],
+              value.range(of: #"^\d{1,19}$"#, options: .regularExpression) != nil else {
+            return nil
+        }
+        return value
+    }
+
+    private func extractXSpaceID(from url: URL) -> String? {
+        let segments = url.path.split(separator: "/").map(String.init)
+        guard let index = segments.firstIndex(where: { $0.caseInsensitiveCompare("spaces") == .orderedSame }),
+              let value = segments[safe: index + 1],
+              value.range(of: #"^[A-Za-z0-9]{8,30}$"#, options: .regularExpression) != nil else {
+            return nil
+        }
+        return value
+    }
+
+    private func isXListURL(_ url: URL) -> Bool {
+        let host = url.host?.lowercased() ?? ""
+        let segments = url.path.split(separator: "/").map(String.init)
+        return (host == "x.com" || host.hasSuffix("twitter.com")) &&
+            segments.count >= 3 &&
+            segments[0].caseInsensitiveCompare("i") == .orderedSame &&
+            segments[1].caseInsensitiveCompare("lists") == .orderedSame
+    }
+
+    private func isXSpaceURL(_ url: URL) -> Bool {
+        let host = url.host?.lowercased() ?? ""
+        let segments = url.path.split(separator: "/").map(String.init)
+        return (host == "x.com" || host.hasSuffix("twitter.com")) &&
+            segments.count >= 3 &&
+            segments[0].caseInsensitiveCompare("i") == .orderedSame &&
+            segments[1].caseInsensitiveCompare("spaces") == .orderedSame
+    }
+
+    private func isInstagramErrorDocument(html: String) -> Bool {
+        let text = stripHTMLTags(html).lowercased()
+        return text.contains("page isn't available") ||
+            text.contains("post isn't available") ||
+            text.contains("ページが利用できません") ||
+            text.contains("投稿を利用できません")
+    }
+
+    private func normalizeInstagramTitleText(
+        _ raw: String?,
+        channel: Bool = false,
+        sound: Bool = false
+    ) -> String? {
+        var normalized = normalizeText(raw) ?? ""
+        if channel {
+            normalized = normalized
+                .replacingOccurrences(of: "Join my channel:", with: "")
+                .replacingOccurrences(of: "Join my group chat:", with: "")
+                .replacingOccurrences(of: "Join my チャンネル:", with: "")
+                .replacingOccurrences(of: "チャンネルに参加:", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let lowercased = normalized.lowercased()
+        if sound && (
+            (lowercased.contains("instagramで") && normalized.contains("オリジナル音源")) ||
+                lowercased.hasPrefix("original audio on instagram")
+        ) {
+            return nil
+        }
+        guard !normalized.isEmpty,
+              normalized.caseInsensitiveCompare("Instagram") != .orderedSame,
+              normalized.caseInsensitiveCompare("Instagram photos and videos") != .orderedSame,
+              normalized.caseInsensitiveCompare("Join my group chat:") != .orderedSame,
+              !normalized.contains("Instagramをまたご利用") else {
+            return nil
+        }
+        return normalized
+    }
+
+    private func normalizeInstagramBodyText(_ raw: String?) -> String? {
+        let normalized = normalizeFetchedBodyText(raw) ?? ""
+        guard !normalized.isEmpty,
+              !normalized.localizedCaseInsensitiveContains("log in to Instagram"),
+              !normalized.localizedCaseInsensitiveContains("create an account or log in to Instagram"),
+              !normalized.localizedCaseInsensitiveContains("instagramでログイン"),
+              !normalized.contains("Instagramをまたご利用"),
+              !normalized.contains("ログインして") else {
+            return nil
+        }
+        return normalized
+    }
+
+    private func normalizeInstagramSoundBodyText(_ raw: String?) -> String? {
+        guard let normalized = normalizeInstagramBodyText(raw) else { return nil }
+        if normalized.localizedCaseInsensitiveContains("instagramで") && normalized.contains("オリジナル音源") {
+            return nil
+        }
+        return normalized.range(
+            of: #"^Listen to .+ on Instagram and watch reels with original audio$"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) == nil ? normalized : nil
+    }
+
+    private func normalizeInstagramThumbnailURL(_ raw: String?) -> String? {
+        guard let normalized = normalizeURLAttribute(raw),
+              let url = URL(string: normalized) else {
+            return nil
+        }
+        let host = url.host?.lowercased() ?? ""
+        let path = url.path.lowercased()
+        if host == "static.cdninstagram.com" && path.contains("/rsrc.php/") {
+            return nil
+        }
+        if host.hasSuffix("instagram.com") && path.contains("/images/assets_do_not_hardcode/instagram_group_links/") {
+            return nil
+        }
+        return normalized
+    }
+
+    private func isInstagramProfileLikeURL(_ url: URL) -> Bool {
+        isInstagramAccountProfileURL(url) || isInstagramSoundURL(url)
+    }
+
+    private func isInstagramAccountProfileURL(_ url: URL) -> Bool {
+        let segments = url.path.split(separator: "/").map(String.init)
+        guard segments.count == 1 else { return false }
+        return ![
+            "about", "accounts", "channel", "direct", "directory", "emails",
+            "explore", "legal", "privacy", "reels", "stories", "terms"
+        ].contains(segments[0].lowercased())
+    }
+
+    private func isInstagramHighlightURL(_ url: URL) -> Bool {
+        url.path.lowercased().hasPrefix("/stories/highlights/")
+    }
+
+    private func isInstagramSoundURL(_ url: URL) -> Bool {
+        url.path.lowercased().hasPrefix("/reels/audio/")
+    }
+
+    private func isInstagramChannelURL(_ url: URL) -> Bool {
+        url.path.lowercased().hasPrefix("/channel/")
+    }
+
+    private func instagramHashtagName(from url: URL) -> String? {
+        let segments = url.path.split(separator: "/").map(String.init)
+        guard segments.count == 3,
+              segments[0].caseInsensitiveCompare("explore") == .orderedSame,
+              segments[1].caseInsensitiveCompare("tags") == .orderedSame else {
+            return nil
+        }
+        let name = segments[2]
+            .trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? nil : name
+    }
+
+    private func isTikTokMusicURL(_ url: URL) -> Bool {
+        let path = url.path.lowercased()
+        return path.hasPrefix("/playlist/") ||
+            path.contains("/playlist/") ||
+            path.hasPrefix("/playlist-music/") ||
+            path.hasPrefix("/share/music/") ||
+            path.hasPrefix("/music/")
+    }
+
+    private func isTikTokProfileURL(_ url: URL) -> Bool {
+        let segments = url.path.split(separator: "/").map(String.init)
+        guard segments.count == 1,
+              segments[0].hasPrefix("@") else {
+            return false
+        }
+        return true
+    }
+
+    private func extractTikTokProfileID(from url: URL) -> String? {
+        guard isTikTokProfileURL(url) else { return nil }
+        return url.path.split(separator: "/").first.map(String.init)
+    }
+
+    private func isTikTokCreatorMarketplaceURL(_ url: URL) -> Bool {
+        let host = url.host?.lowercased() ?? ""
+        let path = url.path.lowercased()
+        return path.contains("/creative/creatorlink/share-link") ||
+            (host == "inapp.tiktokv.com" && path.contains("/creative/creatormarketplace/"))
+    }
+
+    private func isTikTokProviderUnavailableDocument(html: String, url: URL, finalURL: URL) -> Bool {
+        let lowercasedHTML = html.lowercased()
+        let hasPlaylistMetadata = (isTikTokPlaylistURL(url) || isTikTokPlaylistURL(finalURL)) &&
+            lowercasedHTML.contains("<title") &&
+            (
+                (lowercasedHTML.contains("playlist") && lowercasedHTML.contains("created by")) ||
+                    lowercasedHTML.contains("作成したプレイリスト")
+            )
+        if hasPlaylistMetadata {
+            return false
+        }
+        let text = stripHTMLTags(html).lowercased()
+        return text.contains("page not available") ||
+            text.contains("this page isn't available") ||
+            text.contains("this sound isn't available") ||
+            text.contains("playlist is invalid") ||
+            text.contains("プレイリストが無効") ||
+            (text.contains("著作権表記なし") && text.contains("プレイリスト")) ||
+            text.contains("この楽曲は見つかりませんでした")
+    }
+
+    private func isTikTokPlaylistURL(_ url: URL) -> Bool {
+        let path = url.path.lowercased()
+        return path.hasPrefix("/playlist/") ||
+            path.contains("/playlist/") ||
+            path.hasPrefix("/playlist-music/")
+    }
+
+    private func extractTikTokPlaylistTitle(from url: URL) -> String? {
+        let segments = url.path.split(separator: "/").map(String.init)
+        guard let index = segments.firstIndex(where: {
+            $0.caseInsensitiveCompare("playlist") == .orderedSame ||
+                $0.caseInsensitiveCompare("playlist-music") == .orderedSame
+        }),
+              let raw = segments[safe: index + 1] else {
+            return nil
+        }
+        let title = raw
+            .replacingOccurrences(of: #"-\d{10,}$"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty ? nil : title
+    }
+
+    private func extractTikTokCanonicalID(from value: String?) -> String? {
+        guard let value else { return nil }
+        return extractTikTokVideoID(from: value) ??
+            firstRawMatch(pattern: #"/(?:playlist|playlist-music|music|share/music)/([^/?#]+)"#, html: value)
     }
 
     private func normalizeURLAttribute(_ raw: String?) -> String? {
@@ -1376,7 +2022,12 @@ struct MetadataFetcher: Sendable {
     }
 
     private func readyUpdate(from metadata: ExtractedMetadata, finalURL: URL) -> MetadataUpdate {
-        MetadataUpdate(
+        let host = finalURL.host?.lowercased() ?? ""
+        let isXService = host == "x.com" ||
+            host.hasSuffix("twitter.com")
+        let isInstagramService = host.hasSuffix("instagram.com")
+        let isTikTokService = host.hasSuffix("tiktok.com")
+        return MetadataUpdate(
             fetchedTitle: metadata.title,
             fetchedAuthorName: metadata.authorName,
             fetchedBody: metadata.body,
@@ -1384,7 +2035,9 @@ struct MetadataFetcher: Sendable {
             bodySummary: metadata.summary,
             description: metadata.description,
             thumbnailURL: metadata.thumbnail,
-            badgeImageURL: metadata.badgeImageURL,
+            badgeImageURL: metadata.badgeImageURL ?? (isXService ? Self.xServiceIconURL : nil) ??
+                (isInstagramService ? Self.instagramServiceIconURL : nil) ??
+                (isTikTokService ? Self.tiktokServiceIconURL : nil),
             metadataState: .ready,
             metadataFetchedAt: Date(),
             metadataError: nil,
@@ -1533,6 +2186,10 @@ struct MetadataFetcher: Sendable {
         )
     }
 
+    private static func xSpaceMetadataURL(for spaceID: String) -> URL? {
+        URL(string: "https://api.x.com/2/spaces/\(spaceID)")
+    }
+
     private static func instagramPublicOEmbedURL(for targetURL: URL) -> URL? {
         queryURL(
             base: "https://www.instagram.com/api/v1/oembed/",
@@ -1563,9 +2220,11 @@ struct MetadataFetcher: Sendable {
 
     private static let maxBodyBytes = 2_000_000
     private static let xArticleBodyMaxLength = 200_000
-    private static let xPublicBearerToken =
-        "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
+    private static let xServiceIconURL = "https://x.com/apple-touch-icon.png"
+    private static let instagramServiceIconURL = "https://www.google.com/s2/favicons?domain=instagram.com&sz=128"
+    private static let tiktokServiceIconURL = "https://www.google.com/s2/favicons?domain=tiktok.com&sz=128"
     private static let browserLikeUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1 URLSaveriOS/1.0"
+    private static let tiktokBrowserLikeUserAgent = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
 }
 
 private struct ExtractedMetadata {
@@ -1618,4 +2277,10 @@ private struct HTMLDocument {
 private enum FetchFailure: Error {
     case failed(MetadataError)
     case unavailable(MetadataError)
+}
+
+private extension Array {
+    subscript(safe index: Index) -> Element? {
+        indices.contains(index) ? self[index] : nil
+    }
 }

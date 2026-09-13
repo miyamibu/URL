@@ -2,6 +2,7 @@ package jp.mimac.urlsaver
 
 import android.content.ClipData
 import android.content.Intent
+import jp.mimac.urlsaver.domain.ContentContext
 import jp.mimac.urlsaver.domain.ServiceType
 import jp.mimac.urlsaver.domain.ShareExtractionResult
 import jp.mimac.urlsaver.domain.UrlRules
@@ -209,6 +210,124 @@ class UrlRulesTest {
         val parsed = UrlRules.parseUrl("https://www.tiktok.com/@user/video/12345")
         assertNotNull(parsed)
         assertEquals(ServiceType.TIKTOK, parsed?.serviceType)
+    }
+
+    @Test
+    fun parseUrl_recognizesKnownProviderContentContexts() {
+        assertEquals(
+            ContentContext.VIDEO,
+            UrlRules.parseUrl("https://www.youtube.com/embed/video123")?.contentContext,
+        )
+        assertEquals(
+            ContentContext.POST,
+            UrlRules.parseUrl("https://www.youtube.com/post/community123")?.contentContext,
+        )
+        assertEquals(
+            ContentContext.PROFILE,
+            UrlRules.parseUrl("https://www.youtube.com/@OpenAI")?.contentContext,
+        )
+        assertEquals(
+            ContentContext.PROFILE,
+            UrlRules.parseUrl("https://www.tiktok.com/@tiktok")?.contentContext,
+        )
+        assertEquals(
+            ContentContext.PLAYLIST,
+            UrlRules.parseUrl("https://www.tiktok.com/@tiktok/playlist/In-The-Mix-123")?.contentContext,
+        )
+        assertEquals(
+            ContentContext.SHORT_URL,
+            UrlRules.parseUrl("https://www.tiktok.com/t/Zshort")?.contentContext,
+        )
+        assertEquals(
+            ContentContext.SPACE,
+            UrlRules.parseUrl("https://x.com/i/spaces/1YxNrZzZvwZxw")?.contentContext,
+        )
+        assertEquals(
+            ContentContext.LIST,
+            UrlRules.parseUrl("https://x.com/i/lists/84839422")?.contentContext,
+        )
+        assertEquals(
+            ContentContext.CHANNEL,
+            UrlRules.parseUrl("https://www.instagram.com/channel/AbZ19cL4AVphbig9")?.contentContext,
+        )
+        assertEquals(
+            ContentContext.VIDEO,
+            UrlRules.parseUrl("https://www.tiktok.com/player/v1/12345")?.contentContext,
+        )
+        assertEquals(
+            ContentContext.SOUND,
+            UrlRules.parseUrl("https://www.instagram.com/reels/audio/12345")?.contentContext,
+        )
+        assertEquals(
+            ContentContext.HIGHLIGHT,
+            UrlRules.parseUrl("https://www.instagram.com/stories/highlights/18195781759377100")?.contentContext,
+        )
+        assertEquals(
+            ContentContext.HASHTAG,
+            UrlRules.parseUrl("https://www.instagram.com/explore/tags/nasa")?.contentContext,
+        )
+        assertEquals(
+            ContentContext.PROFILE,
+            UrlRules.parseUrl("https://www.instagram.com/nasa")?.contentContext,
+        )
+    }
+
+    @Test
+    fun effectiveTitle_usesServiceFallbackForTikTok() {
+        assertEquals(
+            "TikTokのリンク",
+            UrlRules.effectiveTitle(
+                userTitle = null,
+                fetchedTitle = null,
+                serviceType = ServiceType.TIKTOK,
+                normalizedHost = "www.tiktok.com",
+            ),
+        )
+    }
+
+    @Test
+    fun parseUrl_target32_providerClassification_isNeverGenericWeb() {
+        val targets = listOf(
+            "https://www.youtube.com/watch?v=video1",
+            "https://www.youtube.com/shorts/video2",
+            "https://www.youtube.com/live/video3",
+            "https://youtube.com/clip/clip4",
+            "https://www.youtube.com/playlist?list=playlist5",
+            "https://www.youtube.com/post/post6",
+            "https://www.youtube.com/@OpenAI",
+            "https://youtu.be/video8",
+            "https://www.youtube.com/embed/video9",
+            "https://x.com/sama/status/10",
+            "https://x.com/OpenAI",
+            "https://x.com/i/spaces/12",
+            "https://x.com/i/lists/13",
+            "https://x.com/i/communities/14",
+            "https://x.com/i/article/15",
+            "https://www.instagram.com/p/post16",
+            "https://www.instagram.com/reel/reel17",
+            "https://www.instagram.com/stories/highlights/story18",
+            "https://instagram.com/channel/channel19",
+            "https://www.instagram.com/reels/audio/audio20",
+            "https://www.instagram.com/nasa",
+            "https://www.instagram.com/explore/tags/nasa",
+            "https://www.tiktok.com/@scout2015/video/23",
+            "https://www.tiktok.com/@tiktok",
+            "https://www.tiktok.com/@tiktok/playlist/list25",
+            "https://www.tiktok.com/playlist-music/music26",
+            "https://www.tiktok.com/share/music/music27",
+            "https://www.tiktok.com/music/music28",
+            "https://www.tiktok.com/tag/nasa",
+            "https://www.tiktok.com/sticker/sticker30",
+            "https://www.tiktok.com/player/v1/31",
+            "https://www.tiktok.com/t/short32",
+        )
+
+        targets.forEach { url ->
+            assertEquals(url, ServiceType.YOUTUBE.takeIf { url.contains("youtube") || url.contains("youtu.be") }
+                ?: ServiceType.X.takeIf { url.contains("x.com") }
+                ?: ServiceType.INSTAGRAM.takeIf { url.contains("instagram.com") }
+                ?: ServiceType.TIKTOK, UrlRules.parseUrl(url)?.serviceType)
+        }
     }
 
     @Test
