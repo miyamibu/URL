@@ -246,9 +246,16 @@ private fun ShareReceiverContent(
 ) {
     val context = LocalContext.current
     val allTags by container.tagRepository.observeAllTagsWithCount().collectAsState(initial = emptyList())
+    val sharedTagSession by container.sharedTagAuthSessionProvider.session.collectAsState()
     val localTags = remember(allTags) {
         allTags
             .filter { tag -> tag.scope == SharedTagScope.LOCAL_ONLY }
+            .sortedByDescending { tag -> tag.id }
+            .distinctBy { tag -> normalizeSharedTagName(tag.name) }
+    }
+    val sharedTags = remember(allTags) {
+        allTags
+            .filter { tag -> tag.scope == SharedTagScope.SYNCED }
             .sortedByDescending { tag -> tag.id }
             .distinctBy { tag -> normalizeSharedTagName(tag.name) }
     }
@@ -318,6 +325,8 @@ private fun ShareReceiverContent(
                     receiverState.hasPendingShare -> {
                         ShareReceiverPendingContent(
                             localTags = localTags,
+                            sharedTags = sharedTags,
+                            isSharedTagSignedIn = sharedTagSession != null,
                             selectedLocalTagIds = receiverState.selectedLocalTagIds,
                             newTagName = receiverState.newTagName,
                             tagCreateError = receiverState.tagCreateError,
@@ -329,6 +338,15 @@ private fun ShareReceiverContent(
                             onNewTagNameChange = viewModel::updateNewTagName,
                             onCreateTag = viewModel::createLocalTag,
                             onCancel = onFinish,
+                            onOpenSharedTagLogin = {
+                                context.startActivity(
+                                    Intent(context, MainActivity::class.java).apply {
+                                        putExtra(jp.mimac.urlsaver.data.EXTRA_OPEN_SHARED_TAG_CLOUD, true)
+                                        addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                                    },
+                                )
+                                onFinish()
+                            },
                             onSave = viewModel::savePendingShare,
                         )
                     }
@@ -386,6 +404,8 @@ private fun ShareReceiverTagImportContent(
 @Composable
 private fun ShareReceiverPendingContent(
     localTags: List<TagWithCount>,
+    sharedTags: List<TagWithCount>,
+    isSharedTagSignedIn: Boolean,
     selectedLocalTagIds: Set<Long>,
     newTagName: String,
     tagCreateError: String?,
@@ -397,6 +417,7 @@ private fun ShareReceiverPendingContent(
     onNewTagNameChange: (String) -> Unit,
     onCreateTag: () -> Unit,
     onCancel: () -> Unit,
+    onOpenSharedTagLogin: () -> Unit,
     onSave: () -> Unit,
 ) {
     val isTagEditingEnabled = !isTagSelectionLocked && !isCreatingTag
@@ -463,6 +484,47 @@ private fun ShareReceiverPendingContent(
                     onClick = { onToggleLocalTag(tag.id) },
                 )
             }
+        }
+    }
+    if (sharedTags.isNotEmpty()) {
+        Spacer(Modifier.height(24.dp))
+        Text(
+            text = "共有タグ",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+        )
+        Spacer(Modifier.height(10.dp))
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            sharedTags.forEach { tag ->
+                ShareReceiverTagRow(
+                    tag = tag,
+                    selected = tag.id in selectedLocalTagIds,
+                    enabled = isTagEditingEnabled,
+                    onClick = { onToggleLocalTag(tag.id) },
+                )
+            }
+        }
+    } else if (!isSharedTagSignedIn) {
+        Spacer(Modifier.height(24.dp))
+        Text(
+            text = "共有タグ",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+        )
+        Text(
+            text = "共有タグを保存先にするにはログインしてください。",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        TextButton(
+            onClick = onOpenSharedTagLogin,
+            enabled = !isSaving,
+            modifier = Modifier.heightIn(min = 48.dp),
+        ) {
+            Text("ログイン画面を開く")
         }
     }
     Spacer(Modifier.height(54.dp))

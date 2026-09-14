@@ -327,7 +327,10 @@ object UrlRules {
     }
 
     private fun extractUrlCandidates(text: String): List<String> {
-        return URL_CANDIDATE_REGEX.findAll(text).map { it.value }.toList()
+        return URL_CANDIDATE_REGEX.findAll(text)
+            .map { match -> match.value.trimEnd(*SHARE_TRAILING_PUNCTUATION) }
+            .filter { it.isNotBlank() }
+            .toList()
     }
 
     private fun isWithinInputTextByteLimit(text: String): Boolean {
@@ -483,4 +486,5 @@ object UrlRules {
     )
 
     private val URL_CANDIDATE_REGEX = Regex("https?://[^\\s<>()\\[\\]\"']+", RegexOption.IGNORE_CASE)
+    private val SHARE_TRAILING_PUNCTUATION = charArrayOf('.', ',', '、', '。', '!', '！', '?', '？', ';', '；')
 }

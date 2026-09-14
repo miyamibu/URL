@@ -824,7 +824,9 @@ private fun MainScreen(
     var selectedSharedTagGroupId by rememberSaveable { mutableStateOf<Long?>(null) }
     var showExportSheet by rememberSaveable { mutableStateOf(false) }
     val exportSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var showAiProviderChooser by rememberSaveable { mutableStateOf(false) }
     var showChatGptSheet by rememberSaveable { mutableStateOf(false) }
+    var selectedAiProvider by rememberSaveable { mutableStateOf(AiHandoffProvider.CHAT_GPT) }
     val chatGptSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showProfileSheet by rememberSaveable { mutableStateOf(false) }
     val profileSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -1514,8 +1516,20 @@ private fun MainScreen(
             ChatGptExportScreen(
                 viewModel = exportVm,
                 onBack = { showChatGptSheet = false },
+                provider = selectedAiProvider,
             )
         }
+    }
+
+    if (showAiProviderChooser) {
+        AiProviderChooserDialog(
+            onDismiss = { showAiProviderChooser = false },
+            onSelect = { provider ->
+                selectedAiProvider = provider
+                showAiProviderChooser = false
+                showChatGptSheet = true
+            },
+        )
     }
 
     if (showProfileSheet) {
@@ -1877,7 +1891,7 @@ private fun MainScreen(
                     selectedSharedTagGroupId = null
                 },
                 onExport = { showExportSheet = true },
-                onOpenChatGpt = { showChatGptSheet = true },
+                onOpenChatGpt = { showAiProviderChooser = true },
                 onAdd = { openManualInput() },
                 onTagManage = { showLocalTagManagerSheet = true },
                 onOpenArchive = onOpenArchive,
@@ -6951,34 +6965,61 @@ private fun MainBottomNavBar(
                     .align(Alignment.TopEnd)
                     .padding(top = 8.dp, end = 14.dp)
                     .heightIn(min = 48.dp)
-                    .semantics { contentDescription = "ChatGPT" },
+                    .semantics { contentDescription = "AI" },
                 shape = RoundedCornerShape(24.dp),
                 color = MaterialTheme.colorScheme.primaryContainer,
                 shadowElevation = 3.dp,
             ) {
-                Row(
+                Text(
+                    text = "AI",
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.ChatBubbleOutline,
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp),
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                    )
-                    Text(
-                        text = "ChatGPT",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    maxLines = 1,
+                )
             }
         }
     }
+}
+
+@Composable
+private fun AiProviderChooserDialog(
+    onDismiss: () -> Unit,
+    onSelect: (AiHandoffProvider) -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("AIを選ぶ") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                AiHandoffProvider.entries.forEach { provider ->
+                    TextButton(
+                        onClick = { onSelect(provider) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp),
+                    ) {
+                        Text(
+                            text = provider.displayName,
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = TextAlign.Start,
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                    }
+                }
+                Text(
+                    text = "各サービスのロゴは、公式配布条件を確認できた場合だけ表示します。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("キャンセル") }
+        },
+    )
 }
 
 @Composable

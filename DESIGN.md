@@ -39,6 +39,7 @@ If sources conflict, explain the conflict before changing the UI direction.
 - Detail: title, memo, URL/open action, metadata status/body, tags, and share/export actions should have predictable hierarchy.
 - Shared-tag flows: distinguish local tags, cloud-shared tags, invite links, auth-required states, sync-in-progress, and sync failures.
 - Export flows: clearly separate AI-friendly export from backup/restore semantics.
+- The home screen's independent right-side `AI` action opens the provider chooser in this exact order: ChatGPT, Gemini, Claude, DeepSeek. Every provider reuses the same AI-safe selection, preview, redaction, ZIP generation, and OS share flow.
 - iOS share extension must be concise and resilient to constrained extension UI.
 
 ## Components

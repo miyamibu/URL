@@ -55,6 +55,7 @@ final class SharedTagStoreTests: XCTestCase {
                         tagID: "tag-1",
                         rawURL: "https://example.com/shared-article",
                         normalizedURL: "https://example.com/shared-article",
+                        addedBy: "collaborator-1",
                         deletedAt: nil
                     )
                 ]
@@ -73,6 +74,68 @@ final class SharedTagStoreTests: XCTestCase {
         XCTAssertEqual(tags.first?.name, "設計メモ")
         XCTAssertEqual(tags.first?.currentUserRole, .owner)
         XCTAssertEqual(tags.first?.activeURLCount, 1)
+
+        XCTAssertEqual(
+            try store.loadSharedTagURLNotificationEvents(authUserID: "user-1"),
+            [
+                SharedTagURLNotificationEvent(
+                    remoteTagID: "tag-1",
+                    tagName: "設計メモ",
+                    remoteURLID: "url-1",
+                    addedBy: "collaborator-1"
+                )
+            ]
+        )
+    }
+
+    func testSharedTagNotificationCandidatesExcludeSelfReplayAndInitialSync() {
+        let knownTag = SharedTagSummary(
+            remoteTagID: "tag-known",
+            name: "共有",
+            currentUserRole: .editor,
+            activeURLCount: 1,
+            lastSyncedAt: nil
+        )
+        let replay = SharedTagURLNotificationEvent(
+            remoteTagID: "tag-known",
+            tagName: "共有",
+            remoteURLID: "url-replay",
+            addedBy: "other-user"
+        )
+        let own = SharedTagURLNotificationEvent(
+            remoteTagID: "tag-known",
+            tagName: "共有",
+            remoteURLID: "url-own",
+            addedBy: "current-user"
+        )
+        let external = SharedTagURLNotificationEvent(
+            remoteTagID: "tag-known",
+            tagName: "共有",
+            remoteURLID: "url-external",
+            addedBy: "other-user"
+        )
+        let initialSync = SharedTagURLNotificationEvent(
+            remoteTagID: "tag-new",
+            tagName: "新しい共有",
+            remoteURLID: "url-initial",
+            addedBy: "other-user"
+        )
+        let unknownActor = SharedTagURLNotificationEvent(
+            remoteTagID: "tag-known",
+            tagName: "共有",
+            remoteURLID: "url-unknown-actor",
+            addedBy: nil
+        )
+
+        XCTAssertEqual(
+            sharedTagNotificationCandidates(
+                beforeTags: [knownTag],
+                beforeEvents: [replay],
+                afterEvents: [replay, own, external, initialSync, unknownActor],
+                authUserID: "current-user"
+            ),
+            [external]
+        )
     }
 
     func testClearLocalSharedStateDropsHiddenCacheRows() throws {

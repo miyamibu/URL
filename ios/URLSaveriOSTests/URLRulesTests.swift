@@ -113,6 +113,19 @@ final class URLRulesTests: XCTestCase {
         )
     }
 
+    func testExtractAcceptsInstagramReelFromSharedProseWithTrailingPunctuation() {
+        let groups = ShareCandidateGroups(
+            extraCandidates: [
+                "このリールをチェックしてください https://www.instagram.com/reel/ABC123/?igsh=share_token。"
+            ]
+        )
+
+        XCTAssertEqual(
+            URLRules.extractFromCandidateGroups(groups),
+            .found("https://www.instagram.com/reel/ABC123/?igsh=share_token")
+        )
+    }
+
     func testManualInputDifferentiatesNoURLAndInvalidURL() {
         XCTAssertEqual(URLRules.extractForManualInput("hello"), .noURLFound)
         XCTAssertEqual(URLRules.extractForManualInput("https:///broken"), .invalidURL)

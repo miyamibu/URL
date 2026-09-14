@@ -1,5 +1,10 @@
 # REPO_GO Evidence
 
+Current candidate (2026-08-30):
+- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.20`, `versionCode=23`
+- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.20`, `build=23`; share extension `com.mibu.codebridge.ios.share`
+- Local validation is current; signing, authenticated upload, review submission, and public propagation are separate evidence gates.
+
 Final status: REPO_GO (repository scope verified 2026-08-25) / PRODUCTION_SUPABASE_RENDER_GO / SIGNED_IOS_1_0_19_BUILD21_UPLOADED / BLOCKED_EXTERNAL_APPLE_VERSION_SUBMISSION_AUTH_AND_RAILWAY_PLAN / PUBLIC_LAUNCH_NO_GO
 
 ## 2026-08-25 audit remediation and production-state decision
@@ -75,8 +80,8 @@ Still open at the time of the 2026-08-22 freeze (external, owner-gated): product
 
 ## Current source snapshot (manifest-backed)
 
-- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.17`, `versionCode=21`
-- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.19`, `build=21`; share extension `com.mibu.codebridge.ios.share`
+- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.20`, `versionCode=23`
+- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.20`, `build=23`; share extension `com.mibu.codebridge.ios.share`
 - Supabase migration head: `20260824090000_fix_apply_personal_link_ops_conflict.sql`
 - Machine-readable source: `docs/release/release-manifest.json`
 

@@ -1,5 +1,9 @@
 # Final Store Submission Checklist
 
+Current candidate (2026-08-30):
+- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.20`, `versionCode=23`
+- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.20`, `build=23`; share extension `com.mibu.codebridge.ios.share`
+
 ## Date
 2026-06-28 historical submission log; current source re-baseline added 2026-07-09; public-state recheck added 2026-08-13.
 
@@ -7,8 +11,8 @@
 この文書の下部に残る `1.0.11` の表は、2026-06-27/28 の Google Play / App Store 提出時点の履歴ログとして扱う。現在の repo source はmanifestと実ソースで照合し、この履歴ログだけでは次回提出可否を判断しない。
 
 ## Current source snapshot (manifest-backed)
-- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.17`, `versionCode=21`
-- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.19`, `build=21`; share extension `com.mibu.codebridge.ios.share`
+- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.20`, `versionCode=23`
+- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.20`, `build=23`; share extension `com.mibu.codebridge.ios.share`
 - Supabase migration head: `20260824090000_fix_apply_personal_link_ops_conflict.sql`
 - Machine-readable source: `docs/release/release-manifest.json`.
 - The dated provider and store records below are historical evidence and do not become current proof without a fresh recheck.

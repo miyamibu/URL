@@ -30,6 +30,7 @@ import jp.mimac.urlsaver.data.SharedTagAuthSession
 import jp.mimac.urlsaver.data.SharedTagAuthSessionProvider
 import jp.mimac.urlsaver.data.SharedTagSyncCoordinator
 import jp.mimac.urlsaver.data.SharedTagMemberEntity
+import jp.mimac.urlsaver.data.SharedTagNotificationCleaner
 import jp.mimac.urlsaver.data.SharedTagSyncRemoteConfig
 import jp.mimac.urlsaver.data.SharedTagSyncRemoteDataSource
 import jp.mimac.urlsaver.data.SharedTagSyncScheduler
@@ -102,6 +103,7 @@ class TagRepositoryTest {
     private lateinit var aiTransparencyRepository: AiTransparencyRepository
     private lateinit var aiLocalDataClearer: CountingAiLocalDataClearer
     private lateinit var localAccountCleanupStore: InMemoryLocalAccountCleanupStore
+    private lateinit var notificationCleaner: CountingNotificationCleaner
     private val deletionRequestStore = InMemoryAccountDeletionRequestStore()
     private lateinit var accountLinkedLocalDataCleaner: CountingAccountLinkedLocalDataCleaner
     private val scheduler = FakeScheduler()
@@ -117,6 +119,7 @@ class TagRepositoryTest {
         syncScheduler = FakeSyncScheduler()
         remote = FakeRemoteDataSource()
         localAccountCleanupStore = InMemoryLocalAccountCleanupStore()
+        notificationCleaner = CountingNotificationCleaner()
         accountLinkedLocalDataCleaner = CountingAccountLinkedLocalDataCleaner()
         aiTransparencyRepository = AiTransparencyRepository(
             database = db,
@@ -161,6 +164,7 @@ class TagRepositoryTest {
                 ),
             ),
             aiLocalDataClearer = aiLocalDataClearer,
+            sharedTagNotificationCleaner = notificationCleaner,
             accountLinkedLocalDataCleaner = accountLinkedLocalDataCleaner,
             localAccountCleanupStore = localAccountCleanupStore,
             accountDeletionRequestStore = deletionRequestStore,
@@ -170,6 +174,24 @@ class TagRepositoryTest {
     @After
     fun tearDown() {
         db.close()
+    }
+
+    @Test
+    fun signOut_clearsSessionStopsUserSyncAndRemovesSharedTagNotifications() = runBlocking {
+        authProvider.updateSession(
+            SharedTagAuthSession(
+                authUserId = "logout-user",
+                accessToken = "access",
+                refreshToken = "refresh",
+                userEmail = "logout@example.com",
+            ),
+        )
+
+        repository.signOut()
+
+        assertNull(authProvider.session.value)
+        assertEquals(listOf("logout-user"), syncScheduler.cancelled)
+        assertEquals(1, notificationCleaner.clearCallCount)
     }
 
     @Test
@@ -1587,6 +1609,14 @@ class TagRepositoryTest {
 
         override suspend fun cancel(authUserId: String) {
             cancelled += authUserId
+        }
+    }
+
+    private class CountingNotificationCleaner : SharedTagNotificationCleaner {
+        var clearCallCount = 0
+
+        override fun clear() {
+            clearCallCount += 1
         }
     }
 }

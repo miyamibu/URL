@@ -1,12 +1,16 @@
 # Store Listing Draft
 
+Current candidate (2026-08-30):
+- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.20`, `versionCode=23`
+- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.20`, `build=23`; share extension `com.mibu.codebridge.ios.share`
+
 ## Goal
 App Store / Google Play へ提出する文言を、現在の source baseline（Android `1.0.17 (versionCode=21)` / iOS `1.0.19 (build=21)`）と、実際に選択した release mode に一致させる。
 
 ## Current source snapshot (manifest-backed)
 
-- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.17`, `versionCode=21`
-- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.19`, `build=21`; share extension `com.mibu.codebridge.ios.share`
+- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.20`, `versionCode=23`
+- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.20`, `build=23`; share extension `com.mibu.codebridge.ios.share`
 - Supabase migration head: `20260824090000_fix_apply_personal_link_ops_conflict.sql`
 
 ## App Identity

@@ -2,6 +2,32 @@ import Foundation
 import SwiftUI
 import UIKit
 
+enum AIHandoffProvider: String, CaseIterable, Identifiable {
+    case chatGPT = "ChatGPT"
+    case gemini = "Gemini"
+    case claude = "Claude"
+    case deepSeek = "DeepSeek"
+
+    var id: String { rawValue }
+    var displayName: String { rawValue }
+
+    var officialDestination: URL {
+        switch self {
+        case .chatGPT: return URL(string: "https://chatgpt.com/")!
+        case .gemini: return URL(string: "https://gemini.google.com/")!
+        case .claude: return URL(string: "https://claude.ai/new")!
+        case .deepSeek: return URL(string: "https://chat.deepseek.com/")!
+        }
+    }
+
+    var officialAssetAvailable: Bool {
+        switch self {
+        case .chatGPT, .claude: return true
+        case .gemini, .deepSeek: return false
+        }
+    }
+}
+
 func exportTodayDateInput(now: Date = Date(), calendar: Calendar = .current) -> String {
     let formatter = DateFormatter()
     formatter.calendar = calendar
@@ -38,6 +64,7 @@ struct ExportSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @ObservedObject var model: URLSaverAppModel
+    let aiProvider: AIHandoffProvider
 
     @State private var scope: URLExportScope = .all
     @State private var selectedTagIDs: Set<String> = []
@@ -79,11 +106,13 @@ struct ExportSheet: View {
 
     init(model: URLSaverAppModel) {
         self.model = model
+        self.aiProvider = .chatGPT
         _exportMode = State(initialValue: .standard)
     }
 
-    fileprivate init(model: URLSaverAppModel, mode: ExportMode) {
+    fileprivate init(model: URLSaverAppModel, mode: ExportMode, aiProvider: AIHandoffProvider = .chatGPT) {
         self.model = model
+        self.aiProvider = aiProvider
         _exportMode = State(initialValue: mode)
     }
 
@@ -591,7 +620,7 @@ struct ExportSheet: View {
             .buttonStyle(.plain)
             .accessibilityLabel("閉じる")
 
-            Text(exportMode == .chatGpt ? "ChatGPT" : "エクスポート")
+            Text(exportMode == .chatGpt ? aiProvider.displayName : "エクスポート")
                 .font(.system(size: 27, weight: .heavy, design: .rounded))
                 .foregroundStyle(AppPalette.textPrimary)
                 .lineLimit(1)
@@ -913,7 +942,7 @@ struct ExportSheet: View {
         guard hasConfirmedChatGptPreview,
               let preview = chatGptPreview,
               !preview.eligibleItems.isEmpty else {
-            chatGptPreviewError = "ChatGPTに送れる保存リンクがありません。タグを選び、対象を確認してからもう一度お試しください。"
+            chatGptPreviewError = "\(aiProvider.displayName)に送れる保存リンクがありません。タグを選び、対象を確認してからもう一度お試しください。"
             return
         }
 
@@ -962,7 +991,7 @@ struct ExportSheet: View {
                     removeChatGptTemporaryFile(at: generatedFileURL)
                 }
                 guard generationID == chatGptGenerationID else { return }
-                let message = (error as? LocalizedError)?.errorDescription ?? "ChatGPT用ZIPを作成できませんでした。もう一度お試しください。"
+                let message = (error as? LocalizedError)?.errorDescription ?? "\(aiProvider.displayName)へ渡すZIPを作成できませんでした。もう一度お試しください。"
                 isPreparingChatGpt = false
                 refreshChatGptPreview()
                 errorMessage = message
@@ -982,7 +1011,7 @@ struct ExportSheet: View {
               preparedChatGptSelectedTagIDs == selectedChatGptLocalTagIDs,
               preparedChatGptGenerationID == chatGptGenerationID,
               hasConfirmedChatGptPreview else {
-            errorMessage = "先にChatGPT用ファイルを作成してください。"
+            errorMessage = "先に\(aiProvider.displayName)へ渡すファイルを作成してください。"
             return
         }
         errorMessage = nil
@@ -1149,9 +1178,10 @@ struct ExportSheet: View {
 
 struct ChatGptExportSheet: View {
     @ObservedObject var model: URLSaverAppModel
+    let provider: AIHandoffProvider
 
     var body: some View {
-        ExportSheet(model: model, mode: .chatGpt)
+        ExportSheet(model: model, mode: .chatGpt, aiProvider: provider)
     }
 }
 

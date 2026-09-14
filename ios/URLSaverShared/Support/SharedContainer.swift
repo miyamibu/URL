@@ -68,6 +68,7 @@ struct ShareExtensionPendingOperation: Codable, Equatable, Sendable {
     let memo: String?
     let degradationNotice: ShareDegradationNotice?
     var selectedTagIDs: [Int64]
+    var selectedSharedTagRemoteIDs: [String]? = nil
     var tagSelectionLockedAt: Date?
     var pendingItems: [ShareExtensionPendingItem]
     var completedItems: [ShareExtensionCompletedItem]
@@ -105,9 +106,14 @@ struct ShareExtensionPendingOperation: Codable, Equatable, Sendable {
         tagSelectionLockedAt != nil
     }
 
-    mutating func lockTagSelection(_ tagIDs: Set<Int64>, at now: Date = Date()) {
+    mutating func lockTagSelection(
+        _ tagIDs: Set<Int64>,
+        sharedTagRemoteIDs: Set<String> = [],
+        at now: Date = Date()
+    ) {
         guard tagSelectionLockedAt == nil else { return }
         selectedTagIDs = tagIDs.sorted()
+        selectedSharedTagRemoteIDs = sharedTagRemoteIDs.sorted()
         tagSelectionLockedAt = now
         updatedAt = now
     }

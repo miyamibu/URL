@@ -234,11 +234,7 @@ SNS やメッセージで見つけた URL を後で見返したい人向けの�
 ## Codex Prompt Index
 - [`CODEX_INSTRUCTIONS.md`](CODEX_INSTRUCTIONS.md): Codex 実行時の互換入口。詳細な現行ルールは `AGENTS.md` を参照
 - [`docs/prompts/README.md`](docs/prompts/README.md): Codex prompt docs の統合インデックス（最初に参照）
-- [`docs/codex-cross-platform-review-prompt.md`](docs/codex-cross-platform-review-prompt.md): Android/iOS の差分と回帰を守る防御的レビュー用
-- [`docs/codex-dark-ui-implementation-prompt.md`](docs/codex-dark-ui-implementation-prompt.md): HTML モック由来の Dark UI 実装用
 - [`docs/codex-ios-port-prompt.md`](docs/codex-ios-port-prompt.md): historical な Android Phase 1a/1b iOS 移植 prompt。現在の iOS parity は `AGENTS.md` と canonical QA tracker も参照
-- [`docs/codex-shared-tag-invite-sync-prompt.md`](docs/codex-shared-tag-invite-sync-prompt.md): shared tag invite sync MVP 実装用
-- [`docs/codex-swipe-list-actions-prompt.md`](docs/codex-swipe-list-actions-prompt.md): Main 一覧 swipe archive/delete 実装用
 
 ## Privacy / Local Storage Policy
 - 保存データは端末内 Room DB に保持する（URL、タイトル、メモ、metadata 状態）
