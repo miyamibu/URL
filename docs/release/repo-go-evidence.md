@@ -1,6 +1,18 @@
 # REPO_GO Evidence
 
-Final status: REPO_GO (repository scope reverified 2026-08-26) / MONTHLY_FIXED_COST_ZERO_ENFORCED / PRODUCTION_SUPABASE_RENDER_RAILWAY_FREE_YOUTUBE_GO / APP_STORE_1_0_19_BUILD21_IN_REVIEW / PHYSICAL_IPHONE_CORE_NAV_SMOKE_PASS / BLOCKED_EXTERNAL_APPLE_REVIEW / PUBLIC_LAUNCH_NO_GO
+Final status: REPO_GO (repository scope reverified 2026-09-14) / SIGNED_ANDROID_IOS_1_0_22_BUILD37_READY / STORE_SUBMISSION_PENDING / REMOTE_CI_IN_PROGRESS
+
+## 2026-09-14 release reconciliation
+
+The current candidate is `1.0.22 (37)` on both mobile platforms. Current metadata work and published sharing/notification behavior were reconciled into `main` at `9ee610c2`. The dated records below remain evidence for their original versions and environments.
+
+- Android: 500 test cases exercised, with the single initial authenticated-redirect assertion corrected and all 85 MetadataFetcher tests passing on recheck; the other 415 tests passed in the full run. Final lint and bundleRelease passed. The signed AAB has the expected package/version/target SDK 36, embedded R8 mapping, and the same upload certificate as the published version 23.
+- iOS: 245 XCTest cases exercised, 3 live-cloud skips; the one source-contract assertion affected by the shared-tag argument passed after its focused correction, and the other 241 cases passed in the full run. Release archive and App Store export passed. App and extension versions/builds and distribution entitlements were verified.
+- The iOS archive reuses the published cloud/service configuration. Android's existing client key and iOS's published client key both passed a read-only auth-settings check against the same Supabase project. No provider, plan, account, credential, security setting, migration, or backend deployment was changed.
+- `verify_mobile_ui_contract.py`, `verify_release_manifest.py`, release hygiene, the public-Web recovery contract, and staged gitleaks passed. The initial launch-readiness run found only this document's old evidence date; this section records the completed current validation rather than reusing the August result.
+- GitHub accepted the ordinary push to main and the two preserved worktree branches. Cross-platform CI is being checked separately before store submission; no CI success is claimed while jobs are incomplete or failing.
+- Build 37 has no new physical-device UI claim. Prior physical metadata evidence is retained with its original build/date. Full cloud notification delivery and the three live-cloud XCTest cases remain outside this local regression evidence.
+- The candidate artifacts, hashes, source provenance, and store receipts are recorded in `docs/release/final-submission-checklist.md`; raw logs remain under `artifacts/git-review/2026-09-14/`.
 
 ## 2026-08-25 audit remediation and production-state decision
 

@@ -1310,8 +1310,15 @@ final class URLSaverAppModel: ObservableObject {
     }
 
     func refreshSharedTagNotificationAuthorizationStatus() async {
-        let settings = await UNUserNotificationCenter.current().notificationSettings()
-        sharedTagNotificationAuthorizationStatus = settings.authorizationStatus
+        sharedTagNotificationAuthorizationStatus = await notificationAuthorizationStatus()
+    }
+
+    private func notificationAuthorizationStatus() async -> UNAuthorizationStatus {
+        await withCheckedContinuation { continuation in
+            UNUserNotificationCenter.current().getNotificationSettings { settings in
+                continuation.resume(returning: settings.authorizationStatus)
+            }
+        }
     }
 
     private func notifySharedTagUpdates(
@@ -1327,8 +1334,8 @@ final class URLSaverAppModel: ObservableObject {
             authUserID: authUserID
         )
         guard !increases.isEmpty else { return }
-        let settings = await UNUserNotificationCenter.current().notificationSettings()
-        guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
+        let authorizationStatus = await notificationAuthorizationStatus()
+        guard authorizationStatus == .authorized || authorizationStatus == .provisional else {
             return
         }
         let tagNames = Array(Set(increases.map(\.tagName))).sorted().prefix(3).joined(separator: "、")
