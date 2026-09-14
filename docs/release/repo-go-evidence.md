@@ -1,6 +1,6 @@
 # REPO_GO Evidence
 
-Final status: REPO_GO (repository scope reverified 2026-09-14) / SIGNED_ANDROID_IOS_1_0_22_BUILD37_READY / STORE_SUBMISSION_PENDING / REMOTE_CI_IN_PROGRESS
+Final status: REPO_GO (repository scope reverified 2026-09-14) / SIGNED_ANDROID_IOS_1_0_22_BUILD37_SUBMITTED / GOOGLE_IN_REVIEW / APPLE_WAITING_FOR_REVIEW / REMOTE_CI_PASS
 
 ## 2026-09-14 release reconciliation
 
@@ -10,7 +10,7 @@ The current candidate is `1.0.22 (37)` on both mobile platforms. Current metadat
 - iOS: 245 XCTest cases exercised, 3 live-cloud skips; the one source-contract assertion affected by the shared-tag argument passed after its focused correction, and the other 241 cases passed in the full run. Release archive and App Store export passed. App and extension versions/builds and distribution entitlements were verified.
 - The iOS archive reuses the published cloud/service configuration. Android's existing client key and iOS's published client key both passed a read-only auth-settings check against the same Supabase project. No provider, plan, account, credential, security setting, migration, or backend deployment was changed.
 - `verify_mobile_ui_contract.py`, `verify_release_manifest.py`, release hygiene, the public-Web recovery contract, and staged gitleaks passed. The initial launch-readiness run found only this document's old evidence date; this section records the completed current validation rather than reusing the August result.
-- GitHub accepted the ordinary push to main and the two preserved worktree branches. Cross-platform CI is being checked separately before store submission; no CI success is claimed while jobs are incomplete or failing.
+- Final source `941dbc36` passed all five Cross-platform CI jobs (run `34792611428`) and Production feature contracts (run `34792611441`). The iOS CI run executed 245 tests with 3 skips and 0 failures. Both stores received `1.0.22 (37)` at 2026-09-14 09:40 JST: Apple submission `cf1a0433-f524-4380-8b74-314139d26774` is waiting for review; Google submission `20` is in review. Receipt details and links are in the final submission checklist.
 - Build 37 has no new physical-device UI claim. Prior physical metadata evidence is retained with its original build/date. Full cloud notification delivery and the three live-cloud XCTest cases remain outside this local regression evidence.
 - The candidate artifacts, hashes, source provenance, and store receipts are recorded in `docs/release/final-submission-checklist.md`; raw logs remain under `artifacts/git-review/2026-09-14/`.
 
