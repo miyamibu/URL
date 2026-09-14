@@ -7,16 +7,32 @@
 この文書の下部に残る `1.0.11` の表は、2026-06-27/28 の Google Play / App Store 提出時点の履歴ログとして扱う。現在の repo source はmanifestと実ソースで照合し、この履歴ログだけでは次回提出可否を判断しない。
 
 ## Current source snapshot (manifest-backed)
-- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.17`, `versionCode=21`
-- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.19`, `build=21`; share extension `com.mibu.codebridge.ios.share`
+- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.22`, `versionCode=37`
+- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.22`, `build=37`; share extension `com.mibu.codebridge.ios.share`
 - Supabase migration head: `20260824090000_fix_apply_personal_link_ops_conflict.sql`
 - Machine-readable source: `docs/release/release-manifest.json`.
 - The dated provider and store records below are historical evidence and do not become current proof without a fresh recheck.
 - Current release/ops readiness tracker: `docs/release/launch-go-checklist.md`.
-- Current repo-local checks and public-Web contracts are tracked independently from release approval. Apple published version 1.0.18 (20) on 2026-08-25 with the submitted local-only copy and Japanese declaration. Current source 1.0.19 (21) adds the audited Share Extension fail-closed correction; its exact signed binary was archived, exported, verified, uploaded, attached to version 1.0.19, and submitted to App Review on 2026-08-26. Current status is `REPO_LOCAL_GO / MONTHLY_FIXED_COST_ZERO_ENFORCED / RENDER_FREE_RAILWAY_FREE_YOUTUBE_GO / APP_STORE_1_0_19_REVIEW_PENDING / DEVICE_UI_CORE_NAV_SMOKE_PASS`; Apple approval/public propagation, sandbox purchase, full feature-flow device coverage, and remaining production integrations remain separate gates. Railway Hobby/Pro and every other paid plan are excluded rather than treated as remedies.
+- Current candidate: `1.0.22 (37)`, prepared on 2026-09-14 with the published shared-tag/cloud behavior and the current metadata corrections. Build, upload, processing, review submission, approval, and public availability are tracked separately in the current release record below. The 2026-08-26 App Review receipt elsewhere in this document belongs to `1.0.19 (21)`.
 - AI-safe export, manual ChatGPT handoff, and MCP source contracts are tracked separately under `docs/ai/`. Manual handoff is local ZIP + OS share with no question/API/OAuth; those local docs do not mean production MCP deployment, production OAuth registration, OpenAI submission, store submission, production secret entry, or store/live recheck is complete.
 - The `1.0.11` store submission, public URL, screenshot, signing, and console rows below are historical evidence, not current proof for the manifest-backed source.
 - Rows below that say `DONE` are historical `1.0.11` evidence unless the row explicitly names a current repo gate. Do not use them as `LAUNCH_GO` evidence without re-running the manual launch checklist.
+
+## 2026-09-14 release record
+
+- Authorization: organize all pending commits/pushes, then submit the Android and iOS apps to their stores.
+- Store baseline verified in authenticated consoles: Google Play `1.0.20 (23)` in production; App Store `1.0.21 (25)` ready for distribution.
+- Candidate: Android `jp.miyamibu.urlalbum` and iOS `com.mibu.codebridge.ios`, both `1.0.22 (37)`. Share extension `com.mibu.codebridge.ios.share` also has `1.0.22 (37)`.
+- Current metadata and AI handoff changes were preserved in `f6a89987`. Published sharing/notification behavior was recovered from the historical release worktree, with writable-tag filtering, shared-only iOS picker sizing, and Android authenticated-redirect protection corrected during review.
+- Android validation: 500 unit cases exercised; the single initial redirect-test failure was fixed, and all 85 MetadataFetcher tests then passed. The other 415 cases passed in the full run. Final lint and release bundle passed. Bundletool 1.18.3 confirmed the package, version, target SDK 36, and bundle validity. R8 mapping is embedded; no native-library payload is present.
+- iOS validation: 245 XCTest cases exercised; 3 live-cloud tests were skipped. The one source-contract assertion affected by the shared-tag argument was updated and passed on focused recheck; the other 241 cases passed in the full run. Signed archive and App Store export passed. App and extension have `get-task-allow=false`.
+- Runtime: exported iOS cloud/service configuration matches the previously distributed release artifact. Android service URLs match the prior release. Its existing anon JWT and the published client's publishable key both returned HTTP 200 from the same Supabase auth-settings endpoint; no key or service setting was changed.
+- Android artifact: `build/store/rinbam-1.0.22-37-play-signed.aab`; SHA-256 `0d457315608716545d10c1b44e9da86fde1e3c1adcfc15bcb5742ac9baa4b3ce`. Upload certificate matches the Play-accepted version 23 certificate.
+- iOS artifact: `build/app-store/1.0.22-37/りんばむ.ipa`; SHA-256 `e80d0f59c73b74f4ef66e19603490d3acf85bcef8efe284a8b914d9adab9c6c1`. Export explicitly set `manageAppVersionAndBuildNumber=false`.
+- Historical worktrees: `codex/preserve-review-136b-20260914` at `15ca607c` and `codex/preserve-release-1.0.20-20260914` at `142e3530` preserve 118 and 49 source/document changes. All 223 original content/deletion-state records remained identical. Local binaries and raw evidence remain in place under explicit ignore rules.
+- Existing `codex/修正` and `codex/release-hardening-20260728` remain preserved. Their older Collection policy and unrelated server/web variants are not treated as current product requirements. Published mobile behavior and applicable CI pins were reviewed separately for this candidate.
+- Evidence directory: `artifacts/git-review/2026-09-14/`. Historical physical-device metadata checks are retained under `artifacts/ui-review/2026-09-13/` and `artifacts/ui-review/2026-09-14/ios-physical-30/`; they are not re-labelled as a new physical-device run for build 37.
+- Store submission: `PENDING` until the upload, processing, association, and review receipts are recorded here. Store approval/public propagation remain external states.
 
 ## Current Public And Console Boundary (2026-08-13 JST)
 

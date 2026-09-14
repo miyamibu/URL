@@ -27,6 +27,7 @@ final class ShareViewController: UIViewController {
     private let tagFlowView = TagFlowView()
     private let createTagField = UITextField()
     private let createTagButton = UIButton(type: .system)
+    private let sharedTagLoginButton = UIButton(type: .system)
     private let saveButton = UIButton(type: .system)
     private let cancelButton = UIButton(type: .system)
     private let pickerActionsStack = UIStackView()
@@ -36,12 +37,17 @@ final class ShareViewController: UIViewController {
     private var panelHeightConstraint: NSLayoutConstraint?
     private var tagAreaHeightConstraint: NSLayoutConstraint?
     private var tagFlowHeightConstraint: NSLayoutConstraint?
+    private var sharedTagLoginHeightConstraint: NSLayoutConstraint?
+    private var sharedTagLoginTopConstraint: NSLayoutConstraint?
     private var resultDirectConstraints: [NSLayoutConstraint] = []
     private var repository: URLRepository?
     private var localTags: [LocalTagSummary] = []
+    private var sharedTags: [SharedTagSummary] = []
+    private var isSharedTagSignedIn = false
     private let pendingOperationStore = ShareExtensionPendingOperationStore()
     private var pendingOperation: ShareExtensionPendingOperation?
     private var selectedLocalTagIDs = Set<Int64>()
+    private var selectedSharedTagRemoteIDs = Set<String>()
     private var isSaving = false
     private var processTask: Task<Void, Never>?
     private var saveTask: Task<Void, Never>?
@@ -162,6 +168,7 @@ final class ShareViewController: UIViewController {
 
         createTagField.translatesAutoresizingMaskIntoConstraints = false
         createTagButton.translatesAutoresizingMaskIntoConstraints = false
+        sharedTagLoginButton.translatesAutoresizingMaskIntoConstraints = false
         saveButton.translatesAutoresizingMaskIntoConstraints = false
         cancelButton.translatesAutoresizingMaskIntoConstraints = false
         pickerActionsStack.translatesAutoresizingMaskIntoConstraints = false
@@ -185,6 +192,7 @@ final class ShareViewController: UIViewController {
         pickerContainerView.addSubview(tagAreaView)
         pickerContainerView.addSubview(createTagField)
         pickerContainerView.addSubview(createTagButton)
+        pickerContainerView.addSubview(sharedTagLoginButton)
         pickerContainerView.addSubview(pickerActionsStack)
         pickerBottomConstraint = contentStack.bottomAnchor.constraint(
             equalTo: panelView.safeAreaLayoutGuide.bottomAnchor,
@@ -195,6 +203,8 @@ final class ShareViewController: UIViewController {
             constant: Layout.resultBottomOffset
         )
         panelHeightConstraint = panelView.heightAnchor.constraint(equalToConstant: Layout.minimumPickerHeight)
+        sharedTagLoginHeightConstraint = sharedTagLoginButton.heightAnchor.constraint(equalToConstant: 48)
+        sharedTagLoginTopConstraint = sharedTagLoginButton.topAnchor.constraint(equalTo: createTagButton.bottomAnchor, constant: 10)
         resultBottomConstraint?.isActive = false
         NSLayoutConstraint.activate([
             panelView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -217,13 +227,17 @@ final class ShareViewController: UIViewController {
             pickerMessageLabel.topAnchor.constraint(equalTo: pickerTitleLabel.bottomAnchor, constant: 8),
             pickerActionsStack.leadingAnchor.constraint(equalTo: pickerContainerView.leadingAnchor),
             pickerActionsStack.trailingAnchor.constraint(equalTo: pickerContainerView.trailingAnchor),
-            pickerActionsStack.topAnchor.constraint(equalTo: createTagButton.bottomAnchor, constant: 22),
+            pickerActionsStack.topAnchor.constraint(equalTo: sharedTagLoginButton.bottomAnchor, constant: 22),
             pickerActionsStack.bottomAnchor.constraint(equalTo: pickerContainerView.bottomAnchor),
             pickerActionsStack.heightAnchor.constraint(equalToConstant: 58),
             createTagButton.leadingAnchor.constraint(equalTo: pickerContainerView.leadingAnchor),
             createTagButton.trailingAnchor.constraint(equalTo: pickerContainerView.trailingAnchor),
             createTagButton.topAnchor.constraint(equalTo: createTagField.bottomAnchor, constant: 18),
             createTagButton.heightAnchor.constraint(equalToConstant: 54),
+            sharedTagLoginButton.leadingAnchor.constraint(equalTo: pickerContainerView.leadingAnchor),
+            sharedTagLoginButton.trailingAnchor.constraint(equalTo: pickerContainerView.trailingAnchor),
+            sharedTagLoginTopConstraint!,
+            sharedTagLoginHeightConstraint!,
             createTagField.leadingAnchor.constraint(equalTo: pickerContainerView.leadingAnchor),
             createTagField.trailingAnchor.constraint(equalTo: pickerContainerView.trailingAnchor),
             createTagField.topAnchor.constraint(equalTo: tagAreaView.bottomAnchor, constant: 14),
@@ -419,6 +433,16 @@ final class ShareViewController: UIViewController {
 
     private func presentTagPicker(repository: URLRepository, share: PendingExtensionShare) async {
         let tags = (try? repository.loadLocalTags()) ?? []
+        let syncedTags: [SharedTagSummary]
+        if let authUserID = SharedTagExtensionAuthContextStore().loadAuthUserID(),
+           let store = try? SharedTagStore(database: repository.database) {
+            isSharedTagSignedIn = true
+            syncedTags = ((try? store.loadVisibleTags(authUserID: authUserID)) ?? [])
+                .filter { $0.currentUserRole == .owner || $0.currentUserRole == .editor }
+        } else {
+            isSharedTagSignedIn = false
+            syncedTags = []
+        }
         let storedOperation = try? pendingOperationStore.load()
         let recoveredOperation = storedOperation.flatMap { operation in
             operation.matches(
@@ -435,8 +459,10 @@ final class ShareViewController: UIViewController {
         try? pendingOperationStore.write(operation)
         await MainActor.run {
             localTags = tags
+            sharedTags = syncedTags
             pendingOperation = operation
             selectedLocalTagIDs = Set(operation.selectedTagIDs)
+            selectedSharedTagRemoteIDs = Set(operation.selectedSharedTagRemoteIDs ?? [])
             showTagPicker()
             if recoveredOperation != nil {
                 pickerMessageLabel.text = "中断した保存を復元しました。未完了の\(operation.pendingItems.count)件だけを再試行できます。"
@@ -526,6 +552,15 @@ final class ShareViewController: UIViewController {
         createTagButton.removeTarget(nil, action: nil, for: .allEvents)
         createTagButton.addTarget(self, action: #selector(createLocalTagFromInput), for: .touchUpInside)
 
+        sharedTagLoginButton.setTitle("りんばむでログイン", for: .normal)
+        sharedTagLoginButton.titleLabel?.font = .preferredFont(forTextStyle: .headline)
+        sharedTagLoginButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        sharedTagLoginButton.removeTarget(nil, action: nil, for: .allEvents)
+        sharedTagLoginButton.addTarget(self, action: #selector(openSharedTagLogin), for: .touchUpInside)
+        sharedTagLoginButton.isHidden = isSharedTagSignedIn
+        sharedTagLoginHeightConstraint?.constant = isSharedTagSignedIn ? 0 : 48
+        sharedTagLoginTopConstraint?.constant = isSharedTagSignedIn ? 0 : 10
+
         saveButton.setTitle("保存", for: .normal)
         saveButton.titleLabel?.font = .preferredFont(forTextStyle: .title2)
         saveButton.titleLabel?.adjustsFontForContentSizeCategory = true
@@ -543,8 +578,12 @@ final class ShareViewController: UIViewController {
         tagAreaHeightConstraint = tagAreaView.heightAnchor.constraint(equalToConstant: preferredTagAreaHeight())
         tagAreaHeightConstraint?.isActive = true
 
-        if localTags.isEmpty {
-            pickerMessageLabel.text = "タグがまだありません。必要なら作成できます。"
+        if !isSharedTagSignedIn || localTags.isEmpty {
+            pickerMessageLabel.text = !isSharedTagSignedIn
+                ? "共有タグを保存先にするにはログインが必要です。端末内の自作タグはログインなしで選べます。"
+                : (sharedTags.isEmpty
+                    ? "タグがまだありません。必要なら自作タグを作成できます。"
+                    : "共有タグを選べます。必要なら自作タグも作成できます。")
             pickerMessageLabel.isHidden = false
         }
         updateTagEditingAvailability()
@@ -567,14 +606,36 @@ final class ShareViewController: UIViewController {
         UIAccessibility.post(notification: .announcement, argument: message)
     }
 
+    @objc
+    private func openSharedTagLogin() {
+        guard let url = URL(string: "urlsaver://shared-tags") else { return }
+        Task {
+            if await openHostApp(url) {
+                await MainActor.run { finishExtension() }
+            } else {
+                await MainActor.run {
+                    pickerMessageLabel.text = "りんばむを開けませんでした。アプリを直接開いてログインしてください。"
+                    pickerMessageLabel.isHidden = false
+                }
+            }
+        }
+    }
+
     @MainActor
     private func rebuildTagButtons() {
+        let choices = localTags.map {
+            ShareExtensionTagChoice(key: "local:\($0.id)", title: $0.name)
+        } + sharedTags.map {
+            ShareExtensionTagChoice(key: "shared:\($0.remoteTagID)", title: "共有・\($0.name)")
+        }
+        let selectedKeys = Set(selectedLocalTagIDs.map { "local:\($0)" })
+            .union(selectedSharedTagRemoteIDs.map { "shared:\($0)" })
         tagFlowView.configure(
-            tags: localTags,
-            selectedTagIDs: selectedLocalTagIDs,
+            choices: choices,
+            selectedKeys: selectedKeys,
             isEnabled: !isTagSelectionLocked,
-            onToggle: { [weak self] tagID in
-                self?.toggleLocalTag(tagID)
+            onToggle: { [weak self] key in
+                self?.toggleTag(key)
             }
         )
         tagFlowHeightConstraint?.constant = preferredTagContentHeight()
@@ -582,13 +643,30 @@ final class ShareViewController: UIViewController {
         updatePickerLayoutHeight()
     }
 
+    private func toggleTag(_ key: String) {
+        guard !isTagSelectionLocked else { return }
+        if key.hasPrefix("local:"), let id = Int64(key.dropFirst("local:".count)) {
+            toggleLocalTag(id)
+            return
+        }
+        if key.hasPrefix("shared:") {
+            let remoteID = String(key.dropFirst("shared:".count))
+            if selectedSharedTagRemoteIDs.contains(remoteID) {
+                selectedSharedTagRemoteIDs.remove(remoteID)
+            } else {
+                selectedSharedTagRemoteIDs.insert(remoteID)
+            }
+            rebuildTagButtons()
+        }
+    }
+
     private func preferredTagAreaHeight() -> CGFloat {
-        guard !localTags.isEmpty else { return 0 }
+        guard !localTags.isEmpty || !sharedTags.isEmpty else { return 0 }
         return min(preferredTagContentHeight(), Layout.maximumTagAreaHeight)
     }
 
     private func preferredTagContentHeight() -> CGFloat {
-        guard !localTags.isEmpty else { return 0 }
+        guard !localTags.isEmpty || !sharedTags.isEmpty else { return 0 }
         let marginsWidth = view.layoutMargins.left + view.layoutMargins.right
         let availableWidth = max(240, view.bounds.width - marginsWidth)
         return max(56, tagFlowView.preferredHeight(for: availableWidth))
@@ -603,7 +681,8 @@ final class ShareViewController: UIViewController {
         let titleHeight = fittingHeight(for: pickerTitleLabel, width: contentWidth)
         let messageHeight = pickerMessageLabel.isHidden ? 0 : fittingHeight(for: pickerMessageLabel, width: contentWidth)
         let messageGap: CGFloat = pickerMessageLabel.isHidden ? 0 : 8
-        let tagGap: CGFloat = localTags.isEmpty ? 0 : 18
+        let tagGap: CGFloat = localTags.isEmpty && sharedTags.isEmpty ? 0 : 18
+        let loginRouteHeight: CGFloat = isSharedTagSignedIn ? 0 : 58
         let contentHeight = Layout.pickerTopInset +
             titleHeight +
             messageGap +
@@ -614,6 +693,7 @@ final class ShareViewController: UIViewController {
             58 +
             18 +
             54 +
+            loginRouteHeight +
             22 +
             58 +
             abs(Layout.pickerBottomOffset)
@@ -686,7 +766,10 @@ final class ShareViewController: UIViewController {
               !operation.pendingItems.isEmpty else {
             return
         }
-        operation.lockTagSelection(selectedLocalTagIDs)
+        operation.lockTagSelection(
+            selectedLocalTagIDs,
+            sharedTagRemoteIDs: selectedSharedTagRemoteIDs
+        )
         pendingOperation = operation
         try? pendingOperationStore.write(operation)
         isSaving = true
@@ -907,7 +990,9 @@ final class ShareViewController: UIViewController {
             return ShareHandoffReport(
                 result: item.result,
                 entryID: item.entryID,
+                entryIDs: item.entryID.map { [$0] },
                 normalizedURL: item.normalizedURL,
+                sharedTagRemoteIDs: operation.selectedSharedTagRemoteIDs,
                 degradationNotice: operation.degradationNotice,
                 batchSummary: nil,
                 createdAt: Date()
@@ -916,7 +1001,9 @@ final class ShareViewController: UIViewController {
         return ShareHandoffReport(
             result: .batchProcessed,
             entryID: nil,
+            entryIDs: operation.completedItems.compactMap(\.entryID),
             normalizedURL: nil,
+            sharedTagRemoteIDs: operation.selectedSharedTagRemoteIDs,
             degradationNotice: operation.degradationNotice,
             batchSummary: batchSummary(for: operation),
             createdAt: Date()
@@ -1027,25 +1114,25 @@ private final class TagFlowView: UIView {
     private let verticalSpacing: CGFloat = 8
     private let maxChipWidth: CGFloat = 210
     private var chipButtons: [UIButton] = []
-    private var tagIDsByButton = [UIButton: Int64]()
-    private var onToggle: ((Int64) -> Void)?
+    private var keysByButton = [UIButton: String]()
+    private var onToggle: ((String) -> Void)?
 
     func configure(
-        tags: [LocalTagSummary],
-        selectedTagIDs: Set<Int64>,
+        choices: [ShareExtensionTagChoice],
+        selectedKeys: Set<String>,
         isEnabled: Bool,
-        onToggle: @escaping (Int64) -> Void
+        onToggle: @escaping (String) -> Void
     ) {
         chipButtons.forEach { $0.removeFromSuperview() }
         chipButtons = []
-        tagIDsByButton = [:]
+        keysByButton = [:]
         self.onToggle = onToggle
 
-        for tag in tags {
+        for choice in choices {
             let button = UIButton(type: .system)
-            let selected = selectedTagIDs.contains(tag.id)
+            let selected = selectedKeys.contains(choice.key)
             var configuration = UIButton.Configuration.plain()
-            configuration.title = tag.name
+            configuration.title = choice.title
             configuration.image = UIImage(systemName: selected ? "checkmark.circle.fill" : "circle")
             configuration.imagePlacement = .leading
             configuration.imagePadding = 8
@@ -1068,7 +1155,7 @@ private final class TagFlowView: UIView {
             button.alpha = isEnabled ? 1 : 0.55
             addSubview(button)
             chipButtons.append(button)
-            tagIDsByButton[button] = tag.id
+            keysByButton[button] = choice.key
         }
 
         invalidateIntrinsicContentSize()
@@ -1111,8 +1198,8 @@ private final class TagFlowView: UIView {
 
     @objc
     private func toggleTag(_ sender: UIButton) {
-        guard let tagID = tagIDsByButton[sender] else { return }
-        onToggle?(tagID)
+        guard let key = keysByButton[sender] else { return }
+        onToggle?(key)
     }
 
     private func measuredHeight(for width: CGFloat) -> CGFloat {
@@ -1161,6 +1248,11 @@ private final class TagFlowView: UIView {
         let items: [FlowItem]
         let height: CGFloat
     }
+}
+
+private struct ShareExtensionTagChoice {
+    let key: String
+    let title: String
 }
 
 private struct ShareExtensionPayload {

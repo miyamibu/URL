@@ -77,6 +77,23 @@ class UrlRulesTest {
     }
 
     @Test
+    fun extractIntent_acceptsInstagramReelFromSharedProseWithTrailingPunctuation() {
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            putExtra(
+                Intent.EXTRA_TEXT,
+                "このリールをチェックしてください https://www.instagram.com/reel/ABC123/?igsh=share_token。",
+            )
+        }
+
+        val extracted = UrlRules.extractFromIntent(intent)
+
+        assertEquals(
+            ShareExtractionResult.Found("https://www.instagram.com/reel/ABC123/?igsh=share_token"),
+            extracted,
+        )
+    }
+
+    @Test
     fun extractIntent_returnsNoUrlWhenNoCandidate() {
         val intent = Intent(Intent.ACTION_SEND)
         val extracted = UrlRules.extractFromIntent(intent)

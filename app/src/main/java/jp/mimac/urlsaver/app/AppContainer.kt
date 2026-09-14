@@ -7,6 +7,7 @@ import androidx.work.WorkManager
 import jp.mimac.urlsaver.BuildConfig
 import jp.mimac.urlsaver.billing.GooglePlayBillingService
 import jp.mimac.urlsaver.data.AppDatabase
+import jp.mimac.urlsaver.data.AndroidSharedTagUpdateNotifier
 import jp.mimac.urlsaver.data.AccountDeletionRequestStore
 import jp.mimac.urlsaver.data.SharedPreferencesAccountDeletionRequestStore
 import jp.mimac.urlsaver.data.AccountOperationFence
@@ -216,6 +217,9 @@ class AppContainer(context: Context) {
     private val sharedTagSyncScheduler: SharedTagSyncScheduler by lazy {
         WorkManagerSharedTagSyncScheduler(WorkManager.getInstance(appContext))
     }
+    private val sharedTagUpdateNotifier: AndroidSharedTagUpdateNotifier by lazy {
+        AndroidSharedTagUpdateNotifier(appContext)
+    }
     private val sharedTagSyncCoordinator: SharedTagSyncCoordinator by lazy {
         SharedTagSyncCoordinator(
             database = database,
@@ -227,6 +231,7 @@ class AppContainer(context: Context) {
             clock = clock,
             metadataScheduler = scheduler,
             accountOperationFence = accountOperationFence,
+            updateNotifier = sharedTagUpdateNotifier,
         )
     }
     private val accountLinkedLocalDataCleaner by lazy {
@@ -312,6 +317,7 @@ class AppContainer(context: Context) {
             remoteConfig = sharedTagSyncRemoteConfig,
             usageSummaryDataSource = usageSummaryDataSource,
             aiLocalDataClearer = aiTransparencyRepository,
+            sharedTagNotificationCleaner = sharedTagUpdateNotifier,
             accountLinkedLocalDataCleaner = accountLinkedLocalDataCleaner,
             localAccountCleanupStore = localAccountCleanupStore,
             accountDeletionRequestStore = accountDeletionRequestStore,

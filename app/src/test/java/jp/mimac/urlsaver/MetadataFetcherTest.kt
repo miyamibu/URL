@@ -529,6 +529,51 @@ class MetadataFetcherTest {
     }
 
     @Test
+    fun fetch_xSpaceOfficialApi_doesNotForwardBearerToAnotherOrigin() {
+        withServer { server ->
+            server.enqueue(
+                MockResponse().setResponseCode(302)
+                    .addHeader("Location", "https://untrusted.example/space"),
+            )
+            val requestedUrls = mutableListOf<String>()
+            val result = MetadataFetcher(
+                allowLocalTestUrls = true,
+                xPublicBearerToken = "test-space-token",
+                xSpaceMetadataEndpointBuilder = { server.url("/space").toString() },
+                connectionFactory = { requestedUrl ->
+                    requestedUrls += requestedUrl
+                    URL(server.url("/space").toString()).openConnection() as HttpURLConnection
+                },
+            ).fetch("https://x.com/i/spaces/1YxNrZzZvwZxw")
+
+            assertEquals(FetchOutcome.Unavailable(MetadataError.UNSUPPORTED_SCHEME), result)
+            assertEquals(listOf(server.url("/space").toString()), requestedUrls)
+            assertEquals(1, server.requestCount)
+        }
+    }
+
+    @Test
+    fun fetch_xSpaceOfficialApi_preservesBearerOnSameOriginRedirect() {
+        withServer { server ->
+            server.enqueue(MockResponse().setResponseCode(302).addHeader("Location", "/space-final"))
+            server.enqueue(
+                MockResponse().setResponseCode(200)
+                    .setBody("""{"data":{"id":"1YxNrZzZvwZxw","title":"Space title"}}"""),
+            )
+            val result = MetadataFetcher(
+                allowLocalTestUrls = true,
+                xPublicBearerToken = "test-space-token",
+                xSpaceMetadataEndpointBuilder = { server.url("/space").toString() },
+            ).fetch("https://x.com/i/spaces/1YxNrZzZvwZxw")
+
+            assertTrue(result is FetchOutcome.Ready)
+            assertEquals("Bearer test-space-token", server.takeRequest().getHeader("Authorization"))
+            assertEquals("Bearer test-space-token", server.takeRequest().getHeader("Authorization"))
+            assertEquals(2, server.requestCount)
+        }
+    }
+
+    @Test
     fun fetch_xArticleHtmlProfileLink_suppliesAuthorName() {
         withServer { server ->
             server.enqueue(

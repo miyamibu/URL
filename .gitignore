@@ -51,3 +51,15 @@ ios/**/Index.noindex/
 ios/**/ModuleCache.noindex/
 ios/**/SDKStatCaches.noindex/
 ios/Config/URLSaverSecrets.xcconfig
+
+# Retained local production and verification materials (see docs/local-artifacts.md)
+/.firecrawl/
+/deliverables/
+/deliverables_v2/
+/deliverables_v3/
+/deliverables_sns_h3/
+/artifacts/git-review/
+/artifacts/ui-review/2026-09-12/
+/artifacts/ui-review/2026-09-13/
+/artifacts/ui-review/2026-09-14/
+/output/playwright/

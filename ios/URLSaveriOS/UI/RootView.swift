@@ -22,6 +22,8 @@ struct RootView: View {
     @State private var selectedMainLocalTagID: Int64?
     @State private var selectedArchiveLocalTagID: Int64?
     @AppStorage("entryListDisplayMode") private var displayModeRaw = EntryListDisplayMode.compact.rawValue
+    @AppStorage("pendingOpenSharedTagCloudFromNotification") private var pendingOpenSharedTagCloudFromNotification = false
+    @AppStorage("pendingSharedTagRemoteIDFromNotification") private var pendingSharedTagRemoteIDFromNotification = ""
     @State private var showFirstRunOnboarding = FirstRunOnboardingStore.shouldShow()
     @State private var firstRunOnboardingPageIndex = 0
     @State private var isShowingLocalTagCreateAlert = false
@@ -321,6 +323,19 @@ struct RootView: View {
                 .onChange(of: selectedMainLocalTagID) { _, _ in
                     handleMainFilterChange()
                 }
+                .onReceive(NotificationCenter.default.publisher(for: .openSharedTagCloudFromNotification)) { _ in
+                    openSharedTagCloudFromNotification()
+                }
+                .onAppear {
+                    if pendingOpenSharedTagCloudFromNotification {
+                        openSharedTagCloudFromNotification()
+                    }
+                }
+                .onChange(of: pendingOpenSharedTagCloudFromNotification) { _, shouldOpen in
+                    if shouldOpen {
+                        openSharedTagCloudFromNotification()
+                    }
+                }
             filterObservedContent
                 .overlay(alignment: .bottom) {
                     notificationOverlay
@@ -589,6 +604,17 @@ struct RootView: View {
                 }
             }
         )
+    }
+
+    private func openSharedTagCloudFromNotification() {
+        pendingOpenSharedTagCloudFromNotification = false
+        model.selectedTab = .main
+        if !pendingSharedTagRemoteIDFromNotification.isEmpty {
+            selectedSharedTagID = pendingSharedTagRemoteIDFromNotification
+            pendingSharedTagRemoteIDFromNotification = ""
+        } else {
+            isShowingSharedTagCloudSheet = true
+        }
     }
 
     private var inviteConfirmationPresented: Binding<Bool> {

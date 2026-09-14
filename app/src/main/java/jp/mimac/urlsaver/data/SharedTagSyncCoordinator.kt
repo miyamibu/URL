@@ -28,6 +28,7 @@ class SharedTagSyncCoordinator(
     private val clock: AppClock,
     private val metadataScheduler: MetadataScheduler,
     private val accountOperationFence: AccountOperationFence = AccountOperationFence(),
+    private val updateNotifier: SharedTagUpdateNotifier = NoopSharedTagUpdateNotifier,
     private val json: Json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
@@ -62,6 +63,9 @@ class SharedTagSyncCoordinator(
         val now = clock.nowEpochMillis()
         val syncState = ensureSyncState(session.authUserId)
         val pendingOps = syncDao.getPendingOutbox(session.authUserId)
+        val knownRemoteUrlIds = tagDao.getSyncedCrossRefsForUser(session.authUserId)
+            .mapNotNull { it.remoteUrlId }
+            .toSet()
 
         return runCatching {
             if (pendingOps.isNotEmpty()) {
@@ -77,6 +81,16 @@ class SharedTagSyncCoordinator(
             check(snapshot.urls.all { it.normalizationVersion == SHARED_TAG_NORMALIZATION_VERSION }) {
                 "Shared tag snapshot contains an unsupported URL normalization version"
             }
+            val newRemoteUrls = if (syncState.lastSyncSucceededAt == null) {
+                emptyList()
+            } else {
+                snapshot.urls.filter { remoteUrl ->
+                    remoteUrl.deletedAt == null &&
+                        remoteUrl.id !in knownRemoteUrlIds &&
+                        remoteUrl.addedBy.isNotBlank() &&
+                        remoteUrl.addedBy != session.authUserId
+                }
+            }
             applySnapshot(session.authUserId, snapshot, now)
             syncDao.upsertSyncState(
                 syncState.copy(
@@ -86,6 +100,22 @@ class SharedTagSyncCoordinator(
                 ),
             )
             syncDao.deleteCompletedOutbox(session.authUserId)
+            if (newRemoteUrls.isNotEmpty()) {
+                val tagNamesById = snapshot.tags.associate { it.id to it.name }
+                val firstRemoteTagId = newRemoteUrls.firstOrNull()?.tagId
+                val firstLocalTagId = firstRemoteTagId
+                    ?.let { remoteTagId -> tagDao.findSyncedTagByRemoteId(session.authUserId, remoteTagId)?.id }
+                runCatching {
+                    updateNotifier.notify(
+                        SharedTagUpdateNotice(
+                            newUrlCount = newRemoteUrls.size,
+                            tagNames = newRemoteUrls.mapNotNull { tagNamesById[it.tagId] },
+                            eventIds = newRemoteUrls.map { it.id },
+                            localTagId = firstLocalTagId,
+                        ),
+                    )
+                }
+            }
             true
         }.getOrElse { error ->
             pendingOps.forEach { entity ->

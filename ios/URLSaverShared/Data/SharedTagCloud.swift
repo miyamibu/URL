@@ -338,6 +338,32 @@ final class SharedTagAuthSessionStore: @unchecked Sendable {
     }
 }
 
+final class SharedTagExtensionAuthContextStore: @unchecked Sendable {
+    private let userDefaults: UserDefaults?
+    private let authUserIDKey = "shared_tag_extension_auth_user_id"
+
+    init(suiteName: String = SharedContainer.appGroupIdentifier) {
+        userDefaults = UserDefaults(suiteName: suiteName)
+    }
+
+    func loadAuthUserID() -> String? {
+        guard let value = userDefaults?.string(forKey: authUserIDKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else {
+            return nil
+        }
+        return value
+    }
+
+    func update(authUserID: String?) {
+        if let value = authUserID?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
+            userDefaults?.set(value, forKey: authUserIDKey)
+        } else {
+            userDefaults?.removeObject(forKey: authUserIDKey)
+        }
+    }
+}
+
 private struct KeychainSharedTagAuthSecureStorage: SharedTagAuthSecureStorage {
     private let service: String
     private let account: String
@@ -1713,6 +1739,34 @@ final class SharedTagStore: @unchecked Sendable {
         }
     }
 
+    func loadSharedTagURLNotificationEvents(authUserID: String) throws -> [SharedTagURLNotificationEvent] {
+        try database.fetchMany(
+            sql: """
+            SELECT
+                shared_tag_urls.tag_remote_id,
+                shared_tags.name,
+                shared_tag_urls.remote_url_id,
+                shared_tag_urls.added_by
+            FROM shared_tag_urls
+            INNER JOIN shared_tags
+                ON shared_tags.auth_user_id = shared_tag_urls.auth_user_id
+               AND shared_tags.remote_tag_id = shared_tag_urls.tag_remote_id
+            WHERE shared_tag_urls.auth_user_id = ?
+              AND shared_tag_urls.deleted_at IS NULL
+              AND shared_tags.deleted_at IS NULL
+            ORDER BY shared_tag_urls.remote_url_id ASC;
+            """,
+            binds: [sql(authUserID)]
+        ) { statement in
+            SharedTagURLNotificationEvent(
+                remoteTagID: Self.textColumn(statement, index: 0) ?? "",
+                tagName: Self.textColumn(statement, index: 1) ?? "",
+                remoteURLID: Self.textColumn(statement, index: 2) ?? "",
+                addedBy: Self.textColumn(statement, index: 3)
+            )
+        }
+    }
+
     func loadActiveMembersForTag(authUserID: String, remoteTagID: String) throws -> [SharedTagMemberSummary] {
         try database.fetchMany(
             sql: """
@@ -1924,8 +1978,9 @@ final class SharedTagStore: @unchecked Sendable {
                         remote_url_id,
                         normalized_url,
                         raw_url,
+                        added_by,
                         deleted_at
-                    ) VALUES (?, ?, ?, ?, ?, ?);
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?);
                     """,
                     binds: [
                         sql(authUserID),
@@ -1933,6 +1988,7 @@ final class SharedTagStore: @unchecked Sendable {
                         sql(remoteURL.id),
                         sql(remoteURL.normalizedURL),
                         sql(remoteURL.rawURL),
+                        sql(remoteURL.addedBy),
                         sql(Self.parseISO8601(remoteURL.deletedAt)?.timeIntervalSince1970),
                     ]
                 )
@@ -2130,6 +2186,7 @@ final class SharedTagStore: @unchecked Sendable {
                 remote_url_id TEXT NOT NULL,
                 normalized_url TEXT NOT NULL,
                 raw_url TEXT NOT NULL,
+                added_by TEXT,
                 deleted_at REAL,
                 PRIMARY KEY (auth_user_id, tag_remote_id, remote_url_id)
             );
@@ -2142,6 +2199,11 @@ final class SharedTagStore: @unchecked Sendable {
             CREATE INDEX IF NOT EXISTS idx_shared_tag_groups_visible ON shared_tag_groups(auth_user_id, deleted_at, name);
             CREATE INDEX IF NOT EXISTS idx_shared_tag_urls_lookup ON shared_tag_urls(auth_user_id, normalized_url, deleted_at);
             """
+        )
+        try database.addColumnIfMissing(
+            table: "shared_tag_urls",
+            column: "added_by",
+            definition: "added_by TEXT"
         )
         try database.addColumnIfMissing(
             table: "shared_tag_members",
@@ -2762,6 +2824,11 @@ final class SharedTagCloudService: @unchecked Sendable {
         guard let session = try sessionStore.load() else { return [] }
         let ids = try store.loadEntryIDsForTag(authUserID: session.authUserID, remoteTagID: remoteTagID)
         return try ids.compactMap { try repository.loadEntry(id: $0) }
+    }
+
+    func loadSharedTagURLNotificationEvents() throws -> [SharedTagURLNotificationEvent] {
+        guard let session = try sessionStore.load() else { return [] }
+        return try store.loadSharedTagURLNotificationEvents(authUserID: session.authUserID)
     }
 
     func loadMembersForTag(remoteTagID: String) throws -> [SharedTagMemberSummary] {
@@ -4649,6 +4716,7 @@ struct RemoteSharedTagURL: Decodable, Sendable {
     let rawURL: String
     let normalizedURL: String
     let normalizationVersion: Int
+    let addedBy: String?
     let deletedAt: String?
 
     init(
@@ -4657,6 +4725,7 @@ struct RemoteSharedTagURL: Decodable, Sendable {
         rawURL: String,
         normalizedURL: String,
         normalizationVersion: Int = sharedTagNormalizationVersion,
+        addedBy: String? = nil,
         deletedAt: String?
     ) {
         self.id = id
@@ -4664,6 +4733,7 @@ struct RemoteSharedTagURL: Decodable, Sendable {
         self.rawURL = rawURL
         self.normalizedURL = normalizedURL
         self.normalizationVersion = normalizationVersion
+        self.addedBy = addedBy
         self.deletedAt = deletedAt
     }
 
@@ -4673,6 +4743,7 @@ struct RemoteSharedTagURL: Decodable, Sendable {
         case rawURL = "raw_url"
         case normalizedURL = "normalized_url"
         case normalizationVersion = "normalization_version"
+        case addedBy = "added_by"
         case deletedAt = "deleted_at"
     }
 }
@@ -4724,6 +4795,29 @@ struct RemoteSharedTagGroupTag: Decodable, Sendable {
         case tagID = "tag_id"
         case addedBy = "added_by"
         case createdAt = "created_at"
+    }
+}
+
+struct SharedTagURLNotificationEvent: Equatable, Sendable {
+    let remoteTagID: String
+    let tagName: String
+    let remoteURLID: String
+    let addedBy: String?
+}
+
+func sharedTagNotificationCandidates(
+    beforeTags: [SharedTagSummary],
+    beforeEvents: [SharedTagURLNotificationEvent],
+    afterEvents: [SharedTagURLNotificationEvent],
+    authUserID: String?
+) -> [SharedTagURLNotificationEvent] {
+    let knownTagIDs = Set(beforeTags.map(\.remoteTagID))
+    let knownEventIDs = Set(beforeEvents.map(\.remoteURLID))
+    return afterEvents.filter { event in
+        knownTagIDs.contains(event.remoteTagID) &&
+            !knownEventIDs.contains(event.remoteURLID) &&
+            event.addedBy != nil &&
+            event.addedBy != authUserID
     }
 }
 

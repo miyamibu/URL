@@ -143,6 +143,7 @@ struct SharedTagCloudSheet: View {
             displayNameDraft = model.profile.trimmedDisplayName
             applyPendingPromoCodeIfNeeded()
             await model.refreshSharedTagCloudState()
+            await model.refreshSharedTagNotificationAuthorizationStatus()
         }
         .onChange(of: model.profile.displayName) { _, newValue in
             displayNameDraft = newValue
@@ -703,6 +704,28 @@ struct SharedTagCloudSheet: View {
 
     private var accountActionsSection: some View {
         VStack(spacing: 16) {
+            if model.sharedTagCloudState.isSignedIn &&
+                model.sharedTagNotificationAuthorizationStatus == .notDetermined {
+                AppActionButton(enabled: !isWorking) {
+                    guard !isWorking else { return }
+                    isWorking = true
+                    Task {
+                        await model.requestSharedTagNotificationAuthorization()
+                        isWorking = false
+                    }
+                } label: {
+                    Text("共有タグの新着通知を有効にする")
+                }
+            } else if model.sharedTagCloudState.isSignedIn &&
+                model.sharedTagNotificationAuthorizationStatus == .denied {
+                AppActionButton(enabled: !isWorking) {
+                    guard let settingsURL = URL(string: UIApplication.openSettingsURLString) else { return }
+                    UIApplication.shared.open(settingsURL)
+                } label: {
+                    Text("iPhoneの設定で通知を有効にする")
+                }
+            }
+
             if model.sharedTagCloudState.isSignedIn {
                 HStack(spacing: 10) {
                     AppActionButton(enabled: !isWorking) {

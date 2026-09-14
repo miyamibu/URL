@@ -4,6 +4,7 @@ import android.content.Intent
 import jp.mimac.urlsaver.data.EXTRA_DEEP_LINK_INVALID
 import jp.mimac.urlsaver.data.EXTRA_DEEP_LINK_TAG_ID
 import jp.mimac.urlsaver.data.EXTRA_MAIN_INTENT_EVENT_TOKEN
+import jp.mimac.urlsaver.data.EXTRA_OPEN_SHARED_TAG_CLOUD
 import jp.mimac.urlsaver.data.EXTRA_PROMO_CODE
 import jp.mimac.urlsaver.data.EXTRA_PROMO_CODE_INVALID
 import jp.mimac.urlsaver.data.EXTRA_SHARED_TAG_INVITE_INVALID
@@ -83,7 +84,8 @@ internal class MainActivitySecondaryIntentHandler(
         val isInviteInvalid = intent.getBooleanExtra(EXTRA_SHARED_TAG_INVITE_INVALID, false)
         val promoCode = intent.getStringExtra(EXTRA_PROMO_CODE)?.takeIf { it.isNotBlank() }
         val isPromoInvalid = intent.getBooleanExtra(EXTRA_PROMO_CODE_INVALID, false)
-        if (!hasTagId && !isInvalid && inviteToken == null && !isInviteInvalid && promoCode == null && !isPromoInvalid) return
+        val openSharedTagCloud = intent.getBooleanExtra(EXTRA_OPEN_SHARED_TAG_CLOUD, false)
+        if (!hasTagId && !isInvalid && inviteToken == null && !isInviteInvalid && promoCode == null && !isPromoInvalid && !openSharedTagCloud) return
 
         val tagId = if (hasTagId) intent.getLongExtra(EXTRA_DEEP_LINK_TAG_ID, 0L) else null
         val signature = buildDeepLinkSignature(
@@ -94,11 +96,17 @@ internal class MainActivitySecondaryIntentHandler(
             isInviteInvalid = isInviteInvalid,
             promoCode = promoCode,
             isPromoInvalid = isPromoInvalid,
+            openSharedTagCloud = openSharedTagCloud,
         )
         if (!consumedDeepLinkSignatures.add(signature)) return
 
         if (promoCode != null) {
             navigate(MainNavigationEvent.NavigateToPromoCode(promoCode))
+            return
+        }
+
+        if (openSharedTagCloud) {
+            navigate(MainNavigationEvent.NavigateToCloudAuth)
             return
         }
 
@@ -150,11 +158,12 @@ internal class MainActivitySecondaryIntentHandler(
         isInviteInvalid: Boolean,
         promoCode: String?,
         isPromoInvalid: Boolean,
+        openSharedTagCloud: Boolean,
     ): String {
         val eventToken = intent.getStringExtra(EXTRA_MAIN_INTENT_EVENT_TOKEN)?.takeIf { it.isNotBlank() }
         if (eventToken != null) {
             return "event:$eventToken"
         }
-        return "legacy:${tagId ?: "none"}:${inviteToken ?: "none"}:${promoCode ?: "none"}:$isInvalid:$isInviteInvalid:$isPromoInvalid"
+        return "legacy:${tagId ?: "none"}:${inviteToken ?: "none"}:${promoCode ?: "none"}:$isInvalid:$isInviteInvalid:$isPromoInvalid:$openSharedTagCloud"
     }
 }

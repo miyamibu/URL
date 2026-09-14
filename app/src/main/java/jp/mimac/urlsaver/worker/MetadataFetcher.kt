@@ -1476,12 +1476,25 @@ class MetadataFetcher(
         authorizationBearer: String? = null,
         mapPayload: (JsonObject) -> FetchOutcome,
     ): FetchOutcome {
+        val authorizationOrigin = if (authorizationBearer.isNullOrBlank()) {
+            null
+        } else {
+            runCatching { URI(initialUrl) }.getOrNull()
+                ?: return FetchOutcome.Unavailable(MetadataError.PARSE_FAILED)
+        }
         var current = initialUrl
         var redirects = 0
 
         while (true) {
             val currentUri = runCatching { URI(current) }.getOrNull()
                 ?: return FetchOutcome.Unavailable(MetadataError.PARSE_FAILED)
+            if (authorizationOrigin != null &&
+                (currentUri.scheme != authorizationOrigin.scheme ||
+                    currentUri.host != authorizationOrigin.host ||
+                    currentUri.port != authorizationOrigin.port)
+            ) {
+                return FetchOutcome.Unavailable(MetadataError.UNSUPPORTED_SCHEME)
+            }
             if (!isFetchableScheme(currentUri)) {
                 return FetchOutcome.Unavailable(MetadataError.UNSUPPORTED_SCHEME)
             }

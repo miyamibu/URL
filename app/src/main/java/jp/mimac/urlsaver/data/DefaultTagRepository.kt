@@ -64,6 +64,7 @@ class DefaultTagRepository(
     private val remoteConfig: SharedTagSyncRemoteConfig,
     private val usageSummaryDataSource: UsageSummaryDataSource,
     private val aiLocalDataClearer: AiLocalDataClearer,
+    private val sharedTagNotificationCleaner: SharedTagNotificationCleaner = NoopSharedTagNotificationCleaner,
     private val accountLinkedLocalDataCleaner: AccountLinkedLocalDataCleaner = NoopAccountLinkedLocalDataCleaner,
     private val localAccountCleanupStore: LocalAccountCleanupStore = NoopLocalAccountCleanupStore,
     private val accountDeletionRequestStore: AccountDeletionRequestStore = NoopAccountDeletionRequestStore,
@@ -758,7 +759,9 @@ class DefaultTagRepository(
 
     override suspend fun signOut() {
         accountOperationFence.withExclusiveOperation {
+            authSessionProvider.session.value?.authUserId?.let { syncScheduler?.cancel(it) }
             authSessionProvider.updateSession(null)
+            sharedTagNotificationCleaner.clear()
         }
     }
 

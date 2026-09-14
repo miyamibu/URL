@@ -922,7 +922,8 @@ final class ExportArchiveBuilderTests: XCTestCase {
         let source = try String(contentsOf: shareExtensionSourceURL(), encoding: .utf8)
 
         XCTAssertTrue(source.contains("guard !isSaving"))
-        XCTAssertTrue(source.contains("operation.lockTagSelection(selectedLocalTagIDs)"))
+        XCTAssertTrue(source.contains("operation.lockTagSelection("))
+        XCTAssertTrue(source.contains("sharedTagRemoteIDs: selectedSharedTagRemoteIDs"))
         XCTAssertTrue(source.contains("operation.recordAttempt("))
         XCTAssertTrue(source.contains("if !item.needsURLSave"))
         XCTAssertTrue(source.contains("tagIDs: item.pendingTagIDs"))
