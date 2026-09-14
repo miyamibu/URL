@@ -252,7 +252,7 @@ object AdPolicy {
 private fun PlanType.limitMessageLabel(): String {
     return when (this) {
         PlanType.FREE -> "無料プラン"
-        PlanType.LAUNCH_STANDARD -> "ローンチ版"
+        PlanType.LAUNCH_STANDARD -> "現在のプラン"
         PlanType.STANDARD -> "Standardプラン"
         PlanType.PRO -> "Proプラン"
         PlanType.PROMO_PRO -> "優待Pro"

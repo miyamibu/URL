@@ -29,6 +29,26 @@ final class SharedTagSyncExecutorTests: XCTestCase {
         let finalCount = await driver.currentInvocationCount()
         XCTAssertEqual(finalCount, 2)
     }
+
+    func testApplyOperationResponseAcceptsOnlyMatchingTerminalSuccessStatuses() throws {
+        let applied = try JSONDecoder().decode(
+            ApplySharedTagOpsResponse.self,
+            from: Data(#"{"results":[{"op_id":"op-1","status":"applied"},{"op_id":"op-2","status":"no_op"}]}"#.utf8)
+        )
+        XCTAssertNoThrow(try applied.validate(expectedOperationIDs: ["op-1", "op-2"]))
+
+        let forbidden = try JSONDecoder().decode(
+            ApplySharedTagOpsResponse.self,
+            from: Data(#"{"results":[{"op_id":"op-1","status":"forbidden"}]}"#.utf8)
+        )
+        XCTAssertThrowsError(try forbidden.validate(expectedOperationIDs: ["op-1"]))
+
+        let mismatched = try JSONDecoder().decode(
+            ApplySharedTagOpsResponse.self,
+            from: Data(#"{"results":[{"op_id":"another-op","status":"applied"}]}"#.utf8)
+        )
+        XCTAssertThrowsError(try mismatched.validate(expectedOperationIDs: ["op-1"]))
+    }
 }
 
 private actor TestSharedTagSyncDriver: SharedTagSyncDriving {

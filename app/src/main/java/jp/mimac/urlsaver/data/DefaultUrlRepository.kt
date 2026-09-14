@@ -350,6 +350,30 @@ class DefaultUrlRepository(
         return true
     }
 
+    override suspend fun archiveEntries(entryIds: Collection<Long>): Set<Long> {
+        val requestedIds = entryIds.distinct()
+        if (requestedIds.isEmpty()) return emptySet()
+        return database.withTransaction {
+            val archivedIds = requestedIds
+                .chunked(SQLITE_SAFE_BIND_LIMIT)
+                .flatMap { chunk ->
+                    dao.findIdsInStates(chunk, listOf(RecordState.ACTIVE))
+                }
+                .toCollection(linkedSetOf())
+            if (archivedIds.isEmpty()) return@withTransaction emptySet()
+
+            val now = clock.nowEpochMillis()
+            archivedIds.chunked(SQLITE_SAFE_BIND_LIMIT).forEach { chunk ->
+                dao.archiveEntries(
+                    entryIds = chunk,
+                    archivedAt = now,
+                    updatedAt = now,
+                )
+            }
+            archivedIds
+        }
+    }
+
     override suspend fun unarchive(entryId: Long): Boolean {
         val now = clock.nowEpochMillis()
         val target = dao.findById(entryId) ?: return false
@@ -369,7 +393,7 @@ class DefaultUrlRepository(
         val now = clock.nowEpochMillis()
         val target = dao.findById(entryId) ?: return null
         if (target.recordState != RecordState.ACTIVE && target.recordState != RecordState.ARCHIVED) return null
-        val pendingUntil = now + gracePeriodMillis
+        val provisionalDeadline = now + gracePeriodMillis
         val archivedAt = when (target.recordState) {
             RecordState.ARCHIVED -> target.archivedAt ?: now
             RecordState.ACTIVE -> null
@@ -378,59 +402,89 @@ class DefaultUrlRepository(
         dao.update(
             target.copy(
                 recordState = RecordState.PENDING_DELETE,
-                pendingDeletionUntil = pendingUntil,
+                pendingDeletionUntil = null,
                 archivedAt = archivedAt,
                 updatedAt = now,
             ),
         )
-        return pendingUntil
+        return provisionalDeadline
+    }
+
+    override suspend fun markPendingDeleteEntries(
+        entryIds: Collection<Long>,
+        gracePeriodMillis: Long,
+    ): Map<Long, Long> {
+        val requestedIds = entryIds.distinct()
+        if (requestedIds.isEmpty()) return emptyMap()
+        return database.withTransaction {
+            val acceptedIds = requestedIds
+                .chunked(SQLITE_SAFE_BIND_LIMIT)
+                .flatMap { chunk ->
+                    dao.findIdsInStates(
+                        chunk,
+                        listOf(RecordState.ACTIVE, RecordState.ARCHIVED),
+                    )
+                }
+                .distinct()
+            if (acceptedIds.isEmpty()) return@withTransaction emptyMap()
+
+            val deadlineBase = clock.nowEpochMillis()
+            val commonPendingUntil = deadlineBase + gracePeriodMillis
+            acceptedIds.chunked(SQLITE_SAFE_BIND_LIMIT).forEach { chunk ->
+                dao.markPendingDeleteEntries(
+                    entryIds = chunk,
+                    pendingUntil = null,
+                    updatedAt = deadlineBase,
+                )
+            }
+            acceptedIds.associateWith { commonPendingUntil }
+        }
+    }
+
+    override suspend fun startPendingDeleteUndoWindow(
+        entryIds: Collection<Long>,
+        gracePeriodMillis: Long,
+    ): Map<Long, Long> {
+        val requestedIds = entryIds.distinct()
+        if (requestedIds.isEmpty()) return emptyMap()
+        return database.withTransaction {
+            val pendingIds = requestedIds
+                .chunked(SQLITE_SAFE_BIND_LIMIT)
+                .flatMap { chunk ->
+                    dao.findIdsInStates(chunk, listOf(RecordState.PENDING_DELETE))
+                }
+                .distinct()
+            if (pendingIds.isEmpty()) return@withTransaction emptyMap()
+
+            val deadlineBase = clock.nowEpochMillis()
+            val commonPendingUntil = deadlineBase + gracePeriodMillis
+            pendingIds.chunked(SQLITE_SAFE_BIND_LIMIT).forEach { chunk ->
+                dao.updatePendingDeleteDeadlines(
+                    entryIds = chunk,
+                    pendingUntil = commonPendingUntil,
+                    updatedAt = deadlineBase,
+                )
+            }
+            pendingIds.associateWith { commonPendingUntil }
+        }
     }
 
     override suspend fun finalizePendingDelete(entryId: Long) {
-        val now = clock.nowEpochMillis()
-        val target = dao.findById(entryId) ?: return
-        if (target.recordState != RecordState.PENDING_DELETE) return
-        val due = target.pendingDeletionUntil ?: return
-        if (due <= now) {
-            dao.deleteById(entryId)
-        }
+        dao.deleteExpiredPendingById(entryId, clock.nowEpochMillis())
     }
 
     override suspend fun cleanupExpiredPendingDeletes() {
         dao.cleanupExpiredPending(clock.nowEpochMillis())
     }
 
+    override suspend fun restoreProvisionalPendingDeletes() {
+        dao.restoreProvisionalPendingDeletes(clock.nowEpochMillis())
+    }
+
     override suspend fun restore(entryId: Long): Boolean {
         val now = clock.nowEpochMillis()
-        val target = dao.findById(entryId) ?: return false
-        return when (target.recordState) {
-            RecordState.PENDING_DELETE -> {
-                val restoreAsArchived = target.archivedAt != null
-                dao.update(
-                    target.copy(
-                        recordState = if (restoreAsArchived) RecordState.ARCHIVED else RecordState.ACTIVE,
-                        pendingDeletionUntil = null,
-                        archivedAt = if (restoreAsArchived) target.archivedAt else null,
-                        updatedAt = now,
-                    ),
-                )
-                true
-            }
-
-            RecordState.ARCHIVED -> {
-                dao.update(
-                    target.copy(
-                        recordState = RecordState.ACTIVE,
-                        pendingDeletionUntil = null,
-                        archivedAt = null,
-                        updatedAt = now,
-                    ),
-                )
-                true
-            }
-
-            RecordState.ACTIVE -> false
-        }
+        if (dao.restorePendingDelete(entryId, now) == 1) return true
+        return dao.restoreArchivedEntry(entryId, now) == 1
     }
 
     override suspend fun saveUserTitle(entryId: Long, rawTitle: String): SaveTitleResult {
@@ -555,6 +609,7 @@ class DefaultUrlRepository(
     }
 
     private companion object {
+        const val SQLITE_SAFE_BIND_LIMIT = 900
         const val TAG = "DefaultUrlRepository"
     }
 }

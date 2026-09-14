@@ -19,6 +19,10 @@ import jp.mimac.urlsaver.domain.RecordState
 import jp.mimac.urlsaver.domain.ServiceType
 import jp.mimac.urlsaver.domain.ShareSaveResult
 import jp.mimac.urlsaver.util.AppClock
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.first
 import org.junit.After
@@ -94,9 +98,10 @@ class RepositoryBehaviorTest {
 
         clock.now = 3_000L
         val pendingUntil = repository.markPendingDelete(entryId)
-        assertEquals(8_000L, pendingUntil)
+        assertEquals(86_403_000L, pendingUntil)
         val pending = db.urlEntryDao().findById(entryId)!!
         assertEquals(RecordState.PENDING_DELETE, pending.recordState)
+        assertEquals(null, pending.pendingDeletionUntil)
         assertEquals(archivedAt, pending.archivedAt)
 
         clock.now = 4_000L
@@ -105,6 +110,175 @@ class RepositoryBehaviorTest {
         assertEquals(RecordState.ARCHIVED, restored.recordState)
         assertEquals(archivedAt, restored.archivedAt)
         assertEquals(null, restored.pendingDeletionUntil)
+    }
+
+    @Test
+    fun markPendingDeleteEntries_usesOneDeadlineAndReportsRejectedIds() = runBlocking {
+        val first = repository.saveFromManualInput("https://example.com/batch-delete-first").entryId!!
+        val second = repository.saveFromManualInput("https://example.com/batch-delete-second").entryId!!
+        val alreadyPending = repository.saveFromManualInput("https://example.com/batch-delete-pending").entryId!!
+        repository.markPendingDelete(alreadyPending)
+
+        clock.now = 20_000L
+        val results = repository.markPendingDeleteEntries(
+            listOf(first, second, alreadyPending, Long.MAX_VALUE),
+        )
+
+        assertEquals(setOf(first, second), results.keys)
+        assertEquals(setOf(86_420_000L), results.values.toSet())
+        assertEquals(null, db.urlEntryDao().findById(first)?.pendingDeletionUntil)
+        assertEquals(null, db.urlEntryDao().findById(second)?.pendingDeletionUntil)
+        assertEquals(RecordState.PENDING_DELETE, db.urlEntryDao().findById(alreadyPending)?.recordState)
+    }
+
+    @Test
+    fun startPendingDeleteUndoWindow_resetsEveryPendingEntryToOneDisplayRelativeDeadline() = runBlocking {
+        val first = repository.saveFromManualInput("https://example.com/undo-window-first").entryId!!
+        val second = repository.saveFromManualInput("https://example.com/undo-window-second").entryId!!
+        repository.markPendingDeleteEntries(listOf(first, second))
+
+        clock.now = 40_000L
+        val deadlines = repository.startPendingDeleteUndoWindow(listOf(first, second, Long.MAX_VALUE))
+
+        assertEquals(mapOf(first to 45_000L, second to 45_000L), deadlines)
+        assertEquals(45_000L, db.urlEntryDao().findById(first)?.pendingDeletionUntil)
+        assertEquals(45_000L, db.urlEntryDao().findById(second)?.pendingDeletionUntil)
+    }
+
+    @Test
+    fun provisionalPendingDeleteCannotFinalizeOrCleanupBeforeUndoIsDisplayed() = runBlocking {
+        val entryId = repository.saveFromManualInput("https://example.com/provisional-delete").entryId!!
+        repository.markPendingDelete(entryId, gracePeriodMillis = 5_000L)
+
+        clock.now = 20_000L
+        repository.finalizePendingDelete(entryId)
+        repository.cleanupExpiredPendingDeletes()
+        val provisional = db.urlEntryDao().findById(entryId)
+        assertEquals(RecordState.PENDING_DELETE, provisional?.recordState)
+        assertEquals(null, provisional?.pendingDeletionUntil)
+
+        val deadline = repository.startPendingDeleteUndoWindow(listOf(entryId)).getValue(entryId)
+        assertEquals(25_000L, deadline)
+        clock.now = 24_999L
+        repository.finalizePendingDelete(entryId)
+        assertEquals(RecordState.PENDING_DELETE, db.urlEntryDao().findById(entryId)?.recordState)
+        clock.now = 25_000L
+        repository.finalizePendingDelete(entryId)
+        assertEquals(null, db.urlEntryDao().findById(entryId))
+    }
+
+    @Test
+    fun restoreAndFinalizeRace_isAtomicAndNeverDeletesASuccessfullyRestoredEntry() = runBlocking {
+        repeat(100) { iteration ->
+            clock.now = 100_000L + iteration
+            val entryId = repository.saveFromManualInput(
+                "https://example.com/restore-finalize-race-$iteration",
+            ).entryId!!
+            repository.markPendingDelete(entryId, gracePeriodMillis = 0)
+            repository.startPendingDeleteUndoWindow(listOf(entryId), gracePeriodMillis = 0)
+
+            val restored = coroutineScope {
+                val start = CompletableDeferred<Unit>()
+                val restore = async(Dispatchers.IO) {
+                    start.await()
+                    repository.restore(entryId)
+                }
+                val finalize = async(Dispatchers.IO) {
+                    start.await()
+                    repository.finalizePendingDelete(entryId)
+                }
+                start.complete(Unit)
+                val didRestore = restore.await()
+                finalize.await()
+                didRestore
+            }
+
+            val persisted = db.urlEntryDao().findById(entryId)
+            assertEquals(
+                "restore=true must linearize before conditional finalize (iteration=$iteration)",
+                restored,
+                persisted != null,
+            )
+            if (restored) {
+                assertEquals(RecordState.ACTIVE, persisted?.recordState)
+                assertEquals(null, persisted?.pendingDeletionUntil)
+            }
+        }
+    }
+
+    @Test
+    fun startupRestoresOnlyProvisionalPendingDeleteAndKeepsActiveUndoDeadline() = runBlocking {
+        val provisional = repository.saveFromManualInput("https://example.com/provisional-restart").entryId!!
+        val activeUndo = repository.saveFromManualInput("https://example.com/active-undo-restart").entryId!!
+        repository.markPendingDeleteEntries(listOf(provisional, activeUndo))
+        clock.now = 50_000L
+        repository.startPendingDeleteUndoWindow(listOf(activeUndo))
+
+        repository.restoreProvisionalPendingDeletes()
+
+        assertEquals(RecordState.ACTIVE, db.urlEntryDao().findById(provisional)?.recordState)
+        assertEquals(null, db.urlEntryDao().findById(provisional)?.pendingDeletionUntil)
+        assertEquals(RecordState.PENDING_DELETE, db.urlEntryDao().findById(activeUndo)?.recordState)
+        assertEquals(55_000L, db.urlEntryDao().findById(activeUndo)?.pendingDeletionUntil)
+    }
+
+    @Test
+    fun batchArchiveAndPendingDelete_tenThousandEntriesCompleteWithinFiveSecondsEach() = runBlocking {
+        db.openHelper.writableDatabase.execSQL(
+            """
+            WITH RECURSIVE sequence(value) AS (
+                SELECT 1
+                UNION ALL
+                SELECT value + 1 FROM sequence WHERE value < 10000
+            )
+            INSERT INTO url_entries (
+                originalUrl, normalizedUrl, displayUrl, openUrl,
+                normalizedHost, rawSourceHost, collectionId, serviceType, contentContext,
+                memo, localProvenanceCount, sharedReferenceCount,
+                metadataState, recordState, createdAt, updatedAt
+            )
+            SELECT
+                'https://batch.example/' || value,
+                'https://batch.example/' || value,
+                'batch.example/' || value,
+                'https://batch.example/' || value,
+                'batch.example', 'batch.example', 1, 'WEB', 'STANDARD',
+                '', 1, 0, 'READY', 'ACTIVE', value, value
+            FROM sequence
+            """.trimIndent(),
+        )
+        val entryIds = db.urlEntryDao().loadAllEntries().map { it.id }
+        assertEquals(10_000, entryIds.size)
+
+        val archiveStartedAt = System.nanoTime()
+        val archivedIds = repository.archiveEntries(entryIds)
+        val archiveElapsedMillis = (System.nanoTime() - archiveStartedAt) / 1_000_000
+
+        assertEquals(10_000, archivedIds.size)
+        assertTrue(
+            "1万件のアーカイブが5秒を超えました: ${archiveElapsedMillis}ms",
+            archiveElapsedMillis < 5_000,
+        )
+
+        db.openHelper.writableDatabase.execSQL(
+            """
+            UPDATE url_entries
+            SET recordState = 'ACTIVE', archivedAt = NULL,
+                pendingDeletionUntil = NULL, updatedAt = createdAt
+            """.trimIndent(),
+        )
+        clock.now = 30_000L
+
+        val pendingStartedAt = System.nanoTime()
+        val pendingDeletions = repository.markPendingDeleteEntries(entryIds)
+        val pendingElapsedMillis = (System.nanoTime() - pendingStartedAt) / 1_000_000
+
+        assertEquals(10_000, pendingDeletions.size)
+        assertEquals(setOf(86_430_000L), pendingDeletions.values.toSet())
+        assertTrue(
+            "1万件の削除待ち設定が5秒を超えました: ${pendingElapsedMillis}ms",
+            pendingElapsedMillis < 5_000,
+        )
     }
 
     @Test

@@ -228,4 +228,4 @@ SNS やメッセージで見かけた URL をあとで見返したいユーザ�
   - Instagram: JSON-LD -> 埋め込み JSON -> OG
   - Web: `og:title/<title>` + `meta/本文候補 p`
 - `canonicalId` と `metadataError` を折りたたみ詳細から削除しない。
-- `user labels` は既存 `collections` / `tags` と独立した軽量機能として扱い、Main 一覧から割り当て・絞り込みできるようにする。
+- Historical / superseded: 当時案の `user labels` / `collections` UIは採用しない。現行は `docs/rinbam-canonical-spec.md#current-and-compatibility-only-features` に従い、DB/migration/旧出力の互換殻だけを保持する。

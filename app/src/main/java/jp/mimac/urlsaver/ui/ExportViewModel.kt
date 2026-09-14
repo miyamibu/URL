@@ -17,6 +17,8 @@ import jp.mimac.urlsaver.domain.SharedTagScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -67,6 +69,7 @@ class ExportViewModel(
     private var chatGptPrepareJob: Job? = null
     private var chatGptPreviewGeneration: Long = 0L
     private var chatGptPrepareGeneration: Long = 0L
+    private val standardPreparedArchives = mutableSetOf<PreparedExportArchive>()
 
     init {
         viewModelScope.launch {
@@ -128,8 +131,8 @@ class ExportViewModel(
     }
 
     suspend fun prepareExport(outputFormat: ExportOutputFormat): Result<PreparedExportArchive> {
-        return runCatching {
-            exportRepository.prepareExport(
+        return try {
+            val archive = exportRepository.prepareExport(
                 ExportRequest(
                     scope = uiStateFlow.value.scope,
                     selectedTagIds = uiStateFlow.value.selectedTagIds,
@@ -141,7 +144,28 @@ class ExportViewModel(
                     outputFormat = outputFormat,
                 ),
             )
+            try {
+                currentCoroutineContext().ensureActive()
+            } catch (cancellation: CancellationException) {
+                exportRepository.releasePreparedArchive(archive)
+                throw cancellation
+            }
+            standardPreparedArchives += archive
+            Result.success(archive)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Exception) {
+            Result.failure(error)
         }
+    }
+
+    fun releaseStandardPreparedArchive(archive: PreparedExportArchive) {
+        standardPreparedArchives.remove(archive)
+        exportRepository.releasePreparedArchive(archive)
+    }
+
+    fun releaseAllStandardPreparedArchives() {
+        standardPreparedArchives.toList().forEach(::releaseStandardPreparedArchive)
     }
 
     fun toggleChatGptTagSelection(tagId: Long) {
@@ -179,6 +203,7 @@ class ExportViewModel(
             preview.entries.isEmpty() ||
             !current.isContentConfirmed
         ) {
+            current.preparedArchive?.let(exportRepository::releasePreparedArchive)
             chatGptUiStateFlow.value = current.copy(
                 preparedArchive = null,
                 isArchivePreparing = false,
@@ -189,6 +214,7 @@ class ExportViewModel(
         }
 
         chatGptPrepareJob?.cancel()
+        current.preparedArchive?.let(exportRepository::releasePreparedArchive)
         chatGptPrepareGeneration += 1L
         val request = ChatGptPrepareRequest(
             selectedTagIds = current.selectedTagIds,
@@ -217,6 +243,8 @@ class ExportViewModel(
                         archiveSuccessMessage =
                             "${archive.entryCount}件のChatGPT用ZIPを作成しました",
                     )
+                } else {
+                    exportRepository.releasePreparedArchive(archive)
                 }
             } catch (cancellation: CancellationException) {
                 throw cancellation
@@ -341,12 +369,37 @@ class ExportViewModel(
         chatGptPrepareGeneration += 1L
         chatGptPrepareJob?.cancel()
         chatGptPrepareJob = null
+        chatGptUiStateFlow.value.preparedArchive?.let(exportRepository::releasePreparedArchive)
         chatGptUiStateFlow.value = chatGptUiStateFlow.value.copy(
             preparedArchive = null,
             isArchivePreparing = false,
             archiveError = null,
             archiveSuccessMessage = null,
         )
+    }
+
+    fun releasePreparedChatGptArchive(archive: PreparedExportArchive) {
+        if (chatGptUiStateFlow.value.preparedArchive == archive) {
+            invalidatePreparedChatGptArchive()
+        } else {
+            exportRepository.releasePreparedArchive(archive)
+        }
+    }
+
+    fun clearPreparedChatGptArchive() {
+        invalidatePreparedChatGptArchive()
+    }
+
+    override fun onCleared() {
+        chatGptPreviewGeneration += 1L
+        chatGptPrepareGeneration += 1L
+        chatGptPreviewJob?.cancel()
+        chatGptPrepareJob?.cancel()
+        chatGptPreviewJob = null
+        chatGptPrepareJob = null
+        chatGptUiStateFlow.value.preparedArchive?.let(exportRepository::releasePreparedArchive)
+        releaseAllStandardPreparedArchives()
+        super.onCleared()
     }
 
     private fun isCurrentChatGptRequest(request: ChatGptPrepareRequest, runningJob: Job): Boolean {

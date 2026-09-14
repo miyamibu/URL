@@ -3,6 +3,121 @@ import XCTest
 @testable import URLSaveriOS
 
 final class ExportArchiveBuilderTests: XCTestCase {
+    func testFileBackedArchiveReportsExactByteCount() throws {
+        let outputDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("rinbam-ios-file-count-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outputDirectory) }
+
+        let archive = try URLSaveriOS.URLExportArchiveBuilder.prepareExport(
+            request: makeRequest(outputFormat: .json),
+            entries: [makeRecord(id: 1, host: "byte-count.example", memo: "streamed")],
+            localTags: [],
+            localTagAssignments: [:],
+            sharedTagsByEntryID: [:],
+            appVersion: "test",
+            outputDirectory: outputDirectory
+        )
+        let values = try archive.fileURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+
+        XCTAssertEqual(values.isRegularFile, true)
+        XCTAssertEqual(Int64(try XCTUnwrap(values.fileSize)), archive.byteCount)
+        XCTAssertGreaterThan(archive.byteCount, 0)
+    }
+
+    func testCancellationErrorRemovesPartialFileBackedOperationDirectory() throws {
+        let outputDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("rinbam-ios-cancel-cleanup-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outputDirectory) }
+        var checkpointCount = 0
+
+        XCTAssertThrowsError(
+            try URLSaveriOS.URLExportArchiveBuilder.prepareExport(
+                request: makeRequest(outputFormat: .zip),
+                entries: [makeRecord(id: 1, host: "cancel-cleanup.example")],
+                localTags: [],
+                localTagAssignments: [:],
+                sharedTagsByEntryID: [:],
+                appVersion: "test",
+                outputDirectory: outputDirectory,
+                writeCheckpoint: {
+                    checkpointCount += 1
+                    if checkpointCount == 2 {
+                        throw CancellationError()
+                    }
+                }
+            )
+        ) { error in
+            XCTAssertTrue(error is CancellationError)
+        }
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: outputDirectory.path).isEmpty)
+    }
+
+    func testChatGptSizeLimitRemovesPartialFileBackedOperationDirectory() throws {
+        let outputDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("rinbam-ios-size-cleanup-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outputDirectory) }
+        let tag = makeLocalTag(id: 1, name: "最大サイズ")
+        let entry = makeRecord(id: 1, host: "size-cleanup.example", memo: String(repeating: "長", count: 2_000))
+        let assignments: [Int64: Set<Int64>] = [entry.id: [tag.id]]
+        let preview = try URLSaveriOS.URLExportArchiveBuilder.buildChatGptExportPreview(
+            selectedLocalTagIDs: [tag.id],
+            entries: [entry],
+            localTags: [tag],
+            localTagAssignments: assignments,
+            sharedTagsByEntryID: [:]
+        )
+
+        XCTAssertThrowsError(
+            try URLSaveriOS.URLExportArchiveBuilder.prepareChatGptExport(
+                selectedLocalTagIDs: [tag.id],
+                expectedSnapshotToken: preview.snapshotToken,
+                entries: [entry],
+                localTags: [tag],
+                localTagAssignments: assignments,
+                sharedTagsByEntryID: [:],
+                appVersion: "test",
+                outputDirectory: outputDirectory,
+                maximumArchiveBytes: 256
+            )
+        ) { error in
+            XCTAssertTrue(error.localizedDescription.contains("25 MiB"))
+        }
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: outputDirectory.path).isEmpty)
+    }
+
+    func testTenThousandMaximumLengthRecordsCompleteAsFileBackedJSON() throws {
+        let outputDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("rinbam-ios-10k-export-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outputDirectory) }
+        let maximumMemo = String(repeating: "長", count: 2_000)
+        let entries = (0..<10_000).map { index in
+            makeRecord(
+                id: Int64(index + 1),
+                host: "stress-\(index).example",
+                memo: maximumMemo
+            )
+        }
+
+        let archive = try URLSaveriOS.URLExportArchiveBuilder.prepareExport(
+            request: makeRequest(outputFormat: .json),
+            entries: entries,
+            localTags: [],
+            localTagAssignments: [:],
+            sharedTagsByEntryID: [:],
+            appVersion: "test",
+            outputDirectory: outputDirectory
+        )
+        let fileSize = try XCTUnwrap(archive.fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+
+        XCTAssertEqual(archive.entryCount, 10_000)
+        XCTAssertEqual(Int64(fileSize), archive.byteCount)
+        XCTAssertGreaterThan(archive.byteCount, 20_000_000)
+    }
+
     func testZipOutputUsesZipExtensionAndContainsExpectedFiles() throws {
         let archive = try URLSaveriOS.URLExportArchiveBuilder.prepareExport(
             request: makeRequest(outputFormat: .zip),
@@ -17,7 +132,7 @@ final class ExportArchiveBuilderTests: XCTestCase {
         XCTAssertTrue(archive.fileName.hasSuffix(".zip"))
         XCTAssertEqual(archive.mimeType, "application/zip")
 
-        let files = try extractZIPFiles(from: archive.bytes)
+        let files = try extractZIPFiles(from: Data(contentsOf: archive.fileURL))
         XCTAssertNotNil(files["manifest.json"])
         XCTAssertNotNil(files["entries.jsonl"])
         XCTAssertNotNil(files["schema.json"])
@@ -40,7 +155,9 @@ final class ExportArchiveBuilderTests: XCTestCase {
         XCTAssertTrue(archive.fileName.hasSuffix(".json"))
         XCTAssertEqual(archive.mimeType, "application/json")
 
-        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: archive.bytes) as? [String: Any])
+        let payload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: archive.fileURL)) as? [String: Any]
+        )
         let manifest = try XCTUnwrap(payload["manifest"] as? [String: Any])
         let entries = try XCTUnwrap(payload["entries"] as? [[String: Any]])
 
@@ -75,7 +192,7 @@ final class ExportArchiveBuilderTests: XCTestCase {
             now: Date(timeIntervalSince1970: 1_714_000_000)
         )
 
-        let files = try extractZIPFiles(from: archive.bytes)
+        let files = try extractZIPFiles(from: Data(contentsOf: archive.fileURL))
         let entriesText = try XCTUnwrap(String(data: try XCTUnwrap(files["entries.jsonl"]), encoding: .utf8))
         let entry = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(entriesText.utf8)) as? [String: Any])
         let entryMarkdownData = try XCTUnwrap(
@@ -129,7 +246,9 @@ final class ExportArchiveBuilderTests: XCTestCase {
             appVersion: "test"
         )
 
-        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: archive.bytes) as? [String: Any])
+        let payload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: archive.fileURL)) as? [String: Any]
+        )
         let entries = try XCTUnwrap(payload["entries"] as? [[String: Any]])
         let entry = try XCTUnwrap(entries.first)
         XCTAssertEqual(entry["aiEligible"] as? Bool, false)
@@ -266,7 +385,7 @@ final class ExportArchiveBuilderTests: XCTestCase {
             )
         )
 
-        let files = try extractZIPFiles(from: archive.bytes)
+        let files = try extractZIPFiles(from: Data(contentsOf: archive.fileURL))
         let manifest = try XCTUnwrap(
             JSONSerialization.jsonObject(with: try XCTUnwrap(files["manifest.json"])) as? [String: Any]
         )
@@ -409,7 +528,7 @@ final class ExportArchiveBuilderTests: XCTestCase {
             appVersion: "test"
         )
 
-        let files = try extractZIPFiles(from: archive.bytes)
+        let files = try extractZIPFiles(from: Data(contentsOf: archive.fileURL))
         let markdownData = try XCTUnwrap(
             files.first { $0.key.hasPrefix("entries/") && $0.key.hasSuffix(".md") }?.value
         )
@@ -499,7 +618,7 @@ final class ExportArchiveBuilderTests: XCTestCase {
             appVersion: "test"
         )
 
-        let files = try extractZIPFiles(from: archive.bytes)
+        let files = try extractZIPFiles(from: Data(contentsOf: archive.fileURL))
         let allExportedText = ([archive.fileName] + files.keys + files.values.map { String(decoding: $0, as: UTF8.self) })
             .joined(separator: "\n")
         for attackValue in [
@@ -560,7 +679,7 @@ final class ExportArchiveBuilderTests: XCTestCase {
             appVersion: "test"
         )
 
-        let files = try extractZIPFiles(from: archive.bytes)
+        let files = try extractZIPFiles(from: Data(contentsOf: archive.fileURL))
         let allExportedText = files.values.map { String(decoding: $0, as: UTF8.self) }.joined(separator: "\n")
         XCTAssertTrue(allExportedText.contains("選択タグ"))
         XCTAssertFalse(allExportedText.contains("未選択極秘タグ"))
@@ -719,7 +838,7 @@ final class ExportArchiveBuilderTests: XCTestCase {
             entries: [firstEntry, secondEntry], localTags: [tag],
             localTagAssignments: [1: [1], 2: [1]], sharedTagsByEntryID: [:], appVersion: "test"
         )
-        let files = try extractZIPFiles(from: archive.bytes)
+        let files = try extractZIPFiles(from: Data(contentsOf: archive.fileURL))
         let entryPaths = files.keys.filter { $0.hasPrefix("entries/") && $0.hasSuffix(".md") }
         XCTAssertEqual(entryPaths.count, 2)
         XCTAssertEqual(Set(entryPaths).count, 2)
@@ -777,6 +896,46 @@ final class ExportArchiveBuilderTests: XCTestCase {
         XCTAssertFalse(source.contains("private func loadChatGptExportSnapshot"))
     }
 
+    func testStandardExportFailsClosedForSnapshotAndSharedTagLookupErrors() throws {
+        let entry = makeRecord(id: 804, host: "standard-export.example")
+        XCTAssertThrowsError(try URLSaveriOS.StandardExportPreparationGate.loadSharedTagsByEntryID(
+            entries: [entry],
+            bulkLookup: { _ in throw StubLookupError.failed }
+        ))
+        XCTAssertThrowsError(try URLSaveriOS.StandardExportPreparationGate.loadSharedTagsByEntryID(
+            entries: [entry],
+            bulkLookup: { _ in [:] }
+        ))
+        XCTAssertNoThrow(try URLSaveriOS.StandardExportPreparationGate.loadSharedTagsByEntryID(
+            entries: [entry],
+            bulkLookup: { _ in [entry.id: []] }
+        ))
+
+        let source = try String(contentsOf: appModelSourceURL(), encoding: .utf8)
+        XCTAssertTrue(source.contains("loadStandardExportLocalSnapshot()"))
+        XCTAssertTrue(source.contains("StandardExportPreparationGate.loadSharedTagsByEntryID"))
+        XCTAssertFalse(source.contains("(try? services.repository.loadExportSnapshot())"))
+        XCTAssertFalse(source.contains("Dictionary(uniqueKeysWithValues: entries.map { ($0.id, []) })"))
+    }
+
+    func testShareExtensionRetainsFailedInputAndPreventsDuplicateRetry() throws {
+        let source = try String(contentsOf: shareExtensionSourceURL(), encoding: .utf8)
+
+        XCTAssertTrue(source.contains("guard !isSaving"))
+        XCTAssertTrue(source.contains("operation.lockTagSelection(selectedLocalTagIDs)"))
+        XCTAssertTrue(source.contains("operation.recordAttempt("))
+        XCTAssertTrue(source.contains("if !item.needsURLSave"))
+        XCTAssertTrue(source.contains("tagIDs: item.pendingTagIDs"))
+        XCTAssertTrue(source.contains("selectedTagIDs: operation.selectedTagIDs"))
+        XCTAssertTrue(source.contains("guard !isTagSelectionLocked"))
+        XCTAssertTrue(source.contains("tagFlowView.setInteractionEnabled(isEnabled)"))
+        XCTAssertTrue(source.contains("完了済みの\\(operation.completedItems.count)件は再送しません"))
+        XCTAssertTrue(source.contains("saveButton.setTitle(\"もう一度保存\""))
+        XCTAssertTrue(source.contains("入力と選択タグは保持しています"))
+        XCTAssertTrue(source.contains("shareSaveSucceeded(result.result)"))
+        XCTAssertFalse(source.contains("var failedURLs: [String] = []"))
+    }
+
     func testChatGptRepositorySnapshotLoadsEntriesTagsAndAssignmentsTogether() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("chatgpt-export-snapshot-\(UUID().uuidString)", isDirectory: true)
@@ -810,7 +969,9 @@ final class ExportArchiveBuilderTests: XCTestCase {
             appVersion: "test"
         )
 
-        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: archive.bytes) as? [String: Any])
+        let payload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: archive.fileURL)) as? [String: Any]
+        )
         let manifest = try XCTUnwrap(payload["manifest"] as? [String: Any])
         let entry = try XCTUnwrap((payload["entries"] as? [[String: Any]])?.first)
         XCTAssertEqual(manifest["selectedTagIds"] as? [String], [])
@@ -852,13 +1013,23 @@ final class ExportArchiveBuilderTests: XCTestCase {
         XCTAssertNil(source.range(of: #"\bcase\s+copy\b"#, options: .regularExpression))
         XCTAssertTrue(source.contains("Text(exportMode == .chatGpt ? \"ChatGPT\" : \"エクスポート\")"))
         XCTAssertTrue(source.contains("ChatGPTに送る"))
-        XCTAssertTrue(source.contains("自作タグを選んで送る"))
-        XCTAssertTrue(source.contains("prepareAndShareChatGptFile"))
+        XCTAssertTrue(source.contains("自作タグを1つ以上選んでください"))
+        XCTAssertTrue(source.contains("ZIPに入る自作タグ名（伏せ字後）"))
+        XCTAssertTrue(source.contains("Toggle(isOn: $hasConfirmedChatGptPreview)"))
+        XCTAssertTrue(source.contains("未知の形式の秘密は残る可能性があります"))
+        XCTAssertTrue(source.contains("ForEach(preview.eligibleItems)"))
+        XCTAssertFalse(source.contains("hasConfirmedChatGptPreview = true"))
         XCTAssertTrue(source.contains("ChatGptExportSheet"))
         XCTAssertTrue(source.contains("ActivityShareSheet(items: shareItems)"))
         XCTAssertTrue(source.contains("hasConfirmedChatGptPreview"))
         XCTAssertTrue(source.contains("chatGptPreviewTask?.cancel()"))
         XCTAssertTrue(source.contains("chatGptPreparationTask?.cancel()"))
+        XCTAssertTrue(source.contains("@State private var standardExportTask: Task<Void, Never>?"))
+        XCTAssertTrue(source.contains("let destination = selectedDestination"))
+        XCTAssertTrue(source.contains("standardExportTask?.cancel()"))
+        XCTAssertTrue(source.contains("try Task.checkCancellation()"))
+        XCTAssertTrue(source.contains("catch is CancellationError"))
+        XCTAssertTrue(source.contains("removeOwnedExportFile(at: generatedFileURL)"))
         XCTAssertTrue(source.contains("scheduleChatGptTemporaryFileCleanup()"))
         XCTAssertTrue(source.contains("60_000_000_000"))
         XCTAssertTrue(source.contains("preparedChatGptGenerationID == chatGptGenerationID"))
@@ -1064,7 +1235,7 @@ final class ExportArchiveBuilderTests: XCTestCase {
     }
 
     private func chatGptPublicSafeID(from archive: URLSaveriOS.PreparedExportArchive) throws -> String {
-        let files = try extractZIPFiles(from: archive.bytes)
+        let files = try extractZIPFiles(from: Data(contentsOf: archive.fileURL))
         let entriesText = try XCTUnwrap(String(data: try XCTUnwrap(files["entries.jsonl"]), encoding: .utf8))
         let entry = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(entriesText.utf8)) as? [String: Any])
         return try XCTUnwrap(entry["publicSafeId"] as? String)

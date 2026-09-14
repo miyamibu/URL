@@ -66,6 +66,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.net.URI
 import java.net.URLEncoder
+import java.io.File
 
 class AppContainer(context: Context) {
     private val appContext = context.applicationContext
@@ -291,6 +292,7 @@ class AppContainer(context: Context) {
             syncBeforeExport = { sharedTagSyncCoordinator.syncCurrentSession() },
             clock = clock,
             appVersion = BuildConfig.VERSION_NAME,
+            archiveDirectory = File(appContext.cacheDir, "exports"),
         )
     }
 

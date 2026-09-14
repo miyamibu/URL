@@ -118,8 +118,121 @@ interface UrlEntryDao {
     @Update
     suspend fun update(entry: UrlEntryEntity)
 
+    @Query(
+        """
+        SELECT id
+        FROM url_entries
+        WHERE id IN (:entryIds)
+          AND recordState IN (:recordStates)
+        """
+    )
+    suspend fun findIdsInStates(
+        entryIds: List<Long>,
+        recordStates: List<RecordState>,
+    ): List<Long>
+
+    @Query(
+        """
+        UPDATE url_entries
+        SET recordState = 'ARCHIVED',
+            archivedAt = :archivedAt,
+            pendingDeletionUntil = NULL,
+            updatedAt = :updatedAt
+        WHERE id IN (:entryIds)
+          AND recordState = 'ACTIVE'
+        """
+    )
+    suspend fun archiveEntries(
+        entryIds: List<Long>,
+        archivedAt: Long,
+        updatedAt: Long,
+    )
+
+    @Query(
+        """
+        UPDATE url_entries
+        SET recordState = 'PENDING_DELETE',
+            pendingDeletionUntil = :pendingUntil,
+            archivedAt = CASE
+                WHEN recordState = 'ARCHIVED' THEN COALESCE(archivedAt, :updatedAt)
+                ELSE NULL
+            END,
+            updatedAt = :updatedAt
+        WHERE id IN (:entryIds)
+          AND recordState IN ('ACTIVE', 'ARCHIVED')
+        """
+    )
+    suspend fun markPendingDeleteEntries(
+        entryIds: List<Long>,
+        pendingUntil: Long?,
+        updatedAt: Long,
+    )
+
+    @Query(
+        """
+        UPDATE url_entries
+        SET recordState = CASE WHEN archivedAt IS NULL THEN 'ACTIVE' ELSE 'ARCHIVED' END,
+            pendingDeletionUntil = NULL,
+            updatedAt = :updatedAt
+        WHERE recordState = 'PENDING_DELETE'
+          AND pendingDeletionUntil IS NULL
+        """
+    )
+    suspend fun restoreProvisionalPendingDeletes(updatedAt: Long)
+
+    @Query(
+        """
+        UPDATE url_entries
+        SET pendingDeletionUntil = :pendingUntil,
+            updatedAt = :updatedAt
+        WHERE id IN (:entryIds)
+          AND recordState = 'PENDING_DELETE'
+        """
+    )
+    suspend fun updatePendingDeleteDeadlines(
+        entryIds: List<Long>,
+        pendingUntil: Long,
+        updatedAt: Long,
+    )
+
+    @Query(
+        """
+        UPDATE url_entries
+        SET recordState = CASE WHEN archivedAt IS NULL THEN 'ACTIVE' ELSE 'ARCHIVED' END,
+            pendingDeletionUntil = NULL,
+            updatedAt = :updatedAt
+        WHERE id = :entryId
+          AND recordState = 'PENDING_DELETE'
+        """
+    )
+    suspend fun restorePendingDelete(entryId: Long, updatedAt: Long): Int
+
+    @Query(
+        """
+        UPDATE url_entries
+        SET recordState = 'ACTIVE',
+            pendingDeletionUntil = NULL,
+            archivedAt = NULL,
+            updatedAt = :updatedAt
+        WHERE id = :entryId
+          AND recordState = 'ARCHIVED'
+        """
+    )
+    suspend fun restoreArchivedEntry(entryId: Long, updatedAt: Long): Int
+
     @Query("DELETE FROM url_entries WHERE id = :entryId")
     suspend fun deleteById(entryId: Long)
+
+    @Query(
+        """
+        DELETE FROM url_entries
+        WHERE id = :entryId
+          AND recordState = 'PENDING_DELETE'
+          AND pendingDeletionUntil IS NOT NULL
+          AND pendingDeletionUntil <= :now
+        """
+    )
+    suspend fun deleteExpiredPendingById(entryId: Long, now: Long): Int
 
     @Query("DELETE FROM url_entries WHERE recordState = 'PENDING_DELETE' AND pendingDeletionUntil IS NOT NULL AND pendingDeletionUntil <= :now")
     suspend fun cleanupExpiredPending(now: Long)

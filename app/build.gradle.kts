@@ -222,7 +222,7 @@ dependencies {
     implementation("androidx.room:room-ktx:2.6.1")
     implementation("com.android.billingclient:billing:8.3.0")
     implementation("io.coil-kt:coil-compose:2.6.0")
-    implementation("org.jsoup:jsoup:1.18.1")
+    implementation("org.jsoup:jsoup:1.23.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
     ksp("androidx.room:room-compiler:2.6.1")
 

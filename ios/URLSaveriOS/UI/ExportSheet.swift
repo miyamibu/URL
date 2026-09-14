@@ -1,6 +1,6 @@
 import Foundation
 import SwiftUI
-import UniformTypeIdentifiers
+import UIKit
 
 func exportTodayDateInput(now: Date = Date(), calendar: Calendar = .current) -> String {
     let formatter = DateFormatter()
@@ -23,7 +23,9 @@ func cleanupStaleChatGptTemporaryDirectories(
         includingPropertiesForKeys: Array(resourceKeys),
         options: [.skipsHiddenFiles]
     ) else { return }
-    for candidate in candidates where candidate.lastPathComponent.hasPrefix("rinbam-chatgpt-task-") {
+    for candidate in candidates where
+        candidate.lastPathComponent.hasPrefix("rinbam-chatgpt-task-") ||
+        candidate.lastPathComponent.hasPrefix("rinbam-export-task-") {
         guard let values = try? candidate.resourceValues(forKeys: resourceKeys),
               values.isDirectory == true,
               let modifiedAt = values.contentModificationDate,
@@ -47,6 +49,8 @@ struct ExportSheet: View {
     @State private var selectedFormat: URLExportOutputFormat = .zip
     @State private var selectedDestination: ExportDestination = .shareSheet
     @State private var isStandardExporting = false
+    @State private var standardExportTask: Task<Void, Never>?
+    @State private var standardExportGenerationID = UUID()
     @State private var isPreparingChatGpt = false
     @State private var errorMessage: String?
     @State private var successMessage: String?
@@ -54,9 +58,8 @@ struct ExportSheet: View {
     @State private var isShowingShareSheet = false
     @State private var isSharingPreparedChatGptFile = false
     @State private var isShowingFileExporter = false
-    @State private var fileExportDocument: ExportFileDocument?
-    @State private var fileExportType: UTType = .zip
-    @State private var fileExportDefaultName = "urlsaver-export"
+    @State private var fileExportURL: URL?
+    @State private var temporaryStandardExportURL: URL?
     @State private var exportMode: ExportMode = .standard
     @State private var selectedChatGptLocalTagIDs: Set<Int64> = []
     @State private var chatGptPreview: ChatGptExportPreview?
@@ -211,31 +214,32 @@ struct ExportSheet: View {
                 scheduleChatGptTemporaryFileCleanup()
             } else {
                 invalidatePreparedChatGptFile(force: true)
+                cleanupStandardExportFile()
             }
         }) {
             ActivityShareSheet(items: shareItems)
         }
-        .fileExporter(
-            isPresented: $isShowingFileExporter,
-            document: fileExportDocument,
-            contentType: fileExportType,
-            defaultFilename: fileExportDefaultName
-        ) { result in
-            switch result {
-            case .success(let url):
-                successMessage = "\(url.lastPathComponent) を保存しました"
-            case .failure(let error):
-                errorMessage = (error as? LocalizedError)?.errorDescription ?? "ファイルに保存できませんでした。"
+        .sheet(isPresented: $isShowingFileExporter, onDismiss: {
+            cleanupStandardExportFile()
+        }) {
+            if let fileExportURL {
+                ExportDocumentPicker(fileURL: fileExportURL) { savedURL in
+                    if let savedURL {
+                        successMessage = "\(savedURL.lastPathComponent) を保存しました"
+                    }
+                    isShowingFileExporter = false
+                }
             }
-            fileExportDocument = nil
         }
         .onDisappear {
             if !isShowingFileExporter && !isShowingShareSheet {
+                cancelStandardExportTask()
                 chatGptPreviewTask?.cancel()
                 chatGptPreparationTask?.cancel()
                 if chatGptFileCleanupTask == nil {
                     invalidatePreparedChatGptFile(force: true)
                 }
+                cleanupStandardExportFile()
             }
         }
     }
@@ -278,7 +282,16 @@ struct ExportSheet: View {
     private var chatGptExportContent: some View {
         ScrollView(showsIndicators: false) {
             LazyVStack(alignment: .leading, spacing: 16) {
-                sectionLabel("自作タグを選んで送る")
+                fixedChatGptContentCard(
+                    title: "ChatGPTへの渡し方",
+                    icon: "bubble.left.and.text.bubble.right",
+                    items: [
+                        "りんばむでは質問を入力しません。",
+                        "確認した内容をZIPにし、質問とモデル選択はChatGPT側で行います。"
+                    ]
+                )
+
+                sectionLabel("1. 渡したい自作タグを選択")
 
                 if chatGptLocalTags.isEmpty {
                     Text("URLが付いた自作タグがありません")
@@ -291,6 +304,32 @@ struct ExportSheet: View {
                         }
                     }
                 }
+
+                sectionLabel("2. 渡す内容を確認")
+                fixedChatGptContentCard(
+                    title: "含まれるもの",
+                    icon: "doc.text.magnifyingglass",
+                    items: [
+                        "URL、タイトル、自作タグ、保存日時、メモ抜粋",
+                        "取得できた著者・要約・抜粋など、下に表示する伏せ字後の全JSON"
+                    ]
+                )
+                fixedChatGptContentCard(
+                    title: "含まれないもの",
+                    icon: "nosign",
+                    items: [
+                        "質問、PDF・画像本体、取得本文全文",
+                        "共有タグと参加者、削除待ち・アーカイブ・共有参照のURL"
+                    ]
+                )
+                fixedChatGptContentCard(
+                    title: "伏せ字の限界",
+                    icon: "exclamationmark.triangle",
+                    items: [
+                        "メールアドレス、電話番号、token・secret、JWT、Supabase情報、端末内パスは検出できた範囲を伏せ字にします。",
+                        "未知の形式の秘密は残る可能性があります。下の伏せ字後の全内容を必ず確認してください。"
+                    ]
+                )
 
                 if isLoadingChatGptPreview {
                     HStack(spacing: 10) {
@@ -319,6 +358,23 @@ struct ExportSheet: View {
                         Text("送れる保存リンクがありません")
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(AppPalette.danger)
+                    } else {
+                        if !preview.selectedLocalTagNames.isEmpty {
+                            Text("ZIPに入る自作タグ名（伏せ字後）：\(preview.selectedLocalTagNames.joined(separator: "、"))")
+                                .font(.system(.caption, design: .rounded, weight: .semibold))
+                                .foregroundStyle(AppPalette.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        ForEach(ChatGptExportExclusionReason.allCases, id: \.rawValue) { reason in
+                            if let count = preview.exclusionReasonCounts[reason], count > 0 {
+                                Text("・\(reason.displayName)：\(count)件")
+                                    .font(.system(.caption, design: .rounded, weight: .semibold))
+                                    .foregroundStyle(AppPalette.textSecondary)
+                            }
+                        }
+                        ForEach(preview.eligibleItems) { item in
+                            chatGptPreviewItem(item)
+                        }
                     }
                 }
 
@@ -354,35 +410,59 @@ struct ExportSheet: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
+                if chatGptPreview?.eligibleItems.isEmpty == false, !isLoadingChatGptPreview {
+                    Toggle(isOn: $hasConfirmedChatGptPreview) {
+                        Text("対象URLと伏せ字後の全内容を確認し、未知の秘密が含まれていないことを確認しました")
+                            .font(.system(.body, design: .rounded, weight: .semibold))
+                            .foregroundStyle(AppPalette.textPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .toggleStyle(.switch)
+                    .accessibilityHint("オンにするとChatGPT用ZIPを作成できます")
+                }
+
+                sectionLabel("3. ChatGPT用ZIPを作成")
                 AppActionButton(
                     tone: .primary,
-                    enabled: canPrepareAndShareChatGptFile
+                    enabled: canPrepareChatGptFile
                 ) {
-                    prepareAndShareChatGptFile()
+                    prepareChatGptFile()
                 } label: {
                     if isPreparingChatGpt {
                         HStack(spacing: 8) {
                             ProgressView().tint(AppPalette.textPrimary)
                             Text("準備しています")
                         }
-                    } else if let count = chatGptPreview?.eligibleCount, count > 0 {
-                        Text("\(count)件をChatGPTに送る")
                     } else {
+                        Text("ChatGPT用ZIPを作成")
+                    }
+                }
+
+                sectionLabel("4. ChatGPTに送る")
+                if let preparedChatGptEntryCount {
+                    fixedChatGptContentCard(
+                        title: "生成済みZIP",
+                        icon: "doc.zipper",
+                        items: [
+                            "生成時点の対象 \(preparedChatGptEntryCount)件",
+                            "送信後、ChatGPTで質問を入力してください。"
+                        ]
+                    )
+                    AppActionButton(tone: .secondary, enabled: canSendToChatGpt) {
+                        sharePreparedChatGptFile()
+                    } label: {
                         Text("ChatGPTに送る")
                     }
+                } else {
+                    Text("先に対象を確認してZIPを作成してください。作成しただけでは共有されません。")
+                        .font(.system(.body, design: .rounded, weight: .medium))
+                        .foregroundStyle(AppPalette.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 30)
         }
-    }
-
-    private var canPrepareAndShareChatGptFile: Bool {
-        !isPreparingChatGpt &&
-            !isStandardExporting &&
-            !isLoadingChatGptPreview &&
-            chatGptPreviewError == nil &&
-            chatGptPreview?.eligibleItems.isEmpty == false
     }
 
     private var canSendToChatGpt: Bool {
@@ -827,16 +907,7 @@ struct ExportSheet: View {
         chatGptPreviewTask = task
     }
 
-    private func prepareAndShareChatGptFile() {
-        guard chatGptPreview?.eligibleItems.isEmpty == false else {
-            chatGptPreviewError = "ChatGPTに送れる保存リンクがありません。"
-            return
-        }
-        hasConfirmedChatGptPreview = true
-        prepareChatGptFile(shareWhenReady: true)
-    }
-
-    private func prepareChatGptFile(shareWhenReady: Bool = false) {
+    private func prepareChatGptFile() {
         errorMessage = nil
         successMessage = nil
         guard hasConfirmedChatGptPreview,
@@ -864,20 +935,7 @@ struct ExportSheet: View {
                 guard archive.entryCount == expectedEntryCount else {
                     throw URLExportError.invalidRequest("対象の保存リンクが更新されました。内容を確認して、もう一度お試しください。")
                 }
-                let fileURL = try await Task.detached(priority: .utility) {
-                    cleanupStaleChatGptTemporaryDirectories()
-                    let directoryURL = FileManager.default.temporaryDirectory
-                        .appendingPathComponent("rinbam-chatgpt-task-\(generationID.uuidString)", isDirectory: true)
-                    do {
-                        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-                        let fileURL = directoryURL.appendingPathComponent(archive.fileName)
-                        try archive.bytes.write(to: fileURL, options: [.atomic])
-                        return fileURL
-                    } catch {
-                        try? FileManager.default.removeItem(at: directoryURL)
-                        throw error
-                    }
-                }.value
+                let fileURL = try validatedPreparedArchiveFile(archive)
                 generatedFileURL = fileURL
                 try Task.checkCancellation()
                 guard selectedTagIDs == selectedChatGptLocalTagIDs,
@@ -895,9 +953,6 @@ struct ExportSheet: View {
                 preparedChatGptGenerationID = generationID
                 generatedFileURL = nil
                 successMessage = "\(archive.entryCount)件のZIPを作成しました"
-                if shareWhenReady {
-                    sharePreparedChatGptFile()
-                }
             } catch is CancellationError {
                 if let generatedFileURL {
                     removeChatGptTemporaryFile(at: generatedFileURL)
@@ -967,12 +1022,44 @@ struct ExportSheet: View {
     }
 
     private func removeChatGptTemporaryFile(at fileURL: URL) {
-        let directoryURL = fileURL.deletingLastPathComponent()
-        if directoryURL.lastPathComponent.hasPrefix("rinbam-chatgpt-task-") {
-            try? FileManager.default.removeItem(at: directoryURL)
-        } else if FileManager.default.fileExists(atPath: fileURL.path) {
-            try? FileManager.default.removeItem(at: fileURL)
+        removeOwnedExportFile(at: fileURL)
+    }
+
+    private func cleanupStandardExportFile() {
+        let fileURL = temporaryStandardExportURL
+        temporaryStandardExportURL = nil
+        fileExportURL = nil
+        if let fileURL {
+            removeOwnedExportFile(at: fileURL)
         }
+    }
+
+    private func cancelStandardExportTask() {
+        standardExportTask?.cancel()
+        standardExportTask = nil
+        standardExportGenerationID = UUID()
+        isStandardExporting = false
+    }
+
+    private func removeOwnedExportFile(at fileURL: URL) {
+        let directoryURL = fileURL.deletingLastPathComponent()
+        let directoryName = directoryURL.lastPathComponent
+        guard directoryName.hasPrefix("rinbam-chatgpt-task-") ||
+                directoryName.hasPrefix("rinbam-export-task-") else { return }
+        try? FileManager.default.removeItem(at: directoryURL)
+    }
+
+    private func validatedPreparedArchiveFile(_ archive: PreparedExportArchive) throws -> URL {
+        let fileURL = archive.fileURL.standardizedFileURL
+        let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        guard values.isRegularFile == true,
+              Int64(values.fileSize ?? -1) == archive.byteCount,
+              fileURL.lastPathComponent == archive.fileName else {
+            throw URLExportError.invalidRequest(
+                "エクスポートファイルを確認できません。もう一度作成してください。"
+            )
+        }
+        return fileURL
     }
 
     private func exportArchive() {
@@ -989,29 +1076,57 @@ struct ExportSheet: View {
                 dateTo: try parseDate(dateToInput),
                 outputFormat: selectedFormat
             )
+            let destination = selectedDestination
+            standardExportTask?.cancel()
+            standardExportTask = nil
+            standardExportGenerationID = UUID()
+            let generationID = standardExportGenerationID
+            cleanupStandardExportFile()
             isStandardExporting = true
-            Task {
+            let task = Task { @MainActor in
+                var generatedFileURL: URL?
                 do {
+                    cleanupStaleChatGptTemporaryDirectories()
                     let archive = try await model.prepareExportArchive(request: request)
-                    let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(archive.fileName)
-                    try archive.bytes.write(to: fileURL, options: [.atomic])
-                    switch selectedDestination {
+                    let fileURL = try validatedPreparedArchiveFile(archive)
+                    generatedFileURL = fileURL
+                    try Task.checkCancellation()
+                    guard generationID == standardExportGenerationID else {
+                        throw CancellationError()
+                    }
+                    cleanupStandardExportFile()
+                    temporaryStandardExportURL = fileURL
+                    generatedFileURL = nil
+                    isStandardExporting = false
+                    standardExportTask = nil
+                    switch destination {
                     case .shareSheet:
                         shareItems = [fileURL]
                         isSharingPreparedChatGptFile = false
                         isShowingShareSheet = true
                     case .file:
-                        fileExportDocument = ExportFileDocument(data: archive.bytes)
-                        fileExportType = archive.mimeType == "application/json" ? .json : .zip
-                        fileExportDefaultName = archive.fileName
+                        fileExportURL = fileURL
                         isShowingFileExporter = true
                     }
-                    isStandardExporting = false
+                } catch is CancellationError {
+                    if let generatedFileURL {
+                        removeOwnedExportFile(at: generatedFileURL)
+                    }
+                    if generationID == standardExportGenerationID {
+                        isStandardExporting = false
+                        standardExportTask = nil
+                    }
                 } catch {
+                    if let generatedFileURL {
+                        removeOwnedExportFile(at: generatedFileURL)
+                    }
+                    guard generationID == standardExportGenerationID else { return }
                     isStandardExporting = false
+                    standardExportTask = nil
                     errorMessage = (error as? LocalizedError)?.errorDescription ?? "エクスポートできませんでした。"
                 }
             }
+            standardExportTask = task
         } catch {
             isStandardExporting = false
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "エクスポートできませんでした。"
@@ -1184,21 +1299,38 @@ private struct TagFlowLayout: Layout {
     }
 }
 
-private struct ExportFileDocument: FileDocument {
-    static var readableContentTypes: [UTType] { [.data] }
-    static var writableContentTypes: [UTType] { [.data, .zip, .json] }
+private struct ExportDocumentPicker: UIViewControllerRepresentable {
+    let fileURL: URL
+    let onFinish: (URL?) -> Void
 
-    private let data: Data
-
-    init(data: Data) {
-        self.data = data
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onFinish: onFinish)
     }
 
-    init(configuration: ReadConfiguration) throws {
-        self.data = configuration.file.regularFileContents ?? Data()
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(forExporting: [fileURL], asCopy: true)
+        picker.delegate = context.coordinator
+        return picker
     }
 
-    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
-        FileWrapper(regularFileWithContents: data)
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        private let onFinish: (URL?) -> Void
+
+        init(onFinish: @escaping (URL?) -> Void) {
+            self.onFinish = onFinish
+        }
+
+        func documentPicker(
+            _ controller: UIDocumentPickerViewController,
+            didPickDocumentsAt urls: [URL]
+        ) {
+            onFinish(urls.first)
+        }
+
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            onFinish(nil)
+        }
     }
 }

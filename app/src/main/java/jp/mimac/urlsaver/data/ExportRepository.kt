@@ -23,7 +23,10 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
-import java.io.ByteArrayOutputStream
+import java.io.BufferedOutputStream
+import java.io.File
+import java.io.FileOutputStream
+import java.io.OutputStream
 import java.security.MessageDigest
 import java.time.Instant
 import java.time.LocalDate
@@ -32,6 +35,7 @@ import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import java.util.UUID
 
 enum class ExportScope {
     ALL,
@@ -80,11 +84,43 @@ data class ExportTagOption(
 
 data class PreparedExportArchive(
     val fileName: String,
-    val bytes: ByteArray,
+    val file: File,
+    val byteCount: Long,
     val entryCount: Int,
     val mimeType: String,
     val chatGptPreview: ChatGptExportPreview? = null,
 )
+
+internal class ExportArchiveSizeLimitExceededException : IllegalStateException()
+
+internal class SizeLimitedExportOutputStream(
+    private val delegate: OutputStream,
+    private val maximumBytes: Long,
+) : OutputStream() {
+    private var writtenBytes = 0L
+
+    override fun write(value: Int) {
+        requireCapacity(1)
+        delegate.write(value)
+        writtenBytes += 1
+    }
+
+    override fun write(buffer: ByteArray, offset: Int, length: Int) {
+        requireCapacity(length)
+        delegate.write(buffer, offset, length)
+        writtenBytes += length
+    }
+
+    override fun flush() = delegate.flush()
+
+    override fun close() = delegate.close()
+
+    private fun requireCapacity(additionalBytes: Int) {
+        if (maximumBytes != Long.MAX_VALUE && additionalBytes.toLong() > maximumBytes - writtenBytes) {
+            throw ExportArchiveSizeLimitExceededException()
+        }
+    }
+}
 
 data class ChatGptExportPreviewEntry(
     val publicSafeId: String,
@@ -121,6 +157,7 @@ interface ExportRepository {
         selectedTagIds: Set<Long>,
         expectedSnapshotToken: String,
     ): PreparedExportArchive
+    fun releasePreparedArchive(archive: PreparedExportArchive): Boolean = false
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -141,6 +178,17 @@ class DefaultExportRepository(
     },
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val computationDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val archiveDirectory: File = File(
+        System.getProperty("java.io.tmpdir"),
+        "rinbam-export-work",
+    ),
+    private val maximumChatGptArchiveBytes: Long = CHATGPT_MAX_ARCHIVE_BYTES.toLong(),
+    private val archiveWriteCheckpoint: suspend () -> Unit = {
+        currentCoroutineContext().ensureActive()
+    },
+    private val ownershipMarkerWriter: (File) -> Unit = { marker ->
+        marker.writeText(EXPORT_OWNERSHIP_MARKER_CONTENT)
+    },
 ) : ExportRepository {
 
     override suspend fun loadAvailableTags(): List<ExportTagOption> {
@@ -218,25 +266,31 @@ class DefaultExportRepository(
                 fields = EXPORT_FIELDS,
             )
 
-            val bytes = when (request.outputFormat) {
-                ExportOutputFormat.ZIP -> buildZipExportBytes(
-                    manifest = manifest,
-                    entryDocuments = entryDocuments,
-                    redactionReport = redactionReport,
-                )
-                ExportOutputFormat.JSON -> buildJsonExportBytes(
-                    manifest = manifest,
-                    entryDocuments = entryDocuments,
-                    redactionReport = redactionReport,
-                )
+            val fileName = buildExportFileName(
+                createdAt = createdAt,
+                outputFormat = request.outputFormat,
+            )
+            val archiveFile = writeArchiveFile(fileName) { output ->
+                when (request.outputFormat) {
+                    ExportOutputFormat.ZIP -> writeZipExport(
+                        output = output,
+                        manifest = manifest,
+                        entryDocuments = entryDocuments,
+                        redactionReport = redactionReport,
+                    )
+                    ExportOutputFormat.JSON -> writeJsonExport(
+                        output = output,
+                        manifest = manifest,
+                        entryDocuments = entryDocuments,
+                        redactionReport = redactionReport,
+                    )
+                }
             }
 
             PreparedExportArchive(
-                fileName = buildExportFileName(
-                    createdAt = createdAt,
-                    outputFormat = request.outputFormat,
-                ),
-                bytes = bytes,
+                fileName = fileName,
+                file = archiveFile,
+                byteCount = archiveFile.length(),
                 entryCount = entryDocuments.size,
                 mimeType = request.outputFormat.mimeType,
             )
@@ -310,22 +364,49 @@ class DefaultExportRepository(
                 onlyWithMemo = false,
                 fields = CHATGPT_EXPORT_FIELDS,
             )
-            val bytes = buildZipExportBytes(
-                manifest = manifest,
-                entryDocuments = entryDocuments,
-                redactionReport = redactionReport,
-                readmeMode = ExportReadmeMode.CHAT_GPT_HANDOFF,
-                stripLocalIds = true,
-            )
+            val fileName = buildChatGptExportFileName(createdAt)
+            val archiveFile = writeArchiveFile(
+                fileName = fileName,
+                maximumBytes = maximumChatGptArchiveBytes,
+            ) { output ->
+                writeZipExport(
+                    output = output,
+                    manifest = manifest,
+                    entryDocuments = entryDocuments,
+                    redactionReport = redactionReport,
+                    readmeMode = ExportReadmeMode.CHAT_GPT_HANDOFF,
+                    stripLocalIds = true,
+                )
+            }
 
             PreparedExportArchive(
-                fileName = buildChatGptExportFileName(createdAt),
-                bytes = bytes,
+                fileName = fileName,
+                file = archiveFile,
+                byteCount = archiveFile.length(),
                 entryCount = entryDocuments.size,
                 mimeType = ExportOutputFormat.ZIP.mimeType,
                 chatGptPreview = selection.toPreview(),
             )
         }
+    }
+
+    override fun releasePreparedArchive(archive: PreparedExportArchive): Boolean {
+        return runCatching {
+            val canonicalRoot = archiveDirectory.canonicalFile
+            val canonicalFile = archive.file.canonicalFile
+            val operationDirectory = canonicalFile.parentFile?.canonicalFile ?: return false
+            val operationId = runCatching { UUID.fromString(operationDirectory.name) }.getOrNull()
+                ?: return false
+            if (operationId.toString() != operationDirectory.name) return false
+            if (operationDirectory.parentFile?.canonicalFile != canonicalRoot) return false
+            val safeFileName = File(archive.fileName).name
+            if (canonicalFile != File(operationDirectory, safeFileName).canonicalFile) return false
+            val ownershipMarker = File(operationDirectory, EXPORT_OWNERSHIP_MARKER_FILE)
+            if (!ownershipMarker.isFile || ownershipMarker.readText() != EXPORT_OWNERSHIP_MARKER_CONTENT) {
+                return false
+            }
+            operationDirectory.deleteRecursively() && !operationDirectory.exists()
+        }.getOrDefault(false)
     }
 
     private suspend fun loadChatGptExportSelection(selectedTagIds: Set<Long>): ChatGptExportSelection {
@@ -572,72 +653,105 @@ class DefaultExportRepository(
         return sha256Hex(material)
     }
 
-    private suspend fun buildZipExportBytes(
+    private suspend fun writeArchiveFile(
+        fileName: String,
+        maximumBytes: Long = Long.MAX_VALUE,
+        writer: suspend (OutputStream) -> Unit,
+    ): File = withContext(ioDispatcher) {
+        archiveDirectory.mkdirs()
+        check(archiveDirectory.isDirectory) { "エクスポート用の一時領域を準備できませんでした。" }
+        val operationDirectory = File(archiveDirectory, UUID.randomUUID().toString())
+        check(operationDirectory.mkdirs()) { "エクスポート用の一時領域を準備できませんでした。" }
+        val outputFile = File(operationDirectory, File(fileName).name)
+        try {
+            ownershipMarkerWriter(File(operationDirectory, EXPORT_OWNERSHIP_MARKER_FILE))
+            FileOutputStream(outputFile).use { fileOutput ->
+                val limitedOutput = SizeLimitedExportOutputStream(fileOutput, maximumBytes)
+                BufferedOutputStream(limitedOutput, EXPORT_STREAM_BUFFER_BYTES).use { bufferedOutput ->
+                    writer(bufferedOutput)
+                }
+            }
+            archiveWriteCheckpoint()
+            outputFile
+        } catch (cancellation: CancellationException) {
+            operationDirectory.deleteRecursively()
+            throw cancellation
+        } catch (_: ExportArchiveSizeLimitExceededException) {
+            operationDirectory.deleteRecursively()
+            throw IllegalArgumentException(
+                "ChatGPT用ZIPが大きすぎます（上限25 MiB）。タグを分けてお試しください。",
+            )
+        } catch (error: Throwable) {
+            operationDirectory.deleteRecursively()
+            throw error
+        }
+    }
+
+    private suspend fun writeZipExport(
+        output: OutputStream,
         manifest: ExportManifest,
         entryDocuments: List<ExportEntryDocument>,
         redactionReport: ExportRedactionReport,
         readmeMode: ExportReadmeMode = ExportReadmeMode.STANDARD,
         stripLocalIds: Boolean = false,
-    ): ByteArray {
-        val bytes = ByteArrayOutputStream().use { output ->
-            ZipOutputStream(output).use { zip ->
+    ) {
+        ZipOutputStream(output).use { zip ->
+            addZipEntry(
+                zip = zip,
+                path = "manifest.json",
+                content = encodeManifest(manifest, stripLocalIds),
+            )
+            addZipEntry(zip, "schema.json", AI_SAFE_SCHEMA_JSON)
+            addZipEntry(
+                zip,
+                "README_FOR_AI.md",
+                buildReadmeForAi(manifest, redactionReport, readmeMode),
+            )
+            addZipEntry(zip, "redaction_report.json", json.encodeToString(redactionReport))
+
+            zip.putNextEntry(ZipEntry("entries.jsonl"))
+            entryDocuments.forEachIndexed { index, document ->
+                archiveWriteCheckpoint()
+                if (index > 0) zip.write('\n'.code)
+                zip.write(encodeEntryDocument(document, stripLocalIds).toByteArray(Charsets.UTF_8))
+            }
+            zip.closeEntry()
+
+            entryDocuments.forEachIndexed { index, document ->
+                archiveWriteCheckpoint()
+                val stableName = buildEntryFileName(
+                    index = index + 1,
+                    document = document,
+                    includeLocalId = !stripLocalIds,
+                )
                 addZipEntry(
                     zip = zip,
-                    path = "manifest.json",
-                    content = encodeManifest(manifest, stripLocalIds),
+                    path = "entries/$stableName.md",
+                    content = document.toMarkdown(),
                 )
-                addZipEntry(zip, "schema.json", AI_SAFE_SCHEMA_JSON)
-                addZipEntry(
-                    zip,
-                    "README_FOR_AI.md",
-                    buildReadmeForAi(manifest, redactionReport, readmeMode),
-                )
-                addZipEntry(zip, "redaction_report.json", json.encodeToString(redactionReport))
-
-                zip.putNextEntry(ZipEntry("entries.jsonl"))
-                entryDocuments.forEachIndexed { index, document ->
-                    currentCoroutineContext().ensureActive()
-                    if (index > 0) zip.write('\n'.code)
-                    zip.write(encodeEntryDocument(document, stripLocalIds).toByteArray(Charsets.UTF_8))
-                }
-                zip.closeEntry()
-
-                entryDocuments.forEachIndexed { index, document ->
-                    currentCoroutineContext().ensureActive()
-                    val stableName = buildEntryFileName(
-                        index = index + 1,
-                        document = document,
-                        includeLocalId = !stripLocalIds,
-                    )
-                    addZipEntry(
-                        zip = zip,
-                        path = "entries/$stableName.md",
-                        content = document.toMarkdown(),
-                    )
-                }
-            }
-            output.toByteArray()
-        }
-        if (readmeMode == ExportReadmeMode.CHAT_GPT_HANDOFF) {
-            require(bytes.size <= CHATGPT_MAX_ARCHIVE_BYTES) {
-                "ChatGPT用ZIPが大きすぎます（上限25 MiB）。タグを分けてお試しください。"
             }
         }
-        return bytes
     }
 
-    private fun buildJsonExportBytes(
+    private suspend fun writeJsonExport(
+        output: OutputStream,
         manifest: ExportManifest,
         entryDocuments: List<ExportEntryDocument>,
         redactionReport: ExportRedactionReport,
-    ): ByteArray {
-        val payload = ExportJsonPayload(
-            manifest = manifest,
-            entries = entryDocuments,
-            readmeForAi = buildReadmeForAi(manifest, redactionReport),
-            redactionReport = redactionReport,
-        )
-        return json.encodeToString(payload).toByteArray(Charsets.UTF_8)
+    ) {
+        output.writeUtf8("{\n\"manifest\":")
+        output.writeUtf8(json.encodeToString(manifest))
+        output.writeUtf8(",\n\"entries\":[")
+        entryDocuments.forEachIndexed { index, document ->
+            archiveWriteCheckpoint()
+            if (index > 0) output.writeUtf8(",")
+            output.writeUtf8(encodeEntryDocument(document, stripLocalIds = false))
+        }
+        output.writeUtf8("],\n\"readmeForAi\":")
+        output.writeUtf8(jsonLine.encodeToString(buildReadmeForAi(manifest, redactionReport)))
+        output.writeUtf8(",\n\"redactionReport\":")
+        output.writeUtf8(json.encodeToString(redactionReport))
+        output.writeUtf8("\n}")
     }
 
     private fun encodeManifest(manifest: ExportManifest, stripLocalIds: Boolean): String {
@@ -688,6 +802,16 @@ class DefaultExportRepository(
         zip.putNextEntry(ZipEntry(path))
         zip.write(content.toByteArray(Charsets.UTF_8))
         zip.closeEntry()
+    }
+
+    private fun OutputStream.writeUtf8(value: String) {
+        val encoded = value.toByteArray(Charsets.UTF_8)
+        var offset = 0
+        while (offset < encoded.size) {
+            val length = minOf(EXPORT_STREAM_WRITE_CHUNK_BYTES, encoded.size - offset)
+            write(encoded, offset, length)
+            offset += length
+        }
     }
 
     private data class ExportDatabaseSnapshot(
@@ -1147,6 +1271,10 @@ class DefaultExportRepository(
             "対象URLまたは内容が更新されました。内容をもう一度確認してから作成してください。"
         const val CHATGPT_MAX_ENTRY_COUNT = 10_000
         const val CHATGPT_MAX_ARCHIVE_BYTES = 25 * 1024 * 1024
+        const val EXPORT_STREAM_BUFFER_BYTES = 64 * 1024
+        const val EXPORT_STREAM_WRITE_CHUNK_BYTES = 64 * 1024
+        const val EXPORT_OWNERSHIP_MARKER_FILE = ".rinbam-export-owner-v1"
+        const val EXPORT_OWNERSHIP_MARKER_CONTENT = "rinbam-owned-temporary-export-v1"
         val FILE_TIMESTAMP_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")
         val SLUG_SANITIZE_REGEX = Regex("[^a-z0-9]+")
         val EMAIL_REGEX = Regex("[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}", RegexOption.IGNORE_CASE)

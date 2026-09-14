@@ -29,8 +29,6 @@ Codex 向け prompt ドキュメントを 1 か所で発見できるようにし
 - 記載済みリンクが解決しない場合はリンクを一時削除せず、正しいパスを確定してから更新する。
 
 ## Prompt Files (`docs/codex-*.md`)
-- [`../codex-cross-platform-review-prompt.md`](../codex-cross-platform-review-prompt.md): Android/iOS の差分、回帰、リスクを防御的に洗い出すレビュー実行 prompt。
 - [`../codex-dark-ui-implementation-prompt.md`](../codex-dark-ui-implementation-prompt.md): HTML mock に合わせて挙動を変えずに Dark UI を実装する prompt。
 - [`../codex-ios-port-prompt.md`](../codex-ios-port-prompt.md): historical な Android Phase 1a/1b native iOS 移植 prompt。現在の parity では `AGENTS.md` と canonical QA tracker も参照する。
 - [`../codex-shared-tag-invite-sync-prompt.md`](../codex-shared-tag-invite-sync-prompt.md): shared tag invite sync MVP を段階導入する実装 prompt。
-- [`../codex-swipe-list-actions-prompt.md`](../codex-swipe-list-actions-prompt.md): Main 一覧の swipe archive/delete を安全に実装する prompt。

@@ -17,6 +17,7 @@ import jp.mimac.urlsaver.data.EXTRA_SHARE_SAVE_RESULT
 import jp.mimac.urlsaver.data.SHARE_DEGRADATION_TRUNCATED_TO_FIRST_URL
 import jp.mimac.urlsaver.data.SHARE_DEGRADATION_TRUNCATED_TO_MAX_URLS
 import jp.mimac.urlsaver.data.UrlRepository
+import jp.mimac.urlsaver.data.PENDING_DELETE_UNDO_WINDOW_MILLIS
 import jp.mimac.urlsaver.domain.DetailEffect
 import jp.mimac.urlsaver.domain.MainNavigationEvent
 import jp.mimac.urlsaver.domain.SharedTagAuthResult
@@ -27,6 +28,7 @@ import jp.mimac.urlsaver.domain.SnackbarTargetRoute
 import jp.mimac.urlsaver.util.AppClock
 import jp.mimac.urlsaver.util.SystemAppClock
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.channels.BufferOverflow as ChannelOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -53,7 +55,8 @@ class MainActivityViewModel(
     val snackbarControlEvents = snackbarControlChannel.receiveAsFlow()
 
     private val consumedShareSignatures = mutableSetOf<String>()
-    private val deleteTimers = mutableMapOf<Long, Job>()
+    private val deleteTimers = mutableMapOf<Long, DeleteTimerRegistration>()
+    private var nextDeleteTimerToken = 0L
 
     private var titleUndo: TitleUndoState? = null
     private val secondaryIntentHandler = MainActivitySecondaryIntentHandler(
@@ -122,7 +125,7 @@ class MainActivityViewModel(
             ShareSaveResult.PERSONAL_URL_LIMIT_REACHED -> enqueueSnackbar(
                 SnackbarEvent(
                     kind = SnackbarEventKind.INFO,
-                    message = "ローンチ版の保存上限に達しました。不要なURLを整理してから追加してください。",
+                    message = "現在のプランの保存上限に達しました。不要なURLを整理してから追加してください。",
                 ),
             )
             ShareSaveResult.SAVE_FAILED -> enqueueSnackbar(SnackbarEvent(kind = SnackbarEventKind.INFO, message = "保存できませんでした"))
@@ -182,7 +185,7 @@ class MainActivityViewModel(
             ShareSaveResult.PERSONAL_URL_LIMIT_REACHED -> enqueueSnackbar(
                 SnackbarEvent(
                     kind = SnackbarEventKind.INFO,
-                    message = "ローンチ版の保存上限に達しました。不要なURLを整理してから追加してください。",
+                    message = "現在のプランの保存上限に達しました。不要なURLを整理してから追加してください。",
                 ),
             )
             ShareSaveResult.SAVE_FAILED -> enqueueSnackbar(SnackbarEvent(kind = SnackbarEventKind.INFO, message = "保存できませんでした"))
@@ -311,6 +314,7 @@ class MainActivityViewModel(
 
     fun cleanupOnStart() {
         viewModelScope.launch {
+            repository.restoreProvisionalPendingDeletes()
             repository.cleanupExpiredPendingDeletes()
             repository.backfillYouTubeAuthorNames()
         }
@@ -320,20 +324,22 @@ class MainActivityViewModel(
         cancelDeleteTimer(entryId)
         val now = clock.nowEpochMillis()
         val delayMs = (pendingDeletionUntil - now).coerceAtLeast(0)
-        val job = viewModelScope.launch {
+        val token = ++nextDeleteTimerToken
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
             delay(delayMs)
+            if (deleteTimers[entryId]?.token != token) return@launch
             repository.finalizePendingDelete(entryId)
-            deleteTimers.remove(entryId)
+            if (deleteTimers[entryId]?.token == token) {
+                deleteTimers.remove(entryId)
+            }
         }
-        deleteTimers[entryId] = job
+        deleteTimers[entryId] = DeleteTimerRegistration(token = token, job = job)
+        job.start()
     }
 
     fun onBatchPendingDelete(pendingDeletions: Map<Long, Long>) {
         if (pendingDeletions.isEmpty()) return
         invalidateTitleUndo()
-        pendingDeletions.forEach { (entryId, pendingUntil) ->
-            startDeleteTimer(entryId, pendingUntil)
-        }
         val entryIds = pendingDeletions.keys.sorted()
         enqueueSnackbar(
             SnackbarEvent(
@@ -345,6 +351,36 @@ class MainActivityViewModel(
                 entryIds = entryIds,
             ),
         )
+    }
+
+    suspend fun prepareSnackbarForDisplay(event: SnackbarEvent): SnackbarEvent {
+        val entryIds = when (event.kind) {
+            SnackbarEventKind.UNDO_PENDING_DELETE -> listOfNotNull(event.entryId)
+            SnackbarEventKind.UNDO_BATCH_PENDING_DELETE -> event.entryIds.orEmpty().distinct()
+            else -> return event
+        }
+        if (entryIds.isEmpty()) return event
+
+        val deadlines = runCatching {
+            repository.startPendingDeleteUndoWindow(
+                entryIds = entryIds,
+                gracePeriodMillis = PENDING_DELETE_UNDO_WINDOW_MILLIS,
+            )
+        }.getOrDefault(emptyMap())
+        if (deadlines.keys != entryIds.toSet()) {
+            entryIds.forEach { entryId ->
+                runCatching { repository.restore(entryId) }
+                cancelDeleteTimer(entryId)
+            }
+            return SnackbarEvent(
+                kind = SnackbarEventKind.INFO,
+                message = "削除の取り消し猶予を開始できなかったため、削除を取り消しました",
+            )
+        }
+        deadlines.forEach { (entryId, pendingUntil) ->
+            startDeleteTimer(entryId, pendingUntil)
+        }
+        return event
     }
 
     fun onBatchArchive(entryIds: List<Long>) {
@@ -363,16 +399,15 @@ class MainActivityViewModel(
     }
 
     fun cancelDeleteTimer(entryId: Long) {
-        deleteTimers.remove(entryId)?.cancel()
+        deleteTimers.remove(entryId)?.job?.cancel()
     }
 
     suspend fun onSnackbarAction(event: SnackbarEvent) {
         when (event.kind) {
             SnackbarEventKind.UNDO_PENDING_DELETE -> {
                 val id = event.entryId ?: return
-                if (repository.restore(id)) {
-                    cancelDeleteTimer(id)
-                }
+                cancelDeleteTimer(id)
+                repository.restore(id)
             }
 
             SnackbarEventKind.UNDO_ARCHIVE -> {
@@ -382,10 +417,9 @@ class MainActivityViewModel(
 
             SnackbarEventKind.UNDO_BATCH_PENDING_DELETE -> {
                 val ids = event.entryIds ?: return
+                ids.forEach(::cancelDeleteTimer)
                 ids.forEach { id ->
-                    if (repository.restore(id)) {
-                        cancelDeleteTimer(id)
-                    }
+                    repository.restore(id)
                 }
             }
 
@@ -530,6 +564,11 @@ class MainActivityViewModel(
     private fun intExtraComponent(intent: Intent, key: String): String {
         return if (intent.hasExtra(key)) intent.getIntExtra(key, 0).toString() else "null"
     }
+
+    private data class DeleteTimerRegistration(
+        val token: Long,
+        val job: Job,
+    )
 
     private data class TitleUndoState(
         val entryId: Long,

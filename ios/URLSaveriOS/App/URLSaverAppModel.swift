@@ -186,11 +186,39 @@ enum ChatGptExportPreparationGate {
     }
 }
 
+enum StandardExportPreparationGate {
+    static func loadSharedTagsByEntryID(
+        entries: [URLRecord],
+        bulkLookup: ([URLRecord]) throws -> [Int64: [SharedTagSummary]]
+    ) throws -> [Int64: [SharedTagSummary]] {
+        do {
+            let result = try bulkLookup(entries)
+            guard entries.allSatisfy({ result[$0.id] != nil }) else {
+                throw URLExportError.invalidRequest("共有タグの状態を確認できませんでした。")
+            }
+            return result
+        } catch {
+            throw URLExportError.invalidRequest(
+                "保存データと共有タグを完全に読み取れなかったため、ZIPを作成しませんでした。もう一度お試しください。"
+            )
+        }
+    }
+}
+
 struct SavedAppMediaFile: Identifiable, Equatable, Sendable {
     let id: String
     let fileURL: URL
     let mediaType: String
     let fileName: String
+}
+
+struct EntryBatchMutationResult: Equatable, Sendable {
+    let requestedEntryIDs: Set<Int64>
+    let successfulEntryIDs: Set<Int64>
+
+    var failedEntryIDs: Set<Int64> {
+        requestedEntryIDs.subtracting(successfulEntryIDs)
+    }
 }
 
 @MainActor
@@ -223,6 +251,7 @@ final class URLSaverAppModel: ObservableObject {
     private var notificationQueue: [AppNotification] = []
     private var notificationDismissTask: Task<Void, Never>?
     private var deleteTimers: [Int64: Task<Void, Never>] = [:]
+    private var deleteTimerTokens: [Int64: UUID] = [:]
     private var hasBootstrapped = false
     private var isReloading = false
 
@@ -237,6 +266,7 @@ final class URLSaverAppModel: ObservableObject {
         sharedTagAccountLocalCleanupState = services.sharedTagCloud.localAccountCleanupState
         profile = (try? services.profileStore.load()) ?? .empty
         pendingInviteRecord = try? services.pendingInviteStore.load()
+        try? services.repository.restoreProvisionalPendingDeletes()
         try? services.repository.cleanupExpiredPendingDeletes()
         services.storePurchaseService.startTransactionUpdates()
         await reload()
@@ -482,6 +512,21 @@ final class URLSaverAppModel: ObservableObject {
     }
 
     func purchasePaidCourse(planType: PlanType, billingPeriod: BillingPeriod) async {
+        let requestedOption = PaidCoursePurchaseOption(
+            planType: planType,
+            billingPeriod: billingPeriod
+        )
+        guard availablePaidCoursePurchaseOptions(currentPlan: entitlements.planType).contains(requestedOption) else {
+            enqueueNotification(
+                AppNotification(
+                    message: "現在のプランでは、この購入は必要ありません。プラン表示を更新してから確認してください。",
+                    actionLabel: nil,
+                    action: nil,
+                    autoDismissAfter: 5
+                )
+            )
+            return
+        }
         let result = await services.storePurchaseService.purchase(
             planType: planType,
             billingPeriod: billingPeriod
@@ -561,7 +606,7 @@ final class URLSaverAppModel: ObservableObject {
         }
 
         switch saveResult.result {
-        case .inputTooLarge, .invalidURL, .noURLFound:
+        case .inputTooLarge, .invalidURL, .noURLFound, .personalURLLimitReached:
             return .inputError(saveResult.result)
         default:
             return .saved(saveResult)
@@ -602,36 +647,41 @@ final class URLSaverAppModel: ObservableObject {
         )
     }
 
-    func archive(entryIDs: Set<Int64>) async {
-        let ids = entryIDs.sorted()
-        guard !ids.isEmpty else { return }
-        var archivedIDs: [Int64] = []
-        for entryID in ids where (try? services.repository.archive(entryID: entryID)) == true {
-            archivedIDs.append(entryID)
+    func archive(entryIDs: Set<Int64>) async -> EntryBatchMutationResult {
+        guard !entryIDs.isEmpty else {
+            return EntryBatchMutationResult(requestedEntryIDs: [], successfulEntryIDs: [])
         }
+        let archivedIDSet = (try? services.repository.archive(entryIDs: entryIDs)) ?? []
+        let result = EntryBatchMutationResult(
+            requestedEntryIDs: entryIDs,
+            successfulEntryIDs: archivedIDSet
+        )
+        let archivedIDs = archivedIDSet.sorted()
 
         guard !archivedIDs.isEmpty else {
             enqueueNotification(AppNotification(message: "アーカイブできませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
-            return
+            return result
         }
 
         await reload()
         enqueueNotification(
             AppNotification(
-                message: "\(archivedIDs.count)件をアーカイブしました",
+                message: result.failedEntryIDs.isEmpty
+                    ? "\(archivedIDs.count)件をアーカイブしました"
+                    : "\(archivedIDs.count)件をアーカイブしました。\(result.failedEntryIDs.count)件は未処理です",
                 actionLabel: "元に戻す",
                 action: .undoArchiveBatch(archivedIDs),
                 autoDismissAfter: 5
             )
         )
+        return result
     }
 
     func markPendingDelete(entryID: Int64) async {
-        guard let pendingUntil = try? services.repository.markPendingDelete(entryID: entryID) else {
+        guard (try? services.repository.markPendingDelete(entryID: entryID)) != nil else {
             enqueueNotification(AppNotification(message: "削除できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
             return
         }
-        scheduleDeleteTimer(entryID: entryID, due: pendingUntil)
         await reload()
         enqueueNotification(
             AppNotification(
@@ -643,33 +693,34 @@ final class URLSaverAppModel: ObservableObject {
         )
     }
 
-    func markPendingDelete(entryIDs: Set<Int64>) async {
-        let ids = entryIDs.sorted()
-        guard !ids.isEmpty else { return }
-        var deletedIDs: [Int64] = []
-
-        for entryID in ids {
-            guard let pendingUntil = try? services.repository.markPendingDelete(entryID: entryID) else {
-                continue
-            }
-            scheduleDeleteTimer(entryID: entryID, due: pendingUntil)
-            deletedIDs.append(entryID)
+    func markPendingDelete(entryIDs: Set<Int64>) async -> EntryBatchMutationResult {
+        guard !entryIDs.isEmpty else {
+            return EntryBatchMutationResult(requestedEntryIDs: [], successfulEntryIDs: [])
         }
+        let pendingDeletions = (try? services.repository.markPendingDelete(entryIDs: entryIDs)) ?? [:]
+        let result = EntryBatchMutationResult(
+            requestedEntryIDs: entryIDs,
+            successfulEntryIDs: Set(pendingDeletions.keys)
+        )
+        let deletedIDs = pendingDeletions.keys.sorted()
 
         guard !deletedIDs.isEmpty else {
             enqueueNotification(AppNotification(message: "削除できませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
-            return
+            return result
         }
 
         await reload()
         enqueueNotification(
             AppNotification(
-                message: "\(deletedIDs.count)件を削除しました",
+                message: result.failedEntryIDs.isEmpty
+                    ? "\(deletedIDs.count)件を削除しました"
+                    : "\(deletedIDs.count)件を削除しました。\(result.failedEntryIDs.count)件は未処理です",
                 actionLabel: "元に戻す",
                 action: .undoPendingDeleteBatch(deletedIDs),
                 autoDismissAfter: 5
             )
         )
+        return result
     }
 
     func restoreFromArchive(entryID: Int64) async -> Bool {
@@ -1330,21 +1381,20 @@ final class URLSaverAppModel: ObservableObject {
     func prepareExportArchive(request: URLExportRequest) async throws -> PreparedExportArchive {
         _ = await syncSharedTagCloud(showFailureNotification: false)
         let services = services
-        let fallbackEntries = activeEntries + archivedEntries
-        let localTags = localTags
-        let localTagAssignments = localTagAssignments
         let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "iOS"
         let operation = Task.detached(priority: .userInitiated) {
             try Task.checkCancellation()
-            let entries = (try? services.repository.loadExportSnapshot()) ?? fallbackEntries
-            let sharedTagsByEntryID = (try? services.sharedTagCloud.loadVisibleTagsByEntryID(entries: entries))
-                ?? Dictionary(uniqueKeysWithValues: entries.map { ($0.id, []) })
+            let snapshot = try services.repository.loadStandardExportLocalSnapshot()
+            let sharedTagsByEntryID = try StandardExportPreparationGate.loadSharedTagsByEntryID(
+                entries: snapshot.entries,
+                bulkLookup: services.sharedTagCloud.loadVisibleTagsByEntryID(entries:)
+            )
             try Task.checkCancellation()
             return try URLExportArchiveBuilder.prepareExport(
                 request: request,
-                entries: entries,
-                localTags: localTags,
-                localTagAssignments: localTagAssignments,
+                entries: snapshot.entries,
+                localTags: snapshot.localTags,
+                localTagAssignments: snapshot.localTagAssignments,
                 sharedTagsByEntryID: sharedTagsByEntryID,
                 appVersion: appVersion
             )
@@ -1702,16 +1752,18 @@ final class URLSaverAppModel: ObservableObject {
         case .openArchive:
             selectedTab = .archive
         case .undoPendingDelete(let entryID):
+            cancelDeleteTimer(entryID: entryID)
             Task {
                 _ = try? services.repository.restore(entryID: entryID)
-                cancelDeleteTimer(entryID: entryID)
                 await reload()
             }
         case .undoPendingDeleteBatch(let entryIDs):
+            for entryID in entryIDs {
+                cancelDeleteTimer(entryID: entryID)
+            }
             Task {
                 for entryID in entryIDs {
                     _ = try? services.repository.restore(entryID: entryID)
-                    cancelDeleteTimer(entryID: entryID)
                 }
                 await reload()
             }
@@ -1865,6 +1917,8 @@ final class URLSaverAppModel: ObservableObject {
             enqueueNotification(AppNotification(message: "有効なURLではありませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
         case .noURLFound:
             enqueueNotification(AppNotification(message: "URLが見つかりませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
+        case .personalURLLimitReached:
+            enqueueNotification(AppNotification(message: "現在のプランの保存上限に達しました。不要なURLを整理してから追加してください", actionLabel: nil, action: nil, autoDismissAfter: 5))
         }
 
         if degradationNotice == .truncatedToFirstURL {
@@ -1932,6 +1986,8 @@ final class URLSaverAppModel: ObservableObject {
             enqueueNotification(AppNotification(message: "有効なURLではありませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
         case .noURLFound:
             enqueueNotification(AppNotification(message: "URLが見つかりませんでした", actionLabel: nil, action: nil, autoDismissAfter: 3))
+        case .personalURLLimitReached:
+            enqueueNotification(AppNotification(message: "現在のプランの保存上限に達しました。不要なURLを整理してから追加してください", actionLabel: nil, action: nil, autoDismissAfter: 5))
         }
 
         if report.degradationNotice == .truncatedToFirstURL {
@@ -1964,7 +2020,7 @@ final class URLSaverAppModel: ObservableObject {
 
     private func showNextNotificationIfNeeded() {
         guard currentNotification == nil, !notificationQueue.isEmpty else { return }
-        let next = notificationQueue.removeFirst()
+        let next = prepareNotificationForDisplay(notificationQueue.removeFirst())
         currentNotification = next
 
         if let autoDismissAfter = next.autoDismissAfter {
@@ -1980,6 +2036,41 @@ final class URLSaverAppModel: ObservableObject {
         }
     }
 
+    private func prepareNotificationForDisplay(_ notification: AppNotification) -> AppNotification {
+        let entryIDs: [Int64]
+        switch notification.action {
+        case .undoPendingDelete(let entryID):
+            entryIDs = [entryID]
+        case .undoPendingDeleteBatch(let values):
+            entryIDs = Array(Set(values)).sorted()
+        default:
+            return notification
+        }
+
+        let deadlines = try? services.repository.startPendingDeleteUndoWindow(
+            entryIDs: Set(entryIDs),
+            gracePeriod: 5,
+            now: Date()
+        )
+        guard let deadlines, Set(deadlines.keys) == Set(entryIDs) else {
+            for entryID in entryIDs {
+                cancelDeleteTimer(entryID: entryID)
+                _ = try? services.repository.restore(entryID: entryID)
+            }
+            Task { [weak self] in await self?.reload() }
+            return AppNotification(
+                message: "削除の取り消し猶予を開始できなかったため、削除を取り消しました",
+                actionLabel: nil,
+                action: nil,
+                autoDismissAfter: 4
+            )
+        }
+        for (entryID, deadline) in deadlines {
+            scheduleDeleteTimer(entryID: entryID, due: deadline)
+        }
+        return notification
+    }
+
     private func scheduleDeleteTimersForPersistedEntries() async {
         let pendingEntries = (try? services.repository.loadPendingDeleteEntries()) ?? []
         for entry in pendingEntries {
@@ -1990,18 +2081,26 @@ final class URLSaverAppModel: ObservableObject {
 
     private func scheduleDeleteTimer(entryID: Int64, due: Date) {
         cancelDeleteTimer(entryID: entryID)
+        let token = UUID()
+        deleteTimerTokens[entryID] = token
         deleteTimers[entryID] = Task { [weak self] in
             let seconds = max(0, due.timeIntervalSinceNow)
-            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-            try? self?.services.repository.finalizePendingDelete(entryID: entryID)
-            await self?.reload()
-            await MainActor.run {
-                self?.deleteTimers[entryID] = nil
+            guard await PendingDeleteTimerWaiter.wait(seconds: seconds),
+                  !Task.isCancelled,
+                  let self,
+                  self.deleteTimerTokens[entryID] == token else {
+                return
             }
+            try? self.services.repository.finalizePendingDelete(entryID: entryID)
+            await self.reload()
+            guard self.deleteTimerTokens[entryID] == token else { return }
+            self.deleteTimers[entryID] = nil
+            self.deleteTimerTokens[entryID] = nil
         }
     }
 
     private func cancelDeleteTimer(entryID: Int64) {
+        deleteTimerTokens.removeValue(forKey: entryID)
         deleteTimers.removeValue(forKey: entryID)?.cancel()
     }
 }
@@ -2340,7 +2439,7 @@ func rinbamMediaFileNamePrecedes(_ lhs: String, _ rhs: String) -> Bool {
     }
 }
 
-private enum IncomingURLRoute {
+enum IncomingURLRoute {
     case refresh
     case authCallback
     case invite(String)
@@ -2349,19 +2448,43 @@ private enum IncomingURLRoute {
     case save(String, ShareDegradationNotice?)
     case unknown
 
-    init(url: URL) {
+    init(url: URL, canonicalHTTPSHost: String? = nil) {
         let scheme = url.scheme?.lowercased()
         let host = url.host?.lowercased()
         let token = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        if scheme == "http" || scheme == "https" {
-            let pathComponents = url.pathComponents.filter { $0 != "/" }
-            if pathComponents.count == 2, pathComponents.first?.lowercased() == "invite" {
-                self = .invite(pathComponents[1])
-            } else if pathComponents.count == 1, pathComponents.first?.lowercased() == "promo" {
+        if scheme == "https" {
+            guard let host,
+                  Self.isCanonicalHost(host),
+                  !Self.hasForbiddenHTTPSAuthority(url),
+                  !Self.hasAmbiguousWebPath(url),
+                  let expectedHost = Self.canonicalHTTPSHost(from: canonicalHTTPSHost),
+                  host == expectedHost else {
+                self = .unknown
+                return
+            }
+            guard let encodedPath = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath else {
+                self = .unknown
+                return
+            }
+            if encodedPath == "/invite" || encodedPath == "/invite/" {
+                self = .invite("")
+            } else if encodedPath.hasPrefix("/invite/") {
+                let pathComponents = url.pathComponents.filter { $0 != "/" }
+                if pathComponents.count == 2, pathComponents.first == "invite" {
+                    self = .invite(pathComponents[1])
+                } else {
+                    self = .unknown
+                }
+            } else if encodedPath == "/promo" {
                 self = .promo(Self.promoCode(from: url))
             } else {
                 self = .unknown
             }
+            return
+        }
+
+        if scheme == "http" {
+            self = .unknown
             return
         }
 
@@ -2398,11 +2521,94 @@ private enum IncomingURLRoute {
         }
     }
 
+    private static func canonicalHTTPSHost(from injectedHost: String?) -> String? {
+        if let injectedHost {
+            let normalizedHost = injectedHost.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !normalizedHost.isEmpty,
+                  isCanonicalHost(normalizedHost),
+                  URL(string: "https://\(normalizedHost)")?.host?.lowercased() == normalizedHost else {
+                return nil
+            }
+            return normalizedHost
+        }
+
+        let config = SharedTagCloudConfig()
+        return canonicalHTTPSHost(fromBaseURL: config.inviteLinkBaseURL)
+    }
+
+    static func canonicalHTTPSHost(fromBaseURL baseURLString: String) -> String? {
+        guard let baseURL = URL(string: baseURLString),
+              baseURL.scheme?.lowercased() == "https",
+              !hasForbiddenHTTPSAuthority(baseURL),
+              let host = baseURL.host?.lowercased(),
+              isCanonicalHost(host) else {
+            return nil
+        }
+        return host
+    }
+
+    private static func isCanonicalHost(_ host: String) -> Bool {
+        let normalizedHost = host.lowercased()
+        guard !normalizedHost.isEmpty, !normalizedHost.hasSuffix(".") else { return false }
+        return normalizedHost
+            .split(separator: ".", omittingEmptySubsequences: false)
+            .allSatisfy { label in
+                let label = String(label)
+                guard !label.isEmpty,
+                      !label.hasPrefix("-"),
+                      !label.hasSuffix("-"),
+                      !label.hasPrefix("xn--") else {
+                    return false
+                }
+                return label.utf8.allSatisfy { byte in
+                    (byte >= 48 && byte <= 57) ||
+                        (byte >= 65 && byte <= 90) ||
+                        (byte >= 97 && byte <= 122) ||
+                        byte == 45
+                }
+            }
+    }
+
+    private static func hasForbiddenHTTPSAuthority(_ url: URL) -> Bool {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.percentEncodedUser == nil,
+              components.percentEncodedPassword == nil,
+              components.port == nil else {
+            return true
+        }
+        return hasExplicitPortSyntax(in: url)
+    }
+
+    private static func hasExplicitPortSyntax(in url: URL) -> Bool {
+        guard let schemeSeparator = url.absoluteString.range(of: "://") else { return true }
+        let remainder = url.absoluteString[schemeSeparator.upperBound...]
+        let authorityEnd = remainder.firstIndex { character in
+            character == "/" || character == "?" || character == "#"
+        } ?? remainder.endIndex
+        let authority = remainder[..<authorityEnd]
+        let hostPort = authority
+            .split(separator: "@", maxSplits: 1, omittingEmptySubsequences: false)
+            .last ?? authority
+        return hostPort.contains(":")
+    }
+
+    private static func hasAmbiguousWebPath(_ url: URL) -> Bool {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return true
+        }
+        let encodedPath = components.percentEncodedPath
+        let normalizedPath = encodedPath.lowercased()
+        return normalizedPath.contains("%2f") ||
+            normalizedPath.contains("%5c") ||
+            encodedPath.contains("\\") ||
+            components.path.contains("\\") ||
+            encodedPath.contains("//")
+    }
+
     private static func promoCode(from url: URL) -> String {
-        if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-           let code = components.queryItems?.first(where: { $0.name == "code" })?.value,
-           !code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return code.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+           let codeItem = queryItems.first(where: { $0.name == "code" }) {
+            return codeItem.value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         }
         guard let fragment = url.fragment else { return "" }
         let fragmentComponents = URLComponents(string: "urlsaver://promo?\(fragment)")

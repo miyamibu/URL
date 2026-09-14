@@ -11,7 +11,7 @@ redactionは既知パターンに対するbest-effortの安全策であり、未
 ## Constraints
 - `fetchedBody`全文はExport/MCP/AIへdefaultで出さない。
 - app-owned production secret、credential、access/refresh tokenはExport/preview/README/Receipt/logへ出さない。
-- ChatGPT手動共有ではURL、title、author、tag、collection、`bodySummary`、`bodyExcerpt`、`description`、`memoExcerpt`を含む全出力文字列を既知パターン検出に通す。excerpt系は長さ制限も適用する。
+- ChatGPT手動共有ではURL、title、author、tag、legacy compatibility用collectionフィールド、`bodySummary`、`bodyExcerpt`、`description`、`memoExcerpt`を含む全出力文字列を既知パターン検出に通す。collectionフィールドの検査は現行Collection UIを意味しない。excerpt系は長さ制限も適用する。
 - email、phone、token-like value、URLエンコードされたtoken区切り、一般的なprovider接頭辞型token（`sk-`、`ghp_`、`xoxb-`、`AIza`、`AKIA`等）、Supabase URL/JWT風文字列、local pathは既知のredaction対象として伏せ字にする。
 - 既知パターン検出を通過しても、未知の秘密、任意形式の認証情報、URL query/fragmentやtitle/tag等に埋め込まれた新形式の秘密が残る可能性を共有前画面に明示する。
 - 手動共有は、対象URLと出力内容をユーザーが確認し、未知の秘密が含まれていないことを明示確認してからZIP生成/OS共有へ進む。
@@ -28,7 +28,7 @@ redactionは既知パターンに対するbest-effortの安全策であり、未
 
 ## Validation
 - Android/iOS Export tests.
-- Android/iOS ChatGPT handoff tests: URL/title/author/tag/collection/summary/excerpt/memoの既知パターン、preview/archive一致、未知secret警告、明示確認なしの共有拒否。
+- Android/iOS ChatGPT handoff tests: URL/title/author/tag/legacy collection field/summary/excerpt/memoの既知パターン、preview/archive一致、未知secret警告、明示確認なしの共有拒否。
 - `python3 scripts/verify_mcp_contract.py`.
 - secret scan fallback using `rg`.
 

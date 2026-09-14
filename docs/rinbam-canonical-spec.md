@@ -12,12 +12,27 @@
 
 ## Source Of Truth
 1. 現在のユーザー明示指示
-2. `AGENTS.md`
-3. `DESIGN.md`
-4. 本書
-5. `docs/mobile-ui-regression-contract.md`
-6. 現在の Android/iOS/backend/DB 実装
-7. 実機確認結果と本番 backend 確認結果
+2. 本書の Adopted / Rejected / Current And Compatibility-Only Features
+3. `docs/mobile-ui-regression-contract.md` と `scripts/verify_mobile_ui_contract.py`
+4. 現在の Android/iOS/backend/DB の domain・schema・migration・実行経路
+5. `DESIGN.md` と承認済みのデザインデータ
+6. 同一snapshotの実機・ブラウザ・backend・DBの実行証拠
+7. 歴史的prompt、draft、古いscreenshot、自然言語の曖昧な選好
+
+`AGENTS.md` は作業の安全・運用契約であり、製品scopeの優先順位を別定義しない。上記で解消できない矛盾は勝手に一方を採用せず `SOURCE_CONFLICT` とし、ユーザー判断または同一snapshotの追加証拠で解消する。
+
+## Current And Compatibility-Only Features
+
+### Current user-facing features
+- 自作タグは端末内の現行整理機能。手動追加・共有保存の「保存先タグ」は、保存時に付ける自作タグを指す。
+- 共有タグとグループは、認証・クラウド設定・ロール条件付きの現行機能。
+- 検索、アーカイブ、通常エクスポート、ChatGPT手動受け渡しは各契約に従う現行機能。
+
+### Compatibility-only and retired
+- Collection / 保存先 / Android UserLabel の既存テーブル、列、過去migration、旧exportの `collection` フィールドは、既存データを開けるための互換殻として保持する。
+- Collection / UserLabel の作成、改名、並べ替え、削除、割当、フィルタ、保存先選択をactive UI・業務経路へ戻さない。
+- 互換フィールドがredaction・migration・import/export testに現れることは、現行ユーザー機能であることを意味しない。
+- 将来復活させる場合は、現在のユーザー明示指示、新しい正準仕様、data compatibility plan、Android/iOS parity、回帰test、実機証拠を先に用意する。
 
 ## Canonical IDs And Runtime Targets
 - Android applicationId: `jp.miyamibu.urlalbum`
@@ -426,7 +441,7 @@
 | Area | Required Checks |
 | --- | --- |
 | Mobile UI contract | `python3 scripts/verify_mobile_ui_contract.py` |
-| Canonical QA tracker | `python3 scripts/verify_canonical_story_tracker.py`; `status_code=PASS` and `remaining_gate=none` only for fully closed rows |
+| Canonical QA tracker | CSV編集後に `python3 scripts/sync_canonical_story_tracker.py`、続けて `python3 scripts/verify_canonical_story_tracker.py`; `status_code=PASS` and `remaining_gate=none` only for fully closed rows |
 | Android UI/source | `./gradlew assembleDebug` |
 | Android logic/DB | `./gradlew testDebugUnitTest` |
 | Android lint when broad UI changes | `./gradlew lintDebug` |

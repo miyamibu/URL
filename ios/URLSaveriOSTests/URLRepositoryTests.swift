@@ -60,6 +60,136 @@ final class URLRepositoryTests: XCTestCase {
         XCTAssertEqual(try repository.observeActiveSnapshot().count, 1)
     }
 
+    func testPersonalURLLimitIsAtomicAcrossConcurrentSaveEntrypoints() async throws {
+        let firstRepository = try URLRepository(databaseURL: databaseURL, personalURLLimit: 2)
+        let secondRepository = try URLRepository(databaseURL: databaseURL, personalURLLimit: 2)
+        XCTAssertEqual(
+            try firstRepository.saveFromManualInput("https://limit.example/seed").result,
+            .created
+        )
+
+        let results = try await withThrowingTaskGroup(of: ShareSaveResult.self, returning: [ShareSaveResult].self) { group in
+            group.addTask {
+                try firstRepository.saveFromManualInput("https://limit.example/manual").result
+            }
+            group.addTask {
+                try secondRepository.saveFromResolvedURL("https://limit.example/share").result
+            }
+            var values: [ShareSaveResult] = []
+            for try await value in group {
+                values.append(value)
+            }
+            return values
+        }
+
+        XCTAssertEqual(results.filter { $0 == .created }.count, 1)
+        XCTAssertEqual(results.filter { $0 == .personalURLLimitReached }.count, 1)
+        XCTAssertEqual(try firstRepository.observeActiveSnapshot().count, 2)
+    }
+
+    func testTenThousandBoundaryAllowsLastNewSaveThenRejectsNextWithoutBreakingDuplicate() throws {
+        let service = ServiceType.web.rawValue
+        let context = ContentContext.standard.rawValue
+        try repository.database.execute(
+            """
+            WITH digits(d) AS (
+                VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9)
+            ), numbers(n) AS (
+                SELECT ones.d + tens.d * 10 + hundreds.d * 100 + thousands.d * 1000
+                FROM digits ones
+                CROSS JOIN digits tens
+                CROSS JOIN digits hundreds
+                CROSS JOIN digits thousands
+            )
+            INSERT INTO url_entries (
+                original_url, normalized_url, display_url, open_url,
+                normalized_host, raw_source_host, service_type, content_context,
+                metadata_state, record_state, local_provenance_count,
+                shared_reference_count, created_at, updated_at
+            )
+            SELECT
+                'https://seed.example/' || n,
+                'https://seed.example/' || n,
+                'seed.example/' || n,
+                'https://seed.example/' || n,
+                'seed.example', 'seed.example', '\(service)', '\(context)',
+                'READY', 'ACTIVE', 1, 0, n, n
+            FROM numbers
+            WHERE n < 9999;
+            """
+        )
+        XCTAssertEqual(try repository.observeActiveSnapshot().count, 9_999)
+
+        let startedAt = Date()
+        let finalAllowed = try repository.saveFromResolvedURL("https://seed.example/final-allowed")
+        let rejected = try repository.saveFromManualInput("https://seed.example/rejected")
+        let duplicate = try repository.saveFromManualInput("https://seed.example/final-allowed")
+        let elapsed = Date().timeIntervalSince(startedAt)
+
+        XCTAssertEqual(finalAllowed.result, .created)
+        XCTAssertEqual(rejected.result, .personalURLLimitReached)
+        XCTAssertEqual(duplicate.result, .duplicateActive)
+        XCTAssertEqual(try repository.observeActiveSnapshot().count, 10_000)
+        XCTAssertLessThan(elapsed, 5.0, "10,000件境界の保存・拒否・重複確認が5秒を超えました")
+    }
+
+    func testBatchArchiveAndPendingDeleteTenThousandEntriesCompleteWithinFiveSecondsEach() throws {
+        let service = ServiceType.web.rawValue
+        let context = ContentContext.standard.rawValue
+        try repository.database.execute(
+            """
+            WITH digits(d) AS (
+                VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9)
+            ), numbers(n) AS (
+                SELECT ones.d + tens.d * 10 + hundreds.d * 100 + thousands.d * 1000
+                FROM digits ones
+                CROSS JOIN digits tens
+                CROSS JOIN digits hundreds
+                CROSS JOIN digits thousands
+            )
+            INSERT INTO url_entries (
+                original_url, normalized_url, display_url, open_url,
+                normalized_host, raw_source_host, service_type, content_context,
+                metadata_state, record_state, local_provenance_count,
+                shared_reference_count, created_at, updated_at
+            )
+            SELECT
+                'https://batch.example/' || n,
+                'https://batch.example/' || n,
+                'batch.example/' || n,
+                'https://batch.example/' || n,
+                'batch.example', 'batch.example', '\(service)', '\(context)',
+                'READY', 'ACTIVE', 1, 0, n, n
+            FROM numbers;
+            """
+        )
+        let entryIDs = Set(try repository.observeActiveSnapshot().map(\.id))
+        XCTAssertEqual(entryIDs.count, 10_000)
+
+        let archiveStartedAt = Date()
+        let archivedIDs = try repository.archive(entryIDs: entryIDs)
+        let archiveElapsed = Date().timeIntervalSince(archiveStartedAt)
+
+        XCTAssertEqual(archivedIDs.count, 10_000)
+        XCTAssertLessThan(archiveElapsed, 5.0, "1万件のアーカイブが5秒を超えました")
+
+        try repository.database.execute(
+            """
+            UPDATE url_entries
+            SET record_state = 'ACTIVE', archived_at = NULL,
+                pending_deletion_until = NULL, updated_at = created_at;
+            """
+        )
+
+        let pendingStartedAt = Date()
+        let pendingDeletions = try repository.markPendingDelete(entryIDs: entryIDs, gracePeriod: 5)
+        let pendingElapsed = Date().timeIntervalSince(pendingStartedAt)
+
+        XCTAssertEqual(pendingDeletions.count, 10_000)
+        XCTAssertEqual(Set(pendingDeletions.values.map(\.timeIntervalSince1970)).count, 1)
+        XCTAssertLessThan(pendingElapsed, 5.0, "1万件の削除待ち設定が5秒を超えました")
+    }
+
     func testManualInputUppercaseSchemeAndDefaultPortDeduplicates() throws {
         let created = try repository.saveFromManualInput("HTTPS://Example.COM:443/manual-normalize/#frag")
         XCTAssertEqual(created.result, .created)
@@ -220,11 +350,47 @@ final class URLRepositoryTests: XCTestCase {
         XCTAssertNotNil(try repository.markPendingDelete(entryID: third.entryID!, gracePeriod: 30))
         XCTAssertNotNil(try repository.markPendingDelete(entryID: second.entryID!, gracePeriod: 30))
         XCTAssertEqual(try repository.loadEntry(id: third.entryID!)?.recordState, .pendingDelete)
-        XCTAssertNotNil(try repository.loadEntry(id: third.entryID!)?.pendingDeletionUntil)
+        XCTAssertNil(try repository.loadEntry(id: third.entryID!)?.pendingDeletionUntil)
         XCTAssertEqual(try repository.loadEntry(id: second.entryID!)?.recordState, .pendingDelete)
 
         XCTAssertTrue(try repository.restore(entryID: second.entryID!))
         XCTAssertEqual(try repository.loadEntry(id: second.entryID!)?.recordState, .archived)
+    }
+
+    func testBatchPendingDeleteUsesCommonDeadlineAndReturnsOnlySuccessfulIDs() throws {
+        let first = try XCTUnwrap(repository.saveFromManualInput("https://example.com/batch-deadline-1").entryID)
+        let second = try XCTUnwrap(repository.saveFromManualInput("https://example.com/batch-deadline-2").entryID)
+        let alreadyPending = try XCTUnwrap(repository.saveFromManualInput("https://example.com/batch-deadline-3").entryID)
+        XCTAssertNotNil(try repository.markPendingDelete(entryID: alreadyPending))
+
+        let pending = try repository.markPendingDelete(
+            entryIDs: [first, second, alreadyPending, Int64.max],
+            gracePeriod: 5
+        )
+
+        XCTAssertEqual(Set(pending.keys), [first, second])
+        XCTAssertEqual(Set(pending.values.map(\.timeIntervalSince1970)).count, 1)
+        XCTAssertNil(try repository.loadEntry(id: first)?.pendingDeletionUntil)
+        XCTAssertNil(try repository.loadEntry(id: second)?.pendingDeletionUntil)
+        let displayNow = Date(timeIntervalSince1970: 50_000)
+        let activeUndo = try repository.startPendingDeleteUndoWindow(
+            entryIDs: [first, second],
+            gracePeriod: 5,
+            now: displayNow
+        )
+        let persistedFirst = try XCTUnwrap(repository.loadEntry(id: first)?.pendingDeletionUntil)
+        let persistedSecond = try XCTUnwrap(repository.loadEntry(id: second)?.pendingDeletionUntil)
+        XCTAssertEqual(
+            persistedFirst.timeIntervalSince1970,
+            try XCTUnwrap(activeUndo[first]).timeIntervalSince1970,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            persistedSecond.timeIntervalSince1970,
+            try XCTUnwrap(activeUndo[second]).timeIntervalSince1970,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(try repository.loadEntry(id: alreadyPending)?.recordState, .pendingDelete)
     }
 
     func testMetadataUpdateDoesNotChangeUpdatedAt() async throws {
@@ -594,8 +760,16 @@ final class URLRepositoryTests: XCTestCase {
             binds: [sql(entryID)]
         )
 
+        let displayNow = Date(timeIntervalSince1970: 100_000)
         XCTAssertNotNil(try repository.markPendingDelete(entryID: entryID, gracePeriod: 1))
-        try repository.cleanupExpiredPendingDeletes(now: Date(timeIntervalSinceNow: 2))
+        XCTAssertNotNil(
+            try repository.startPendingDeleteUndoWindow(
+                entryIDs: [entryID],
+                gracePeriod: 1,
+                now: displayNow
+            )[entryID]
+        )
+        try repository.cleanupExpiredPendingDeletes(now: displayNow.addingTimeInterval(2))
 
         XCTAssertTrue(try repository.observeActiveSnapshot().isEmpty)
 
@@ -603,5 +777,133 @@ final class URLRepositoryTests: XCTestCase {
         XCTAssertEqual(retained.localProvenanceCount, 0)
         XCTAssertEqual(retained.sharedReferenceCount, 1)
         XCTAssertEqual(retained.recordState, .active)
+    }
+
+    func testProvisionalPendingDeleteCannotFinalizeOrCleanupBeforeUndoDisplay() throws {
+        let entryID = try XCTUnwrap(
+            repository.saveFromManualInput("https://example.com/provisional-delete").entryID
+        )
+        XCTAssertNotNil(try repository.markPendingDelete(entryID: entryID, gracePeriod: 5))
+
+        let longAfterInitialRequest = Date(timeIntervalSinceNow: 60)
+        try repository.finalizePendingDelete(entryID: entryID, now: longAfterInitialRequest)
+        try repository.cleanupExpiredPendingDeletes(now: longAfterInitialRequest)
+        XCTAssertEqual(try repository.loadEntry(id: entryID)?.recordState, .pendingDelete)
+        XCTAssertNil(try repository.loadEntry(id: entryID)?.pendingDeletionUntil)
+
+        let displayNow = Date(timeIntervalSince1970: 200_000)
+        let deadline = try XCTUnwrap(
+            repository.startPendingDeleteUndoWindow(
+                entryIDs: [entryID],
+                gracePeriod: 5,
+                now: displayNow
+            )[entryID]
+        )
+        XCTAssertEqual(deadline, displayNow.addingTimeInterval(5))
+        try repository.finalizePendingDelete(entryID: entryID, now: displayNow.addingTimeInterval(4.999))
+        XCTAssertNotNil(try repository.loadEntry(id: entryID))
+        try repository.finalizePendingDelete(entryID: entryID, now: displayNow.addingTimeInterval(5))
+        XCTAssertNil(try repository.loadEntry(id: entryID))
+    }
+
+    func testUndoRestoreAndFinalizeRaceIsAtomicAndLinearizable() async throws {
+        let restoreRepository = try URLRepository(databaseURL: databaseURL)
+        let finalizeRepository = try URLRepository(databaseURL: databaseURL)
+
+        for iteration in 0..<100 {
+            let entryID = try XCTUnwrap(
+                repository.saveFromManualInput(
+                    "https://example.com/restore-finalize-race-\(iteration)"
+                ).entryID
+            )
+            let displayNow = Date(timeIntervalSince1970: 400_000 + Double(iteration))
+            XCTAssertNotNil(try repository.markPendingDelete(entryID: entryID, gracePeriod: 0))
+            XCTAssertNotNil(
+                try repository.startPendingDeleteUndoWindow(
+                    entryIDs: [entryID],
+                    gracePeriod: 0,
+                    now: displayNow
+                )[entryID]
+            )
+
+            let restoreTask = Task.detached {
+                try restoreRepository.restore(entryID: entryID)
+            }
+            let finalizeTask = Task.detached {
+                try finalizeRepository.finalizePendingDelete(entryID: entryID, now: displayNow)
+            }
+            let restored = try await restoreTask.value
+            try await finalizeTask.value
+
+            let persisted = try repository.loadEntry(id: entryID)
+            XCTAssertEqual(
+                restored,
+                persisted != nil,
+                "restore=true must never be followed by deleting the restored row (iteration=\(iteration))"
+            )
+            if restored {
+                XCTAssertEqual(persisted?.recordState, .active)
+                XCTAssertNil(persisted?.pendingDeletionUntil)
+            }
+        }
+    }
+
+    func testRestoreSuccessMeansTheRowSurvivesConditionalFinalize() throws {
+        let restoreFirstID = try XCTUnwrap(
+            repository.saveFromManualInput("https://example.com/restore-wins").entryID
+        )
+        let restoreFirstNow = Date(timeIntervalSince1970: 500_000)
+        XCTAssertNotNil(try repository.markPendingDelete(entryID: restoreFirstID, gracePeriod: 0))
+        _ = try repository.startPendingDeleteUndoWindow(
+            entryIDs: [restoreFirstID],
+            gracePeriod: 0,
+            now: restoreFirstNow
+        )
+
+        XCTAssertTrue(try repository.restore(entryID: restoreFirstID))
+        try repository.finalizePendingDelete(entryID: restoreFirstID, now: restoreFirstNow)
+        XCTAssertEqual(try repository.loadEntry(id: restoreFirstID)?.recordState, .active)
+
+        let finalizeFirstID = try XCTUnwrap(
+            repository.saveFromManualInput("https://example.com/finalize-wins").entryID
+        )
+        let finalizeFirstNow = Date(timeIntervalSince1970: 500_100)
+        XCTAssertNotNil(try repository.markPendingDelete(entryID: finalizeFirstID, gracePeriod: 0))
+        _ = try repository.startPendingDeleteUndoWindow(
+            entryIDs: [finalizeFirstID],
+            gracePeriod: 0,
+            now: finalizeFirstNow
+        )
+
+        try repository.finalizePendingDelete(entryID: finalizeFirstID, now: finalizeFirstNow)
+        XCTAssertFalse(try repository.restore(entryID: finalizeFirstID))
+        XCTAssertNil(try repository.loadEntry(id: finalizeFirstID))
+    }
+
+    func testStartupRestoresOnlyProvisionalPendingAndKeepsActiveUndoWindow() throws {
+        let provisional = try XCTUnwrap(
+            repository.saveFromManualInput("https://example.com/provisional-restart").entryID
+        )
+        let activeUndo = try XCTUnwrap(
+            repository.saveFromManualInput("https://example.com/active-undo-restart").entryID
+        )
+        XCTAssertTrue(try repository.archive(entryID: provisional))
+        _ = try repository.markPendingDelete(entryIDs: [provisional, activeUndo])
+        let displayNow = Date(timeIntervalSince1970: 300_000)
+        _ = try repository.startPendingDeleteUndoWindow(
+            entryIDs: [activeUndo],
+            gracePeriod: 5,
+            now: displayNow
+        )
+
+        try repository.restoreProvisionalPendingDeletes(now: displayNow.addingTimeInterval(1))
+
+        XCTAssertEqual(try repository.loadEntry(id: provisional)?.recordState, .archived)
+        XCTAssertNil(try repository.loadEntry(id: provisional)?.pendingDeletionUntil)
+        XCTAssertEqual(try repository.loadEntry(id: activeUndo)?.recordState, .pendingDelete)
+        XCTAssertEqual(
+            try repository.loadEntry(id: activeUndo)?.pendingDeletionUntil,
+            displayNow.addingTimeInterval(5)
+        )
     }
 }

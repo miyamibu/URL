@@ -435,7 +435,7 @@ class DefaultTagRepository(
                 duplicateSkipped = 0,
                 failed = 0,
                 cancelled = true,
-                message = "ローンチ版の保存上限に達しました。不要なURLを整理してから追加してください。",
+                message = "現在のプランの保存上限に達しました。不要なURLを整理してから追加してください。",
             )
         }
 

@@ -2,12 +2,18 @@ import SwiftUI
 
 @main
 struct URLSaveriOSApp: App {
-    @StateObject private var model = URLSaverAppModel(services: .shared)
+    @StateObject private var model: URLSaverAppModel
     @AppStorage("appThemeMode") private var themeModeRaw = AppThemeMode.system.rawValue
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
-        AppBackgroundScheduler.register(services: .shared)
+        let databaseURL = SharedContainer.databaseURL()
+        FirstRunOnboardingStore.initialize(
+            hadExistingDatabaseBeforeStartup: FileManager.default.fileExists(atPath: databaseURL.path)
+        )
+        let services = AppServices.shared
+        _model = StateObject(wrappedValue: URLSaverAppModel(services: services))
+        AppBackgroundScheduler.register(services: services)
     }
 
     var body: some Scene {

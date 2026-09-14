@@ -64,27 +64,10 @@ PY
   fi
 done
 
-reset_password_page="web/invite-link/auth/reset-password/index.html"
-reset_password_cdn_url='src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.53.0/dist/umd/supabase.min.js"'
-reset_password_cdn_sri='integrity="sha384-H9dj4GG/hgfwNjlYa740FF9geXbzyXSgepgoobvIAW49UUAcfk+GAiBnLDIs4hRh"'
-if [[ -f "$reset_password_page" ]] \
-  && grep -Fq "$reset_password_cdn_url" "$reset_password_page" \
-  && grep -Fq "$reset_password_cdn_sri" "$reset_password_page" \
-  && grep -Fq 'crossorigin="anonymous"' "$reset_password_page"; then
-  pass "reset-password CDN script has the verified SRI hash"
+if python3 scripts/test_public_web_contract.py; then
+  pass "public reset/invite pages have matching strict CSP, recovery paths, and local responses"
 else
-  fail "NO_GO reset-password CDN script is missing the verified SRI hash"
-fi
-
-if [[ -f web/invite-link/vercel.json ]] \
-  && grep -Fq '"source": "/auth/reset-password/:path*"' web/invite-link/vercel.json \
-  && grep -Fq '"key": "Content-Security-Policy"' web/invite-link/vercel.json \
-  && grep -Fq 'sha256-RAh35s8ZX25KPMRobh7ugOpopFd2XiiFHjsEuQ8/k90=' web/invite-link/vercel.json \
-  && grep -Fq 'sha256-IkDFeozcg3Saa4fKYO3EhGCqzC67yl4xj9I6f8cINtI=' web/invite-link/vercel.json \
-  && ! grep -Eq 'unsafe-inline|unsafe-eval' web/invite-link/vercel.json; then
-  pass "reset-password route has a strict hash-based CSP"
-else
-  fail "NO_GO reset-password route is missing a strict hash-based CSP"
+  fail "NO_GO public reset/invite web contract verification failed"
 fi
 
 grep -q 'applicationId = "jp.miyamibu.urlalbum"' app/build.gradle.kts \

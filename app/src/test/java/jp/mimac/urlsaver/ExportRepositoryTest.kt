@@ -12,8 +12,10 @@ import jp.mimac.urlsaver.data.ExportOutputFormat
 import jp.mimac.urlsaver.data.ExportRecordStateFilter
 import jp.mimac.urlsaver.data.ExportRequest
 import jp.mimac.urlsaver.data.ExportScope
+import jp.mimac.urlsaver.data.PreparedExportArchive
 import jp.mimac.urlsaver.data.SharedTagAuthSession
 import jp.mimac.urlsaver.data.SharedTagAuthSessionProvider
+import jp.mimac.urlsaver.data.SizeLimitedExportOutputStream
 import jp.mimac.urlsaver.data.TagEntity
 import jp.mimac.urlsaver.data.TagUrlCrossRef
 import jp.mimac.urlsaver.data.UrlEntryEntity
@@ -29,6 +31,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
@@ -46,9 +52,14 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import java.io.ByteArrayInputStream
+import java.io.File
+import java.io.IOException
+import java.io.OutputStream
 import java.security.MessageDigest
 import java.time.Instant
+import java.util.UUID
 import java.util.zip.ZipInputStream
+import kotlin.io.path.createTempDirectory
 
 @RunWith(RobolectricTestRunner::class)
 class ExportRepositoryTest {
@@ -175,7 +186,7 @@ class ExportRepositoryTest {
         assertTrue(archive.fileName.endsWith(".zip"))
         assertEquals("application/zip", archive.mimeType)
 
-        val payload = parseZipPayload(archive.bytes)
+        val payload = parseZipPayload(archive.file.readBytes())
         val normalizedUrls = payload.entries.map { it.stringValue("normalizedUrl") }
         assertEquals(listOf(fixture.sharedUrl), normalizedUrls)
         assertFalse(normalizedUrls.contains(fixture.localUrl))
@@ -209,7 +220,7 @@ class ExportRepositoryTest {
         assertTrue(archive.fileName.endsWith(".json"))
         assertEquals("application/json", archive.mimeType)
 
-        val payload = parseJsonPayload(archive.bytes)
+        val payload = parseJsonPayload(archive.file.readBytes())
         val normalizedUrls = payload.entries.map { it.stringValue("normalizedUrl") }
         assertEquals(listOf(fixture.sharedUrl), normalizedUrls)
         assertFalse(normalizedUrls.contains(fixture.localUrl))
@@ -269,7 +280,7 @@ class ExportRepositoryTest {
             ),
         )
 
-        val payload = parseZipPayload(archive.bytes)
+        val payload = parseZipPayload(archive.file.readBytes())
         assertEquals(1, archive.entryCount)
         assertTrue(payload.files.getValue("entries.jsonl").contains(sharedOnlyUrl))
         assertTrue(payload.files.getValue("entries.jsonl").contains("shared export"))
@@ -300,7 +311,7 @@ class ExportRepositoryTest {
             ),
         )
 
-        val payload = parseZipPayload(archive.bytes)
+        val payload = parseZipPayload(archive.file.readBytes())
         assertTrue(payload.files.containsKey("schema.json"))
         assertTrue(payload.files.containsKey("README_FOR_AI.md"))
         assertTrue(payload.files.containsKey("redaction_report.json"))
@@ -344,7 +355,7 @@ class ExportRepositoryTest {
             ),
         )
 
-        val payload = parseZipPayload(archive.bytes)
+        val payload = parseZipPayload(archive.file.readBytes())
         val entry = payload.entries.single()
         assertEquals(fixture.sharedUrl, entry.stringValue("normalizedUrl"))
         assertFalse(entry.getValue("aiEligible").jsonPrimitive.boolean)
@@ -369,10 +380,10 @@ class ExportRepositoryTest {
         val jsonRequest = zipRequest.copy(outputFormat = ExportOutputFormat.JSON)
 
         val zipArchive = repository.prepareExport(zipRequest)
-        val zipPayload = parseZipPayload(zipArchive.bytes)
+        val zipPayload = parseZipPayload(zipArchive.file.readBytes())
 
         val jsonArchive = repository.prepareExport(jsonRequest)
-        val jsonPayload = parseJsonPayload(jsonArchive.bytes)
+        val jsonPayload = parseJsonPayload(jsonArchive.file.readBytes())
 
         val zipUrls = zipPayload.entries.map { it.stringValue("normalizedUrl") }.toSet()
         val jsonUrls = jsonPayload.entries.map { it.stringValue("normalizedUrl") }.toSet()
@@ -395,6 +406,182 @@ class ExportRepositoryTest {
             listOf(ExportOutputFormat.ZIP, ExportOutputFormat.JSON),
             ExportOutputFormat.entries,
         )
+    }
+
+    @Test
+    fun sizeLimitedOutputStream_acceptsExact25MiBAndRejectsNextByte() {
+        val discard = object : OutputStream() {
+            override fun write(value: Int) = Unit
+            override fun write(buffer: ByteArray, offset: Int, length: Int) = Unit
+        }
+        val maximumBytes = 25L * 1024L * 1024L
+        val output = SizeLimitedExportOutputStream(discard, maximumBytes)
+        val chunk = ByteArray(64 * 1024)
+        repeat((maximumBytes / chunk.size).toInt()) {
+            output.write(chunk)
+        }
+
+        assertTrue(runCatching { output.write(0) }.isFailure)
+    }
+
+    @Test
+    fun chatGptArchive_sizeFailureRemovesPartialOperationDirectory() = runBlocking {
+        val tagId = db.tagDao().insertTag(TagEntity(name = "size-limit", createdAt = 1L))
+        val entryId = insertEntry(
+            normalizedUrl = "https://example.com/size-limit",
+            recordState = RecordState.ACTIVE,
+            memo = "m".repeat(2_000),
+            serviceType = ServiceType.WEB,
+            createdAt = 1L,
+        )
+        db.tagDao().insertCrossRef(TagUrlCrossRef(tagId = tagId, entryId = entryId))
+        val preview = repository.loadChatGptExportPreview(setOf(tagId))
+        val outputDirectory = createTempDirectory("rinbam-export-size-").toFile()
+        val limitedRepository = createRepository(
+            archiveDirectory = outputDirectory,
+            maximumChatGptArchiveBytes = 256,
+        )
+
+        val failure = runCatching {
+            limitedRepository.prepareChatGptExport(setOf(tagId), preview.snapshotToken)
+        }.exceptionOrNull()
+
+        assertTrue(failure is IllegalArgumentException)
+        assertTrue(failure?.message.orEmpty().contains("25 MiB"))
+        assertTrue(outputDirectory.listFiles().orEmpty().isEmpty())
+    }
+
+    @Test
+    fun archiveCancellationRemovesPartialOperationDirectory() = runBlocking {
+        insertEntry(
+            normalizedUrl = "https://example.com/cancel-file-export",
+            recordState = RecordState.ACTIVE,
+            memo = "cancel",
+            serviceType = ServiceType.WEB,
+            createdAt = 1L,
+        )
+        val outputDirectory = createTempDirectory("rinbam-export-cancel-").toFile()
+        val enteredWrite = CompletableDeferred<Unit>()
+        val releaseWrite = CompletableDeferred<Unit>()
+        val cancellableRepository = createRepository(
+            archiveDirectory = outputDirectory,
+            archiveWriteCheckpoint = {
+                enteredWrite.complete(Unit)
+                releaseWrite.await()
+                currentCoroutineContext().ensureActive()
+            },
+        )
+        val export = async {
+            cancellableRepository.prepareExport(
+                ExportRequest(
+                    scope = ExportScope.ALL,
+                    outputFormat = ExportOutputFormat.ZIP,
+                ),
+            )
+        }
+        enteredWrite.await()
+        export.cancel()
+        releaseWrite.complete(Unit)
+
+        assertTrue(runCatching { export.await() }.isFailure)
+        assertTrue(outputDirectory.listFiles().orEmpty().isEmpty())
+    }
+
+    @Test
+    fun archiveWriterExceptionRemovesPartialOperationDirectory() = runBlocking {
+        insertEntry(
+            normalizedUrl = "https://example.com/exception-file-export",
+            recordState = RecordState.ACTIVE,
+            memo = "exception",
+            serviceType = ServiceType.WEB,
+            createdAt = 1L,
+        )
+        val outputDirectory = createTempDirectory("rinbam-export-exception-").toFile()
+        val failingRepository = createRepository(
+            archiveDirectory = outputDirectory,
+            archiveWriteCheckpoint = { error("injected archive failure") },
+        )
+
+        val failure = runCatching {
+            failingRepository.prepareExport(
+                ExportRequest(
+                    scope = ExportScope.ALL,
+                    outputFormat = ExportOutputFormat.ZIP,
+                ),
+            )
+        }.exceptionOrNull()
+
+        assertTrue(failure?.message.orEmpty().contains("injected archive failure"))
+        assertTrue(outputDirectory.listFiles().orEmpty().isEmpty())
+    }
+
+    @Test
+    fun ownershipMarkerWriteFailureRemovesCreatedOperationDirectory() = runBlocking {
+        insertEntry(
+            normalizedUrl = "https://example.com/marker-write-failure",
+            recordState = RecordState.ACTIVE,
+            memo = "marker",
+            serviceType = ServiceType.WEB,
+            createdAt = 1L,
+        )
+        val outputDirectory = createTempDirectory("rinbam-export-marker-failure-").toFile()
+        val failingRepository = createRepository(
+            archiveDirectory = outputDirectory,
+            ownershipMarkerWriter = { throw IOException("injected marker failure") },
+        )
+
+        val failure = runCatching {
+            failingRepository.prepareExport(
+                ExportRequest(scope = ExportScope.ALL, outputFormat = ExportOutputFormat.ZIP),
+            )
+        }.exceptionOrNull()
+
+        assertTrue(failure is IOException)
+        assertTrue(outputDirectory.listFiles().orEmpty().isEmpty())
+    }
+
+    @Test
+    fun releasePreparedArchiveDeletesOnlyRepositoryOwnedUuidDirectory() = runBlocking {
+        insertEntry(
+            normalizedUrl = "https://example.com/release-owned-export",
+            recordState = RecordState.ACTIVE,
+            memo = "owned",
+            serviceType = ServiceType.WEB,
+            createdAt = 1L,
+        )
+        val outputDirectory = createTempDirectory("rinbam-export-release-").toFile()
+        val ownedRepository = createRepository(archiveDirectory = outputDirectory)
+        val ownedArchive = ownedRepository.prepareExport(
+            ExportRequest(scope = ExportScope.ALL, outputFormat = ExportOutputFormat.JSON),
+        )
+        val ownedOperationDirectory = requireNotNull(ownedArchive.file.parentFile)
+
+        assertTrue(ownedArchive.file.isFile)
+        assertTrue(ownedRepository.releasePreparedArchive(ownedArchive))
+        assertFalse(ownedOperationDirectory.exists())
+
+        val unownedDirectory = File(outputDirectory, UUID.randomUUID().toString()).apply { mkdirs() }
+        val unownedFile = File(unownedDirectory, "unowned.zip").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+        val unownedArchive = PreparedExportArchive(
+            fileName = unownedFile.name,
+            file = unownedFile,
+            byteCount = unownedFile.length(),
+            entryCount = 1,
+            mimeType = ExportOutputFormat.ZIP.mimeType,
+        )
+        val outsideFile = File.createTempFile("rinbam-unowned-export", ".zip").apply {
+            writeBytes(byteArrayOf(4, 5, 6))
+        }
+        val outsideArchive = unownedArchive.copy(
+            fileName = outsideFile.name,
+            file = outsideFile,
+            byteCount = outsideFile.length(),
+        )
+
+        assertFalse(ownedRepository.releasePreparedArchive(unownedArchive))
+        assertTrue(unownedFile.isFile)
+        assertFalse(ownedRepository.releasePreparedArchive(outsideArchive))
+        assertTrue(outsideFile.isFile)
     }
 
     @Test
@@ -525,7 +712,7 @@ class ExportRepositoryTest {
         assertTrue(preview.entries.none { entry -> "未選択" in entry.localTagNames })
 
         val archive = repository.prepareChatGptExport(selectedTagIds, preview.snapshotToken)
-        val payload = parseZipPayload(archive.bytes)
+        val payload = parseZipPayload(archive.file.readBytes())
 
         assertTrue(archive.fileName.startsWith("rinbam-chatgpt-"))
         assertTrue(archive.fileName.endsWith(".zip"))
@@ -782,7 +969,7 @@ class ExportRepositoryTest {
         assertTrue(preview.entries.single().archiveEntryJson.contains(unknownSecret))
 
         val archive = repository.prepareChatGptExport(setOf(selectedTagId), preview.snapshotToken)
-        val files = unzip(archive.bytes)
+        val files = unzip(archive.file.readBytes())
         files.forEach { (path, content) ->
             assertFalse("ZIP path must not contain raw secret", path.contains(secret, ignoreCase = true))
             assertFalse("$path must not contain raw secret", content.contains(secret, ignoreCase = true))
@@ -864,7 +1051,7 @@ class ExportRepositoryTest {
         }
 
         val archive = repository.prepareChatGptExport(setOf(tagId), preview.snapshotToken)
-        val files = unzip(archive.bytes)
+        val files = unzip(archive.file.readBytes())
         val markdownPaths = files.keys.filter { path -> path.startsWith("entries/") }
         preview.entries.forEach { entry ->
             assertTrue(markdownPaths.any { path -> path.contains(entry.publicSafeId.take(12)) })
@@ -957,7 +1144,7 @@ class ExportRepositoryTest {
                 outputFormat = ExportOutputFormat.ZIP,
             ),
         )
-        val payload = parseZipPayload(archive.bytes)
+        val payload = parseZipPayload(archive.file.readBytes())
 
         assertTrue(payload.manifest.containsKey("selectedTagIds"))
         val entry = payload.entries.single()
@@ -1204,6 +1391,10 @@ class ExportRepositoryTest {
 
     private fun createRepository(
         syncBeforeExport: suspend () -> Boolean = { true },
+        archiveDirectory: File = createTempDirectory("rinbam-export-repository-").toFile(),
+        maximumChatGptArchiveBytes: Long = 25L * 1024L * 1024L,
+        archiveWriteCheckpoint: suspend () -> Unit = { currentCoroutineContext().ensureActive() },
+        ownershipMarkerWriter: (File) -> Unit = { marker -> marker.writeText("rinbam-owned-temporary-export-v1") },
     ): DefaultExportRepository {
         return DefaultExportRepository(
             urlEntryDao = db.urlEntryDao(),
@@ -1213,6 +1404,10 @@ class ExportRepositoryTest {
             syncBeforeExport = syncBeforeExport,
             clock = clock,
             appVersion = "1.0-test",
+            archiveDirectory = archiveDirectory,
+            maximumChatGptArchiveBytes = maximumChatGptArchiveBytes,
+            archiveWriteCheckpoint = archiveWriteCheckpoint,
+            ownershipMarkerWriter = ownershipMarkerWriter,
         )
     }
 

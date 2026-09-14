@@ -11,6 +11,7 @@ final class ShareViewController: UIViewController {
         static let minimumPickerHeight: CGFloat = 360
         static let maximumPickerHeight: CGFloat = 700
         static let maximumTagAreaHeight: CGFloat = 230
+        static let saveTimeoutNanoseconds: UInt64 = 20_000_000_000
     }
 
     private let statusLabel = UILabel()
@@ -38,8 +39,19 @@ final class ShareViewController: UIViewController {
     private var resultDirectConstraints: [NSLayoutConstraint] = []
     private var repository: URLRepository?
     private var localTags: [LocalTagSummary] = []
-    private var pendingShare: PendingExtensionShare?
+    private let pendingOperationStore = ShareExtensionPendingOperationStore()
+    private var pendingOperation: ShareExtensionPendingOperation?
     private var selectedLocalTagIDs = Set<Int64>()
+    private var isSaving = false
+    private var processTask: Task<Void, Never>?
+    private var saveTask: Task<Void, Never>?
+    private var saveTimeoutTask: Task<Void, Never>?
+    private var timedOutOperationID: UUID?
+    private var lifecycle = ShareExtensionLifecycle()
+
+    private var isTagSelectionLocked: Bool {
+        isSaving || pendingOperation?.isTagSelectionLocked == true
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -48,7 +60,8 @@ final class ShareViewController: UIViewController {
         view.isOpaque = true
         configureUI()
 
-        Task {
+        processTask = Task { [weak self] in
+            guard let self else { return }
             await processShare()
         }
     }
@@ -56,6 +69,21 @@ final class ShareViewController: UIViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         preferredContentSize = CGSize(width: view.bounds.width, height: panelHeightConstraint?.constant ?? Layout.minimumPickerHeight)
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        if lifecycle.shouldCancelTasksWhenViewDisappears {
+            processTask?.cancel()
+            saveTask?.cancel()
+            saveTimeoutTask?.cancel()
+        }
+    }
+
+    deinit {
+        processTask?.cancel()
+        saveTask?.cancel()
+        saveTimeoutTask?.cancel()
     }
 
     private func configureUI() {
@@ -208,7 +236,28 @@ final class ShareViewController: UIViewController {
 
     @objc
     private func finishExtension() {
+        clearPendingOperationIfCurrent()
+        completeExtensionRequest()
+    }
+
+    @objc
+    private func cancelExtension() {
+        clearPendingOperationIfCurrent()
+        completeExtensionRequest()
+    }
+
+    private func completeExtensionRequest() {
+        lifecycle.beginCompletion()
+        processTask?.cancel()
+        saveTask?.cancel()
+        saveTimeoutTask?.cancel()
         extensionContext?.completeRequest(returningItems: nil)
+    }
+
+    private func clearPendingOperationIfCurrent() {
+        guard let operationID = pendingOperation?.operationID else { return }
+        try? pendingOperationStore.clear(operationID: operationID)
+        pendingOperation = nil
     }
 
     private func makeHostAppRefreshURL() -> URL? {
@@ -369,19 +418,47 @@ final class ShareViewController: UIViewController {
 
     private func presentTagPicker(repository: URLRepository, share: PendingExtensionShare) async {
         let tags = (try? repository.loadLocalTags()) ?? []
+        let storedOperation = try? pendingOperationStore.load()
+        let recoveredOperation = storedOperation.flatMap { operation in
+            operation.matches(
+                urls: share.urls,
+                memo: share.memo,
+                degradationNotice: share.degradationNotice
+            ) ? operation : nil
+        }
+        let operation = recoveredOperation ?? ShareExtensionPendingOperation(
+            originalURLs: share.urls,
+            memo: share.memo,
+            degradationNotice: share.degradationNotice
+        )
+        try? pendingOperationStore.write(operation)
         await MainActor.run {
             localTags = tags
-            pendingShare = share
-            selectedLocalTagIDs = []
+            pendingOperation = operation
+            selectedLocalTagIDs = Set(operation.selectedTagIDs)
             showTagPicker()
+            if recoveredOperation != nil {
+                pickerMessageLabel.text = "中断した保存を復元しました。未完了の\(operation.pendingItems.count)件だけを再試行できます。"
+                pickerMessageLabel.textColor = .secondaryLabel
+                pickerMessageLabel.isHidden = false
+                saveButton.setTitle("未完了分を保存", for: .normal)
+                updatePickerLayoutHeight()
+            }
         }
     }
 
-    private func presentTagShareImportConfirmation(repository: URLRepository, payload: TagSharePayload) async {
+    private func presentTagShareImportConfirmation(
+        repository: URLRepository,
+        payload: TagSharePayload,
+        retryMessage: String? = nil
+    ) async {
         await MainActor.run {
             let alert = UIAlertController(
                 title: "自作タグを受け取る",
-                message: "タグ「\(payload.tag)」とURL \(payload.urls.count)件を読み込みます。既存URLは重複として扱います。",
+                message: [
+                    retryMessage,
+                    "タグ「\(payload.tag)」とURL \(payload.urls.count)件を読み込みます。既存URLは重複として扱います。",
+                ].compactMap { $0 }.joined(separator: "\n\n"),
                 preferredStyle: .alert
             )
             alert.addAction(UIAlertAction(title: "キャンセル", style: .cancel) { [weak self] _ in
@@ -396,7 +473,14 @@ final class ShareViewController: UIViewController {
                         finished: true
                     )
                 } catch {
-                    self.updateStatus("タグデータを読み込めませんでした。保存しませんでした", finished: true)
+                    Task {
+                        try? await Task.sleep(nanoseconds: 250_000_000)
+                        await self.presentTagShareImportConfirmation(
+                            repository: repository,
+                            payload: payload,
+                            retryMessage: "タグデータを読み込めませんでした。入力は保持しています。もう一度お試しください。"
+                        )
+                    }
                 }
             })
             present(alert, animated: true)
@@ -452,7 +536,7 @@ final class ShareViewController: UIViewController {
         cancelButton.titleLabel?.font = .preferredFont(forTextStyle: .title2)
         cancelButton.titleLabel?.adjustsFontForContentSizeCategory = true
         cancelButton.removeTarget(nil, action: nil, for: .allEvents)
-        cancelButton.addTarget(self, action: #selector(finishExtension), for: .touchUpInside)
+        cancelButton.addTarget(self, action: #selector(cancelExtension), for: .touchUpInside)
 
         tagAreaHeightConstraint?.isActive = false
         tagAreaHeightConstraint = tagAreaView.heightAnchor.constraint(equalToConstant: preferredTagAreaHeight())
@@ -462,7 +546,24 @@ final class ShareViewController: UIViewController {
             pickerMessageLabel.text = "タグがまだありません。必要なら作成できます。"
             pickerMessageLabel.isHidden = false
         }
+        updateTagEditingAvailability()
         updatePickerLayoutHeight()
+    }
+
+    @MainActor
+    private func showSaveRetry(message: String) {
+        isSaving = false
+        pickerContainerView.isHidden = false
+        contentStack.isHidden = true
+        pickerMessageLabel.text = message
+        pickerMessageLabel.textColor = .systemRed
+        pickerMessageLabel.isHidden = false
+        saveButton.setTitle("もう一度保存", for: .normal)
+        saveButton.isEnabled = true
+        cancelButton.isEnabled = true
+        updateTagEditingAvailability()
+        updatePickerLayoutHeight()
+        UIAccessibility.post(notification: .announcement, argument: message)
     }
 
     @MainActor
@@ -470,6 +571,7 @@ final class ShareViewController: UIViewController {
         tagFlowView.configure(
             tags: localTags,
             selectedTagIDs: selectedLocalTagIDs,
+            isEnabled: !isTagSelectionLocked,
             onToggle: { [weak self] tagID in
                 self?.toggleLocalTag(tagID)
             }
@@ -531,18 +633,20 @@ final class ShareViewController: UIViewController {
     }
 
     private func toggleLocalTag(_ tagID: Int64) {
+        guard !isTagSelectionLocked else { return }
         if selectedLocalTagIDs.contains(tagID) {
             selectedLocalTagIDs.remove(tagID)
         } else {
             selectedLocalTagIDs.insert(tagID)
         }
+        persistSelectedTags()
         saveButton.isEnabled = true
         rebuildTagButtons()
     }
 
     @objc
     private func createLocalTagFromInput() {
-        guard let repository else { return }
+        guard !isTagSelectionLocked, let repository else { return }
         let name = createTagField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !name.isEmpty else {
             pickerMessageLabel.text = "タグ名を入力してください"
@@ -556,6 +660,7 @@ final class ShareViewController: UIViewController {
         }
         localTags = (try? repository.loadLocalTags()) ?? [tag]
         selectedLocalTagIDs.insert(tag.id)
+        persistSelectedTags()
         createTagField.text = ""
         pickerMessageLabel.text = nil
         pickerMessageLabel.isHidden = true
@@ -563,100 +668,280 @@ final class ShareViewController: UIViewController {
         rebuildTagButtons()
     }
 
+    private func persistSelectedTags() {
+        guard !isTagSelectionLocked, var operation = pendingOperation else { return }
+        operation.selectedTagIDs = selectedLocalTagIDs.sorted()
+        operation.updatedAt = Date()
+        pendingOperation = operation
+        try? pendingOperationStore.write(operation)
+    }
+
     @objc
     private func savePendingShare() {
-        guard let repository, let pendingShare else { return }
-        let localTagIDs = Array(selectedLocalTagIDs)
+        guard !isSaving,
+              saveTask == nil,
+              let repository,
+              var operation = pendingOperation,
+              !operation.pendingItems.isEmpty else {
+            return
+        }
+        operation.lockTagSelection(selectedLocalTagIDs)
+        pendingOperation = operation
+        try? pendingOperationStore.write(operation)
+        isSaving = true
         saveButton.isEnabled = false
         cancelButton.isEnabled = false
-        createTagButton.isEnabled = false
-        statusLabel.text = "保存しています…"
-        Task {
-            if pendingShare.urls.count > 1 || pendingShare.isBatch {
-                var created = 0
-                var duplicate = 0
-                var restored = 0
-                var failed = 0
-                for url in pendingShare.urls {
-                    let result = (try? repository.saveFromResolvedURL(
-                        url,
-                        localTagIDs: localTagIDs,
-                        initialMemo: pendingShare.memo
-                    ))
-                        ?? SaveResult(result: .saveFailed)
-                    switch result.result {
-                    case .created:
-                        created += 1
-                    case .duplicateActive, .duplicateArchived:
-                        duplicate += 1
-                    case .restoredFromPendingDelete:
-                        restored += 1
-                    default:
-                        failed += 1
-                    }
-                }
-                let summary = BatchSaveSummary(
-                    total: pendingShare.urls.count,
-                    created: created,
-                    duplicate: duplicate,
-                    restored: restored,
-                    failed: failed
-                )
-                let report = ShareHandoffReport(
-                    result: .batchProcessed,
-                    entryID: nil,
-                    normalizedURL: nil,
-                    degradationNotice: pendingShare.degradationNotice,
-                    batchSummary: summary,
-                    createdAt: Date()
-                )
-                try? await ShareHandoffStore().write(report)
-                let statusText = "\(summary.total)件を処理しました（新規\(summary.created) / 既存\(summary.duplicate) / 復元\(summary.restored) / 失敗\(summary.failed)）"
-                let opened = if let refreshURL = makeHostAppRefreshURL() {
-                    await openHostApp(refreshURL)
-                } else {
-                    false
-                }
+        updateTagEditingAvailability()
+        pickerMessageLabel.text = "保存しています…"
+        pickerMessageLabel.textColor = .secondaryLabel
+        pickerMessageLabel.isHidden = false
+        timedOutOperationID = nil
+        let operationID = operation.operationID
+        saveTask = Task { [weak self] in
+            guard let self else { return }
+            await executePendingOperation(repository: repository, operationID: operationID)
+        }
+        saveTimeoutTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: Layout.saveTimeoutNanoseconds)
+                guard !Task.isCancelled, let self else { return }
                 await MainActor.run {
-                    if opened {
-                        finishExtension()
-                    } else {
-                        updateStatus(statusText, finished: true)
-                    }
+                    guard self.pendingOperation?.operationID == operationID else { return }
+                    self.timedOutOperationID = operationID
+                    self.saveTask?.cancel()
                 }
-            } else {
-                let result = (try? repository.saveFromResolvedURL(
-                    pendingShare.urls[0],
-                    localTagIDs: localTagIDs,
-                    initialMemo: pendingShare.memo
-                ))
-                    ?? SaveResult(result: .saveFailed)
-                let report = ShareHandoffReport(
-                    result: result.result,
-                    entryID: result.entryID,
-                    normalizedURL: result.normalizedURL,
-                    degradationNotice: pendingShare.degradationNotice,
-                    batchSummary: nil,
-                    createdAt: Date()
-                )
-                try? await ShareHandoffStore().write(report)
-                let opened = if let refreshURL = makeHostAppRefreshURL() {
-                    await openHostApp(refreshURL)
-                } else {
-                    false
-                }
-                await MainActor.run {
-                    if opened {
-                        finishExtension()
-                    } else {
-                        updateStatus(
-                            shareStatusText(result: result.result, degradation: pendingShare.degradationNotice),
-                            finished: true
-                        )
-                    }
-                }
+            } catch {
+                return
             }
         }
+    }
+
+    @MainActor
+    private func updateTagEditingAvailability() {
+        let isEnabled = !isTagSelectionLocked
+        createTagField.isEnabled = isEnabled
+        createTagButton.isEnabled = isEnabled
+        tagFlowView.setInteractionEnabled(isEnabled)
+    }
+
+    private func executePendingOperation(repository: URLRepository, operationID: UUID) async {
+        defer {
+            saveTimeoutTask?.cancel()
+            saveTimeoutTask = nil
+            saveTask = nil
+            isSaving = false
+        }
+        do {
+            guard var operation = pendingOperation, operation.operationID == operationID else { return }
+            let workItems = operation.pendingItems
+            for item in workItems {
+                try Task.checkCancellation()
+                let attempt = attemptPendingItem(
+                    item,
+                    selectedTagIDs: operation.selectedTagIDs,
+                    memo: operation.memo,
+                    repository: repository
+                )
+                operation.recordAttempt(
+                    for: item,
+                    retryItem: attempt.retryItem,
+                    completed: attempt.completedItems
+                )
+                try pendingOperationStore.write(operation)
+                pendingOperation = operation
+            }
+            try Task.checkCancellation()
+
+            if !operation.pendingItems.isEmpty {
+                showSaveRetry(message: retryMessage(for: operation))
+                return
+            }
+
+            let report = handoffReport(for: operation)
+            try? await ShareHandoffStore().write(report)
+            try? pendingOperationStore.clear(operationID: operation.operationID)
+            pendingOperation = nil
+            let statusText = completionMessage(for: operation)
+            let opened: Bool
+            if let refreshURL = makeHostAppRefreshURL() {
+                lifecycle.beginHostHandoff()
+                opened = await openHostApp(refreshURL)
+            } else {
+                opened = false
+            }
+            if opened {
+                finishExtension()
+            } else {
+                lifecycle.hostHandoffFailed()
+                updateStatus(statusText, finished: true)
+            }
+        } catch is CancellationError {
+            guard pendingOperation?.operationID == operationID else { return }
+            if timedOutOperationID == operationID {
+                showSaveRetry(
+                    message: "保存処理が時間内に完了しませんでした。完了済みは再送せず、未完了分だけをもう一度保存できます。"
+                )
+            }
+        } catch {
+            guard pendingOperation?.operationID == operationID else { return }
+            showSaveRetry(
+                message: "保存処理を完了できませんでした。入力と選択タグは保持しています。未完了分だけをもう一度お試しください。"
+            )
+        }
+    }
+
+    private func attemptPendingItem(
+        _ item: ShareExtensionPendingItem,
+        selectedTagIDs: [Int64],
+        memo: String?,
+        repository: URLRepository
+    ) -> ShareExtensionItemAttempt {
+        if !item.needsURLSave {
+            guard let entryID = item.entryID else {
+                var retry = item
+                retry.needsURLSave = true
+                retry.pendingTagIDs = []
+                return ShareExtensionItemAttempt(retryItem: retry)
+            }
+            let failedTagIDs = failedTagAssignments(
+                entryID: entryID,
+                tagIDs: item.pendingTagIDs,
+                repository: repository
+            )
+            if !failedTagIDs.isEmpty {
+                var retry = item
+                retry.pendingTagIDs = failedTagIDs
+                return ShareExtensionItemAttempt(retryItem: retry)
+            }
+            return ShareExtensionItemAttempt(
+                completedItems: [
+                    ShareExtensionCompletedItem(
+                        url: item.url,
+                        result: item.savedResult ?? .duplicateActive,
+                        entryID: item.entryID,
+                        normalizedURL: item.normalizedURL
+                    ),
+                ]
+            )
+        }
+
+        let result = (try? repository.saveFromResolvedURL(
+            item.url,
+            localTagIDs: [],
+            initialMemo: memo
+        )) ?? SaveResult(result: .saveFailed)
+        if result.result == .saveFailed {
+            return ShareExtensionItemAttempt(retryItem: item)
+        }
+
+        let failedTagIDs: [Int64]
+        if shareSaveSucceeded(result.result), let entryID = result.entryID {
+            failedTagIDs = failedTagAssignments(
+                entryID: entryID,
+                tagIDs: selectedTagIDs,
+                repository: repository
+            )
+        } else {
+            failedTagIDs = []
+        }
+        if !failedTagIDs.isEmpty {
+            return ShareExtensionItemAttempt(
+                retryItem: ShareExtensionPendingItem(
+                    url: item.url,
+                    needsURLSave: false,
+                    entryID: result.entryID,
+                    normalizedURL: result.normalizedURL,
+                    pendingTagIDs: failedTagIDs,
+                    savedResult: result.result
+                )
+            )
+        }
+        return ShareExtensionItemAttempt(
+            completedItems: [
+                ShareExtensionCompletedItem(
+                    url: item.url,
+                    result: result.result,
+                    entryID: result.entryID,
+                    normalizedURL: result.normalizedURL
+                ),
+            ]
+        )
+    }
+
+    private func failedTagAssignments(
+        entryID: Int64,
+        tagIDs: [Int64],
+        repository: URLRepository
+    ) -> [Int64] {
+        Array(Set(tagIDs)).sorted().filter { tagID in
+            (try? repository.assignLocalTag(entryID: entryID, tagID: tagID)) != true
+        }
+    }
+
+    private func deduplicatedCompletedItems(
+        _ items: [ShareExtensionCompletedItem]
+    ) -> [ShareExtensionCompletedItem] {
+        var seen = Set<String>()
+        return items.filter { seen.insert($0.url).inserted }
+    }
+
+    private func retryMessage(for operation: ShareExtensionPendingOperation) -> String {
+        let tagOnlyCount = operation.pendingItems.filter { !$0.needsURLSave }.count
+        let saveCount = operation.pendingItems.count - tagOnlyCount
+        var messages: [String] = []
+        if saveCount > 0 {
+            messages.append("\(saveCount)件を保存できませんでした。入力と選択タグは保持しています。")
+        }
+        if tagOnlyCount > 0 {
+            messages.append("\(tagOnlyCount)件はURLを保存済みですがタグ付けが未完了です。再試行では未完了タグだけを追加します。")
+        }
+        if !operation.completedItems.isEmpty {
+            messages.append("完了済みの\(operation.completedItems.count)件は再送しません。")
+        }
+        return messages.joined(separator: "\n")
+    }
+
+    private func handoffReport(for operation: ShareExtensionPendingOperation) -> ShareHandoffReport {
+        if operation.originalURLs.count == 1, let item = operation.completedItems.first {
+            return ShareHandoffReport(
+                result: item.result,
+                entryID: item.entryID,
+                normalizedURL: item.normalizedURL,
+                degradationNotice: operation.degradationNotice,
+                batchSummary: nil,
+                createdAt: Date()
+            )
+        }
+        return ShareHandoffReport(
+            result: .batchProcessed,
+            entryID: nil,
+            normalizedURL: nil,
+            degradationNotice: operation.degradationNotice,
+            batchSummary: batchSummary(for: operation),
+            createdAt: Date()
+        )
+    }
+
+    private func batchSummary(for operation: ShareExtensionPendingOperation) -> BatchSaveSummary {
+        let results = operation.completedItems.map(\.result)
+        let created = results.filter { $0 == .created }.count
+        let duplicate = results.filter { $0 == .duplicateActive || $0 == .duplicateArchived }.count
+        let restored = results.filter { $0 == .restoredFromPendingDelete }.count
+        return BatchSaveSummary(
+            total: operation.originalURLs.count,
+            created: created,
+            duplicate: duplicate,
+            restored: restored,
+            failed: operation.originalURLs.count - created - duplicate - restored
+        )
+    }
+
+    private func completionMessage(for operation: ShareExtensionPendingOperation) -> String {
+        if operation.originalURLs.count == 1, let item = operation.completedItems.first {
+            return shareStatusText(result: item.result, degradation: operation.degradationNotice)
+        }
+        let summary = batchSummary(for: operation)
+        return "\(summary.total)件を処理しました（新規\(summary.created) / 既存\(summary.duplicate) / 復元\(summary.restored) / 失敗\(summary.failed)）"
     }
 
     private func processShareViaHostAppFallback(payload: ShareExtensionPayload) async {
@@ -685,6 +970,7 @@ final class ShareViewController: UIViewController {
             return
         }
 
+        lifecycle.beginHostHandoff()
         let opened = await openHostApp(routeURL)
         let statusText = if opened {
             degradation == .truncatedToFirstURL
@@ -696,6 +982,8 @@ final class ShareViewController: UIViewController {
         await MainActor.run { updateStatus(statusText, finished: true) }
         if opened {
             finishExtension()
+        } else {
+            lifecycle.hostHandoffFailed()
         }
     }
 
@@ -740,12 +1028,51 @@ final class ShareViewController: UIViewController {
             main = "保存できる内容が見つかりませんでした"
         case .batchProcessed:
             main = "処理しました"
+        case .personalURLLimitReached:
+            main = "保存上限に達しているため保存できませんでした"
         }
 
         guard degradation == .truncatedToFirstURL else {
             return main
         }
         return main + "\n共有内容に複数URLが含まれていたため、1件目のみ保存しました"
+    }
+
+    private func shareSaveSucceeded(_ result: ShareSaveResult) -> Bool {
+        switch result {
+        case .created, .duplicateActive, .duplicateArchived, .restoredFromPendingDelete:
+            return true
+        case .batchProcessed, .saveFailed, .inputTooLarge, .invalidURL, .noURLFound, .personalURLLimitReached:
+            return false
+        }
+    }
+
+    private func shareRetryStatusText(result: ShareSaveResult) -> String {
+        switch result {
+        case .personalURLLimitReached:
+            return "現在のプランの保存上限に達しています。りんばむで不要なURLを整理してから、もう一度お試しください。入力とタグは保持しています。"
+        case .inputTooLarge:
+            return "共有内容が長すぎるため保存できませんでした。内容を短くして、もう一度お試しください。入力とタグは保持しています。"
+        case .invalidURL, .noURLFound:
+            return "保存できるURLまたはテキストを確認して、もう一度お試しください。入力とタグは保持しています。"
+        case .batchProcessed, .saveFailed:
+            return "保存できませんでした。通信や空き容量を確認して、もう一度お試しください。入力とタグは保持しています。"
+        case .created, .duplicateActive, .duplicateArchived, .restoredFromPendingDelete:
+            return "保存しました。"
+        }
+    }
+}
+
+private struct ShareExtensionItemAttempt {
+    let retryItem: ShareExtensionPendingItem?
+    let completedItems: [ShareExtensionCompletedItem]
+
+    init(
+        retryItem: ShareExtensionPendingItem? = nil,
+        completedItems: [ShareExtensionCompletedItem] = []
+    ) {
+        self.retryItem = retryItem
+        self.completedItems = completedItems
     }
 }
 
@@ -760,6 +1087,7 @@ private final class TagFlowView: UIView {
     func configure(
         tags: [LocalTagSummary],
         selectedTagIDs: Set<Int64>,
+        isEnabled: Bool,
         onToggle: @escaping (Int64) -> Void
     ) {
         chipButtons.forEach { $0.removeFromSuperview() }
@@ -790,6 +1118,8 @@ private final class TagFlowView: UIView {
             button.layer.borderColor = selected ? UIColor.systemBlue.cgColor : UIColor.separator.cgColor
             button.clipsToBounds = true
             button.addTarget(self, action: #selector(toggleTag(_:)), for: .touchUpInside)
+            button.isEnabled = isEnabled
+            button.alpha = isEnabled ? 1 : 0.55
             addSubview(button)
             chipButtons.append(button)
             tagIDsByButton[button] = tag.id
@@ -797,6 +1127,13 @@ private final class TagFlowView: UIView {
 
         invalidateIntrinsicContentSize()
         setNeedsLayout()
+    }
+
+    func setInteractionEnabled(_ isEnabled: Bool) {
+        chipButtons.forEach { button in
+            button.isEnabled = isEnabled
+            button.alpha = isEnabled ? 1 : 0.55
+        }
     }
 
     override var intrinsicContentSize: CGSize {

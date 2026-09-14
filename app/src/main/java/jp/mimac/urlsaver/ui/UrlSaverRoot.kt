@@ -13,6 +13,7 @@ import android.net.Uri
 import android.view.Surface
 import android.view.TextureView
 import jp.mimac.urlsaver.BuildConfig
+import jp.mimac.urlsaver.FirstRunOnboardingStore
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -55,6 +56,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -212,6 +214,11 @@ import jp.mimac.urlsaver.ui.components.TagFilterRow
 import jp.mimac.urlsaver.ui.ads.BannerAdSlot
 import jp.mimac.urlsaver.ui.theme.OrbitTokens
 import jp.mimac.urlsaver.ui.theme.AppThemeMode
+import jp.mimac.urlsaver.ui.theme.SwipeActionTone
+import jp.mimac.urlsaver.ui.theme.detailSupportingColor
+import jp.mimac.urlsaver.ui.theme.selectableChipPalette
+import jp.mimac.urlsaver.ui.theme.selectionBarPalette
+import jp.mimac.urlsaver.ui.theme.swipeActionPalette
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
@@ -227,7 +234,6 @@ fun shouldShowSharedTagCloudEntryPoints(
 ): Boolean = true
 
 private const val RINBAM_USAGE_GUIDE_URL = "https://rinbam-usage-guide.miyamibu.chatgpt.site"
-
 @Composable
 fun UrlSaverRoot(
     activityViewModel: MainActivityViewModel,
@@ -243,17 +249,18 @@ fun UrlSaverRoot(
     var currentSnackbarKind by remember { mutableStateOf<SnackbarEventKind?>(null) }
 
     suspend fun showEvent(event: SnackbarEvent) {
-        currentSnackbarKind = event.kind
+        val displayEvent = activityViewModel.prepareSnackbarForDisplay(event)
+        currentSnackbarKind = displayEvent.kind
 
-        val duration = if (event.customDurationMillis != null) {
+        val duration = if (displayEvent.customDurationMillis != null) {
             SnackbarDuration.Indefinite
         } else {
-            event.duration ?: SnackbarDuration.Short
+            displayEvent.duration ?: SnackbarDuration.Short
         }
 
-        val timerJob = if (event.customDurationMillis != null) {
+        val timerJob = if (displayEvent.customDurationMillis != null) {
             scope.launch {
-                delay(event.customDurationMillis)
+                delay(displayEvent.customDurationMillis)
                 snackbarHostState.currentSnackbarData?.dismiss()
             }
         } else {
@@ -261,17 +268,17 @@ fun UrlSaverRoot(
         }
 
         val result = snackbarHostState.showSnackbar(
-            message = event.message,
-            actionLabel = event.actionLabel,
+            message = displayEvent.message,
+            actionLabel = displayEvent.actionLabel,
             duration = duration,
         )
 
         timerJob?.cancel()
 
         if (result == SnackbarResult.ActionPerformed) {
-            activityViewModel.onSnackbarAction(event)
+            activityViewModel.onSnackbarAction(displayEvent)
         } else {
-            activityViewModel.onSnackbarDismissed(event)
+            activityViewModel.onSnackbarDismissed(displayEvent)
         }
 
         currentSnackbarKind = null
@@ -410,13 +417,14 @@ private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
 ) {
     composable(Routes.MAIN) {
         val vm: MainListViewModel = viewModel(
-            factory = SimpleFactory {
+            factory = SavedStateFactory { savedStateHandle ->
                 MainListViewModel(
                     repository = context.appContainer().repository,
                     tagRepository = context.appContainer().tagRepository,
                     displayModeStore = context.appContainer().entryCardDisplayModeStore,
                     serviceFilterOrderStore = context.appContainer().serviceFilterOrderStore,
                     topFilterOrderStore = context.appContainer().topFilterOrderStore,
+                    savedStateHandle = savedStateHandle,
                 )
             },
         )
@@ -440,8 +448,7 @@ private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
             onArchiveEntry = { entryId ->
                 activityViewModel.onDetailEffect(DetailEffect.NavigateBackAfterArchive(entryId))
             },
-            onPendingDeleteEntry = { entryId, pendingUntil ->
-                activityViewModel.startDeleteTimer(entryId, pendingUntil)
+            onPendingDeleteEntry = { entryId, _ ->
                 activityViewModel.onDetailEffect(DetailEffect.NavigateBackAfterPendingDelete(entryId))
             },
             onBatchArchiveEntries = { entryIds ->
@@ -525,9 +532,6 @@ private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
                     -> navController.popBackStack(route = Routes.MAIN, inclusive = false)
                     is DetailEffect.TitleEdited -> Unit
                 }
-            },
-            onScheduleDeleteTimer = { pendingUntil ->
-                activityViewModel.startDeleteTimer(entryId, pendingUntil)
             },
             onTitleEditStarted = { activityViewModel.onTitleEditStarted() },
             onCopySuccess = { activityViewModel.notifyCopySuccess() },
@@ -687,6 +691,7 @@ private fun MainScreen(
     val serviceFilterOrder by viewModel.serviceFilterOrder.collectAsStateWithLifecycle()
     val topFilterOrderTokens by viewModel.topFilterOrderTokens.collectAsStateWithLifecycle()
     val entryCardDisplayMode by viewModel.entryCardDisplayMode.collectAsStateWithLifecycle()
+    val manualInputState by viewModel.manualInputState.collectAsStateWithLifecycle()
     val exportVm: ExportViewModel = viewModel(
         key = "main_export_sheet",
         factory = SimpleFactory {
@@ -737,6 +742,9 @@ private fun MainScreen(
             }
     }
     val showSharedTagCloudUi = true
+    var showFirstRunOnboarding by rememberSaveable {
+        mutableStateOf(FirstRunOnboardingStore.shouldShow(context))
+    }
 
     LaunchedEffect(Unit) {
         profileVm.refreshPendingInvite()
@@ -748,13 +756,17 @@ private fun MainScreen(
     var searchQueryLocal by rememberSaveable { mutableStateOf("") }
     var databaseSearchMatchIds by remember { mutableStateOf<Set<Long>?>(emptySet()) }
     LaunchedEffect(searchQueryLocal) {
-        if (searchQueryLocal.isBlank()) {
+        val requestedQuery = searchQueryLocal
+        if (requestedQuery.isBlank()) {
             databaseSearchMatchIds = emptySet()
         } else {
             databaseSearchMatchIds = null
-            databaseSearchMatchIds = runCatching {
-                viewModel.searchEntryIds(searchQueryLocal)
+            val matchingEntryIds = runCatching {
+                viewModel.searchEntryIds(requestedQuery)
             }.getOrDefault(emptySet())
+            if (searchQueryLocal == requestedQuery) {
+                databaseSearchMatchIds = matchingEntryIds
+            }
         }
     }
     LaunchedEffect(localSaveTags, selectedMainLocalTagId) {
@@ -797,7 +809,6 @@ private fun MainScreen(
         }
     }
 
-    var manualInputState by remember { mutableStateOf(ManualInputUiState()) }
     var showPrivacyDialog by remember { mutableStateOf(false) }
     var showUsageGuide by rememberSaveable { mutableStateOf(false) }
     var sharedTagDialogState by remember { mutableStateOf(SharedTagDialogUiState()) }
@@ -881,7 +892,7 @@ private fun MainScreen(
     }
 
     fun openManualInput() {
-        manualInputState = ManualInputUiState(visible = true)
+        viewModel.openManualInput()
     }
 
     fun closeCreateManualLocalTagDialog() {
@@ -902,38 +913,20 @@ private fun MainScreen(
         sharedTagGroupDialogState = SharedTagDialogUiState()
     }
 
-    fun submitManualSave() {
-        scope.launch {
-            manualInputState = manualInputState.copy(isSaving = true)
-            try {
-                val submitResult = viewModel.submitManualInput(
-                    input = manualInputState.inputText,
-                    localTagIds = manualInputState.selectedLocalTagIds,
+    LaunchedEffect(viewModel) {
+        viewModel.manualSaveEvents.collect { event ->
+            onManualResult(event.saveResult, event.entryId)
+            if (event.failedTagAssignmentCount > 0) {
+                snackbarHostState.showSnackbar(
+                    "一部のタグを追加できませんでした",
+                    duration = SnackbarDuration.Short,
                 )
-                val result = submitResult.saveResult
-                val entryId = submitResult.entryId
-                when (result) {
-                    ShareSaveResult.INPUT_TOO_LARGE,
-                    ShareSaveResult.INVALID_URL,
-                    ShareSaveResult.NO_URL_FOUND,
-                    ShareSaveResult.PERSONAL_URL_LIMIT_REACHED,
-                    -> manualInputState = manualInputState.copy(inputError = result)
-                    else -> {
-                        onManualResult(result, entryId)
-                        if (submitResult.failedTagAssignmentCount > 0) {
-                            snackbarHostState.showSnackbar(
-                                "一部のタグを追加できませんでした",
-                                duration = SnackbarDuration.Short,
-                            )
-                        }
-                        if (result == ShareSaveResult.CREATED || result == ShareSaveResult.RESTORED_FROM_PENDING_DELETE) {
-                            AdsManager.registerMeaningfulActionAndMaybeShow(context)
-                        }
-                        manualInputState = ManualInputUiState()
-                    }
-                }
-            } finally {
-                manualInputState = manualInputState.copy(isSaving = false)
+            }
+            if (
+                event.saveResult == ShareSaveResult.CREATED ||
+                event.saveResult == ShareSaveResult.RESTORED_FROM_PENDING_DELETE
+            ) {
+                AdsManager.registerMeaningfulActionAndMaybeShow(context)
             }
         }
     }
@@ -946,10 +939,7 @@ private fun MainScreen(
                         selectedMainLocalTagId = created.tagId
                         viewModel.selectService(ServiceType.ALL)
                     } else {
-                        manualInputState = manualInputState.copy(
-                            selectedLocalTagIds = manualInputState.selectedLocalTagIds + created.tagId,
-                            localTagError = null,
-                        )
+                        viewModel.selectManualInputTag(created.tagId)
                     }
                     closeCreateManualLocalTagDialog()
                 }
@@ -965,10 +955,7 @@ private fun MainScreen(
                             selectedMainLocalTagId = duplicateId
                             viewModel.selectService(ServiceType.ALL)
                         } else {
-                            manualInputState = manualInputState.copy(
-                                selectedLocalTagIds = manualInputState.selectedLocalTagIds + duplicateId,
-                                localTagError = null,
-                            )
+                            viewModel.selectManualInputTag(duplicateId)
                         }
                         closeCreateManualLocalTagDialog()
                     } else {
@@ -1092,7 +1079,7 @@ private fun MainScreen(
             when (val result = tagViewModel.createGroupInviteLink(group.id, role.name.lowercase())) {
                 is SharedTagGroupInviteCreationResult.Success -> {
                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    clipboard.setPrimaryClip(ClipData.newPlainText("URL Saver group invite", result.inviteUrl))
+                    clipboard.setPrimaryClip(ClipData.newPlainText("りんばむ グループ招待", result.inviteUrl))
                     val shareIntent = Intent(Intent.ACTION_SEND).apply {
                         type = "text/plain"
                         putExtra(Intent.EXTRA_TEXT, result.inviteUrl)
@@ -1205,12 +1192,20 @@ private fun MainScreen(
     }
 
     fun archiveSelectedEntries() {
+        val requestedIds = selectedEntryIds
         scope.launch {
-            val archivedIds = viewModel.archiveEntries(selectedEntryIds)
+            val archivedIds = viewModel.archiveEntries(requestedIds)
+            val failedIds = requestedIds - archivedIds.toSet()
             if (archivedIds.isNotEmpty()) {
-                selectedEntryIds = emptySet()
-                selectionModeActive = false
+                selectedEntryIds = failedIds
+                selectionModeActive = failedIds.isNotEmpty()
                 onBatchArchiveEntries(archivedIds)
+                if (failedIds.isNotEmpty()) {
+                    snackbarHostState.showSnackbar(
+                        "${archivedIds.size}件をアーカイブしました。${failedIds.size}件は未処理のため選択を残しました",
+                        duration = SnackbarDuration.Long,
+                    )
+                }
             } else {
                 onArchiveFailed()
             }
@@ -1218,12 +1213,20 @@ private fun MainScreen(
     }
 
     fun deleteSelectedEntries() {
+        val requestedIds = selectedEntryIds
         scope.launch {
-            val pendingDeletions = viewModel.markPendingDeleteEntries(selectedEntryIds)
+            val pendingDeletions = viewModel.markPendingDeleteEntries(requestedIds)
+            val failedIds = requestedIds - pendingDeletions.keys
             if (pendingDeletions.isNotEmpty()) {
-                selectedEntryIds = emptySet()
-                selectionModeActive = false
+                selectedEntryIds = failedIds
+                selectionModeActive = failedIds.isNotEmpty()
                 onBatchPendingDeleteEntries(pendingDeletions)
+                if (failedIds.isNotEmpty()) {
+                    snackbarHostState.showSnackbar(
+                        "${pendingDeletions.size}件を削除しました。${failedIds.size}件は未処理のため選択を残しました",
+                        duration = SnackbarDuration.Long,
+                    )
+                }
             } else {
                 onDeleteFailed()
             }
@@ -1301,15 +1304,8 @@ private fun MainScreen(
         selectedLocalTagIds = manualInputState.selectedLocalTagIds,
         manualLocalTagError = manualInputState.localTagError,
         isManualSaving = manualInputState.isSaving,
-        onDismiss = {
-            manualInputState = ManualInputUiState()
-        },
-        onInputChange = {
-            manualInputState = manualInputState.copy(
-                inputText = it,
-                inputError = null,
-            )
-        },
+        onDismiss = viewModel::dismissManualInput,
+        onInputChange = viewModel::updateManualInputText,
         onPaste = {
             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             val pasted = clipboard.primaryClip
@@ -1320,27 +1316,15 @@ private fun MainScreen(
                 .orEmpty()
                 .trim()
             if (pasted.isNotEmpty()) {
-                manualInputState = manualInputState.copy(
-                    inputText = pasted,
-                    inputError = null,
-                )
+                viewModel.updateManualInputText(pasted)
             }
         },
-        onSelectLocalTag = { tagId ->
-            manualInputState = manualInputState.copy(
-                selectedLocalTagIds = if (tagId in manualInputState.selectedLocalTagIds) {
-                    manualInputState.selectedLocalTagIds - tagId
-                } else {
-                    manualInputState.selectedLocalTagIds + tagId
-                },
-                localTagError = null,
-            )
-        },
+        onSelectLocalTag = viewModel::toggleManualInputTag,
         onRequestCreateLocalTag = {
             createLocalTagForMainFilter = false
             manualLocalTagDialogState = SharedTagDialogUiState(visible = true)
         },
-        onSave = { submitManualSave() },
+        onSave = viewModel::submitCurrentManualInput,
     )
 
     LocalTagManagementSheet(
@@ -1809,6 +1793,7 @@ private fun MainScreen(
                             createLocalTagForMainFilter = true
                             manualLocalTagDialogState = SharedTagDialogUiState(visible = true)
                         },
+                        onOpenManualInput = { openManualInput() },
                         onRequestRenameLocalTag = { tag ->
                             pendingRenameLocalTagId = tag.id
                             renameLocalTagDialogState = SharedTagDialogUiState(
@@ -1876,6 +1861,14 @@ private fun MainScreen(
                 onOpenArchive = onOpenArchive,
             )
         }
+        if (showFirstRunOnboarding) {
+            OnboardingGuideOverlay(
+                onFinish = {
+                    FirstRunOnboardingStore.markSeen(context)
+                    showFirstRunOnboarding = false
+                },
+            )
+        }
     }
 
 }
@@ -1899,7 +1892,11 @@ private fun ManualInputSheet(
 ) {
     if (!visible) return
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+    ) {
         Column(modifier = Modifier.padding(16.dp)) {
             OutlinedTextField(
                 value = inputText,
@@ -1918,13 +1915,15 @@ private fun ManualInputSheet(
                 isError = inputError == ShareSaveResult.INVALID_URL ||
                     inputError == ShareSaveResult.NO_URL_FOUND ||
                     inputError == ShareSaveResult.INPUT_TOO_LARGE ||
-                    inputError == ShareSaveResult.PERSONAL_URL_LIMIT_REACHED,
+                    inputError == ShareSaveResult.PERSONAL_URL_LIMIT_REACHED ||
+                    inputError == ShareSaveResult.SAVE_FAILED,
                 supportingText = {
                     when (inputError) {
                         ShareSaveResult.INVALID_URL -> Text("URL形式が正しくありません。https:// から始まるURLを入力してください")
                         ShareSaveResult.NO_URL_FOUND -> Text("入力内にURLが見つかりませんでした。URLをそのまま貼り付けてください")
                         ShareSaveResult.INPUT_TOO_LARGE -> Text("入力が長すぎます。256KB以内のURLまたはテキストにしてください")
-                        ShareSaveResult.PERSONAL_URL_LIMIT_REACHED -> Text("ローンチ版の保存上限に達しました。不要なURLを整理してから追加してください。")
+                        ShareSaveResult.PERSONAL_URL_LIMIT_REACHED -> Text("現在のプランの保存上限に達しました。不要なURLを整理してから追加してください。")
+                        ShareSaveResult.SAVE_FAILED -> Text("保存できませんでした。入力とタグは残っています。通信状態を確認して、もう一度お試しください")
                         else -> Unit
                     }
                 },
@@ -1959,20 +1958,17 @@ private fun ManualInputSheet(
                 ) {
                     localTags.forEach { tag ->
                         val selected = tag.id in selectedLocalTagIds
+                        val tagPalette = selectableChipPalette(MaterialTheme.colorScheme, selected)
                         Surface(
                             shape = RoundedCornerShape(999.dp),
-                            color = if (selected) {
-                                MaterialTheme.colorScheme.primaryContainer
-                            } else {
-                                OrbitTokens.panelStrong
-                            },
-                            contentColor = if (selected) {
-                                MaterialTheme.colorScheme.onPrimaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.onSurface
-                            },
-                            border = BorderStroke(1.dp, OrbitTokens.outline),
-                            modifier = Modifier.clickable { onSelectLocalTag(tag.id) },
+                            color = tagPalette.container,
+                            contentColor = tagPalette.content,
+                            border = BorderStroke(1.dp, tagPalette.outline),
+                            modifier = Modifier.selectable(
+                                selected = selected,
+                                onClick = { onSelectLocalTag(tag.id) },
+                                role = Role.Checkbox,
+                            ).testTag("manual_input_tag_${tag.id}"),
                         ) {
                             Text(
                                 text = tag.name,
@@ -2020,7 +2016,7 @@ private fun ManualInputSheet(
                     Spacer(Modifier.width(8.dp))
                     Text("保存中…")
                 } else {
-                    Text("保存")
+                    Text(if (inputError == ShareSaveResult.SAVE_FAILED) "もう一度保存" else "保存")
                 }
             }
             Spacer(Modifier.height(12.dp))
@@ -2230,7 +2226,7 @@ private fun UsageGuideContent(
                 iconColor = Color(0xFF128A2E),
                 iconBackground = Color(0xFFEAF7ED),
                 title = "Safariや他アプリから保存",
-                body = "Safariや他のアプリの共有から、りんばむを選ぶだけで保存できます。",
+                body = "Safariや他のアプリで共有を開き、りんばむを選んでから「保存」を押します。",
             ) {
                 ShareToRinbamPreview()
             }
@@ -2305,6 +2301,17 @@ private fun UsageGuideContent(
                 body = "エクスポートしたデータをClaudeやChatGPTに渡して活用できます。",
             ) {
                 GuideAIExportPreview()
+            }
+            UsageGuideRow(
+                marker = "8",
+                markerColor = MaterialTheme.colorScheme.primary,
+                icon = { Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null) },
+                iconColor = MaterialTheme.colorScheme.primary,
+                iconBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                title = "確認してChatGPTへ渡す",
+                body = "自作タグを選び、伏せ字後の全内容と除外項目を確認してチェックします。作成したZIPだけをChatGPTへ渡し、質問はChatGPT側で入力します。",
+            ) {
+                GuideChatGptPreview()
             }
             UsageGuideNote(onOpenExternalGuide = onOpenExternalGuide)
         }
@@ -2551,6 +2558,29 @@ private fun GuideAIExportPreview() {
 }
 
 @Composable
+private fun GuideChatGptPreview() {
+    GuidePreviewSurface {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = "1 伏せ字後の全内容を確認",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = "2 未知の秘密が残っていないか確認してチェック",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = "3 ZIPを作成して共有",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
 private fun UsageGuideNote(
     onOpenExternalGuide: () -> Unit,
 ) {
@@ -2784,6 +2814,7 @@ private fun MainListContent(
     onReorderTopFilters: (List<String>) -> Unit,
     onSelectLocalTag: (Long?) -> Unit,
     onRequestCreateLocalTag: () -> Unit,
+    onOpenManualInput: () -> Unit,
     onRequestRenameLocalTag: (TagWithCount) -> Unit,
     onOpenTagDetail: (Long) -> Unit,
     onRequestCreateSharedTag: () -> Unit,
@@ -2922,6 +2953,9 @@ private fun MainListContent(
         ListFilterLoadState.Empty -> {
             EmptyState(
                 title = stringResource(R.string.main_empty_title),
+                body = stringResource(R.string.main_empty_body),
+                actionLabel = stringResource(R.string.main_add_url),
+                onAction = onOpenManualInput,
             )
         }
 
@@ -3021,14 +3055,13 @@ private fun MainListLoadStatePanel(
     }
 }
 
-private data class ManualInputUiState(
-    val visible: Boolean = false,
-    val inputText: String = "",
-    val inputError: ShareSaveResult? = null,
-    val selectedLocalTagIds: Set<Long> = emptySet(),
-    val localTagError: String? = null,
-    val isSaving: Boolean = false,
-)
+internal fun shouldPreserveManualInputAfter(result: ShareSaveResult): Boolean {
+    return result == ShareSaveResult.INPUT_TOO_LARGE ||
+        result == ShareSaveResult.INVALID_URL ||
+        result == ShareSaveResult.NO_URL_FOUND ||
+        result == ShareSaveResult.PERSONAL_URL_LIMIT_REACHED ||
+        result == ShareSaveResult.SAVE_FAILED
+}
 
 private data class SharedTagDialogUiState(
     val visible: Boolean = false,
@@ -3874,17 +3907,18 @@ private fun EntrySelectionBar(
     onCancel: () -> Unit,
 ) {
     val buttonShape = androidx.compose.foundation.shape.RoundedCornerShape(50)
+    val palette = selectionBarPalette()
     Row(
         modifier = Modifier
             .padding(horizontal = 12.dp)
             .fillMaxWidth()
             .background(
-                color = OrbitTokens.panelSoft,
+                color = palette.container,
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(OrbitTokens.radiusChip),
             )
             .border(
                 width = 1.dp,
-                color = OrbitTokens.outline,
+                color = palette.outline,
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(OrbitTokens.radiusChip),
             )
             .padding(horizontal = 12.dp, vertical = 9.dp),
@@ -3894,7 +3928,7 @@ private fun EntrySelectionBar(
         Text(
             text = "${selectedCount}件",
             style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = palette.content,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
@@ -4015,13 +4049,12 @@ private fun BatchLocalTagAssignmentSheet(
                     ) {
                         localTags.forEach { tag ->
                             val selected = tag.id in selectedTagIds
+                            val tagPalette = selectableChipPalette(MaterialTheme.colorScheme, selected)
                             Surface(
                                 shape = RoundedCornerShape(50),
-                                color = if (selected) MaterialTheme.colorScheme.primaryContainer else OrbitTokens.panelSoft,
-                                border = BorderStroke(
-                                    1.dp,
-                                    if (selected) MaterialTheme.colorScheme.primary else OrbitTokens.outline,
-                                ),
+                                color = tagPalette.container,
+                                contentColor = tagPalette.content,
+                                border = BorderStroke(1.dp, tagPalette.outline),
                                 modifier = Modifier.clickable {
                                     selectedTagIds = if (selected) {
                                         selectedTagIds - tag.id
@@ -4045,7 +4078,7 @@ private fun BatchLocalTagAssignmentSheet(
                                     Text(
                                         text = tag.name,
                                         style = MaterialTheme.typography.labelLarge,
-                                        color = MaterialTheme.colorScheme.onSurface,
+                                        color = tagPalette.content,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
                                         modifier = Modifier.widthIn(max = 180.dp),
@@ -4165,10 +4198,10 @@ private fun MainSwipeBackground(
     val isArchive = direction == SwipeToDismissBoxValue.StartToEnd
     val isDelete = direction == SwipeToDismissBoxValue.EndToStart
     val density = LocalDensity.current
-    val color = when {
-        isArchive -> OrbitTokens.secondarySurface
-        isDelete -> OrbitTokens.dangerSurface
-        else -> OrbitTokens.panelSoft
+    val palette = when {
+        isArchive -> swipeActionPalette(SwipeActionTone.POSITIVE)
+        isDelete -> swipeActionPalette(SwipeActionTone.DESTRUCTIVE)
+        else -> selectionBarPalette()
     }
     val icon = when {
         isArchive -> Icons.Outlined.Archive
@@ -4195,7 +4228,7 @@ private fun MainSwipeBackground(
                     .fillMaxHeight()
                     .width(revealedWidth)
                     .background(
-                        color = color,
+                        color = palette.container,
                         shape = androidx.compose.foundation.shape.RoundedCornerShape(OrbitTokens.radiusPanel),
                     )
                     .padding(horizontal = 16.dp, vertical = 20.dp),
@@ -4206,11 +4239,11 @@ private fun MainSwipeBackground(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     if (isDelete) {
-                        Text(text = label, style = MaterialTheme.typography.labelLarge)
-                        Icon(imageVector = icon, contentDescription = null)
+                        Text(text = label, style = MaterialTheme.typography.labelLarge, color = palette.content)
+                        Icon(imageVector = icon, contentDescription = null, tint = palette.content)
                     } else {
-                        Icon(imageVector = icon, contentDescription = null)
-                        Text(text = label, style = MaterialTheme.typography.labelLarge)
+                        Icon(imageVector = icon, contentDescription = null, tint = palette.content)
+                        Text(text = label, style = MaterialTheme.typography.labelLarge, color = palette.content)
                     }
                 }
             }
@@ -4277,10 +4310,10 @@ private fun ArchiveSwipeBackground(
     val isRestore = direction == SwipeToDismissBoxValue.StartToEnd
     val isDelete = direction == SwipeToDismissBoxValue.EndToStart
     val density = LocalDensity.current
-    val color = when {
-        isRestore -> OrbitTokens.secondarySurface
-        isDelete -> OrbitTokens.dangerSurface
-        else -> OrbitTokens.panelSoft
+    val palette = when {
+        isRestore -> swipeActionPalette(SwipeActionTone.POSITIVE)
+        isDelete -> swipeActionPalette(SwipeActionTone.DESTRUCTIVE)
+        else -> selectionBarPalette()
     }
     val icon = when {
         isRestore -> Icons.AutoMirrored.Outlined.ArrowBack
@@ -4307,7 +4340,7 @@ private fun ArchiveSwipeBackground(
                     .fillMaxHeight()
                     .width(revealedWidth)
                     .background(
-                        color = color,
+                        color = palette.container,
                         shape = androidx.compose.foundation.shape.RoundedCornerShape(OrbitTokens.radiusPanel),
                     )
                     .padding(horizontal = 16.dp, vertical = 20.dp),
@@ -4318,11 +4351,11 @@ private fun ArchiveSwipeBackground(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     if (isDelete) {
-                        Text(text = label, style = MaterialTheme.typography.labelLarge)
-                        Icon(imageVector = icon, contentDescription = null)
+                        Text(text = label, style = MaterialTheme.typography.labelLarge, color = palette.content)
+                        Icon(imageVector = icon, contentDescription = null, tint = palette.content)
                     } else {
-                        Icon(imageVector = icon, contentDescription = null)
-                        Text(text = label, style = MaterialTheme.typography.labelLarge)
+                        Icon(imageVector = icon, contentDescription = null, tint = palette.content)
+                        Text(text = label, style = MaterialTheme.typography.labelLarge, color = palette.content)
                     }
                 }
             }
@@ -4673,7 +4706,6 @@ private fun DetailScreen(
     onBack: () -> Unit,
     onOpenMain: () -> Unit,
     onDetailEffect: (DetailEffect) -> Unit,
-    onScheduleDeleteTimer: (Long) -> Unit,
     onTitleEditStarted: () -> Unit,
     onCopySuccess: () -> Unit,
     onMemoSaved: () -> Unit,
@@ -5070,7 +5102,7 @@ private fun DetailScreen(
                     onClick = {
                         showDeleteConfirmDialog = false
                         if (current.recordState != RecordState.ARCHIVED) {
-                            viewModel.deleteToPending(onScheduleDeleteTimer)
+                            viewModel.deleteToPending()
                         }
                     },
                     colors = ButtonDefaults.textButtonColors(
@@ -5554,7 +5586,7 @@ private fun DetailScreen(
                         Text(
                             text = detailServiceLabelForEntry(current),
                             style = MaterialTheme.typography.bodyLarge,
-                            color = OrbitTokens.textMutedStrong,
+                            color = detailSupportingColor(MaterialTheme.colorScheme),
                         )
                     }
                 }
@@ -7075,42 +7107,31 @@ private data class OnboardingGuidePage(
 
 private val onboardingGuidePages = listOf(
     OnboardingGuidePage(
-        title = "自作タグを作成",
-        body = "＋を押すと、自分用のタグを作れます。保存するURLを用途ごとに整理できます。",
-        spotlight = { _ -> Rect(left = 42f, top = 320f, right = 231f, bottom = 441f) },
-        arrowOffset = { _ -> Offset(220f, 386f) },
-        arrowText = "↖",
+        title = "あとで見たいものを保存",
+        body = "他のアプリの共有先で「りんばむ」を選び、必要ならタグを選んで「保存」を押します。画面下の＋から直接追加もできます。",
+        spotlight = { size ->
+            Rect(
+                left = size.width * 0.36f,
+                top = size.height - 210f,
+                right = size.width * 0.64f,
+                bottom = size.height - 82f,
+            )
+        },
+        arrowOffset = { size -> Offset(size.width * 0.50f - 20f, size.height - 270f) },
     ),
     OnboardingGuidePage(
-        title = "タグを移動",
-        body = "タグを長押ししたまま左右へ動かすと、好きな順番に並び替えできます。",
-        spotlight = { size -> Rect(left = 252f, top = 329f, right = size.width - 28f, bottom = 450f) },
-        arrowOffset = { size -> Offset(size.width * 0.50f - 28f, 461f) },
+        title = "タグと検索ですぐ見つける",
+        body = "上のサービスやタグで絞り込み、検索でタイトル・本文・メモから探せます。カードを長押しすると複数選択できます。",
+        spotlight = { size -> Rect(left = 18f, top = 76f, right = size.width - 18f, bottom = 260f) },
+        arrowOffset = { size -> Offset(size.width * 0.50f - 20f, 270f) },
         arrowText = "↑",
     ),
     OnboardingGuidePage(
-        title = "共有タグ",
-        body = "共有タグはサインイン後に使えます。招待されたタグのURL一覧だけを端末間で同期します。",
-        spotlight = { _ -> Rect(left = 42f, top = 548f, right = 231f, bottom = 660f) },
-        arrowOffset = { _ -> Offset(220f, 610f) },
-        arrowText = "↖",
-    ),
-    OnboardingGuidePage(
-        title = "問い合わせ場所",
-        body = "共有タグクラウド画面から、不具合や改善点を送れます。",
-        spotlight = { size -> Rect(left = 42f, top = size.height - 740f, right = size.width - 42f, bottom = size.height - 614f) },
-        arrowOffset = { size -> Offset(size.width * 0.50f - 47f, size.height - 970f) },
-        panelOnTop = true,
-        arrowLarge = true,
-    ),
-    OnboardingGuidePage(
-        title = "称賛のお気持ちも受け付けております！",
-        body = "あまり怒らないでね、、、",
-        spotlight = { size -> Rect(left = 42f, top = size.height - 740f, right = size.width - 42f, bottom = size.height - 614f) },
-        arrowOffset = { size -> Offset(size.width * 0.50f - 47f, size.height - 970f) },
-        panelOnTop = true,
-        bodyStrong = true,
-        arrowLarge = true,
+        title = "詳しい操作は「使い方」へ",
+        body = "右上のメニューに、保存・整理・共有・ChatGPT用ZIPの手順があります。この初回案内とは別なので、いつでも開き直せます。",
+        spotlight = { size -> Rect(left = size.width - 92f, top = 28f, right = size.width - 12f, bottom = 116f) },
+        arrowOffset = { size -> Offset(size.width - 132f, 112f) },
+        arrowText = "↑",
     ),
 )
 

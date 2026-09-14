@@ -52,11 +52,11 @@ export async function sendPromoEmail(input: {
     configuredReplyTo && configuredReplyTo.toLowerCase() !== input.to.toLowerCase()
       ? configuredReplyTo
       : undefined;
-  const subject = "URL Saver code";
+  const subject = "りんばむ code";
   const expiresAtText = new Date(input.expiresAt).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" });
   const displayCode = input.code.trim().replace(/\s+/g, " ");
   const text = [
-    "URL Saver code",
+    "りんばむ code",
     "",
     `Code: ${displayCode}`,
     `Expires: ${expiresAtText}`,
@@ -68,7 +68,7 @@ export async function sendPromoEmail(input: {
   <body style="margin:0;padding:0;background:#f6f7f9;color:#172033;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
     <div style="max-width:560px;margin:0 auto;padding:28px 18px;">
       <div style="background:#ffffff;border:1px solid #e3e7ee;border-radius:12px;padding:24px;">
-        <p style="margin:0 0 8px;font-size:13px;color:#667085;">URL Saver</p>
+        <p style="margin:0 0 8px;font-size:13px;color:#667085;">りんばむ</p>
         <h1 style="margin:0 0 16px;font-size:22px;line-height:1.35;color:#172033;">Your code</h1>
         <p style="margin:0 0 18px;font-size:15px;line-height:1.6;color:#344054;">Open the app and enter this code.</p>
         <p style="margin:0 0 18px;font-size:22px;line-height:1.5;font-weight:700;letter-spacing:1px;color:#172033;">${displayCode}</p>

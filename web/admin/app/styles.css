@@ -5,6 +5,7 @@
   --text: #17202a;
   --muted: #657080;
   --line: #d9dee7;
+  --control-line: #7b8797;
   --primary: #2463eb;
   --danger: #b42318;
   --success: #047857;
@@ -23,8 +24,15 @@ body {
 
 button,
 input,
-textarea {
+textarea,
+select {
   font: inherit;
+}
+
+button,
+input,
+select {
+  min-height: 44px;
 }
 
 a {
@@ -110,11 +118,20 @@ label {
 input,
 textarea {
   width: 100%;
-  border: 1px solid var(--line);
+  border: 1px solid var(--control-line);
   border-radius: 8px;
   padding: 11px 12px;
   background: #fff;
   color: var(--text);
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+a:focus-visible {
+  outline: 3px solid var(--primary);
+  outline-offset: 2px;
 }
 
 button {
@@ -405,11 +422,33 @@ th {
 }
 
 select {
-  border: 1px solid var(--line);
+  border: 1px solid var(--control-line);
   border-radius: 8px;
   padding: 8px;
   background: #fff;
   color: var(--text);
+}
+
+@media (forced-colors: active) {
+  input,
+  textarea,
+  select,
+  button {
+    border: 1px solid CanvasText;
+  }
+
+  button:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible,
+  a:focus-visible {
+    outline-color: Highlight;
+  }
+
+  .chip,
+  .notice {
+    border: 1px solid CanvasText;
+  }
 }
 
 .operationList {

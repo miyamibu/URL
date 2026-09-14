@@ -449,10 +449,10 @@
 			};
 			buildConfigurationList = 562035613345559DD8F8B398 /* Build configuration list for PBXProject "URLSaveriOS" */;
 			compatibilityVersion = "Xcode 16.0";
-			developmentRegion = en;
+			developmentRegion = ja;
 			hasScannedForEncodings = 0;
 			knownRegions = (
-				en,
+				ja,
 				Base,
 			);
 			mainGroup = D3A95D765607D26C44E1EAFB;

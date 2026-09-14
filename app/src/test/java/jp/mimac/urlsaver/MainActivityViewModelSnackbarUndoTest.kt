@@ -15,12 +15,18 @@ import jp.mimac.urlsaver.domain.SnackbarTargetRoute
 import jp.mimac.urlsaver.ui.MainActivityViewModel
 import jp.mimac.urlsaver.ui.Routes
 import jp.mimac.urlsaver.util.AppClock
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -46,6 +52,125 @@ class MainActivityViewModelSnackbarUndoTest {
         advanceUntilIdle()
 
         assertEquals(listOf(55L), repository.finalizeDeleteCalls)
+    }
+
+    @Test
+    fun oldCancelledTimerCompletionCannotRemoveReplacementTimerForSameEntry() = runTest {
+        val oldFinalizeStarted = CompletableDeferred<Unit>()
+        val releaseOldFinalize = CompletableDeferred<Unit>()
+        val repository = FakeRepository().apply {
+            finalizeStarted = oldFinalizeStarted
+            finalizeRelease = releaseOldFinalize
+        }
+        val viewModel = MainActivityViewModel(repository, FakeClock(now = 1_000L))
+
+        viewModel.startDeleteTimer(entryId = 77L, pendingDeletionUntil = 1_000L)
+        runCurrent()
+        assertTrue(oldFinalizeStarted.isCompleted)
+
+        viewModel.startDeleteTimer(entryId = 77L, pendingDeletionUntil = 6_000L)
+        repository.finalizeStarted = null
+        repository.finalizeRelease = null
+        releaseOldFinalize.complete(Unit)
+        runCurrent()
+
+        viewModel.cancelDeleteTimer(77L)
+        advanceTimeBy(5_000L)
+        runCurrent()
+
+        assertEquals(listOf(77L), repository.finalizeDeleteCalls)
+    }
+
+    @Test
+    fun pendingDeleteUndoWindow_startsImmediatelyBeforeSnackbarAndFinalizesAfterFullFiveSeconds() = runTest {
+        val repository = FakeRepository().apply {
+            pendingUndoWindowResult = mapOf(11L to 6_000L, 12L to 6_000L)
+        }
+        val viewModel = MainActivityViewModel(repository, FakeClock(now = 1_000L))
+        viewModel.onBatchPendingDelete(mapOf(11L to 2_000L, 12L to 2_000L))
+        val queued = viewModel.snackbarEvents.first()
+
+        assertTrue(repository.pendingUndoWindowCalls.isEmpty())
+        val displayEvent = viewModel.prepareSnackbarForDisplay(queued)
+
+        assertEquals(listOf(listOf(11L, 12L) to 5_000L), repository.pendingUndoWindowCalls)
+        assertEquals(queued, displayEvent)
+        advanceTimeBy(4_999L)
+        assertTrue(repository.finalizeDeleteCalls.isEmpty())
+        advanceTimeBy(1L)
+        advanceUntilIdle()
+        assertEquals(listOf(11L, 12L), repository.finalizeDeleteCalls.sorted())
+    }
+
+    @Test
+    fun batchUndoImmediatelyBeforeDeadlineCancelsEveryFinalize() = runTest {
+        val repository = FakeRepository().apply {
+            pendingUndoWindowResult = mapOf(21L to 6_000L, 22L to 6_000L)
+            restoreResult = true
+        }
+        val viewModel = MainActivityViewModel(repository, FakeClock(now = 1_000L))
+        viewModel.onBatchPendingDelete(mapOf(21L to 2_000L, 22L to 2_000L))
+        val queued = viewModel.snackbarEvents.first()
+        val displayEvent = viewModel.prepareSnackbarForDisplay(queued)
+
+        advanceTimeBy(4_999L)
+        viewModel.onSnackbarAction(displayEvent)
+        advanceTimeBy(1L)
+        advanceUntilIdle()
+
+        assertEquals(listOf(21L, 22L), repository.restoreCalls.sorted())
+        assertTrue(repository.finalizeDeleteCalls.isEmpty())
+    }
+
+    @Test
+    fun undoCancelsTimerBeforeWaitingForDatabaseRestore() = runTest {
+        val restoreStarted = CompletableDeferred<Unit>()
+        val releaseRestore = CompletableDeferred<Unit>()
+        val repository = FakeRepository().apply {
+            pendingUndoWindowResult = mapOf(23L to 6_000L)
+            restoreResult = true
+            this.restoreStarted = restoreStarted
+            restoreRelease = releaseRestore
+        }
+        val viewModel = MainActivityViewModel(repository, FakeClock(now = 1_000L))
+        viewModel.onBatchPendingDelete(mapOf(23L to 2_000L))
+        val displayEvent = viewModel.prepareSnackbarForDisplay(viewModel.snackbarEvents.first())
+
+        advanceTimeBy(4_999L)
+        val undo = launch { viewModel.onSnackbarAction(displayEvent) }
+        runCurrent()
+        assertTrue(restoreStarted.isCompleted)
+
+        advanceTimeBy(1L)
+        runCurrent()
+        assertTrue(repository.finalizeDeleteCalls.isEmpty())
+
+        releaseRestore.complete(Unit)
+        undo.join()
+        assertEquals(listOf(23L), repository.restoreCalls)
+    }
+
+    @Test
+    fun pendingDeleteQueuedLongerThanFiveSecondsDoesNotStartFinalizeBeforeDisplay() = runTest {
+        val repository = FakeRepository().apply {
+            pendingUndoWindowResult = mapOf(31L to 12_000L)
+        }
+        val viewModel = MainActivityViewModel(repository, FakeClock(now = 7_000L))
+        viewModel.onBatchPendingDelete(mapOf(31L to 6_000L))
+        val queued = viewModel.snackbarEvents.first()
+
+        advanceTimeBy(6_000L)
+        advanceUntilIdle()
+        assertTrue(repository.finalizeDeleteCalls.isEmpty())
+        assertTrue(repository.pendingUndoWindowCalls.isEmpty())
+
+        viewModel.prepareSnackbarForDisplay(queued)
+        assertEquals(listOf(listOf(31L) to 5_000L), repository.pendingUndoWindowCalls)
+        advanceTimeBy(4_999L)
+        assertTrue(repository.finalizeDeleteCalls.isEmpty())
+        advanceTimeBy(1L)
+        advanceUntilIdle()
+        assertEquals(listOf(31L), repository.finalizeDeleteCalls)
     }
 
     @Test
@@ -208,6 +333,14 @@ class MainActivityViewModelSnackbarUndoTest {
     private class FakeRepository : UrlRepository {
         val restoreTitleCalls = mutableListOf<Pair<Long, String?>>()
         val finalizeDeleteCalls = mutableListOf<Long>()
+        val restoreCalls = mutableListOf<Long>()
+        val pendingUndoWindowCalls = mutableListOf<Pair<List<Long>, Long>>()
+        var pendingUndoWindowResult: Map<Long, Long> = emptyMap()
+        var restoreResult = false
+        var restoreStarted: CompletableDeferred<Unit>? = null
+        var restoreRelease: CompletableDeferred<Unit>? = null
+        var finalizeStarted: CompletableDeferred<Unit>? = null
+        var finalizeRelease: CompletableDeferred<Unit>? = null
 
         override fun observeActiveEntries(): Flow<List<UrlEntryEntity>> = emptyFlow()
         override fun observeArchiveEntries(): Flow<List<UrlEntryEntity>> = emptyFlow()
@@ -220,9 +353,27 @@ class MainActivityViewModelSnackbarUndoTest {
         override suspend fun markPendingDelete(entryId: Long, gracePeriodMillis: Long): Long? = null
         override suspend fun finalizePendingDelete(entryId: Long) {
             finalizeDeleteCalls += entryId
+            finalizeStarted?.complete(Unit)
+            finalizeRelease?.let { release ->
+                withContext(NonCancellable) {
+                    release.await()
+                }
+            }
         }
         override suspend fun cleanupExpiredPendingDeletes() = Unit
-        override suspend fun restore(entryId: Long): Boolean = false
+        override suspend fun startPendingDeleteUndoWindow(
+            entryIds: Collection<Long>,
+            gracePeriodMillis: Long,
+        ): Map<Long, Long> {
+            pendingUndoWindowCalls += entryIds.sorted() to gracePeriodMillis
+            return pendingUndoWindowResult
+        }
+        override suspend fun restore(entryId: Long): Boolean {
+            restoreCalls += entryId
+            restoreStarted?.complete(Unit)
+            restoreRelease?.await()
+            return restoreResult
+        }
         override suspend fun saveUserTitle(entryId: Long, rawTitle: String) =
             jp.mimac.urlsaver.data.SaveTitleResult(success = false)
         override suspend fun restoreUserTitle(entryId: Long, oldTitle: String?): Boolean {

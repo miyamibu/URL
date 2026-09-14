@@ -135,7 +135,7 @@ class ShareReceiverActivityEntrypointTest {
     }
 
     @Test
-    fun actionView_httpInviteLink_routesToMainWithInviteTokenExtra() {
+    fun actionView_httpInviteLink_routesToMainWithGenericInvalidFlag() {
         val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
         val intent = Intent(context, ShareReceiverActivity::class.java).apply {
             action = Intent.ACTION_VIEW
@@ -146,8 +146,200 @@ class ShareReceiverActivityEntrypointTest {
         ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
 
         val started = shadowOf(controller.get()).nextStartedActivity
-        assertEquals("invite-token-http-123", started.getStringExtra(EXTRA_SHARED_TAG_INVITE_TOKEN))
+        assertFalse(started.hasExtra(EXTRA_SHARED_TAG_INVITE_TOKEN))
         assertFalse(started.getBooleanExtra(EXTRA_SHARED_TAG_INVITE_INVALID, false))
+        assertTrue(started.getBooleanExtra(EXTRA_DEEP_LINK_INVALID, false))
+    }
+
+    @Test
+    fun actionView_httpsInviteLink_hostComparisonIsCaseInsensitive() {
+        val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
+        val intent = Intent(context, ShareReceiverActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = Uri.parse("https://MIYAMIBU.XYZ/invite/invite-token-uppercase-host")
+        }
+
+        val controller = Robolectric.buildActivity(ShareReceiverActivity::class.java, intent).setup()
+        ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+
+        val started = shadowOf(controller.get()).nextStartedActivity
+        assertEquals("invite-token-uppercase-host", started.getStringExtra(EXTRA_SHARED_TAG_INVITE_TOKEN))
+    }
+
+    @Test
+    fun actionView_httpsForeignInviteLink_routesToMainWithGenericInvalidFlag() {
+        val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
+        val intent = Intent(context, ShareReceiverActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = Uri.parse("https://example.test/invite/foreign-token")
+        }
+
+        val controller = Robolectric.buildActivity(ShareReceiverActivity::class.java, intent).setup()
+        ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+
+        val started = shadowOf(controller.get()).nextStartedActivity
+        assertFalse(started.hasExtra(EXTRA_SHARED_TAG_INVITE_TOKEN))
+        assertFalse(started.getBooleanExtra(EXTRA_SHARED_TAG_INVITE_INVALID, false))
+        assertTrue(started.getBooleanExtra(EXTRA_DEEP_LINK_INVALID, false))
+    }
+
+    @Test
+    fun actionView_httpsSubdomainInviteLink_routesToMainWithGenericInvalidFlag() {
+        val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
+        val intent = Intent(context, ShareReceiverActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = Uri.parse("https://sub.miyamibu.xyz/invite/subdomain-token")
+        }
+
+        val controller = Robolectric.buildActivity(ShareReceiverActivity::class.java, intent).setup()
+        ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+
+        val started = shadowOf(controller.get()).nextStartedActivity
+        assertFalse(started.hasExtra(EXTRA_SHARED_TAG_INVITE_TOKEN))
+        assertTrue(started.getBooleanExtra(EXTRA_DEEP_LINK_INVALID, false))
+    }
+
+    @Test
+    fun actionView_httpsTrailingDotInviteLink_routesToMainWithGenericInvalidFlag() {
+        val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
+        val intent = Intent(context, ShareReceiverActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = Uri.parse("https://miyamibu.xyz./invite/trailing-dot-token")
+        }
+
+        val controller = Robolectric.buildActivity(ShareReceiverActivity::class.java, intent).setup()
+        ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+
+        val started = shadowOf(controller.get()).nextStartedActivity
+        assertFalse(started.hasExtra(EXTRA_SHARED_TAG_INVITE_TOKEN))
+        assertTrue(started.getBooleanExtra(EXTRA_DEEP_LINK_INVALID, false))
+    }
+
+    @Test
+    fun actionView_httpCanonicalInviteLink_routesToMainWithGenericInvalidFlag() {
+        val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
+        val intent = Intent(context, ShareReceiverActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = Uri.parse("http://miyamibu.xyz/invite/http-token")
+        }
+
+        val controller = Robolectric.buildActivity(ShareReceiverActivity::class.java, intent).setup()
+        ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+
+        val started = shadowOf(controller.get()).nextStartedActivity
+        assertFalse(started.hasExtra(EXTRA_SHARED_TAG_INVITE_TOKEN))
+        assertTrue(started.getBooleanExtra(EXTRA_DEEP_LINK_INVALID, false))
+    }
+
+    @Test
+    fun canonicalHttpsBaseConfiguration_rejectsMalformedBaseUrl() {
+        val uri = Uri.parse("https://miyamibu.xyz/invite/configuration-token")
+
+        assertFalse(
+            ShareReceiverEntrypointRouter.isCanonicalHttpsUri(
+                uri,
+                baseUrl = "https://[invalid",
+            )
+        )
+    }
+
+    @Test
+    fun canonicalHttpsBaseConfiguration_rejectsHttpBaseUrl() {
+        val uri = Uri.parse("https://miyamibu.xyz/invite/configuration-token")
+
+        assertFalse(
+            ShareReceiverEntrypointRouter.isCanonicalHttpsUri(
+                uri,
+                baseUrl = "http://miyamibu.xyz",
+            )
+        )
+    }
+
+    @Test
+    fun canonicalHttpsBaseConfiguration_rejectsHostlessBaseUrl() {
+        val uri = Uri.parse("https://miyamibu.xyz/invite/configuration-token")
+
+        assertFalse(
+            ShareReceiverEntrypointRouter.isCanonicalHttpsUri(
+                uri,
+                baseUrl = "https:///invite",
+            )
+        )
+    }
+
+    @Test
+    fun canonicalHttpsBaseConfiguration_rejectsEmptyBaseUrl() {
+        val uri = Uri.parse("https://miyamibu.xyz/invite/configuration-token")
+
+        assertFalse(
+            ShareReceiverEntrypointRouter.isCanonicalHttpsUri(
+                uri,
+                baseUrl = "",
+            )
+        )
+    }
+
+    @Test
+    fun canonicalHttpsBaseConfiguration_rejectsTerminalDotHost() {
+        val uri = Uri.parse("https://miyamibu.xyz/invite/configuration-token")
+
+        assertFalse(
+            ShareReceiverEntrypointRouter.isCanonicalHttpsUri(
+                uri,
+                baseUrl = "https://miyamibu.xyz.",
+            )
+        )
+    }
+
+    @Test
+    fun canonicalHttpsAdversarialMatrix_rejectsNonCanonicalAuthorityAndPath() {
+        val rejectedUrls = listOf(
+            "https://miyamibu.xyz.evil/invite/suffix-token",
+            "https://evil-miyamibu.xyz/invite/prefix-token",
+            "https://canonical.example.evil/invite/canonical-example-token",
+            "https://user:pass@miyamibu.xyz/invite/userinfo-token",
+            "https://@miyamibu.xyz/invite/empty-userinfo-token",
+            "https://miyamibu.xyz:443/invite/default-port-token",
+            "https://miyamibu.xyz:8443/invite/explicit-port-token",
+            "http://miyamibu.xyz/invite/http-token",
+            "https:///invite/hostless-token",
+            "https://[invalid/invite/malformed-token",
+            "https://miyamibu.xyz/invite/token%2Fpart",
+            "https://miyamibu.xyz/invite/token%2fpart",
+            "https://miyamibu.xyz/invite/token%5Cpart",
+            "https://miyamibu.xyz/invite/token%5cpart",
+            "https://miyamibu.xyz/invite\\token",
+            "https://miyamibu.xyz/invite//token",
+            "https://m\u0456yamibu.xyz/invite/unicode-lookalike-token",
+            "https://miyamibu.xn--p1ai/invite/foreign-punycode-token",
+        )
+
+        for (rawUrl in rejectedUrls) {
+            assertFalse(
+                "URL must fail closed: $rawUrl",
+                ShareReceiverEntrypointRouter.isCanonicalHttpsUri(Uri.parse(rawUrl)),
+            )
+        }
+    }
+
+    @Test
+    fun canonicalHttpsBaseConfiguration_rejectsUserInfoAndExplicitPorts() {
+        val uri = Uri.parse("https://miyamibu.xyz/invite/configuration-token")
+        val rejectedBaseUrls = listOf(
+            "https://user:pass@miyamibu.xyz",
+            "https://@miyamibu.xyz",
+            "https://miyamibu.xyz:443",
+            "https://miyamibu.xyz:8443",
+            "https://m\u0456yamibu.xyz",
+            "https://miyamibu.xn--p1ai",
+        )
+
+        for (baseUrl in rejectedBaseUrls) {
+            assertFalse(
+                "Base URL must fail closed: $baseUrl",
+                ShareReceiverEntrypointRouter.isCanonicalHttpsUri(uri, baseUrl = baseUrl),
+            )
+        }
     }
 
     @Test
@@ -196,6 +388,198 @@ class ShareReceiverActivityEntrypointTest {
         val started = shadowOf(controller.get()).nextStartedActivity
         assertEquals("RNBM TEST CODE 5678", started.getStringExtra(EXTRA_PROMO_CODE))
         assertFalse(started.getBooleanExtra(EXTRA_PROMO_CODE_INVALID, false))
+    }
+
+    @Test
+    fun actionView_httpsPromoQuery_routesToMainWithPromoCodeExtra() {
+        val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
+        val intent = Intent(context, ShareReceiverActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = Uri.parse("https://miyamibu.xyz/promo?code=RNBM%20QUERY%20CODE%209012")
+        }
+
+        val controller = Robolectric.buildActivity(ShareReceiverActivity::class.java, intent).setup()
+        ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+
+        val started = shadowOf(controller.get()).nextStartedActivity
+        assertEquals("RNBM QUERY CODE 9012", started.getStringExtra(EXTRA_PROMO_CODE))
+        assertFalse(started.getBooleanExtra(EXTRA_PROMO_CODE_INVALID, false))
+    }
+
+    @Test
+    fun actionView_httpsForeignPromoLink_routesToMainWithGenericInvalidFlag() {
+        val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
+        val intent = Intent(context, ShareReceiverActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = Uri.parse("https://example.test/promo?code=FOREIGN-CODE")
+        }
+
+        val controller = Robolectric.buildActivity(ShareReceiverActivity::class.java, intent).setup()
+        ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+
+        val started = shadowOf(controller.get()).nextStartedActivity
+        assertFalse(started.hasExtra(EXTRA_PROMO_CODE))
+        assertFalse(started.getBooleanExtra(EXTRA_PROMO_CODE_INVALID, false))
+        assertTrue(started.getBooleanExtra(EXTRA_DEEP_LINK_INVALID, false))
+    }
+
+    @Test
+    fun actionView_httpsInviteWithoutToken_routesToMainWithInviteInvalidFlag() {
+        val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
+        val intent = Intent(context, ShareReceiverActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = Uri.parse("https://miyamibu.xyz/invite")
+        }
+
+        val controller = Robolectric.buildActivity(ShareReceiverActivity::class.java, intent).setup()
+        ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+
+        val started = shadowOf(controller.get()).nextStartedActivity
+        assertFalse(started.hasExtra(EXTRA_SHARED_TAG_INVITE_TOKEN))
+        assertTrue(started.getBooleanExtra(EXTRA_SHARED_TAG_INVITE_INVALID, false))
+    }
+
+    @Test
+    fun actionView_httpsInviteWithExtraSegments_routesToMainWithGenericInvalidFlag() {
+        val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
+        val intent = Intent(context, ShareReceiverActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = Uri.parse("https://miyamibu.xyz/invite/token/extra")
+        }
+
+        val controller = Robolectric.buildActivity(ShareReceiverActivity::class.java, intent).setup()
+        ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+
+        val started = shadowOf(controller.get()).nextStartedActivity
+        assertFalse(started.hasExtra(EXTRA_SHARED_TAG_INVITE_TOKEN))
+        assertFalse(started.getBooleanExtra(EXTRA_SHARED_TAG_INVITE_INVALID, false))
+        assertTrue(started.getBooleanExtra(EXTRA_DEEP_LINK_INVALID, false))
+    }
+
+    @Test
+    fun actionView_httpsUppercaseInvite_routesToMainWithGenericInvalidFlag() {
+        val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
+        val intent = Intent(context, ShareReceiverActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = Uri.parse("https://miyamibu.xyz/INVITE/token")
+        }
+
+        val controller = Robolectric.buildActivity(ShareReceiverActivity::class.java, intent).setup()
+        ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+
+        val started = shadowOf(controller.get()).nextStartedActivity
+        assertFalse(started.hasExtra(EXTRA_SHARED_TAG_INVITE_TOKEN))
+        assertFalse(started.getBooleanExtra(EXTRA_SHARED_TAG_INVITE_INVALID, false))
+        assertTrue(started.getBooleanExtra(EXTRA_DEEP_LINK_INVALID, false))
+    }
+
+    @Test
+    fun actionView_httpsPromoWithExtraSegments_routesToMainWithGenericInvalidFlag() {
+        val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
+        val intent = Intent(context, ShareReceiverActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = Uri.parse("https://miyamibu.xyz/promo/extra?code=X")
+        }
+
+        val controller = Robolectric.buildActivity(ShareReceiverActivity::class.java, intent).setup()
+        ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+
+        val started = shadowOf(controller.get()).nextStartedActivity
+        assertFalse(started.hasExtra(EXTRA_PROMO_CODE))
+        assertFalse(started.getBooleanExtra(EXTRA_PROMO_CODE_INVALID, false))
+        assertTrue(started.getBooleanExtra(EXTRA_DEEP_LINK_INVALID, false))
+    }
+
+    @Test
+    fun actionView_httpsUppercasePromo_routesToMainWithGenericInvalidFlag() {
+        val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
+        val intent = Intent(context, ShareReceiverActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = Uri.parse("https://miyamibu.xyz/PROMO?code=X")
+        }
+
+        val controller = Robolectric.buildActivity(ShareReceiverActivity::class.java, intent).setup()
+        ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+
+        val started = shadowOf(controller.get()).nextStartedActivity
+        assertFalse(started.hasExtra(EXTRA_PROMO_CODE))
+        assertFalse(started.getBooleanExtra(EXTRA_PROMO_CODE_INVALID, false))
+        assertTrue(started.getBooleanExtra(EXTRA_DEEP_LINK_INVALID, false))
+    }
+
+    @Test
+    fun actionView_httpsPromoQueryCodeKeyWinsOverFragmentEvenWhenEmpty() {
+        val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
+        val intent = Intent(context, ShareReceiverActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = Uri.parse("https://miyamibu.xyz/promo?code=#code=FRAGMENT")
+        }
+
+        val controller = Robolectric.buildActivity(ShareReceiverActivity::class.java, intent).setup()
+        ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+
+        val started = shadowOf(controller.get()).nextStartedActivity
+        assertFalse(started.hasExtra(EXTRA_PROMO_CODE))
+        assertTrue(started.getBooleanExtra(EXTRA_PROMO_CODE_INVALID, false))
+    }
+
+    @Test
+    fun actionView_httpsPromoDuplicateQueryCodeUsesFirstValue() {
+        val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
+        val intent = Intent(context, ShareReceiverActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = Uri.parse("https://miyamibu.xyz/promo?code=FIRST&code=SECOND")
+        }
+
+        val controller = Robolectric.buildActivity(ShareReceiverActivity::class.java, intent).setup()
+        ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+
+        val started = shadowOf(controller.get()).nextStartedActivity
+        assertEquals("FIRST", started.getStringExtra(EXTRA_PROMO_CODE))
+        assertFalse(started.getBooleanExtra(EXTRA_PROMO_CODE_INVALID, false))
+    }
+
+    @Test
+    fun actionView_httpsPromoWithAmbiguousPath_routesToGenericInvalid() {
+        val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
+        val ambiguousUrls = listOf(
+            "https://miyamibu.xyz/promo/%2F?code=encoded-slash-upper",
+            "https://miyamibu.xyz/promo/%2f?code=encoded-slash-lower",
+            "https://miyamibu.xyz/promo/%5C?code=encoded-backslash-upper",
+            "https://miyamibu.xyz/promo/%5c?code=encoded-backslash-lower",
+            "https://miyamibu.xyz/promo\\token?code=raw-backslash",
+            "https://miyamibu.xyz/promo//token?code=double-slash",
+        )
+
+        for (rawUrl in ambiguousUrls) {
+            val intent = Intent(context, ShareReceiverActivity::class.java).apply {
+                action = Intent.ACTION_VIEW
+                data = Uri.parse(rawUrl)
+            }
+            val controller = Robolectric.buildActivity(ShareReceiverActivity::class.java, intent).setup()
+            ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+
+            val started = shadowOf(controller.get()).nextStartedActivity
+            assertFalse("promo must not be accepted: $rawUrl", started.hasExtra(EXTRA_PROMO_CODE))
+            assertFalse(started.getBooleanExtra(EXTRA_PROMO_CODE_INVALID, false))
+            assertTrue(started.getBooleanExtra(EXTRA_DEEP_LINK_INVALID, false))
+        }
+    }
+
+    @Test
+    fun actionView_httpsPromoWithoutCode_routesToMainWithPromoInvalidFlag() {
+        val context = ApplicationProvider.getApplicationContext<UrlSaverApp>()
+        val intent = Intent(context, ShareReceiverActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = Uri.parse("https://miyamibu.xyz/promo")
+        }
+
+        val controller = Robolectric.buildActivity(ShareReceiverActivity::class.java, intent).setup()
+        ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+
+        val started = shadowOf(controller.get()).nextStartedActivity
+        assertFalse(started.hasExtra(EXTRA_PROMO_CODE))
+        assertTrue(started.getBooleanExtra(EXTRA_PROMO_CODE_INVALID, false))
     }
 
     @Test

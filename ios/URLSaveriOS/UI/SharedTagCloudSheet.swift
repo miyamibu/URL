@@ -815,7 +815,8 @@ struct SharedTagCloudSheet: View {
     }
 
     private var paidCourseSection: some View {
-        AppPanel {
+        let options = availablePaidCoursePurchaseOptions(currentPlan: model.entitlements.planType)
+        return AppPanel {
             Text("有料コース")
                 .font(.system(size: 20, weight: .heavy, design: .rounded))
                 .foregroundStyle(AppPalette.textPrimary)
@@ -824,17 +825,29 @@ struct SharedTagCloudSheet: View {
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(AppPalette.textSecondary)
 
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                if !model.entitlements.planType.isPaidCourse {
-                    paidCourseButton(title: "Standard 月額", plan: .standard, period: .monthly)
+            if options.isEmpty {
+                Label("Proが有効です。追加購入は必要ありません。", systemImage: "checkmark.seal.fill")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(AppPalette.primaryStrong)
+                    .accessibilityLabel("Proが有効です。追加購入は必要ありません")
+            } else {
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                    ForEach(options, id: \.self) { option in
+                        paidCourseButton(
+                            title: paidCourseOptionTitle(option),
+                            plan: option.planType,
+                            period: option.billingPeriod
+                        )
+                    }
                 }
-                paidCourseButton(title: "Standard 年払い", plan: .standard, period: .yearly)
-                if !model.entitlements.planType.isPaidCourse {
-                    paidCourseButton(title: "Pro 月額", plan: .pro, period: .monthly)
-                }
-                paidCourseButton(title: "Pro 年払い", plan: .pro, period: .yearly)
             }
         }
+    }
+
+    private func paidCourseOptionTitle(_ option: PaidCoursePurchaseOption) -> String {
+        let plan = option.planType == .pro ? "Pro" : "Standard"
+        let period = option.billingPeriod == .yearly ? "年払い" : "月額"
+        return "\(plan) \(period)"
     }
 
     private func paidCourseButton(title: String, plan: PlanType, period: BillingPeriod) -> some View {

@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./styles.css";
 
 export const metadata: Metadata = {
-  title: "URL Saver Admin",
-  description: "URL Saver promo code management",
+  title: "りんばむ 管理",
+  description: "りんばむの優待コード管理",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

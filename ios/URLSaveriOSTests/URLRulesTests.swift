@@ -252,6 +252,20 @@ final class URLRulesTests: XCTestCase {
         XCTAssertTrue(planType.isPaidCourse)
     }
 
+    func testPaidCourseOptionsDoNotOfferRedundantOrDowngradePurchases() {
+        XCTAssertTrue(availablePaidCoursePurchaseOptions(currentPlan: .pro).isEmpty)
+        XCTAssertTrue(availablePaidCoursePurchaseOptions(currentPlan: .promoPro).isEmpty)
+        XCTAssertEqual(
+            availablePaidCoursePurchaseOptions(currentPlan: .standard),
+            [
+                PaidCoursePurchaseOption(planType: .pro, billingPeriod: .monthly),
+                PaidCoursePurchaseOption(planType: .pro, billingPeriod: .yearly),
+            ]
+        )
+        XCTAssertEqual(availablePaidCoursePurchaseOptions(currentPlan: .free).count, 4)
+        XCTAssertEqual(availablePaidCoursePurchaseOptions(currentPlan: .launchStandard).count, 4)
+    }
+
     func testEntitlementResolverDoesNotDowngradeProDefault() {
         let resolver = EntitlementResolver(
             grantsProvider: {
@@ -296,7 +310,7 @@ final class URLRulesTests: XCTestCase {
             result,
             .blocked(
                 target: .personalURL,
-                message: "ローンチ版の保存上限に達しました。不要なURLを整理してから追加してください。"
+                message: "現在のプランの保存上限に達しました。不要なURLを整理してから追加してください。"
             )
         )
     }
@@ -369,6 +383,224 @@ final class URLRulesTests: XCTestCase {
     func testSupabaseEntitlementTimestampParserAcceptsFractionalSeconds() {
         XCTAssertNotNil(parseSupabaseISO8601Date("2026-05-01T04:05:06.789123Z"))
         XCTAssertNotNil(parseSupabaseISO8601Date("2026-05-01T04:05:06Z"))
+    }
+
+    func testShareExtensionPendingOperationSurvivesStoreRecreationAndClearsOnlyMatchingOperation() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("share-pending-\(UUID().uuidString)", isDirectory: true)
+        let fileURL = directory.appendingPathComponent("pending.json")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let now = Date(timeIntervalSince1970: 2_000_000)
+        let operationID = UUID()
+        let firstURL = "https://example.com/first"
+        let secondURL = "https://example.com/second"
+        let thirdURL = "https://example.com/third"
+        let operation = ShareExtensionPendingOperation(
+            operationID: operationID,
+            createdAt: now,
+            updatedAt: now,
+            originalURLs: [firstURL, secondURL, thirdURL],
+            memo: "共有メモ",
+            degradationNotice: nil,
+            selectedTagIDs: [8, 7, 8],
+            tagSelectionLockedAt: now,
+            pendingItems: [
+                ShareExtensionPendingItem(
+                    url: firstURL,
+                    needsURLSave: false,
+                    entryID: 101,
+                    normalizedURL: firstURL,
+                    pendingTagIDs: [8],
+                    savedResult: .created
+                ),
+                ShareExtensionPendingItem(url: thirdURL),
+            ],
+            completedItems: [
+                ShareExtensionCompletedItem(
+                    url: secondURL,
+                    result: .duplicateActive,
+                    entryID: 102,
+                    normalizedURL: secondURL
+                ),
+            ]
+        )
+        let firstStore = ShareExtensionPendingOperationStore(fileURL: fileURL)
+        try firstStore.write(operation)
+
+        let relaunchedStore = ShareExtensionPendingOperationStore(fileURL: fileURL)
+        let restored = try XCTUnwrap(relaunchedStore.load(now: now.addingTimeInterval(1)))
+
+        XCTAssertEqual(restored.operationID, operationID)
+        XCTAssertEqual(restored.selectedTagIDs, [7, 8])
+        XCTAssertTrue(restored.isTagSelectionLocked)
+        XCTAssertEqual(restored.completedItems.map(\.url), [secondURL])
+        XCTAssertEqual(restored.pendingItems.map(\.url), [firstURL, thirdURL])
+        XCTAssertFalse(restored.pendingItems[0].needsURLSave)
+        XCTAssertEqual(restored.pendingItems[0].pendingTagIDs, [8])
+
+        try relaunchedStore.clear(operationID: UUID())
+        XCTAssertNotNil(try relaunchedStore.load(now: now.addingTimeInterval(2)))
+        try relaunchedStore.clear(operationID: operationID)
+        XCTAssertNil(try relaunchedStore.load(now: now.addingTimeInterval(2)))
+    }
+
+    func testShareExtensionOperationFreezesTagsAndRetriesOnlyUnfinishedWork() {
+        let now = Date(timeIntervalSince1970: 2_000_000)
+        let firstURL = "https://example.com/tag-retry"
+        let secondURL = "https://example.com/completed"
+        let firstItem = ShareExtensionPendingItem(url: firstURL)
+        let secondItem = ShareExtensionPendingItem(url: secondURL)
+        var operation = ShareExtensionPendingOperation(
+            createdAt: now,
+            updatedAt: now,
+            originalURLs: [firstURL, secondURL],
+            memo: nil,
+            degradationNotice: nil,
+            pendingItems: [firstItem, secondItem]
+        )
+
+        operation.lockTagSelection([7], at: now.addingTimeInterval(1))
+        operation.lockTagSelection([8], at: now.addingTimeInterval(2))
+        operation.recordAttempt(
+            for: firstItem,
+            retryItem: ShareExtensionPendingItem(
+                url: firstURL,
+                needsURLSave: false,
+                entryID: 101,
+                normalizedURL: firstURL,
+                pendingTagIDs: [7],
+                savedResult: .created
+            ),
+            completed: [],
+            at: now.addingTimeInterval(3)
+        )
+        operation.recordAttempt(
+            for: secondItem,
+            retryItem: nil,
+            completed: [
+                ShareExtensionCompletedItem(
+                    url: secondURL,
+                    result: .duplicateActive,
+                    entryID: 102,
+                    normalizedURL: secondURL
+                ),
+            ],
+            at: now.addingTimeInterval(4)
+        )
+
+        XCTAssertTrue(operation.isTagSelectionLocked)
+        XCTAssertEqual(operation.selectedTagIDs, [7])
+        XCTAssertEqual(operation.pendingItems.map(\.url), [firstURL])
+        XCTAssertFalse(operation.pendingItems[0].needsURLSave)
+        XCTAssertEqual(operation.pendingItems[0].pendingTagIDs, [7])
+        XCTAssertEqual(operation.completedItems.map(\.url), [secondURL])
+        XCTAssertFalse(operation.pendingItems.map(\.url).contains(secondURL))
+    }
+
+    func testShareExtensionPendingOperationRejectsExpiredOrDifferentPayloadRecovery() throws {
+        let now = Date(timeIntervalSince1970: 2_000_000)
+        let operation = ShareExtensionPendingOperation(
+            createdAt: now,
+            updatedAt: now,
+            originalURLs: ["https://example.com/first"],
+            memo: "共有メモ",
+            degradationNotice: .truncatedToFirstURL,
+            selectedTagIDs: [7]
+        )
+
+        XCTAssertTrue(
+            operation.matches(
+                urls: ["https://example.com/first"],
+                memo: "共有メモ",
+                degradationNotice: .truncatedToFirstURL
+            )
+        )
+        XCTAssertFalse(
+            operation.matches(
+                urls: ["https://example.com/other"],
+                memo: "共有メモ",
+                degradationNotice: .truncatedToFirstURL
+            )
+        )
+        XCTAssertTrue(operation.isRecoverable(at: now.addingTimeInterval(ShareExtensionPendingOperation.recoveryWindow)))
+        XCTAssertFalse(operation.isRecoverable(at: now.addingTimeInterval(ShareExtensionPendingOperation.recoveryWindow + 1)))
+    }
+
+    func testShareExtensionHostHandoffDoesNotCancelSaveOnViewDisappearance() {
+        var lifecycle = ShareExtensionLifecycle()
+        XCTAssertTrue(lifecycle.shouldCancelTasksWhenViewDisappears)
+
+        lifecycle.beginHostHandoff()
+        XCTAssertEqual(lifecycle.phase, .handingOffToHost)
+        XCTAssertFalse(lifecycle.shouldCancelTasksWhenViewDisappears)
+
+        lifecycle.beginCompletion()
+        XCTAssertEqual(lifecycle.phase, .completing)
+        XCTAssertFalse(lifecycle.shouldCancelTasksWhenViewDisappears)
+
+        var failedHandoff = ShareExtensionLifecycle()
+        failedHandoff.beginHostHandoff()
+        failedHandoff.hostHandoffFailed()
+        XCTAssertEqual(failedHandoff.phase, .active)
+        XCTAssertTrue(failedHandoff.shouldCancelTasksWhenViewDisappears)
+    }
+
+    func testCancelledPendingDeleteTimerNeverAllowsFinalize() async {
+        let waiter = Task {
+            await PendingDeleteTimerWaiter.wait(seconds: 60)
+        }
+        waiter.cancel()
+
+        let shouldFinalize = await waiter.value
+
+        XCTAssertFalse(shouldFinalize)
+    }
+
+    func testFirstRunOnboardingMigrationShowsOnlyForFreshInstall() {
+        let fresh = FirstRunOnboardingStore.resolve(
+            migrationAlreadyCompleted: false,
+            legacySeen: false,
+            hadExistingDatabaseBeforeStartup: false
+        )
+        let existing = FirstRunOnboardingStore.resolve(
+            migrationAlreadyCompleted: false,
+            legacySeen: false,
+            hadExistingDatabaseBeforeStartup: true
+        )
+        let completedFresh = FirstRunOnboardingStore.resolve(
+            migrationAlreadyCompleted: true,
+            legacySeen: true,
+            hadExistingDatabaseBeforeStartup: false
+        )
+
+        XCTAssertFalse(fresh.hasSeenOnboarding)
+        XCTAssertTrue(existing.hasSeenOnboarding)
+        XCTAssertTrue(completedFresh.hasSeenOnboarding)
+    }
+
+    func testFirstRunOnboardingStorePersistsFreshAndExistingInstallBehavior() throws {
+        let freshSuite = "FirstRunFresh-\(UUID().uuidString)"
+        let existingSuite = "FirstRunExisting-\(UUID().uuidString)"
+        let freshDefaults = try XCTUnwrap(UserDefaults(suiteName: freshSuite))
+        let existingDefaults = try XCTUnwrap(UserDefaults(suiteName: existingSuite))
+        defer {
+            freshDefaults.removePersistentDomain(forName: freshSuite)
+            existingDefaults.removePersistentDomain(forName: existingSuite)
+        }
+
+        FirstRunOnboardingStore.initialize(
+            defaults: freshDefaults,
+            hadExistingDatabaseBeforeStartup: false
+        )
+        XCTAssertTrue(FirstRunOnboardingStore.shouldShow(defaults: freshDefaults))
+        FirstRunOnboardingStore.markSeen(defaults: freshDefaults)
+        XCTAssertFalse(FirstRunOnboardingStore.shouldShow(defaults: freshDefaults))
+
+        FirstRunOnboardingStore.initialize(
+            defaults: existingDefaults,
+            hadExistingDatabaseBeforeStartup: true
+        )
+        XCTAssertFalse(FirstRunOnboardingStore.shouldShow(defaults: existingDefaults))
     }
 }
 

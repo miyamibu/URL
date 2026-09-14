@@ -713,7 +713,9 @@ private struct SharedTagSyncRemoteDataSource {
             session: session,
             body: ApplySharedTagOpsPayload(payload: operations)
         )
-        return try makeSharedTagCloudDecoder().decode(ApplySharedTagOpsResponse.self, from: data)
+        let response = try makeSharedTagCloudDecoder().decode(ApplySharedTagOpsResponse.self, from: data)
+        try response.validate(expectedOperationIDs: operations.map(\.opID))
+        return response
     }
 
     func createInvite(
@@ -3490,11 +3492,25 @@ private enum SharedTagSyncOperationType: String, Encodable {
     case removeMember = "remove_member"
 }
 
-private struct ApplySharedTagOpsResponse: Decodable {
+struct ApplySharedTagOpsResponse: Decodable {
     let results: [SharedTagOpApplyResult]
+
+    func validate(expectedOperationIDs: [String]) throws {
+        let expectedIDs = Set(expectedOperationIDs)
+        let responseIDs = results.map(\.opID)
+        guard expectedOperationIDs.count == expectedIDs.count,
+              responseIDs.count == Set(responseIDs).count,
+              responseIDs.count == expectedOperationIDs.count,
+              Set(responseIDs) == expectedIDs else {
+            throw SharedTagCloudError.message("共有タグの変更結果を確認できませんでした。もう一度お試しください。")
+        }
+        guard results.allSatisfy({ $0.status == "applied" || $0.status == "no_op" }) else {
+            throw SharedTagCloudError.message("共有タグの変更はサーバーに受け付けられませんでした。権限と最新状態を確認してください。")
+        }
+    }
 }
 
-private struct SharedTagOpApplyResult: Decodable {
+struct SharedTagOpApplyResult: Decodable {
     let opID: String
     let status: String
     let tagID: String?

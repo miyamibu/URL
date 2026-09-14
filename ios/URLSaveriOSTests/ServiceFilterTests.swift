@@ -2,6 +2,40 @@ import XCTest
 @testable import URLSaveriOS
 
 final class ServiceFilterTests: XCTestCase {
+    func testUserVisibleMobileLabelsUseRinbamBrand() throws {
+        let sourceRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let appInfoData = try Data(contentsOf: sourceRoot.appendingPathComponent("URLSaveriOS/Info.plist"))
+        let shareInfoData = try Data(contentsOf: sourceRoot.appendingPathComponent("URLSaverShareExtension/Info.plist"))
+        let appInfo = try XCTUnwrap(
+            PropertyListSerialization.propertyList(from: appInfoData, format: nil) as? [String: Any]
+        )
+        let shareInfo = try XCTUnwrap(
+            PropertyListSerialization.propertyList(from: shareInfoData, format: nil) as? [String: Any]
+        )
+        let visibleSourceURLs = [
+            "URLSaveriOS/UI/AppChrome.swift",
+            "URLSaveriOS/UI/ExportSheet.swift",
+            "URLSaveriOS/UI/RootView.swift",
+            "URLSaveriOS/UI/SharedTagCloudSheet.swift",
+            "URLSaverShareExtension/ShareViewController.swift",
+        ].map(sourceRoot.appendingPathComponent)
+        let visibleSources = try visibleSourceURLs
+            .map { try String(contentsOf: $0, encoding: .utf8) }
+            .joined(separator: "\n")
+        let quotedLegacyBrand = try NSRegularExpression(
+            pattern: #"\"[^\"\n]*(URL Saver|UrlSaver)[^\"\n]*\""#
+        )
+        let sourceRange = NSRange(visibleSources.startIndex..., in: visibleSources)
+
+        XCTAssertEqual(appInfo["CFBundleDisplayName"] as? String, "りんばむ")
+        XCTAssertEqual(appInfo["CFBundleName"] as? String, "りんばむ")
+        XCTAssertEqual(shareInfo["CFBundleDisplayName"] as? String, "りんばむ共有")
+        XCTAssertEqual(shareInfo["CFBundleName"] as? String, "りんばむ共有")
+        XCTAssertNil(quotedLegacyBrand.firstMatch(in: visibleSources, range: sourceRange))
+    }
+
     func testServiceFilterOrderIncludesTikTokLikeAndroid() {
         XCTAssertEqual(serviceFilterOrder.map(\.rawValue), ["all", "youtube", "x", "instagram", "tiktok", "web"])
     }
@@ -117,7 +151,8 @@ final class ServiceFilterTests: XCTestCase {
         )
 
         XCTAssertEqual(archive.entryCount, 1)
-        XCTAssertGreaterThan(archive.bytes.count, 0)
+        XCTAssertEqual(archive.byteCount, Int64(try Data(contentsOf: archive.fileURL).count))
+        XCTAssertGreaterThan(archive.byteCount, 0)
     }
 
     func testZipExportUsesZipFileNameAndMimeType() throws {
@@ -142,7 +177,10 @@ final class ServiceFilterTests: XCTestCase {
 
         XCTAssertTrue(archive.fileName.hasSuffix(".zip"))
         XCTAssertEqual(archive.mimeType, "application/zip")
-        XCTAssertEqual(Array(archive.bytes.prefix(2)), [0x50, 0x4b]) // ZIP local file header prefix (PK)
+        let handle = try FileHandle(forReadingFrom: archive.fileURL)
+        defer { try? handle.close() }
+        let prefix = try handle.read(upToCount: 2) ?? Data()
+        XCTAssertEqual(Array(prefix), [0x50, 0x4b]) // ZIP local file header prefix (PK)
     }
 
     func testJSONExportProducesManifestAndEntries() throws {
@@ -168,7 +206,9 @@ final class ServiceFilterTests: XCTestCase {
         XCTAssertTrue(archive.fileName.hasSuffix(".json"))
         XCTAssertEqual(archive.mimeType, "application/json")
 
-        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: archive.bytes) as? [String: Any])
+        let json = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: archive.fileURL)) as? [String: Any]
+        )
         let manifest = try XCTUnwrap(json["manifest"] as? [String: Any])
         XCTAssertEqual(manifest["entryCount"] as? Int, 1)
         let entries = try XCTUnwrap(json["entries"] as? [[String: Any]])
@@ -221,6 +261,58 @@ final class ServiceFilterTests: XCTestCase {
 
         let record = makeRecord(id: 20, serviceType: .web, host: "example.com")
         XCTAssertEqual(entryListLoadState(for: [record]), .content)
+    }
+
+    func testSearchRaceGuardRejectsCancelledAndStaleCompletions() {
+        XCTAssertTrue(shouldApplySearchResult(
+            requestedQuery: "旅行",
+            currentQuery: " 旅行 ",
+            isCancelled: false
+        ))
+        XCTAssertFalse(shouldApplySearchResult(
+            requestedQuery: "旅行",
+            currentQuery: "仕事",
+            isCancelled: false
+        ))
+        XCTAssertFalse(shouldApplySearchResult(
+            requestedQuery: "旅行",
+            currentQuery: "旅行",
+            isCancelled: true
+        ))
+    }
+
+    func testMobileRemediationVisualAccessibilityAndBatchContractsRemainPresent() throws {
+        let rootSource = try String(contentsOf: rootViewSourceURL(), encoding: .utf8)
+        XCTAssertTrue(rootSource.contains("title: \"URLをあとで開くために保存\""))
+        XCTAssertTrue(rootSource.contains("title: \"使い方はいつでも確認\""))
+        XCTAssertTrue(rootSource.contains("@ScaledMetric(relativeTo: .body) private var mainBottomContentPadding"))
+        XCTAssertTrue(rootSource.contains(".padding(.bottom, min(mainBottomContentPadding, 280))"))
+        XCTAssertTrue(rootSource.contains("ScrollView(.vertical, showsIndicators: dynamicTypeSize.isAccessibilitySize)"))
+        XCTAssertTrue(rootSource.contains("ViewThatFits(in: .horizontal)"))
+        XCTAssertTrue(rootSource.contains(".font(.system(.body, design: .default).weight(.medium))"))
+        XCTAssertTrue(rootSource.contains("layout: .stacked"))
+        XCTAssertTrue(rootSource.contains("dynamicTypeSize.isAccessibilitySize"))
+        XCTAssertTrue(rootSource.contains("result.failedEntryIDs"))
+        XCTAssertTrue(rootSource.contains("isBatchMutationInFlight"))
+        XCTAssertFalse(rootSource.contains("ローンチ版"))
+
+        let chromeSource = try String(contentsOf: appChromeSourceURL(), encoding: .utf8)
+        XCTAssertTrue(chromeSource.contains("selectedSurface"))
+        XCTAssertTrue(chromeSource.contains("Image(systemName: \"checkmark\")"))
+        XCTAssertTrue(chromeSource.contains(".accessibilityAddTraits(selected ? .isSelected : [])"))
+        XCTAssertTrue(chromeSource.contains("minWidth: 44"))
+        XCTAssertTrue(chromeSource.contains("entryCardDistinctHeaderText"))
+
+        let purchaseSource = try String(contentsOf: sharedTagCloudSheetSourceURL(), encoding: .utf8)
+        XCTAssertTrue(purchaseSource.contains("availablePaidCoursePurchaseOptions"))
+        XCTAssertTrue(purchaseSource.contains("追加購入は必要ありません"))
+    }
+
+    func testAdjustedSelectionAndWarningColorsMeetTextContrast() {
+        XCTAssertGreaterThanOrEqual(contrastRatio(foreground: 0x1F6FD1, background: 0xF2F7FF), 4.5)
+        XCTAssertGreaterThanOrEqual(contrastRatio(foreground: 0x8BC3FF, background: 0x173A5E), 4.5)
+        XCTAssertGreaterThanOrEqual(contrastRatio(foreground: 0x9B2C20, background: 0xFFFFFF), 4.5)
+        XCTAssertGreaterThanOrEqual(contrastRatio(foreground: 0x9A3E00, background: 0xFFF7ED), 4.5)
     }
 
     func testIOSListGuideRetrySaveFailureAndVoiceOverContractsRemainPresent() throws {
@@ -348,6 +440,23 @@ final class ServiceFilterTests: XCTestCase {
 
     private func detailViewSourceURL() -> URL {
         sourceURL("URLSaveriOS/UI/DetailView.swift")
+    }
+
+    private func sharedTagCloudSheetSourceURL() -> URL {
+        sourceURL("URLSaveriOS/UI/SharedTagCloudSheet.swift")
+    }
+
+    private func contrastRatio(foreground: Int, background: Int) -> Double {
+        func luminance(_ color: Int) -> Double {
+            let components = [16, 8, 0].map { shift -> Double in
+                let value = Double((color >> shift) & 0xFF) / 255
+                return value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+            }
+            return 0.2126 * components[0] + 0.7152 * components[1] + 0.0722 * components[2]
+        }
+        let first = luminance(foreground)
+        let second = luminance(background)
+        return (max(first, second) + 0.05) / (min(first, second) + 0.05)
     }
 
     private func sourceURL(_ relativePath: String) -> URL {

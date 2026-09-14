@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -30,8 +31,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.SemanticsPropertyKey
+import androidx.compose.ui.semantics.SemanticsPropertyReceiver
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
@@ -46,6 +51,33 @@ import jp.mimac.urlsaver.ui.preferredDisplayTitle
 import jp.mimac.urlsaver.ui.serviceLabelForList
 import jp.mimac.urlsaver.ui.serviceTypeForUi
 import jp.mimac.urlsaver.ui.theme.OrbitTokens
+
+internal val EntryCardContainerColorKey = SemanticsPropertyKey<Int>("EntryCardContainerColor")
+internal val EntryCardTitleColorKey = SemanticsPropertyKey<Int>("EntryCardTitleColor")
+internal val EntryCardSupportingColorKey = SemanticsPropertyKey<Int>("EntryCardSupportingColor")
+internal var SemanticsPropertyReceiver.entryCardContainerColor by EntryCardContainerColorKey
+internal var SemanticsPropertyReceiver.entryCardTitleColor by EntryCardTitleColorKey
+internal var SemanticsPropertyReceiver.entryCardSupportingColor by EntryCardSupportingColorKey
+
+internal data class EntryCardPalette(
+    val container: Color,
+    val title: Color,
+    val supporting: Color,
+    val chipContainer: Color,
+    val chipContent: Color,
+    val chipOutline: Color,
+)
+
+internal fun entryCardPalette(colorScheme: ColorScheme, selected: Boolean): EntryCardPalette {
+    return EntryCardPalette(
+        container = if (selected) colorScheme.surfaceVariant else colorScheme.surface,
+        title = colorScheme.onSurface,
+        supporting = colorScheme.onSurfaceVariant,
+        chipContainer = if (selected) colorScheme.surface else colorScheme.surfaceVariant,
+        chipContent = if (selected) colorScheme.onSurface else colorScheme.onSurfaceVariant,
+        chipOutline = colorScheme.outline,
+    )
+}
 
 @Suppress("UNUSED_PARAMETER")
 @Composable
@@ -72,10 +104,16 @@ fun EntryCard(
     }
     val titleMaxLines = if (displayMode == EntryCardDisplayMode.COMPACT) 2 else 3
     val visibleLocalTagNames = entryCardVisibleLocalTagNames(localTagNames)
+    val cardPalette = entryCardPalette(MaterialTheme.colorScheme, selected)
 
     Surface(
         modifier = Modifier
             .testTag("entry_card_${entry.id}")
+            .semantics {
+                entryCardContainerColor = cardPalette.container.toArgb()
+                entryCardTitleColor = cardPalette.title.toArgb()
+                entryCardSupportingColor = cardPalette.supporting.toArgb()
+            }
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 8.dp)
             .entryCardClickable(
@@ -83,7 +121,8 @@ fun EntryCard(
                 onLongClick = onLongClick,
             ),
         shape = RoundedCornerShape(OrbitTokens.radiusPanel),
-        color = if (selected) OrbitTokens.panelStrong else MaterialTheme.colorScheme.surface,
+        color = cardPalette.container,
+        contentColor = cardPalette.title,
         border = BorderStroke(
             if (selected) 1.5.dp else 1.dp,
             if (selected) MaterialTheme.colorScheme.primary else OrbitTokens.outline,
@@ -93,7 +132,7 @@ fun EntryCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(
-                    color = if (selected) OrbitTokens.panelStrong else MaterialTheme.colorScheme.surface,
+                    color = cardPalette.container,
                     shape = RoundedCornerShape(OrbitTokens.radiusPanel),
                 ),
         ) {
@@ -159,13 +198,14 @@ fun EntryCard(
                                     if (entry.contentContext != ContentContext.STANDARD) {
                                         Surface(
                                             shape = RoundedCornerShape(999.dp),
-                                            color = OrbitTokens.panelStrong,
-                                            border = BorderStroke(1.dp, OrbitTokens.outline),
+                                            color = cardPalette.chipContainer,
+                                            contentColor = cardPalette.chipContent,
+                                            border = BorderStroke(1.dp, cardPalette.chipOutline),
                                         ) {
                                             Text(
                                                 text = entry.contentContext.label,
                                                 style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                color = cardPalette.chipContent,
                                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                                             )
                                         }
@@ -174,6 +214,7 @@ fun EntryCard(
                             } else {
                                 EntryCardLocalTagFlow(
                                     tagNames = visibleLocalTagNames,
+                                    palette = cardPalette,
                                     modifier = Modifier.weight(1f),
                                 )
                             }
@@ -191,6 +232,7 @@ fun EntryCard(
                             maxLines = titleMaxLines,
                             overflow = TextOverflow.Ellipsis,
                             style = titleTextStyle,
+                            color = cardPalette.title,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(top = 10.dp),
@@ -204,7 +246,7 @@ fun EntryCard(
                         maxLines = 3,
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = OrbitTokens.textMutedStrong,
+                        color = cardPalette.supporting,
                         modifier = Modifier.padding(top = 14.dp),
                     )
                 }
@@ -243,6 +285,7 @@ fun EntryCard(
 @Composable
 private fun EntryCardLocalTagFlow(
     tagNames: List<String>,
+    palette: EntryCardPalette,
     modifier: Modifier = Modifier,
 ) {
     FlowRow(
@@ -253,13 +296,14 @@ private fun EntryCardLocalTagFlow(
         tagNames.forEach { tagName ->
             Surface(
                 shape = RoundedCornerShape(999.dp),
-                color = OrbitTokens.panelStrong,
-                border = BorderStroke(1.dp, OrbitTokens.outline),
+                color = palette.chipContainer,
+                contentColor = palette.chipContent,
+                border = BorderStroke(1.dp, palette.chipOutline),
             ) {
                 Text(
                     text = tagName,
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = palette.chipContent,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier
