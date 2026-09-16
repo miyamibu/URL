@@ -1,6 +1,16 @@
 # REPO_GO Evidence
 
-Final status: REPO_GO (repository scope reverified 2026-09-14) / SIGNED_ANDROID_IOS_1_0_22_BUILD37_SUBMITTED / GOOGLE_IN_REVIEW / APPLE_WAITING_FOR_REVIEW / REMOTE_CI_PASS
+Final status: REPO_GO (local UI and repository checks reverified 2026-09-16) / CURRENT_UI_NOT_STORE_SUBMITTED / STORE_STATE_NOT_RECHECKED
+
+## 2026-09-16 UI source and Git reconciliation
+
+The eight pending Android/iOS UI files were reviewed and committed as `40c21d40`; card presentation, tag hit targets, metadata status visuals, and accessibility labels/layout are the change boundary. Storage, backend, release version, and business logic are unchanged. Details and branch-retention decisions are in `docs/release/git-reconciliation-2026-09-16.md`.
+
+- Mobile UI contract, release manifest, release hygiene, Android Debug build/unit-test/lint tasks, and iOS Debug Simulator build passed. Gradle reused up-to-date results, whose XML reports 500 tests with zero failures/errors/skips; local XCTest was not rerun. Push-triggered CI must be checked against the final pushed SHA, with its receipt retained in `artifacts/git-review/2026-09-16/`.
+- Public Web and admin Web release verification passed. Railway health returned HTTP 200; Render health returned HTTP 200 on recheck with version matching the starting `main` SHA `6b75e255`. No new Web/backend changes require a manual deployment.
+- The initial full launch-readiness check found only the expected pre-push ahead-of-origin condition and this document's previous evidence date. All other checks passed. This dated entry records the actual limited revalidation; it does not relabel old Store or device evidence.
+- Original source/evidence hashes matched for all 105 recorded files. Raw device/session evidence remains local; source and sanitized audit records are committed separately. No branch, source, device data, or evidence was deleted.
+- The new UI source was not uploaded or submitted to either Store. The September 14 submissions below refer to their original source/artifacts; current review/publication states were not rechecked. Existing Kimi K3 final-review evidence contains a timeout and no response, not a passing review. Physical UI/VoiceOver operations were not rerun during this Git task.
 
 ## 2026-09-14 release reconciliation
 
