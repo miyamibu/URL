@@ -168,8 +168,8 @@ struct ScreenHeader: View {
         }
         .padding(.leading, 12)
         .padding(.trailing, 6)
-        .padding(.top, 8)
-        .padding(.bottom, 12)
+        .padding(.top, 6)
+        .padding(.bottom, 10)
     }
 
     private var headerTitle: some View {
@@ -221,15 +221,15 @@ struct AppPanel<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             content
         }
-        .padding(padded ? 20 : 0)
+        .padding(padded ? 18 : 0)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(strong ? AppPalette.panelStrong : AppPalette.surface, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
+        .background(strong ? AppPalette.panelStrong : AppPalette.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 30, style: .continuous)
-                .stroke(strong ? AppPalette.panelStrong : AppPalette.outline, lineWidth: strong ? 0 : 1.5)
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(strong ? AppPalette.panelStrong : AppPalette.outline, lineWidth: strong ? 0 : 1)
         )
     }
 }
@@ -258,10 +258,10 @@ struct AppActionButton<Label: View>: View {
                 .font(.system(.body, design: .rounded).weight(.bold))
                 .foregroundStyle(foregroundColor)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 18)
-                .background(backgroundColor, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+                .padding(.vertical, 16)
+                .background(backgroundColor, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 26, style: .continuous)
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
                         .stroke(borderColor, lineWidth: borderWidth)
                 )
         }
@@ -350,10 +350,10 @@ struct EntryCardView: View {
                     .clipped()
                     .clipShape(
                         UnevenRoundedRectangle(
-                            topLeadingRadius: 30,
+                            topLeadingRadius: 24,
                             bottomLeadingRadius: 0,
                             bottomTrailingRadius: 0,
-                            topTrailingRadius: 30,
+                            topTrailingRadius: 24,
                             style: .continuous
                         )
                     )
@@ -362,16 +362,16 @@ struct EntryCardView: View {
                 HStack(alignment: .top, spacing: 12) {
                     RoundedRectangle(cornerRadius: 999, style: .continuous)
                         .fill(serviceAccentGradient(for: entry.serviceType))
-                        .frame(width: 7, height: 64)
-                        .padding(.top, 4)
+                        .frame(width: 4, height: 48)
+                        .padding(.top, 3)
 
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack(alignment: .top, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(alignment: .top, spacing: 8) {
                             ServiceBadgeView(serviceType: entry.serviceType, badgeImageURL: entry.badgeImageURL)
-                                .padding(.top, 1)
+                                .padding(.top, 0)
 
                             if visibleLocalTagNames.isEmpty {
-                                HStack(spacing: 10) {
+                                HStack(spacing: 8) {
                                     if let headerText = entryCardDistinctHeaderText(for: entry) {
                                         Text(headerText)
                                             .font(.system(.body).weight(.medium))
@@ -401,7 +401,7 @@ struct EntryCardView: View {
                         }
 
                         Text(preferredDisplayTitle(for: entry))
-                            .font(.system(.headline, design: .rounded).weight(.heavy))
+                            .font(.system(.headline, design: .rounded).weight(.bold))
                             .foregroundStyle(AppPalette.textPrimary)
                             .lineLimit(displayMode == .rich ? 3 : 2)
                             .multilineTextAlignment(.leading)
@@ -411,19 +411,19 @@ struct EntryCardView: View {
                             Text(summary)
                                 .font(.system(.subheadline).weight(.medium))
                                 .foregroundStyle(AppPalette.textMuted)
-                                .lineLimit(5)
+                                .lineLimit(3)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
 
                         if let metadataText = MetadataStatusText.listText(for: entry) {
                             Text(metadataText)
-                                .font(.system(.subheadline).weight(.semibold))
+                                .font(.system(.footnote).weight(.semibold))
                                 .foregroundStyle(metadataTextColor(for: entry.metadataState))
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(20)
+                .padding(18)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 if let footerContent {
@@ -435,7 +435,7 @@ struct EntryCardView: View {
         }
         .frame(width: cardWidth)
         .overlay(
-            RoundedRectangle(cornerRadius: 30, style: .continuous)
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .stroke(selected ? AppPalette.primary : Color.clear, lineWidth: selected ? 3 : 0)
         )
         .overlay(alignment: .topTrailing) {
@@ -453,7 +453,7 @@ struct EntryCardView: View {
 
     private var thumbnailHeight: CGFloat {
         guard let cardWidth else { return 220 }
-        return min(max(cardWidth * 0.58, 212), 236)
+        return min(max(cardWidth * 0.55, 196), 224)
     }
 
     private func timestampDate(for entry: URLRecord) -> Date {
@@ -1423,7 +1423,20 @@ let serviceFilterOrder: [ServiceType] = [
 struct FilterChipButton: View {
     let label: String
     let selected: Bool
+    let accessibilityLabel: String?
     let action: (() -> Void)?
+
+    init(
+        label: String,
+        selected: Bool,
+        accessibilityLabel: String? = nil,
+        action: (() -> Void)? = nil
+    ) {
+        self.label = label
+        self.selected = selected
+        self.accessibilityLabel = accessibilityLabel
+        self.action = action
+    }
 
     var body: some View {
         Button {
@@ -1435,7 +1448,7 @@ struct FilterChipButton: View {
                     .foregroundStyle(.clear)
                     .padding(.horizontal, 26)
                     .padding(.vertical, 11)
-                    .frame(minWidth: 54)
+                    .frame(minWidth: 54, minHeight: 44)
                     .background(selected ? AppPalette.selectedSurface : AppPalette.panelStrong, in: Capsule())
                     .overlay {
                         Text(label)
@@ -1457,11 +1470,13 @@ struct FilterChipButton: View {
                 .foregroundStyle(selected ? AppPalette.primaryStrong : Color.white.opacity(0.78))
                 .padding(.horizontal, 18)
                 .padding(.vertical, 11)
-                .frame(maxWidth: 190)
+                .frame(maxWidth: 190, minHeight: 44)
                 .background(selected ? AppPalette.selectedSurface : AppPalette.panelStrong, in: Capsule())
             }
         }
         .buttonStyle(.plain)
+        .contentShape(Capsule())
+        .accessibilityLabel(accessibilityLabel ?? (label == "+" ? "タグを作成" : label))
         .accessibilityValue(selected ? "選択中" : "未選択")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
@@ -1485,6 +1500,7 @@ struct SharedTagSection: View {
                     FilterChipButton(
                         label: "+",
                         selected: false,
+                        accessibilityLabel: "共有タグを作成",
                         action: onCreateTag
                     )
 

@@ -1023,8 +1023,12 @@ private struct BottomHomeActionBar: View {
     @ScaledMetric(relativeTo: .headline) private var scaledAddButtonDiameter: CGFloat = 76
     @ScaledMetric(relativeTo: .body) private var scaledChatGptMinimumHeight: CGFloat = 48
 
-    private var itemHeight: CGFloat { min(scaledItemHeight, 88) }
-    private var barBackgroundHeight: CGFloat { min(scaledBarBackgroundHeight, 100) }
+    private var itemHeight: CGFloat {
+        min(scaledItemHeight, dynamicTypeSize.isAccessibilitySize ? 104 : 88)
+    }
+    private var barBackgroundHeight: CGFloat {
+        min(scaledBarBackgroundHeight, dynamicTypeSize.isAccessibilitySize ? 116 : 100)
+    }
     private var addButtonDiameter: CGFloat { min(scaledAddButtonDiameter, 96) }
     private var totalHeight: CGFloat { max(104, barBackgroundHeight + 28) }
 
@@ -1081,12 +1085,10 @@ private struct BottomHomeActionBar: View {
             VStack(spacing: 6) {
                 Image(systemName: systemImage)
                     .font(.system(.title3, design: .rounded).weight(.semibold))
-                if !dynamicTypeSize.isAccessibilitySize {
-                    Text(label)
-                        .font(.system(.caption2, design: .rounded).weight(.bold))
-                        .lineLimit(2)
-                        .multilineTextAlignment(.center)
-                }
+                Text(label)
+                    .font(.system(.caption2, design: .rounded).weight(.bold))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
             }
             .foregroundStyle(AppPalette.textSecondary)
             .frame(maxWidth: .infinity, minHeight: itemHeight)

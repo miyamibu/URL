@@ -2,6 +2,7 @@ package jp.mimac.urlsaver.ui.components
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -73,7 +74,7 @@ enum class OrbitActionStyle {
 fun OrbitPanel(
     modifier: Modifier = Modifier,
     tone: OrbitPanelTone = OrbitPanelTone.DEFAULT,
-    contentPadding: PaddingValues = PaddingValues(20.dp),
+    contentPadding: PaddingValues = PaddingValues(18.dp),
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val containerColor = when (tone) {
@@ -91,11 +92,12 @@ fun OrbitPanel(
         shape = RoundedCornerShape(OrbitTokens.radiusPanel),
         color = containerColor,
         contentColor = contentColor,
-        border = BorderStroke(1.dp, OrbitTokens.outline),
+        border = BorderStroke(1.dp, OrbitTokens.outline.copy(alpha = 0.9f)),
+        tonalElevation = 1.dp,
     ) {
         Column(
             modifier = Modifier.padding(contentPadding),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
             content = content,
         )
     }
@@ -110,10 +112,13 @@ fun OrbitSectionLabel(
         text = text,
         modifier = modifier,
         style = MaterialTheme.typography.labelLarge.copy(
-            letterSpacing = 0.9.sp,
+            letterSpacing = 0.7.sp,
+            lineHeight = 16.sp,
             fontWeight = FontWeight.SemiBold,
         ),
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.92f),
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
     )
 }
 
@@ -127,29 +132,40 @@ fun OrbitFilterChip(
 ) {
     val hasCustomLabelSize = labelFontSize != TextUnit.Unspecified
     val palette = selectableChipPalette(MaterialTheme.colorScheme, selected)
+    val shape = RoundedCornerShape(OrbitTokens.radiusChip)
     OrbitCappedFontScale(if (hasCustomLabelSize) 1.3f else 2.0f) {
         Box(
             modifier = modifier
-                .widthIn(min = if (compact) 44.dp else 72.dp, max = 220.dp)
-                .heightIn(min = 44.dp)
+                .widthIn(min = if (compact) 48.dp else 72.dp, max = 220.dp)
+                .heightIn(min = 48.dp)
                 .background(
                     color = palette.container,
-                    shape = RoundedCornerShape(OrbitTokens.radiusChip),
+                    shape = shape,
+                )
+                .border(
+                    width = 1.dp,
+                    color = palette.outline.copy(alpha = if (selected) 1f else 0.95f),
+                    shape = shape,
                 )
                 .padding(
-                    horizontal = if (compact) 0.dp else 16.dp,
-                    vertical = if (hasCustomLabelSize) 0.dp else 10.dp,
+                    horizontal = when {
+                        compact -> 10.dp
+                        hasCustomLabelSize -> 12.dp
+                        else -> 14.dp
+                    },
+                    vertical = if (hasCustomLabelSize) 6.dp else 8.dp,
                 ),
             contentAlignment = Alignment.Center,
         ) {
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelLarge.copy(
-                    letterSpacing = if (compact) 0.sp else 0.8.sp,
+                    letterSpacing = if (compact) 0.sp else 0.25.sp,
+                    lineHeight = 16.sp,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = when {
                         hasCustomLabelSize -> labelFontSize
-                        compact && label == "+" -> 22.sp
+                        compact && label == "+" -> 20.sp
                         else -> MaterialTheme.typography.labelLarge.fontSize
                     },
                 ),
@@ -167,7 +183,7 @@ fun OrbitActionButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     style: OrbitActionStyle = OrbitActionStyle.SECONDARY,
-    contentPadding: PaddingValues = PaddingValues(horizontal = 20.dp, vertical = 18.dp),
+    contentPadding: PaddingValues = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
     content: @Composable RowScope.() -> Unit,
 ) {
     val shape = RoundedCornerShape(OrbitTokens.radiusButton)
@@ -175,14 +191,14 @@ fun OrbitActionButton(
         OrbitActionStyle.PRIMARY -> {
             Button(
                 onClick = onClick,
-                modifier = modifier.defaultMinSize(minHeight = 58.dp),
+                modifier = modifier.defaultMinSize(minHeight = 56.dp),
                 enabled = enabled,
                 shape = shape,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = OrbitTokens.primary,
                     contentColor = OrbitTokens.onPrimary,
-                    disabledContainerColor = OrbitTokens.primary.copy(alpha = 0.4f),
-                    disabledContentColor = OrbitTokens.onPrimary.copy(alpha = 0.7f),
+                    disabledContainerColor = OrbitTokens.primary.copy(alpha = 0.42f),
+                    disabledContentColor = OrbitTokens.onPrimary.copy(alpha = 0.72f),
                 ),
                 contentPadding = contentPadding,
             ) {
@@ -197,10 +213,10 @@ fun OrbitActionButton(
         OrbitActionStyle.SECONDARY -> {
             OutlinedButton(
                 onClick = onClick,
-                modifier = modifier.defaultMinSize(minHeight = 58.dp),
+                modifier = modifier.defaultMinSize(minHeight = 56.dp),
                 enabled = enabled,
                 shape = shape,
-                border = BorderStroke(1.dp, OrbitTokens.outlineStrong),
+                border = BorderStroke(1.dp, OrbitTokens.outlineStrong.copy(alpha = 0.9f)),
                 colors = ButtonDefaults.outlinedButtonColors(
                     containerColor = OrbitTokens.panelSoft,
                     contentColor = OrbitTokens.textPrimary,
@@ -220,10 +236,10 @@ fun OrbitActionButton(
         OrbitActionStyle.DANGER -> {
             OutlinedButton(
                 onClick = onClick,
-                modifier = modifier.defaultMinSize(minHeight = 58.dp),
+                modifier = modifier.defaultMinSize(minHeight = 56.dp),
                 enabled = enabled,
                 shape = shape,
-                border = BorderStroke(1.dp, OrbitTokens.danger.copy(alpha = 0.55f)),
+                border = BorderStroke(1.dp, OrbitTokens.danger.copy(alpha = 0.5f)),
                 colors = ButtonDefaults.outlinedButtonColors(
                     containerColor = OrbitTokens.dangerSurface,
                     contentColor = OrbitTokens.danger,
@@ -250,8 +266,12 @@ fun OrbitActionText(
     Text(
         text = text,
         color = emphasisColor,
-        style = MaterialTheme.typography.titleMedium.copy(
+        style = MaterialTheme.typography.titleSmall.copy(
             fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.2.sp,
+            lineHeight = 18.sp,
         ),
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
     )
 }

@@ -198,9 +198,14 @@ struct DetailView: View {
 
                                 if let metadataMessage = detailMetadataMessage(for: entry) {
                                     AppPanel {
-                                        Text(metadataMessage.title)
-                                            .font(.system(size: 21, weight: .heavy, design: .rounded))
-                                            .foregroundStyle(AppPalette.textPrimary)
+                                        Label {
+                                            Text(metadataMessage.title)
+                                                .font(.system(size: 21, weight: .heavy, design: .rounded))
+                                        } icon: {
+                                            Image(systemName: detailMetadataIcon(for: entry))
+                                                .font(.system(size: 18, weight: .bold))
+                                        }
+                                        .foregroundStyle(detailMetadataColor(for: entry))
 
                                         if let body = metadataMessage.body {
                                             Text(body)
@@ -1254,9 +1259,9 @@ private struct DetailTagSummaryPanel: View {
 
                 Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity, minHeight: 154, maxHeight: 154, alignment: .topLeading)
+            .frame(maxWidth: .infinity, minHeight: 154, alignment: .topLeading)
         }
-        .frame(maxWidth: .infinity, minHeight: 194, maxHeight: 194, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 194, alignment: .topLeading)
     }
 }
 
@@ -1270,7 +1275,7 @@ private struct DetailTagEditButton: View {
                 .foregroundStyle(Color.white.opacity(0.95))
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
-                .frame(maxWidth: .infinity, minHeight: 42, maxHeight: 42)
+                .frame(maxWidth: .infinity, minHeight: 48)
                 .background(AppPalette.panelStrong, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .buttonStyle(.plain)
@@ -1292,7 +1297,7 @@ private struct DetailTagValuePill: View {
                 .lineLimit(2)
                 .minimumScaleFactor(0.78)
                 .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity, minHeight: 42, maxHeight: 42)
+                .frame(maxWidth: .infinity, minHeight: 48)
 
             if let onRemove {
                 Button(action: onRemove) {
@@ -1385,5 +1390,29 @@ private func detailMetadataMessage(for entry: URLRecord) -> (title: String, body
             return ("アイコンを更新できます", "再取得すると、取得できる場合は投稿主のプロフィール画像を表示します。", true)
         }
         return nil
+    }
+}
+
+private func detailMetadataIcon(for entry: URLRecord) -> String {
+    switch entry.metadataState {
+    case .pending:
+        return "arrow.clockwise"
+    case .failed:
+        return "exclamationmark.triangle.fill"
+    case .unavailable:
+        return "nosign"
+    case .ready:
+        return "checkmark.circle.fill"
+    }
+}
+
+private func detailMetadataColor(for entry: URLRecord) -> Color {
+    switch entry.metadataState {
+    case .pending:
+        return AppPalette.primaryStrong
+    case .failed, .unavailable:
+        return AppPalette.danger
+    case .ready:
+        return AppPalette.primaryStrong
     }
 }

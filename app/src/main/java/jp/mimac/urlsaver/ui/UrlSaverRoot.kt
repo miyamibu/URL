@@ -84,6 +84,7 @@ import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Sell
 import androidx.compose.material.icons.outlined.ViewAgenda
+import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -5657,17 +5658,56 @@ private fun DetailScreen(
                         delayedPending ||
                         retryRequested
                     val retrying = retryRequested && current.metadataState == MetadataState.PENDING
+                    val metadataStatusIcon = when (current.metadataState) {
+                        MetadataState.PENDING -> Icons.Outlined.Refresh
+                        MetadataState.FAILED -> Icons.Outlined.WarningAmber
+                        MetadataState.UNAVAILABLE -> Icons.Outlined.LinkOff
+                        MetadataState.READY -> Icons.Outlined.Check
+                    }
+                    val metadataStatusColor = when (current.metadataState) {
+                        MetadataState.PENDING -> MaterialTheme.colorScheme.primary
+                        MetadataState.FAILED,
+                        MetadataState.UNAVAILABLE,
+                        -> MaterialTheme.colorScheme.error
+                        MetadataState.READY -> MaterialTheme.colorScheme.secondary
+                    }
                     OrbitPanel(tone = OrbitPanelTone.SOFT) {
-                        Text(
-                            text = metadataMessage.title,
-                            style = MaterialTheme.typography.titleSmall,
-                        )
-                        if (!metadataMessage.body.isNullOrBlank()) {
-                            Text(
-                                text = metadataMessage.body,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.Top,
+                        ) {
+                            Surface(
+                                modifier = Modifier.size(40.dp),
+                                shape = CircleShape,
+                                color = metadataStatusColor.copy(alpha = 0.16f),
+                                contentColor = metadataStatusColor,
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = metadataStatusIcon,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                    )
+                                }
+                            }
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Text(
+                                    text = metadataMessage.title,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                if (!metadataMessage.body.isNullOrBlank()) {
+                                    Text(
+                                        text = metadataMessage.body,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
                         }
                         if (showRetry) {
                             OrbitActionButton(
@@ -6458,10 +6498,10 @@ private fun DetailTagSummaryPanel(
     modifier: Modifier = Modifier,
 ) {
     OrbitPanel(
-        modifier = modifier.height(194.dp),
+        modifier = modifier.heightIn(min = 194.dp),
     ) {
         Column(
-            modifier = Modifier.fillMaxHeight(),
+            modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(9.dp),
         ) {
             Row(
@@ -6493,7 +6533,7 @@ private fun DetailTagSummaryPanel(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(91.dp)
+                        .heightIn(min = 91.dp, max = 180.dp)
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(7.dp),
                 ) {
@@ -6579,7 +6619,7 @@ private fun DetailTagAssignmentOptionRow(
             } else {
                 Modifier.testTag(actionTestTag)
             })
-                .height(if (compact) 38.dp else 40.dp)
+                .height(48.dp)
                 .widthIn(min = if (compact) 54.dp else 72.dp),
             shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(
@@ -6692,7 +6732,7 @@ private fun DetailTagEditButton(
     Button(
         onClick = onClick,
         modifier = modifier
-            .height(42.dp),
+            .height(48.dp),
         shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = OrbitTokens.panelStrong,
@@ -6718,7 +6758,7 @@ private fun DetailTagValuePill(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(42.dp)
+            .heightIn(min = 48.dp)
             .background(
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),

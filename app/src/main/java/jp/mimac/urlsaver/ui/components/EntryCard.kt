@@ -37,8 +37,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsPropertyKey
 import androidx.compose.ui.semantics.SemanticsPropertyReceiver
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import jp.mimac.urlsaver.data.UrlEntryEntity
 import jp.mimac.urlsaver.domain.ContentContext
@@ -98,13 +100,26 @@ fun EntryCard(
     val descriptionText = entry.description ?: entry.bodySummary
     val serviceAccentBrush = serviceAccentBrush(entry.serviceType)
     val titleTextStyle = if (displayMode == EntryCardDisplayMode.RICH) {
-        MaterialTheme.typography.titleMedium
+        MaterialTheme.typography.titleMedium.copy(
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.15.sp,
+            lineHeight = 22.sp,
+        )
     } else {
-        MaterialTheme.typography.titleSmall
+        MaterialTheme.typography.titleSmall.copy(
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.15.sp,
+            lineHeight = 19.sp,
+        )
     }
     val titleMaxLines = if (displayMode == EntryCardDisplayMode.COMPACT) 2 else 3
     val visibleLocalTagNames = entryCardVisibleLocalTagNames(localTagNames)
     val cardPalette = entryCardPalette(MaterialTheme.colorScheme, selected)
+    val cardShape = RoundedCornerShape(20.dp)
+    val cardBorder = BorderStroke(
+        width = if (selected) 1.5.dp else 1.dp,
+        color = if (selected) MaterialTheme.colorScheme.primary else OrbitTokens.outline.copy(alpha = 0.9f),
+    )
 
     Surface(
         modifier = Modifier
@@ -115,26 +130,20 @@ fun EntryCard(
                 entryCardSupportingColor = cardPalette.supporting.toArgb()
             }
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .padding(horizontal = OrbitTokens.screenHorizontalPadding, vertical = 7.dp)
             .entryCardClickable(
                 onClick = onClick,
                 onLongClick = onLongClick,
             ),
-        shape = RoundedCornerShape(OrbitTokens.radiusPanel),
+        shape = cardShape,
         color = cardPalette.container,
         contentColor = cardPalette.title,
-        border = BorderStroke(
-            if (selected) 1.5.dp else 1.dp,
-            if (selected) MaterialTheme.colorScheme.primary else OrbitTokens.outline,
-        ),
+        border = cardBorder,
+        tonalElevation = if (selected) 2.dp else 1.dp,
+        shadowElevation = 0.dp,
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(
-                    color = cardPalette.container,
-                    shape = RoundedCornerShape(OrbitTokens.radiusPanel),
-                ),
+            modifier = Modifier.fillMaxWidth(),
         ) {
             if (showThumbnail) {
                 AsyncImage(
@@ -143,28 +152,28 @@ fun EntryCard(
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(188.dp)
+                        .height(176.dp)
                         .clip(
                             RoundedCornerShape(
-                                topStart = OrbitTokens.radiusCardMedia,
-                                topEnd = OrbitTokens.radiusCardMedia,
+                                topStart = 20.dp,
+                                topEnd = 20.dp,
                             ),
                         )
                         .background(OrbitTokens.panelStrong),
                 )
             }
 
-            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp)) {
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.Top,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     Box(
                         modifier = Modifier
-                            .padding(top = 4.dp)
-                            .width(7.dp)
-                            .height(64.dp)
+                            .padding(top = 3.dp)
+                            .width(3.5.dp)
+                            .height(48.dp)
                             .background(
                                 brush = serviceAccentBrush,
                                 shape = RoundedCornerShape(999.dp),
@@ -174,25 +183,29 @@ fun EntryCard(
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.Top,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             ServiceBadge(
                                 serviceType = serviceTypeForUi(entry.serviceType),
                                 badgeImageUrl = entry.badgeImageUrl,
-                                modifier = Modifier.padding(top = 1.dp),
+                                modifier = Modifier.padding(top = 0.dp),
                             )
                             if (visibleLocalTagNames.isEmpty()) {
                                 Row(
                                     modifier = Modifier.weight(1f),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 ) {
                                     Text(
                                         text = entryCardHeaderFallbackText(entry),
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        style = MaterialTheme.typography.labelLarge.copy(
+                                            fontWeight = FontWeight.Medium,
+                                            letterSpacing = 0.2.sp,
+                                            lineHeight = 16.sp,
+                                        ),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.92f),
                                         modifier = Modifier.weight(1f, fill = false),
                                     )
                                     if (entry.contentContext != ContentContext.STANDARD) {
@@ -200,13 +213,16 @@ fun EntryCard(
                                             shape = RoundedCornerShape(999.dp),
                                             color = cardPalette.chipContainer,
                                             contentColor = cardPalette.chipContent,
-                                            border = BorderStroke(1.dp, cardPalette.chipOutline),
+                                            border = BorderStroke(1.dp, cardPalette.chipOutline.copy(alpha = 0.9f)),
                                         ) {
                                             Text(
                                                 text = entry.contentContext.label,
-                                                style = MaterialTheme.typography.labelSmall,
+                                                style = MaterialTheme.typography.labelSmall.copy(
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    letterSpacing = 0.3.sp,
+                                                ),
                                                 color = cardPalette.chipContent,
-                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
                                             )
                                         }
                                     }
@@ -236,7 +252,7 @@ fun EntryCard(
                             color = cardPalette.title,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(top = 10.dp),
+                                .padding(top = 9.dp),
                         )
                     }
                 }
@@ -246,9 +262,12 @@ fun EntryCard(
                         text = descriptionText,
                         maxLines = 3,
                         overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = cardPalette.supporting,
-                        modifier = Modifier.padding(top = 14.dp),
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            lineHeight = 18.sp,
+                            letterSpacing = 0.15.sp,
+                        ),
+                        color = cardPalette.supporting.copy(alpha = 0.94f),
+                        modifier = Modifier.padding(top = 10.dp),
                     )
                 }
 
@@ -257,22 +276,31 @@ fun EntryCard(
                         text = entry.displayUrl,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 12.dp),
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            letterSpacing = 0.25.sp,
+                            lineHeight = 14.sp,
+                        ),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f),
+                        modifier = Modifier.padding(top = 9.dp),
                     )
                 }
 
                 entryCardMetadataStatusText(entry)?.let { statusText ->
                     Text(
                         text = statusText,
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            letterSpacing = 0.2.sp,
+                            lineHeight = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                        ),
                         color = if (entry.metadataState == MetadataState.FAILED || entry.metadataState == MetadataState.UNAVAILABLE) {
                             OrbitTokens.danger
                         } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.88f)
                         },
-                        modifier = Modifier.padding(top = 10.dp),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 8.dp),
                     )
                 }
 
@@ -291,7 +319,7 @@ private fun EntryCardLocalTagFlow(
 ) {
     FlowRow(
         modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         tagNames.forEach { tagName ->
@@ -299,17 +327,21 @@ private fun EntryCardLocalTagFlow(
                 shape = RoundedCornerShape(999.dp),
                 color = palette.chipContainer,
                 contentColor = palette.chipContent,
-                border = BorderStroke(1.dp, palette.chipOutline),
+                border = BorderStroke(1.dp, palette.chipOutline.copy(alpha = 0.9f)),
             ) {
                 Text(
                     text = tagName,
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 0.2.sp,
+                        lineHeight = 13.sp,
+                    ),
                     color = palette.chipContent,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier
-                        .widthIn(max = 150.dp)
-                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                        .widthIn(max = 148.dp)
+                        .padding(horizontal = 9.dp, vertical = 4.dp),
                 )
             }
         }

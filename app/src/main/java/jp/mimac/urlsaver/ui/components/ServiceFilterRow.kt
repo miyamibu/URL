@@ -5,6 +5,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyRow
@@ -29,6 +30,7 @@ import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
@@ -184,7 +186,7 @@ fun ServiceFilterRow(
         modifier = Modifier
             .testTag("top_filter_row")
             .fillMaxWidth()
-            .padding(horizontal = OrbitTokens.screenHorizontalPadding)
+            .padding(vertical = 2.dp)
             .then(
                 if (canReorder) {
                     Modifier.pointerInput(canReorder) {
@@ -299,16 +301,19 @@ fun ServiceFilterRow(
                     Modifier
                 },
             ),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(horizontal = OrbitTokens.screenHorizontalPadding),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         if (onCreateLocalTag != null) {
             item(key = "create_local_tag") {
                 OrbitFilterChip(
                     label = "+",
                     selected = false,
-                    labelFontSize = 28.sp,
+                    labelFontSize = 24.sp,
                     modifier = Modifier
                         .testTag("top_filter_create_local_tag")
+                        .semantics { contentDescription = "自作タグを作成" }
                         .clickable(enabled = !isDragging) { onCreateLocalTag() },
                 )
             }
