@@ -18,6 +18,16 @@
 - The `1.0.11` store submission, public URL, screenshot, signing, and console rows below are historical evidence, not current proof for the manifest-backed source.
 - Rows below that say `DONE` are historical `1.0.11` evidence unless the row explicitly names a current repo gate. Do not use them as `LAUNCH_GO` evidence without re-running the manual launch checklist.
 
+## 2026-10-01 release record: 1.0.23 (38)
+
+- Authorization: after checking the completed UI changes, submit the latest Android and iPhone apps to Google Play and App Store Connect. The user confirmed that the prior local URL/tag deletion was intentional, declined restoration, and accepted the prior Android physical-device review.
+- Source: `7f739346bb416c4121200b0befc3311b80fb5d60`. All five [Cross-platform CI](https://github.com/miyamibu/URL/actions/runs/36785064926) jobs and [Production feature contracts](https://github.com/miyamibu/URL/actions/runs/36785064845) passed. Temporary iPhone diagnostic/restore code is absent from the source.
+- Android: canonical `jp.miyamibu.urlalbum`, `1.0.23 (38)`. JDK 21 tests, lint and release bundle passed. Signed AAB `build/store/rinbam-1.0.23-38-play-signed.aab`, SHA-256 `92801336ca014d35a081fa6f0b2caba3690451633e19d10fcfc2104c5c8716ba`; Bundletool package/version validation passed and signer matches the previously Play-accepted AAB.
+- iOS: canonical `com.mibu.codebridge.ios` and share extension, both `1.0.23 (38)`. Signed distribution IPA `build/app-store/1.0.23-38/りんばむ.ipa`, SHA-256 `2dbc85db9e7799b1b275693d1ebeb0d907a5b907dd00193a5af3532218fec643`; both targets have `get-task-allow=false`, the expected App Group, and the previous six release runtime configuration values.
+- Device/UI: physical iPhone 12 Appium/XCUITest checked the same source UI in a signed Debug `1.0.23 (38)` install: beige upper/lower regions, right-side four-item menu, one-line Export, gold center plus, dark AI, usage list/back, readable tag-add control, and blue selected top chip without a checkmark. The intentionally removed local tags leave the manual selected-tag chip untestable on that device. Android's earlier Pixel 9a visual proof is accepted by the user; the later Export one-line change passed build/tests/lint but was not reinstalled on the Pixel.
+- Apple: `xcodebuild -exportArchive` with the preserved upload options succeeded on 2026-10-01 and reported build `38` uploaded and processing. Build association, App Review submission, acceptance, and public availability remain unverified until App Store Connect login and receipt inspection.
+- Google Play: production release draft `20` contains only `1.0.23 (38) メニューと表示の改善`; Console accepted the signed AAB, reports zero removed/new supported devices and a 100% rollout to the existing country. The one-change review-send action was accepted and the pre-review quick check was running. Verify the submission receipt after this check; do not call this approved or publicly available yet.
+
 ## 2026-09-14 release record
 
 - Authorization: organize all pending commits/pushes, then submit the Android and iOS apps to their stores.
