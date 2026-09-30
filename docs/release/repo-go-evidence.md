@@ -1,6 +1,6 @@
 # REPO_GO Evidence
 
-Final status: REPO_GO (1.0.23 source, CI, and signed artifacts reverified 2026-10-01) / APPLE_BUILD_PROCESSING / GOOGLE_PLAY_PRE_REVIEW_CHECK
+Final status: REPO_GO (1.0.23 source, CI, and signed artifacts reverified 2026-10-01) / APPLE_BUILD_PROCESSING / GOOGLE_PLAY_IN_REVIEW
 
 ## 2026-10-01 1.0.23 (38) mobile UI release candidate
 
@@ -8,7 +8,7 @@ Final status: REPO_GO (1.0.23 source, CI, and signed artifacts reverified 2026-1
 - Android JDK 21 `testDebugUnitTest lintDebug bundleRelease` passed. The signed canonical AAB is `build/store/rinbam-1.0.23-38-play-signed.aab`, SHA-256 `92801336ca014d35a081fa6f0b2caba3690451633e19d10fcfc2104c5c8716ba`. Bundletool 1.18.3 validated package `jp.miyamibu.urlalbum`, version `1.0.23 (38)`; the upload certificate matches the Play-accepted `1.0.22 (37)` AAB.
 - iOS unsigned Release build and signed archive/export passed. `build/app-store/1.0.23-38/りんばむ.ipa` has SHA-256 `2dbc85db9e7799b1b275693d1ebeb0d907a5b907dd00193a5af3532218fec643`. App and share extension use `1.0.23 (38)`, the canonical bundle IDs and App Group, distribution entitlements with `get-task-allow=false`, and the same six runtime configuration fields as the previous accepted IPA.
 - The exact source commit passed all five [Cross-platform CI](https://github.com/miyamibu/URL/actions/runs/36785064926) jobs and [Production feature contracts](https://github.com/miyamibu/URL/actions/runs/36785064845). Release hygiene, mobile UI contract, and release manifest checks also passed locally. Physical iPhone 12 Appium/XCUITest confirmed the signed Debug candidate's home/menu/usage/manual-add UI; the user accepted the existing Android real-device evidence. Deliberately deleted local tags leave the iPhone manual tag chip's selected state unavailable for direct physical inspection.
-- Apple upload returned success on 2026-10-01 and reported that build `38` was processing; App Store Connect build association and review submission are not yet confirmed. Google Play Console accepted AAB `38`, showed no device-support changes, saved one production release change, and entered its pre-review quick check after the review-send action. Store review receipt, approval, and public availability are tracked separately from these upload results.
+- Apple upload returned success on 2026-10-01 and reported that build `38` was processing; App Store Connect build association and review submission are not yet confirmed. Google Play Console accepted AAB `38`, showed no device-support changes, and completed its pre-review quick check. [Submission 21](https://play.google.com/console/u/0/developers/6026364900028455951/app/4976058498782318560/publishing/submission-activity/21/details) shows the sole `1.0.23 (38)` production change `審査中` as of 2026-10-01 07:42 JST. Approval and public availability remain external.
 
 ## 2026-09-16 UI source and Git reconciliation
 
