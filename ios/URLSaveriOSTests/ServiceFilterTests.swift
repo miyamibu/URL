@@ -298,7 +298,8 @@ final class ServiceFilterTests: XCTestCase {
 
         let chromeSource = try String(contentsOf: appChromeSourceURL(), encoding: .utf8)
         XCTAssertTrue(chromeSource.contains("selectedSurface"))
-        XCTAssertTrue(chromeSource.contains("Image(systemName: \"checkmark\")"))
+        XCTAssertTrue(chromeSource.contains("0x67B0FF"))
+        XCTAssertFalse(chromeSource.contains("Image(systemName: \"checkmark\")"))
         XCTAssertTrue(chromeSource.contains(".accessibilityAddTraits(selected ? .isSelected : [])"))
         XCTAssertTrue(chromeSource.contains("minWidth: 44"))
         XCTAssertTrue(chromeSource.contains("entryCardDistinctHeaderText"))
