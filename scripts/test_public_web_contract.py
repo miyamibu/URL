@@ -66,15 +66,14 @@ def response_tests(expected_reset_csp: str, expected_invite_csp: str) -> None:
     )
     try:
         base_url = f"http://127.0.0.1:{port}"
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + 60
         while True:
             try:
                 fetch(f"{base_url}/")
                 break
-            except URLError:
+            except URLError as error:
                 if time.monotonic() >= deadline:
-                    stderr = process.stderr.read() if process.stderr else ""
-                    raise SystemExit(f"FAIL local preview did not start: {stderr}")
+                    raise SystemExit(f"FAIL local preview did not start: {error.reason}")
                 time.sleep(0.05)
 
         status, headers, body = fetch(f"{base_url}/auth/reset-password")

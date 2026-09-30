@@ -97,8 +97,8 @@ Still open at the time of the 2026-08-22 freeze (external, owner-gated): product
 
 ## Current source snapshot (manifest-backed)
 
-- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.22`, `versionCode=37`
-- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.22`, `build=37`; share extension `com.mibu.codebridge.ios.share`
+- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.23`, `versionCode=38`
+- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.23`, `build=38`; share extension `com.mibu.codebridge.ios.share`
 - Supabase migration head: `20260824090000_fix_apply_personal_link_ops_conflict.sql`
 - Machine-readable source: `docs/release/release-manifest.json`
 

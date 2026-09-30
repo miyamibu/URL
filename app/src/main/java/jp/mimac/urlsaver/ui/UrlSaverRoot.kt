@@ -7274,6 +7274,7 @@ private fun MainBottomNavItem(
     expandedLabels: Boolean = false,
     onClick: () -> Unit,
 ) {
+    val isExportLabel = label == "エクスポート"
     val needsTwoLineLabel = expandedLabels
     val tint = when {
         !enabled -> MainBottomNavTextColor.copy(alpha = 0.38f)
@@ -7306,15 +7307,20 @@ private fun MainBottomNavItem(
             tint = tint,
             modifier = Modifier.size(if (needsTwoLineLabel) 32.dp else 36.dp),
         )
-        OrbitCappedFontScale(2.0f) {
+        OrbitCappedFontScale(if (isExportLabel) 1.0f else 2.0f) {
             Text(
                 text = label,
+                modifier = if (isExportLabel) Modifier.fillMaxWidth() else Modifier,
                 style = MaterialTheme.typography.labelSmall,
                 color = tint,
                 textAlign = TextAlign.Center,
-                maxLines = if (expandedLabels) 3 else 1,
-                softWrap = expandedLabels,
-                overflow = if (expandedLabels) TextOverflow.Clip else TextOverflow.Ellipsis,
+                maxLines = if (isExportLabel) 1 else if (expandedLabels) 3 else 1,
+                softWrap = !isExportLabel && expandedLabels,
+                overflow = if (isExportLabel) TextOverflow.Visible else if (expandedLabels) {
+                    TextOverflow.Clip
+                } else {
+                    TextOverflow.Ellipsis
+                },
             )
         }
     }
