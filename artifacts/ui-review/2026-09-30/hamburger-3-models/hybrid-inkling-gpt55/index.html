@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>りんばむ メニュー案 — Inkling × GPT-5.5 Pro</title>
+  <style>
+    :root {
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+      color: #252635;
+      background: #e5ded4;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; display: flex; align-items: flex-start; justify-content: flex-start; }
+    button, input { font: inherit; }
+    button { cursor: pointer; }
+    .app {
+      position: relative; display: flex; flex-direction: column;
+      width: 390px; max-width: 100vw; height: 844px; max-height: 100dvh;
+      overflow: hidden; isolation: isolate;
+      background: linear-gradient(160deg, #f7f3ec 0%, #ede7df 72%, #e9e1d7 100%);
+    }
+    .topbar {
+      position: relative; z-index: 30; flex: 0 0 62px;
+      display: flex; align-items: center; gap: 8px;
+      padding: 0 12px 0 18px;
+      background: #f9f6f0; border-bottom: 1px solid #e9e1d6;
+    }
+    .brand { flex: 1; min-width: 0; font-size: 20px; font-weight: 800; letter-spacing: .01em; }
+    .top-action {
+      width: 44px; height: 44px; flex: 0 0 44px;
+      display: grid; place-items: center;
+      border: 0; border-radius: 13px; color: #272938; background: transparent;
+    }
+    .top-action:hover, .top-action[aria-expanded="true"] { background: #eee5d8; }
+    .top-action svg { width: 22px; height: 22px; }
+    .home { flex: 1; min-height: 0; overflow: auto; padding: 20px 16px 105px; }
+    .home h1 { margin: 0 0 15px; font-size: 20px; line-height: 1.3; letter-spacing: -.02em; }
+    .search-row {
+      width: 100%; height: 44px; margin-bottom: 15px; padding: 0 14px;
+      border: 1px solid #d7cabb; border-radius: 13px;
+      background: #fffdf9; color: #252635;
+    }
+    .search-row[hidden] { display: none; }
+    .filters { display: flex; gap: 8px; margin-bottom: 16px; overflow: hidden; white-space: nowrap; }
+    .filter {
+      flex: 0 0 auto; padding: 8px 13px; border-radius: 999px;
+      background: #fffcf7; border: 1px solid #e5dbcc;
+      color: #736958; font-size: 11px; font-weight: 700;
+    }
+    .filter.active { background: #302a34; color: #fff8ec; border-color: #302a34; }
+    .card {
+      display: flex; gap: 12px; align-items: flex-start;
+      padding: 15px; margin-bottom: 11px; border-radius: 18px;
+      background: #fffdfa; border: 1px solid #e8e0d6;
+      box-shadow: 0 7px 18px rgba(57, 42, 25, .055);
+    }
+    .card-icon {
+      width: 42px; height: 42px; flex: 0 0 42px;
+      display: grid; place-items: center; border-radius: 13px;
+      background: #efe1ca; color: #815626; font-weight: 800;
+    }
+    .card-icon.alt { background: #e9e5ed; color: #4b465e; }
+    .card-copy { min-width: 0; }
+    .card-title {
+      margin: 0 0 5px; font-size: 14px; line-height: 1.4; font-weight: 700;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .card-host { margin: 0; font-size: 11px; color: #857c70; }
+    .ai-button {
+      position: absolute; z-index: 3; right: 16px; bottom: 91px;
+      min-width: 58px; height: 36px; border: 0; border-radius: 18px;
+      background: #302a34; color: #f7d7a2; font-weight: 800;
+      box-shadow: 0 6px 16px rgba(40, 34, 41, .16);
+    }
+    .bottom-nav {
+      position: relative; z-index: 2; flex: 0 0 74px;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 7px 7px; border-top: 1px solid #e8e0d6;
+      background: #fffcf8;
+    }
+    .nav-action {
+      flex: 1; min-width: 0; min-height: 52px;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+      border: 0; background: transparent; color: #6c665e;
+      font-size: 10px; font-weight: 700;
+    }
+    .nav-action svg { width: 21px; height: 21px; }
+    .nav-add {
+      flex: 0 0 60px; width: 58px; height: 58px; margin: -23px 1px 0;
+      border: 4px solid #fffcf8; border-radius: 50%;
+      background: #b57c3c; color: white; font-size: 31px; line-height: 1;
+      box-shadow: 0 9px 19px rgba(125, 75, 28, .25);
+    }
+    .scrim {
+      position: absolute; inset: 62px 0 0; z-index: 20;
+      background: rgba(19, 22, 34, .37);
+      opacity: 0; pointer-events: none; transition: opacity .2s ease;
+    }
+    .app.menu-open .scrim { opacity: 1; pointer-events: auto; }
+    .menu-panel {
+      position: absolute; z-index: 25; top: 62px; right: 0; bottom: 0;
+      width: min(286px, calc(100% - 72px));
+      overflow: auto; padding: 24px 16px 20px; border-radius: 0;
+      background: #1c2030; color: #fff9ee;
+      border-left: 1px solid #343748;
+      box-shadow: -9px 0 30px rgba(14, 17, 29, .31);
+      opacity: 0; visibility: hidden; pointer-events: none;
+      transform: translateX(100%);
+      transition: opacity .2s ease, transform .2s ease, visibility .2s;
+    }
+    .app.menu-open .menu-panel {
+      opacity: 1; visibility: visible; pointer-events: auto;
+      transform: translateX(0);
+    }
+    .menu-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 4px 12px; border-bottom: 1px solid rgba(255,255,255,.12);
+    }
+    .menu-head h2 { margin: 0; font-size: 19px; font-weight: 800; letter-spacing: .02em; }
+    .mode {
+      border-radius: 999px; padding: 6px 9px; background: #383443;
+      color: #e9bf82; font-size: 10px; font-weight: 800;
+    }
+    .menu-list { list-style: none; margin: 7px 0 0; padding: 0; }
+    .menu-list li + li { border-top: 1px solid rgba(255,255,255,.09); }
+    .menu-item {
+      width: 100%; min-height: 58px; display: flex; align-items: center; gap: 11px;
+      padding: 7px 4px; border: 0; border-radius: 12px;
+      background: transparent; color: inherit; text-align: left;
+    }
+    .menu-item:hover { background: #292d3d; }
+    .item-icon {
+      width: 36px; height: 36px; flex: 0 0 36px;
+      display: grid; place-items: center; border-radius: 11px;
+      background: #3b3540; color: #e9bf82;
+    }
+    .item-icon svg { width: 19px; height: 19px; }
+    .item-label { flex: 1; min-width: 0; font-size: 13px; font-weight: 700; line-height: 1.35; }
+    .chevron { width: 15px; height: 15px; flex: 0 0 15px; color: #a9a2a7; }
+    .toast {
+      position: absolute; z-index: 40; left: 16px; right: 16px; bottom: 92px;
+      padding: 12px 15px; border-radius: 12px;
+      background: #1c2030; color: #fff9ee; font-size: 13px;
+      box-shadow: 0 6px 20px rgba(15, 18, 28, .23);
+    }
+    .toast[hidden] { display: none; }
+    :focus-visible { outline: 3px solid #e9bf82; outline-offset: 2px; }
+    @media (prefers-reduced-motion: reduce) {
+      .scrim, .menu-panel { transition: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app menu-open" id="app">
+    <header class="topbar">
+      <span class="brand">りんばむ</span>
+      <button class="top-action" id="searchButton" type="button" aria-label="検索" aria-expanded="false" aria-controls="searchInput">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true">
+          <circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>
+        </svg>
+      </button>
+      <button class="top-action" id="menuButton" type="button" aria-label="メニュー" aria-controls="menuPanel" aria-expanded="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true">
+          <path d="M4 7h16M4 12h16M4 17h16"/>
+        </svg>
+      </button>
+    </header>
+
+    <main class="home">
+      <input class="search-row" id="searchInput" type="search" placeholder="保存したリンクを検索" aria-label="保存したリンクを検索" hidden>
+      <h1>保存したリンク</h1>
+      <div class="filters" aria-label="フィルター">
+        <span class="filter active">すべて</span><span class="filter">YouTube</span><span class="filter">X</span><span class="filter">Web</span>
+      </div>
+      <article class="card">
+        <span class="card-icon">W</span>
+        <span class="card-copy"><h2 class="card-title">あとで読むデザイン資料</h2><p class="card-host">example.com/design</p></span>
+      </article>
+      <article class="card">
+        <span class="card-icon alt">X</span>
+        <span class="card-copy"><h2 class="card-title">共有で保存したリンク</h2><p class="card-host">example.org/post</p></span>
+      </article>
+      <article class="card">
+        <span class="card-icon">W</span>
+        <span class="card-copy"><h2 class="card-title">週末に見直す記事</h2><p class="card-host">sample.invalid/article</p></span>
+      </article>
+    </main>
+
+    <button class="ai-button" type="button" aria-label="AI">✦ AI</button>
+    <nav class="bottom-nav" aria-label="ホーム主要操作">
+      <button class="nav-action" type="button" aria-label="グループ">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M3 7h7l2 2h9v10H3z"/></svg><span>グループ</span>
+      </button>
+      <button class="nav-action" type="button" aria-label="エクスポート">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 16V3m0 0L8 7m4-4 4 4M4 15v5h16v-5"/></svg><span>エクスポート</span>
+      </button>
+      <button class="nav-add" type="button" aria-label="URLを追加">＋</button>
+      <button class="nav-action" type="button" aria-label="タグ">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h10l8 8-9 9-9-9z"/><circle cx="8" cy="9" r="1.5"/></svg><span>タグ</span>
+      </button>
+      <button class="nav-action" type="button" aria-label="アーカイブ">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v12h14V8M10 12h4"/></svg><span>アーカイブ</span>
+      </button>
+    </nav>
+
+    <div class="scrim" id="scrim" aria-hidden="true"></div>
+    <aside class="menu-panel" id="menuPanel" aria-label="メニュー" aria-hidden="false">
+      <div class="menu-head"><h2>メニュー</h2><span class="mode">画像つき</span></div>
+      <ul class="menu-list">
+        <li><button class="menu-item" type="button" data-action="プロフィール">
+          <span class="item-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.3"/><path d="M5 20a7 7 0 0 1 14 0"/></svg></span>
+          <span class="item-label">プロフィール</span><svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
+        </button></li>
+        <li><button class="menu-item" type="button" data-action="画像なし表示に切り替える">
+          <span class="item-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M8 14h8"/></svg></span>
+          <span class="item-label">画像なし表示に切り替える</span><svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
+        </button></li>
+        <li><button class="menu-item" type="button" data-action="選択">
+          <span class="item-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="m8 12 3 3 5-6"/></svg></span>
+          <span class="item-label">選択</span><svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
+        </button></li>
+        <li><button class="menu-item" type="button" data-action="使い方">
+          <span class="item-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h7a3 3 0 0 1 3 3v12a3 3 0 0 0-3-3H4zM20 5h-3a3 3 0 0 0-3 3v12a3 3 0 0 1 3-3h3z"/></svg></span>
+          <span class="item-label">使い方</span><svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
+        </button></li>
+      </ul>
+    </aside>
+    <div class="toast" id="toast" role="status" hidden></div>
+  </div>
+  <script>
+    const app = document.getElementById('app');
+    const menuButton = document.getElementById('menuButton');
+    const menuPanel = document.getElementById('menuPanel');
+    const scrim = document.getElementById('scrim');
+    const searchButton = document.getElementById('searchButton');
+    const searchInput = document.getElementById('searchInput');
+    const toast = document.getElementById('toast');
+    let toastTimer;
+
+    function setMenu(open) {
+      app.classList.toggle('menu-open', open);
+      menuButton.setAttribute('aria-expanded', String(open));
+      menuPanel.setAttribute('aria-hidden', String(!open));
+      menuPanel.inert = !open;
+      if (!open) menuButton.focus();
+    }
+    function showToast(label) {
+      clearTimeout(toastTimer);
+      toast.textContent = label + '（デザイン確認用）';
+      toast.hidden = false;
+      toastTimer = setTimeout(() => { toast.hidden = true; }, 2400);
+    }
+    menuButton.addEventListener('click', () => setMenu(!app.classList.contains('menu-open')));
+    scrim.addEventListener('click', () => setMenu(false));
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && app.classList.contains('menu-open')) setMenu(false);
+    });
+    document.querySelectorAll('.menu-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const label = item.dataset.action;
+        setMenu(false);
+        showToast(label);
+      });
+    });
+    searchButton.addEventListener('click', () => {
+      setMenu(false);
+      searchInput.hidden = !searchInput.hidden;
+      searchButton.setAttribute('aria-expanded', String(!searchInput.hidden));
+      if (!searchInput.hidden) searchInput.focus();
+    });
+    setMenu(true);
+  </script>
+</body>
+</html>

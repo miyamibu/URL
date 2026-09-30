@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=390, initial-scale=1, viewport-fit=cover">
+<title>りんばむ</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box}
+  :root{
+    --bg:#F4F5FA;
+    --surface:#FFFFFF;
+    --ink:#14161C;
+    --ink-2:#5A6070;
+    --ink-3:#9499A8;
+    --line:#E6E8F0;
+    --accent:#4F46E5;
+    --accent-weak:#EEEFFF;
+    --radius:14px;
+  }
+  html,body{height:100%}
+  body{
+    margin:0;
+    display:grid;
+    place-items:start;
+    background:#0C0E14;
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP","Yu Gothic UI",system-ui,sans-serif;
+    color:var(--ink);
+    -webkit-font-smoothing:antialiased;
+    overflow:hidden;
+  }
+  .phone{
+    position:relative;
+    width:390px;height:844px;
+    background:var(--bg);
+    overflow:hidden;
+    display:flex;flex-direction:column;
+  }
+
+  /* ---------- home ---------- */
+  .topbar{
+    flex:0 0 auto;
+    height:56px;padding:0 8px 0 16px;
+    display:flex;align-items:center;gap:4px;
+    position:relative;z-index:7;
+  }
+  .icon-btn{
+    width:44px;height:44px;
+    display:grid;place-items:center;
+    border:0;border-radius:12px;
+    background:transparent;color:var(--ink);
+    cursor:pointer;
+  }
+  .icon-btn:hover{background:#E9EBF4}
+  .icon-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .topbar-title{font-size:17px;font-weight:700;letter-spacing:.01em}
+  .spacer{flex:1}
+  .topbar-chip{
+    height:30px;padding:0 12px;border-radius:999px;
+    background:var(--surface);border:1px solid var(--line);
+    font-size:12px;font-weight:600;color:var(--ink-2);
+    display:flex;align-items:center;
+  }
+  .home-search{
+    flex:0 0 auto;margin:0 16px 8px;padding:0 12px;height:42px;
+    border:1px solid var(--line);border-radius:12px;background:var(--surface);
+    font:inherit;color:var(--ink);
+  }
+  .home-search[hidden]{display:none}
+  .home{
+    flex:1 1 auto;
+    overflow:auto;
+    padding:8px 16px 0;
+  }
+  .home-head{margin:4px 2px 14px}
+  .home-head h1{margin:0;font-size:22px;font-weight:750;letter-spacing:-.01em}
+  .home-head p{margin:4px 0 0;font-size:12.5px;color:var(--ink-3)}
+  .cards{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+  .card{
+    display:flex;align-items:center;gap:12px;
+    padding:12px 14px;
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+  }
+  .thumb{
+    width:38px;height:38px;border-radius:11px;flex:0 0 auto;
+    display:grid;place-items:center;
+    background:var(--accent-weak);color:var(--accent);
+    font-size:14px;font-weight:800;
+  }
+  .thumb.a{background:#E7F6EF;color:#128A5B}
+  .thumb.b{background:#FDF0E4;color:#B4600F}
+  .card-main{min-width:0;flex:1}
+  .card-title{font-size:14.5px;font-weight:650;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .card-host{margin-top:2px;font-size:11.5px;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .card-tag{flex:0 0 auto;font-size:10.5px;font-weight:700;color:var(--accent);background:var(--accent-weak);padding:3px 8px;border-radius:999px}
+
+  /* ---------- bottom bar ---------- */
+  .tabbar{
+    flex:0 0 auto;
+    position:relative;z-index:2;
+    height:74px;
+    display:flex;align-items:center;justify-content:space-around;
+    padding:0 6px 10px;
+    background:var(--surface);
+    border-top:1px solid var(--line);
+  }
+  .tab{
+    flex:1;
+    display:flex;flex-direction:column;align-items:center;gap:4px;
+    border:0;background:transparent;cursor:pointer;
+    color:var(--ink-2);
+    font-size:10.5px;font-weight:600;
+    padding:6px 0;border-radius:12px;
+  }
+  .tab:hover{color:var(--ink)}
+  .tab:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .tab-add{
+    flex:0 0 64px;
+    width:58px;height:58px;
+    transform:translateY(-18px);
+    border:4px solid var(--surface);
+    border-radius:50%;
+    background:linear-gradient(160deg,#6366F1,#4F46E5);
+    color:#fff;
+    font-size:26px;font-weight:400;line-height:1;
+    display:grid;place-items:center;
+    box-shadow:0 10px 20px rgba(79,70,229,.32);
+  }
+  .tab-add span{transform:translateY(-1px)}
+  .tab-add:hover{filter:brightness(1.05)}
+  .ai-action{position:absolute;right:16px;bottom:90px;z-index:2;border:0;border-radius:18px;padding:9px 14px;background:var(--accent);color:white;font-weight:700}
+
+  /* ---------- scrim ---------- */
+  .scrim{
+    position:absolute;inset:56px 0 0;z-index:5;
+    background:rgba(16,18,26,.34);
+    opacity:0;pointer-events:none;
+    transition:opacity .22s ease;
+  }
+  .scrim.is-on{opacity:1;pointer-events:auto}
+
+  /* ---------- menu sheet ---------- */
+  .menu{
+    position:absolute;top:56px;bottom:0;right:0;z-index:6;
+    width:316px;
+    display:flex;flex-direction:column;
+    background:var(--surface);
+    border-radius:20px 0 0 0;
+    box-shadow:-10px 0 30px rgba(16,18,26,.18);
+    transform:translateX(100%);
+    transition:transform .26s cubic-bezier(.32,.72,0,1);
+    visibility:hidden;
+  }
+  .menu.is-open{transform:translateX(0);visibility:visible}
+  .menu:focus{outline:none}
+
+  .menu-grip{width:34px;height:4px;border-radius:999px;background:var(--line);margin:10px auto 0;flex:0 0 auto}
+
+  .menu-head{
+    flex:0 0 auto;
+    display:flex;align-items:center;gap:11px;
+    padding:14px 18px 12px;
+  }
+  .mark{
+    width:38px;height:38px;border-radius:12px;flex:0 0 auto;
+    background:linear-gradient(160deg,#6366F1,#4F46E5);
+    color:#fff;display:grid;place-items:center;
+    font-size:15px;font-weight:800;
+    box-shadow:0 6px 14px rgba(79,70,229,.28);
+  }
+  .menu-name{font-size:16px;font-weight:750;letter-spacing:-.01em}
+  .menu-close{margin-left:auto;width:44px;height:44px;border:0;border-radius:12px;background:#F1F2F8;color:var(--ink);font-size:22px;cursor:pointer}
+
+  .menu-scroll{
+    flex:1 1 auto;overflow:auto;overscroll-behavior:contain;
+    padding:0 12px 16px;
+  }
+  .menu-label{
+    font-size:11px;font-weight:700;letter-spacing:.06em;
+    color:var(--ink-3);padding:0 8px 8px;
+  }
+  .menu-list{list-style:none;margin:0;padding:0;display:grid;gap:2px}
+  .menu-item{
+    width:100%;
+    display:flex;align-items:center;gap:12px;
+    padding:9px 10px;
+    border:0;border-radius:12px;background:transparent;
+    cursor:pointer;text-align:left;
+    font:inherit;color:var(--ink);
+  }
+  .menu-item:hover{background:#F5F6FB}
+  .menu-item:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+  .ico{
+    width:34px;height:34px;flex:0 0 auto;
+    border-radius:10px;display:grid;place-items:center;
+    background:var(--accent-weak);color:var(--accent);
+  }
+  .ico.alt{background:#E8F4FF;color:#0F6FC6}
+  .ico.warn{background:#FDEEEE;color:#C4322A}
+  .item-label{flex:1;font-size:14.5px;font-weight:600;line-height:1.25}
+  .chev{flex:0 0 auto;color:var(--ink-3)}
+  .feedback{position:absolute;bottom:86px;left:16px;right:16px;z-index:8;padding:12px;border-radius:12px;background:var(--ink);color:white;font-size:13px}
+  .feedback[hidden]{display:none}
+</style>
+</head>
+<body>
+<div class="phone">
+
+  <header class="topbar">
+    <span class="topbar-title">りんばむ</span>
+    <span class="spacer"></span>
+    <button id="searchButton" class="icon-btn" type="button" aria-label="検索" aria-expanded="false">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg>
+    </button>
+    <button id="burger" class="icon-btn" type="button" aria-label="メニュー" aria-haspopup="dialog" aria-expanded="false" aria-controls="menu">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
+        <path d="M4 7h16M4 12h16M4 17h11"/>
+      </svg>
+    </button>
+  </header>
+  <input id="homeSearch" class="home-search" type="search" placeholder="保存したリンクを検索" aria-label="保存したリンクを検索" hidden>
+
+  <main class="home">
+    <div class="home-head">
+      <h1>保存したリンク</h1>
+      <p>最近の保存から</p>
+    </div>
+    <ul class="cards">
+      <li class="card">
+        <span class="thumb">R</span>
+        <span class="card-main">
+          <span class="card-title">rinbam design notes</span>
+          <span class="card-host">notes.example.com</span>
+        </span>
+        <span class="card-tag">デザイン</span>
+      </li>
+      <li class="card">
+        <span class="thumb a">M</span>
+        <span class="card-main">
+          <span class="card-title">Morning Brew 取材メモ</span>
+          <span class="card-host">example.jp/blog/brew</span>
+        </span>
+      </li>
+      <li class="card">
+        <span class="thumb b">T</span>
+        <span class="card-main">
+          <span class="card-title">Team handbook — 保存版</span>
+          <span class="card-host">handbook.example.org</span>
+        </span>
+        <span class="card-tag">仕事</span>
+      </li>
+    </ul>
+  </main>
+  <button class="ai-action" type="button" aria-label="AI">AI</button>
+
+  <nav class="tabbar" aria-label="ホーム主要操作">
+    <button class="tab" type="button">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+      グループ
+    </button>
+    <button class="tab" type="button">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4m0 0L8 8m4-4 4 4M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/></svg>
+      エクスポート
+    </button>
+    <button class="tab tab-add" type="button" aria-label="リンクを追加"><span>＋</span></button>
+    <button class="tab" type="button">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4 12 22l-9-9V4h9z"/><circle cx="7.5" cy="8.5" r="1.4"/></svg>
+      タグ
+    </button>
+    <button class="tab" type="button">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="4" rx="1.4"/><path d="M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>
+      アーカイブ
+    </button>
+  </nav>
+
+  <div class="scrim" id="scrim" aria-hidden="true"></div>
+
+  <aside class="menu" id="menu" role="dialog" aria-modal="true" aria-label="メニュー" tabindex="-1">
+    <div class="menu-grip"></div>
+
+    <div class="menu-head">
+      <span class="mark">りん</span>
+      <span>
+        <span class="menu-name">りんばむ</span>
+      </span>
+      <button id="menuClose" class="menu-close" type="button" aria-label="メニューを閉じる">×</button>
+    </div>
+
+    <div class="menu-scroll">
+      <p class="menu-label">メニュー</p>
+      <ul class="menu-list">
+        <li>
+          <button class="menu-item" type="button" data-label="プロフィール">
+            <span class="ico">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.4"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0"/></svg>
+            </span>
+            <span class="item-label">プロフィール</span>
+            <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>
+          </button>
+        </li>
+        <li>
+          <button class="menu-item" type="button" data-label="画像なし表示に切り替える">
+            <span class="ico alt">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="m4 4 16 16"/><path d="m9 12 2 2 4-4"/></svg>
+            </span>
+            <span class="item-label">画像なし表示に切り替える</span>
+            <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>
+          </button>
+        </li>
+        <li>
+          <button class="menu-item" type="button" data-label="選択">
+            <span class="ico">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><path d="m8.5 12.3 2.4 2.4 4.6-5"/></svg>
+            </span>
+            <span class="item-label">選択</span>
+            <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>
+          </button>
+        </li>
+        <li>
+          <button class="menu-item" type="button" data-label="使い方">
+            <span class="ico">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H19v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M4 18.5A2.5 2.5 0 0 1 6.5 16H19v5H6.5A2.5 2.5 0 0 1 4 18.5z"/></svg>
+            </span>
+            <span class="item-label">使い方</span>
+            <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>
+          </button>
+        </li>
+        <li>
+          <button class="menu-item" type="button" data-label="データの取り扱い">
+            <span class="ico warn">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 5 6v5.5c0 4.2 2.9 7.9 7 9.5 4.1-1.6 7-5.3 7-9.5V6z"/><path d="M9.5 12h5"/></svg>
+            </span>
+            <span class="item-label">データの取り扱い</span>
+            <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>
+          </button>
+        </li>
+      </ul>
+    </div>
+  </aside>
+  <div id="feedback" class="feedback" role="status" hidden></div>
+
+</div>
+
+<script>
+(function () {
+  var menu   = document.getElementById('menu');
+  var scrim  = document.getElementById('scrim');
+  var burger = document.getElementById('burger');
+  var rows   = Array.prototype.slice.call(document.querySelectorAll('.menu-item'));
+  var open   = false;
+
+  function setOpen(v) {
+    open = v;
+    menu.classList.toggle('is-open', v);
+    scrim.classList.toggle('is-on', v);
+    burger.setAttribute('aria-expanded', String(v));
+    if (v) {
+      menu.focus({ preventScroll: true });
+    } else {
+      burger.focus({ preventScroll: true });
+    }
+  }
+
+  burger.addEventListener('click', function () { setOpen(!open); });
+  scrim.addEventListener('click', function () { setOpen(false); });
+  document.getElementById('menuClose').addEventListener('click', function () { setOpen(false); });
+  var homeSearch = document.getElementById('homeSearch');
+  document.getElementById('searchButton').addEventListener('click', function () {
+    homeSearch.hidden = !homeSearch.hidden;
+    this.setAttribute('aria-expanded', String(!homeSearch.hidden));
+    if (!homeSearch.hidden) homeSearch.focus();
+  });
+  rows.forEach(function (row) {
+    row.addEventListener('click', function () {
+      setOpen(false);
+      var feedback = document.getElementById('feedback');
+      feedback.textContent = row.dataset.label + '（デザイン確認用）';
+      feedback.hidden = false;
+      setTimeout(function () { feedback.hidden = true; }, 2000);
+    });
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && open) { e.preventDefault(); setOpen(false); }
+  });
+
+  setOpen(true); // 起動時はメニューを開く
+})();
+</script>
+</body>
+</html>
