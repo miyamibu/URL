@@ -107,6 +107,7 @@ fun OrbitPanel(
 fun OrbitSectionLabel(
     text: String,
     modifier: Modifier = Modifier,
+    color: Color? = null,
 ) {
     Text(
         text = text,
@@ -116,7 +117,7 @@ fun OrbitSectionLabel(
             lineHeight = 16.sp,
             fontWeight = FontWeight.SemiBold,
         ),
-        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.92f),
+        color = color ?: MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.92f),
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
     )

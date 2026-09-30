@@ -9,6 +9,22 @@ private extension Color {
     }
 }
 
+private enum HomeMenuPalette {
+    static let backgroundTop = Color(hex: 0xF7F3EC)
+    static let backgroundMiddle = Color(hex: 0xEDE7DF)
+    static let backgroundBottom = Color(hex: 0xE9E1D7)
+    static let bottomSurface = Color(hex: 0xE9E1D7)
+    static let bottomText = Color(hex: 0x6C665E)
+    static let menu = Color(hex: 0x1C2030)
+    static let menuText = Color(hex: 0xFFF9EE)
+    static let scrim = Color(hex: 0x131622)
+    static let iconSurface = Color(hex: 0x3B3540)
+    static let gold = Color(hex: 0xE9BF82)
+    static let addButton = Color(hex: 0xB57C3C)
+    static let aiButton = Color(hex: 0x302A34)
+    static let aiText = Color(hex: 0xF7D7A2)
+}
+
 func shouldShowPendingInviteBanner(hasPendingInvite: Bool) -> Bool {
     hasPendingInvite
 }
@@ -31,6 +47,7 @@ struct RootView: View {
     @State private var localTagNameDraft = ""
     @State private var isShowingUsageGuide = false
     @State private var isShowingSearchBar = false
+    @State private var isShowingMainMenu = false
     @State private var searchQuery = ""
     @State private var databaseSearchMatchIDs: Set<Int64>? = []
     @State private var isShowingSharedTagCloudSheet = false
@@ -123,6 +140,7 @@ struct RootView: View {
                 displayMode: displayModeBinding,
                 isShowingUsageGuide: $isShowingUsageGuide,
                 isShowingSearchBar: $isShowingSearchBar,
+                isShowingMainMenu: $isShowingMainMenu,
                 searchQuery: $searchQuery,
                 onOpenArchive: { model.selectedTab = .archive },
                 onOpenGroups: { model.selectedTab = .groups },
@@ -252,6 +270,53 @@ struct RootView: View {
         }
     }
 
+    @ViewBuilder
+    private func mainMenuLayer(mainDisplayedEntries: [URLRecord]) -> some View {
+        if model.selectedTab == .main && model.navigationPath.isEmpty && isShowingMainMenu {
+            GeometryReader { geometry in
+                VStack(spacing: 0) {
+                    Color.clear
+                        .frame(height: 62)
+                        .allowsHitTesting(false)
+
+                    HStack(spacing: 0) {
+                        HomeMenuPalette.scrim.opacity(0.37)
+                            .contentShape(Rectangle())
+                            .onTapGesture { isShowingMainMenu = false }
+
+                        MainTopMenu(
+                            displayMode: displayMode,
+                            onOpenProfile: {
+                                isShowingMainMenu = false
+                                isShowingSharedTagCloudSheet = true
+                            },
+                            onToggleDisplayMode: {
+                                isShowingMainMenu = false
+                                displayModeBinding.wrappedValue = displayMode == .rich ? .compact : .rich
+                            },
+                            onEnterSelectionMode: {
+                                isShowingMainMenu = false
+                                isMainSelectionModeActive = true
+                                selectedMainEntryIDs = Set(mainDisplayedEntries.map(\.id))
+                            },
+                            onOpenUsageGuide: {
+                                isShowingMainMenu = false
+                                isMainSelectionModeActive = false
+                                selectedMainEntryIDs = []
+                                searchQuery = ""
+                                isShowingSearchBar = false
+                                isShowingUsageGuide = true
+                            }
+                        )
+                        .frame(width: min(286, max(geometry.size.width - 72, 0)))
+                    }
+                    .frame(maxHeight: .infinity)
+                }
+            }
+            .ignoresSafeArea(.container, edges: .bottom)
+        }
+    }
+
     var body: some View {
         GeometryReader { proxy in
             let mainVisibleEntries = filteredEntries(
@@ -290,6 +355,9 @@ struct RootView: View {
                             )
                             .offset(y: proxy.safeAreaInsets.bottom + 4)
                         }
+                    }
+                    .overlay {
+                        mainMenuLayer(mainDisplayedEntries: mainDisplayedEntries)
                     }
                     .navigationDestination(for: Int64.self) { entryID in
                         DetailView(entryID: entryID, model: model)
@@ -695,6 +763,7 @@ private struct MainScreen: View {
     @Binding var displayMode: EntryListDisplayMode
     @Binding var isShowingUsageGuide: Bool
     @Binding var isShowingSearchBar: Bool
+    @Binding var isShowingMainMenu: Bool
     @Binding var searchQuery: String
     let onOpenArchive: () -> Void
     let onOpenGroups: () -> Void
@@ -725,8 +794,8 @@ private struct MainScreen: View {
     let onRetryLoad: () -> Void
     let showsPendingInviteBanner: Bool
 
-    @State private var isShowingMainMenu = false
     @ScaledMetric(relativeTo: .body) private var mainBottomContentPadding: CGFloat = 176
+    @Environment(\.colorScheme) private var currentColorScheme
 
     var body: some View {
         VStack(spacing: 0) {
@@ -744,36 +813,7 @@ private struct MainScreen: View {
                     onCancelSelection()
                 }
             )
-            .popover(
-                isPresented: $isShowingMainMenu,
-                attachmentAnchor: .rect(.bounds),
-                arrowEdge: .top
-            ) {
-                MainTopMenu(
-                    displayMode: displayMode,
-                    onOpenProfile: {
-                        isShowingMainMenu = false
-                        onOpenSharedTagCloud()
-                    },
-                    onToggleDisplayMode: {
-                        isShowingMainMenu = false
-                        displayMode = displayMode == .rich ? .compact : .rich
-                    },
-                    onEnterSelectionMode: {
-                        isShowingMainMenu = false
-                        onEnterSelectionMode()
-                    },
-                    onOpenUsageGuide: {
-                        isShowingMainMenu = false
-                        onOpenUsageGuide()
-                    },
-                    onOpenPrivacyInfo: {
-                        isShowingMainMenu = false
-                        onOpenPrivacyInfo()
-                    }
-                )
-            }
-            .presentationCompactAdaptation(.popover)
+            .background(isShowingUsageGuide ? AppPalette.background : HomeMenuPalette.backgroundTop)
 
             if isShowingUsageGuide {
                 UsageGuideView(onBack: {
@@ -914,6 +954,23 @@ private struct MainScreen: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .environment(\.colorScheme, isShowingUsageGuide ? currentColorScheme : .light)
+        .background {
+            if isShowingUsageGuide {
+                AppPalette.background.ignoresSafeArea()
+            } else {
+                LinearGradient(
+                    colors: [
+                        HomeMenuPalette.backgroundTop,
+                        HomeMenuPalette.backgroundMiddle,
+                        HomeMenuPalette.backgroundBottom,
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .ignoresSafeArea()
+            }
+        }
         .animation(.interactiveSpring(response: 0.28, dampingFraction: 0.9), value: selectedEntryIDs)
         .animation(.interactiveSpring(response: 0.28, dampingFraction: 0.9), value: selectionModeActive)
     }
@@ -924,6 +981,7 @@ private struct MainScreen: View {
                 icon: "magnifyingglass",
                 accessibilityLabel: "検索",
                 action: {
+                    isShowingMainMenu = false
                     if isShowingUsageGuide {
                         isShowingUsageGuide = false
                         isShowingSearchBar = true
@@ -937,8 +995,8 @@ private struct MainScreen: View {
             ),
             ScreenHeaderButton(
                 icon: "line.3.horizontal",
-                accessibilityLabel: "メニュー",
-                action: { isShowingMainMenu = true }
+                accessibilityLabel: isShowingMainMenu ? "メニューを閉じる" : "メニュー",
+                action: { isShowingMainMenu.toggle() }
             )
         ]
     }
@@ -958,29 +1016,48 @@ private struct MainTopMenu: View {
     let onToggleDisplayMode: () -> Void
     let onEnterSelectionMode: () -> Void
     let onOpenUsageGuide: () -> Void
-    let onOpenPrivacyInfo: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("メニュー")
-                .font(.system(size: 17, weight: .heavy, design: .rounded))
-                .foregroundStyle(AppPalette.textPrimary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Text("メニュー")
+                        .font(.system(.title3, design: .rounded).weight(.heavy))
+                        .foregroundStyle(HomeMenuPalette.menuText)
+                    Spacer(minLength: 4)
+                    Text(displayMode == .rich ? "画像つき" : "画像なし")
+                        .font(.system(.caption2, design: .rounded).weight(.heavy))
+                        .foregroundStyle(HomeMenuPalette.gold)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 6)
+                        .background(HomeMenuPalette.iconSurface, in: Capsule())
+                }
+                .padding(.bottom, 14)
 
-            menuItem("プロフィール", systemImage: "person.crop.circle", action: onOpenProfile)
-            menuItem(
-                displayMode == .rich ? "画像なし表示に切り替える" : "画像つき表示に切り替える",
-                systemImage: displayMode == .rich ? "list.bullet.rectangle" : "rectangle.grid.1x2",
-                action: onToggleDisplayMode
-            )
-            menuItem("選択", systemImage: "checkmark.square", action: onEnterSelectionMode)
-            menuItem("使い方", systemImage: "book.fill", action: onOpenUsageGuide)
-            menuItem("データの取り扱い", systemImage: "shield", action: onOpenPrivacyInfo)
+                menuSeparator
+                menuItem("プロフィール", systemImage: "person.crop.circle", action: onOpenProfile)
+                menuSeparator
+                menuItem(
+                    displayMode == .rich ? "画像なし表示に切り替える" : "画像つき表示に切り替える",
+                    systemImage: displayMode == .rich ? "list.bullet.rectangle" : "rectangle.grid.1x2",
+                    action: onToggleDisplayMode
+                )
+                menuSeparator
+                menuItem("選択", systemImage: "checkmark.square", action: onEnterSelectionMode)
+                menuSeparator
+                menuItem("使い方", systemImage: "book.fill", action: onOpenUsageGuide)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 24)
+            .padding(.bottom, 20)
         }
-        .padding(8)
-        .frame(width: 260)
-        .background(AppPalette.surface)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(HomeMenuPalette.menu)
+    }
+
+    private var menuSeparator: some View {
+        HomeMenuPalette.menuText.opacity(0.09)
+            .frame(height: 1)
     }
 
     private func menuItem(
@@ -989,19 +1066,27 @@ private struct MainTopMenu: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            HStack(spacing: 12) {
+            HStack(spacing: 11) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 19, weight: .semibold))
-                    .frame(width: 24)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(HomeMenuPalette.gold)
+                    .frame(width: 36, height: 36)
+                    .background(
+                        HomeMenuPalette.iconSurface,
+                        in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    )
                 Text(title)
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .font(.system(.subheadline, design: .rounded).weight(.bold))
                     .multilineTextAlignment(.leading)
+                    .foregroundStyle(HomeMenuPalette.menuText)
                     .lineLimit(2)
-                Spacer(minLength: 0)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(HomeMenuPalette.menuText.opacity(0.55))
             }
-            .foregroundStyle(AppPalette.textPrimary)
-            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(title)
@@ -1034,7 +1119,7 @@ private struct BottomHomeActionBar: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            AppPalette.surface
+            HomeMenuPalette.bottomSurface
                 .frame(height: barBackgroundHeight + bottomSafeAreaInset)
                 .frame(maxHeight: .infinity, alignment: .bottom)
 
@@ -1055,7 +1140,7 @@ private struct BottomHomeActionBar: View {
                     .font(.system(.title, design: .rounded).weight(.heavy))
                     .foregroundStyle(Color.black)
                     .frame(width: addButtonDiameter, height: addButtonDiameter)
-                    .background(AppPalette.primary, in: Circle())
+                    .background(HomeMenuPalette.addButton, in: Circle())
             }
             .padding(.top, 2)
             .accessibilityLabel("URLを追加")
@@ -1064,10 +1149,10 @@ private struct BottomHomeActionBar: View {
                 Text("AI")
                     .font(.system(size: 14, weight: .heavy, design: .rounded))
                     .lineLimit(1)
-                .foregroundStyle(AppPalette.textPrimary)
+                .foregroundStyle(HomeMenuPalette.aiText)
                 .padding(.horizontal, 16)
                 .frame(minHeight: min(scaledChatGptMinimumHeight, 64))
-                .background(AppPalette.primary, in: Capsule())
+                .background(HomeMenuPalette.aiButton, in: Capsule())
                 .shadow(color: Color.black.opacity(0.12), radius: 6, y: 2)
             }
             .buttonStyle(.plain)
@@ -1087,10 +1172,11 @@ private struct BottomHomeActionBar: View {
                     .font(.system(.title3, design: .rounded).weight(.semibold))
                 Text(label)
                     .font(.system(.caption2, design: .rounded).weight(.bold))
-                    .lineLimit(2)
+                    .lineLimit(label == "エクスポート" ? 1 : 2)
+                    .allowsTightening(label == "エクスポート")
                     .multilineTextAlignment(.center)
             }
-            .foregroundStyle(AppPalette.textSecondary)
+            .foregroundStyle(HomeMenuPalette.bottomText)
             .frame(maxWidth: .infinity, minHeight: itemHeight)
         }
         .buttonStyle(.plain)
@@ -3639,7 +3725,8 @@ private struct ManualInputSheet: View {
                             ForEach(model.localTags) { tag in
                                 FilterChipButton(
                                     label: tag.name,
-                                    selected: selectedLocalTagIDs.contains(tag.id)
+                                    selected: selectedLocalTagIDs.contains(tag.id),
+                                    usesManualTagSelectionStyle: true
                                 ) {
                                     if selectedLocalTagIDs.contains(tag.id) {
                                         selectedLocalTagIDs.remove(tag.id)
@@ -3654,13 +3741,21 @@ private struct ManualInputSheet: View {
                     .frame(maxHeight: 180, alignment: .top)
                 }
 
-                Button("+") {
+                Button("タグを追加する") {
                     isShowingCreateTagAlert = true
                 }
-                    .font(.system(size: 21, weight: .heavy))
-                    .foregroundStyle(AppPalette.primaryStrong)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
+                .font(.system(size: 17, weight: .heavy, design: .rounded))
+                .foregroundStyle(AppPalette.primaryStrong)
+                .frame(maxWidth: .infinity, minHeight: 56)
+                .background(
+                    AppPalette.surfaceSoft,
+                    in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(AppPalette.outlineSoft, lineWidth: 1)
+                }
+                .accessibilityLabel("タグを追加する")
 
                 Spacer(minLength: 8)
 

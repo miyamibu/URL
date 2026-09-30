@@ -15,6 +15,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.LocalIndication
@@ -28,10 +29,12 @@ fun TagFilterRow(
     tags: List<TagWithCount>,
     onOpenTag: (Long) -> Unit,
     onCreateTag: () -> Unit,
+    headingColor: Color? = null,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         OrbitSectionLabel(
             text = "共有タグ",
+            color = headingColor,
             modifier = Modifier.padding(
                 start = OrbitTokens.screenHorizontalPadding,
                 end = OrbitTokens.screenHorizontalPadding,

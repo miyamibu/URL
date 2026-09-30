@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.drawable.ColorDrawable
 import android.graphics.Matrix
 import android.graphics.BitmapFactory
 import android.graphics.SurfaceTexture
@@ -89,8 +90,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -116,7 +115,9 @@ import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -125,6 +126,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.BlendMode
@@ -137,6 +141,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.view.WindowCompat
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
@@ -246,6 +251,7 @@ fun UrlSaverRoot(
     val navController = rememberNavController()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    var showWarmHomeBars by remember { mutableStateOf(false) }
 
     var currentSnackbarKind by remember { mutableStateOf<SnackbarEventKind?>(null) }
 
@@ -369,6 +375,7 @@ fun UrlSaverRoot(
     }
 
     Scaffold(
+        containerColor = if (showWarmHomeBars) MainHomeHeaderColor else MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { paddingValues ->
         NavHost(
@@ -385,6 +392,7 @@ fun UrlSaverRoot(
                 snackbarHostState = snackbarHostState,
                 themeMode = themeMode,
                 onThemeModeChange = onThemeModeChange,
+                onWarmHomeBarsChange = { showWarmHomeBars = it },
                 resolvedRoute = resolvedRoute,
             )
         }
@@ -392,6 +400,26 @@ fun UrlSaverRoot(
 }
 
 private val MainTopBarActionIconSize = 30.dp
+private val MainTopBarHeight = 64.dp
+private val MainHomeBackgroundBrush = Brush.verticalGradient(
+    colors = listOf(
+        Color(0xFFF7F3EC),
+        Color(0xFFEDE7DF),
+        Color(0xFFE9E1D7),
+    ),
+)
+private val MainMenuSurfaceColor = Color(0xFF1C2030)
+private val MainMenuIconBackgroundColor = Color(0xFF3B3540)
+private val MainMenuWarmColor = Color(0xFFE9BF82)
+private val MainMenuTextColor = Color(0xFFFFF9EE)
+private val MainMenuScrimColor = Color(0xFF131622)
+private val MainCenterPlusColor = Color(0xFFB57C3C)
+private val MainHomeHeaderColor = Color(0xFFF7F3EC)
+private val MainHomeTextColor = Color(0xFF252635)
+private val MainBottomBarColor = Color(0xFFE9E1D7)
+private val MainBottomNavTextColor = Color(0xFF6C665E)
+private val MainAiBackgroundColor = Color(0xFF302A34)
+private val MainAiTextColor = Color(0xFFF7D7A2)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -414,6 +442,7 @@ private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
     snackbarHostState: SnackbarHostState,
     themeMode: AppThemeMode,
     onThemeModeChange: (AppThemeMode) -> Unit,
+    onWarmHomeBarsChange: (Boolean) -> Unit,
     resolvedRoute: String?,
 ) {
     composable(Routes.MAIN) {
@@ -440,6 +469,7 @@ private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
             snackbarHostState = snackbarHostState,
             themeMode = themeMode,
             onThemeModeChange = onThemeModeChange,
+            onWarmHomeBarsChange = onWarmHomeBarsChange,
             onOpenArchive = { navController.navigate(Routes.ARCHIVE) },
             onOpenDetail = { navController.navigate(Routes.detail(it)) },
             onOpenTagDetail = { navController.navigate(Routes.tagDetail(it)) },
@@ -672,6 +702,7 @@ private fun MainScreen(
     snackbarHostState: SnackbarHostState,
     themeMode: AppThemeMode,
     onThemeModeChange: (AppThemeMode) -> Unit,
+    onWarmHomeBarsChange: (Boolean) -> Unit,
     onOpenArchive: () -> Unit,
     onOpenDetail: (Long) -> Unit,
     onOpenTagDetail: (Long) -> Unit,
@@ -840,6 +871,9 @@ private fun MainScreen(
     BackHandler(enabled = !selectionModeActive && searchBarVisible) {
         searchQueryLocal = ""
         searchBarVisible = false
+    }
+    BackHandler(enabled = showMainMenu) {
+        showMainMenu = false
     }
     BackHandler(enabled = showUsageGuide) {
         showUsageGuide = false
@@ -1550,7 +1584,49 @@ private fun MainScreen(
     val isGroupPane = mainPane == MainPane.GROUPS && showSharedTagCloudUi && !showUsageGuide
     val isSearchActive = searchBarVisible || searchQueryLocal.isNotBlank()
     val showMainBottomBar = !selectionModeActive && selectedEntryIds.isEmpty() && !showUsageGuide && !isGroupPane && !isSearchActive
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+    val useWarmHomeBackground = !showUsageGuide && !isGroupPane
+    val homeWindow = (context as? android.app.Activity)?.window
+    val originalScreenBackground = MaterialTheme.colorScheme.background
+    val originalWindowBackgroundColor = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp).toArgb()
+    val originalLightStatusIcons = remember(homeWindow) {
+        homeWindow?.let { WindowCompat.getInsetsController(it, it.decorView).isAppearanceLightStatusBars }
+    }
+    SideEffect {
+        onWarmHomeBarsChange(useWarmHomeBackground)
+        homeWindow?.let { window ->
+            val backgroundColor = if (useWarmHomeBackground) {
+                MainHomeHeaderColor
+            } else {
+                originalScreenBackground
+            }
+            window.setBackgroundDrawable(ColorDrawable(backgroundColor.toArgb()))
+            WindowCompat.getInsetsController(window, window.decorView)
+                .isAppearanceLightStatusBars = useWarmHomeBackground
+        }
+    }
+    DisposableEffect(homeWindow, originalWindowBackgroundColor) {
+        onDispose {
+            onWarmHomeBarsChange(false)
+            homeWindow?.let { window ->
+                window.setBackgroundDrawable(ColorDrawable(originalWindowBackgroundColor))
+                if (originalLightStatusIcons != null) {
+                    WindowCompat.getInsetsController(window, window.decorView)
+                        .isAppearanceLightStatusBars = originalLightStatusIcons
+                }
+            }
+        }
+    }
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                if (useWarmHomeBackground) {
+                    MainHomeBackgroundBrush
+                } else {
+                    SolidColor(MaterialTheme.colorScheme.background)
+                },
+            ),
+    ) {
         val mainBottomBarFontScale = LocalDensity.current.fontScale
         val mainBottomBarContentHeight = mainBottomBarContentHeightDp(
             maxWidthDp = maxWidth.value,
@@ -1561,7 +1637,7 @@ private fun MainScreen(
             fontScale = mainBottomBarFontScale,
         )
         Scaffold(
-            containerColor = MaterialTheme.colorScheme.background,
+            containerColor = Color.Transparent,
             contentWindowInsets = if (isGroupPane) {
                 WindowInsets(0.dp)
             } else {
@@ -1580,7 +1656,17 @@ private fun MainScreen(
                                 )
                             }
                         },
-                        colors = orbitTopAppBarColors(),
+                        colors = if (showUsageGuide) {
+                            orbitTopAppBarColors()
+                        } else {
+                            TopAppBarDefaults.topAppBarColors(
+                                containerColor = MainHomeHeaderColor,
+                                scrolledContainerColor = MainHomeHeaderColor,
+                                titleContentColor = MainHomeTextColor,
+                                actionIconContentColor = MainHomeTextColor,
+                                navigationIconContentColor = MainHomeTextColor,
+                            )
+                        },
                         windowInsets = compactTopAppBarInsets(),
                         actions = {
                             IconButton(onClick = {
@@ -1600,88 +1686,12 @@ private fun MainScreen(
                                     modifier = Modifier.size(MainTopBarActionIconSize),
                                 )
                             }
-                            Box {
-                                IconButton(onClick = { showMainMenu = true }) {
-                                    Icon(
-                                        Icons.Outlined.Menu,
-                                        contentDescription = "メニュー",
-                                        modifier = Modifier.size(MainTopBarActionIconSize),
-                                    )
-                                }
-                                DropdownMenu(
-                                    expanded = showMainMenu,
-                                    onDismissRequest = { showMainMenu = false },
-                                ) {
-                                    DropdownMenuItem(
-                                        text = { Text("プロフィール") },
-                                        leadingIcon = {
-                                            Icon(Icons.Outlined.AccountCircle, contentDescription = null)
-                                        },
-                                        onClick = {
-                                            showMainMenu = false
-                                            showProfileSheet = true
-                                        },
-                                    )
-                                    DropdownMenuItem(
-                                        text = {
-                                            Text(
-                                                if (entryCardDisplayMode == EntryCardDisplayMode.RICH) {
-                                                    "画像なし表示に切り替える"
-                                                } else {
-                                                    "画像つき表示に切り替える"
-                                                },
-                                            )
-                                        },
-                                        leadingIcon = {
-                                            Icon(
-                                                imageVector = if (entryCardDisplayMode == EntryCardDisplayMode.RICH) {
-                                                    Icons.AutoMirrored.Outlined.ViewList
-                                                } else {
-                                                    Icons.Outlined.ViewAgenda
-                                                },
-                                                contentDescription = null,
-                                            )
-                                        },
-                                        onClick = {
-                                            showMainMenu = false
-                                            viewModel.toggleEntryCardDisplayMode()
-                                        },
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("選択") },
-                                        leadingIcon = {
-                                            Icon(Icons.Outlined.ChecklistRtl, contentDescription = null)
-                                        },
-                                        onClick = {
-                                            showMainMenu = false
-                                            if (!selectionModeActive) {
-                                                startSelectionFromVisibleEntries()
-                                            }
-                                        },
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("使い方") },
-                                        leadingIcon = {
-                                            Icon(Icons.AutoMirrored.Outlined.MenuBook, contentDescription = null)
-                                        },
-                                        onClick = {
-                                            showMainMenu = false
-                                            selectedEntryIds = emptySet()
-                                            selectionModeActive = false
-                                            searchQueryLocal = ""
-                                            searchBarVisible = false
-                                            mainPane = MainPane.URLS
-                                            showUsageGuide = true
-                                        },
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("データの取り扱い") },
-                                        onClick = {
-                                            showMainMenu = false
-                                            showPrivacyDialog = true
-                                        },
-                                    )
-                                }
+                            IconButton(onClick = { showMainMenu = !showMainMenu }) {
+                                Icon(
+                                    Icons.Outlined.Menu,
+                                    contentDescription = "メニュー",
+                                    modifier = Modifier.size(MainTopBarActionIconSize),
+                                )
                             }
                         },
                     )
@@ -1700,7 +1710,7 @@ private fun MainScreen(
                         },
                     )
                     .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.background),
+                    .background(Color.Transparent),
                 contentAlignment = Alignment.TopCenter,
             ) {
             Column(
@@ -1897,6 +1907,38 @@ private fun MainScreen(
                 onOpenArchive = onOpenArchive,
             )
         }
+        if (showMainMenu) {
+            MainMenuOverlay(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = MainTopBarHeight),
+                entryCardDisplayMode = entryCardDisplayMode,
+                onDismiss = { showMainMenu = false },
+                onOpenProfile = {
+                    showMainMenu = false
+                    showProfileSheet = true
+                },
+                onToggleDisplayMode = {
+                    showMainMenu = false
+                    viewModel.toggleEntryCardDisplayMode()
+                },
+                onStartSelection = {
+                    showMainMenu = false
+                    if (!selectionModeActive) {
+                        startSelectionFromVisibleEntries()
+                    }
+                },
+                onOpenUsageGuide = {
+                    showMainMenu = false
+                    selectedEntryIds = emptySet()
+                    selectionModeActive = false
+                    searchQueryLocal = ""
+                    searchBarVisible = false
+                    mainPane = MainPane.URLS
+                    showUsageGuide = true
+                },
+            )
+        }
         if (showFirstRunOnboarding) {
             OnboardingGuideOverlay(
                 onFinish = {
@@ -2043,11 +2085,18 @@ private fun ManualInputSheet(
                 )
             }
             Spacer(Modifier.height(6.dp))
-            TextButton(
+            OutlinedButton(
                 onClick = onRequestCreateLocalTag,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 56.dp)
+                    .testTag("manual_input_create_tag"),
             ) {
-                Text("+")
+                Text(
+                    text = "タグを追加する",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
             }
             Spacer(Modifier.height(8.dp))
             Button(
@@ -2867,6 +2916,7 @@ private fun MainListContent(
             tags = sharedTags,
             onOpenTag = onOpenTagDetail,
             onCreateTag = onRequestCreateSharedTag,
+            headingColor = MainBottomNavTextColor,
         )
         if (onOpenGroups != null) {
             Row(
@@ -6873,6 +6923,182 @@ private fun EmptyState(
 }
 
 @Composable
+private fun MainMenuOverlay(
+    modifier: Modifier = Modifier,
+    entryCardDisplayMode: EntryCardDisplayMode,
+    onDismiss: () -> Unit,
+    onOpenProfile: () -> Unit,
+    onToggleDisplayMode: () -> Unit,
+    onStartSelection: () -> Unit,
+    onOpenUsageGuide: () -> Unit,
+) {
+    Box(modifier = modifier) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MainMenuScrimColor.copy(alpha = 0.37f))
+                .clickable(onClick = onDismiss),
+        )
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .fillMaxHeight()
+                .fillMaxWidth(0.74f)
+                .widthIn(max = 286.dp)
+                .background(MainMenuSurfaceColor)
+                .verticalScroll(rememberScrollState())
+                .padding(
+                    start = 16.dp,
+                    top = 24.dp,
+                    end = 16.dp,
+                    bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 24.dp,
+                ),
+            verticalArrangement = Arrangement.spacedBy(0.dp),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 4.dp, end = 4.dp, bottom = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "メニュー",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MainMenuTextColor,
+                )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    text = if (entryCardDisplayMode == EntryCardDisplayMode.RICH) "画像つき" else "画像なし",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MainMenuWarmColor,
+                    modifier = Modifier
+                        .background(MainMenuIconBackgroundColor, RoundedCornerShape(99.dp))
+                        .padding(horizontal = 9.dp, vertical = 6.dp),
+                )
+            }
+            Spacer(
+                Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(MainMenuTextColor.copy(alpha = 0.09f)),
+            )
+            MainMenuItem(
+                icon = Icons.Outlined.AccountCircle,
+                label = "プロフィール",
+                text = { Text("プロフィール") },
+                onClick = onOpenProfile,
+            )
+            Spacer(
+                Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(MainMenuTextColor.copy(alpha = 0.09f)),
+            )
+            MainMenuItem(
+                icon = if (entryCardDisplayMode == EntryCardDisplayMode.RICH) {
+                    Icons.AutoMirrored.Outlined.ViewList
+                } else {
+                    Icons.Outlined.ViewAgenda
+                },
+                label = if (entryCardDisplayMode == EntryCardDisplayMode.RICH) {
+                    "画像なし表示に切り替える"
+                } else {
+                    "画像つき表示に切り替える"
+                },
+                onClick = onToggleDisplayMode,
+            )
+            Spacer(
+                Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(MainMenuTextColor.copy(alpha = 0.09f)),
+            )
+            MainMenuItem(
+                icon = Icons.Outlined.ChecklistRtl,
+                label = "選択",
+                onClick = onStartSelection,
+            )
+            Spacer(
+                Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(MainMenuTextColor.copy(alpha = 0.09f)),
+            )
+            MainMenuItem(
+                icon = Icons.AutoMirrored.Outlined.MenuBook,
+                label = "使い方",
+                onClick = onOpenUsageGuide,
+            )
+        }
+    }
+}
+
+@Composable
+private fun MainMenuItem(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    text: (@Composable () -> Unit)? = null,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 58.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick, role = Role.Button)
+            .semantics(mergeDescendants = true) {
+                contentDescription = label
+            }
+            .padding(horizontal = 4.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(11.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(RoundedCornerShape(11.dp))
+                .background(MainMenuIconBackgroundColor),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MainMenuWarmColor,
+                modifier = Modifier.size(19.dp),
+            )
+        }
+        Box(modifier = Modifier.weight(1f)) {
+            if (text != null) {
+                CompositionLocalProvider(
+                    androidx.compose.material3.LocalContentColor provides MainMenuTextColor,
+                    androidx.compose.material3.LocalTextStyle provides MaterialTheme.typography.labelLarge.copy(
+                        fontWeight = FontWeight.Bold,
+                    ),
+                ) {
+                    text()
+                }
+            } else {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MainMenuTextColor,
+                    softWrap = true,
+                    overflow = TextOverflow.Clip,
+                )
+            }
+        }
+        Text(
+            text = "›",
+            fontSize = 20.sp,
+            color = MainMenuTextColor.copy(alpha = 0.55f),
+        )
+    }
+}
+
+@Composable
 private fun MainBottomNavBar(
     modifier: Modifier = Modifier,
     contentHeight: Dp,
@@ -6886,7 +7112,7 @@ private fun MainBottomNavBar(
 ) {
     val navigationBarHeight = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val bottomFillHeight = if (navigationBarHeight < 32.dp) 32.dp else navigationBarHeight
-    val bottomBarColor = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp)
+    val bottomBarColor = MainBottomBarColor
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -6909,7 +7135,7 @@ private fun MainBottomNavBar(
                         .align(Alignment.TopCenter),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                    Box(modifier = Modifier.weight(0.85f), contentAlignment = Alignment.Center) {
                         MainBottomNavItem(
                             icon = Icons.Outlined.Groups,
                             label = "グループ",
@@ -6917,7 +7143,7 @@ private fun MainBottomNavBar(
                             onClick = onOpenGroups,
                         )
                     }
-                    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                    Box(modifier = Modifier.weight(1.15f), contentAlignment = Alignment.Center) {
                         MainBottomNavItem(
                             icon = Icons.Outlined.IosShare,
                             label = "エクスポート",
@@ -6951,7 +7177,7 @@ private fun MainBottomNavBar(
                 .offset(y = 61.dp)
                 .size(76.dp)
                 .background(
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MainCenterPlusColor,
                     shape = RoundedCornerShape(99.dp),
                 )
                 .clickable(onClick = onAdd)
@@ -6978,7 +7204,7 @@ private fun MainBottomNavBar(
                     .heightIn(min = 48.dp)
                     .semantics { contentDescription = "AI" },
                 shape = RoundedCornerShape(24.dp),
-                color = MaterialTheme.colorScheme.primaryContainer,
+                color = MainAiBackgroundColor,
                 shadowElevation = 3.dp,
             ) {
                 Row(
@@ -6990,7 +7216,7 @@ private fun MainBottomNavBar(
                         text = "AI",
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        color = MainAiTextColor,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -7048,10 +7274,11 @@ private fun MainBottomNavItem(
     expandedLabels: Boolean = false,
     onClick: () -> Unit,
 ) {
+    val needsTwoLineLabel = expandedLabels
     val tint = when {
-        !enabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
-        selected -> MaterialTheme.colorScheme.primary
-        else -> MaterialTheme.colorScheme.onSurfaceVariant
+        !enabled -> MainBottomNavTextColor.copy(alpha = 0.38f)
+        selected -> MainCenterPlusColor
+        else -> MainBottomNavTextColor
     }
     Column(
         modifier = Modifier
@@ -7067,17 +7294,17 @@ private fun MainBottomNavItem(
             )
             .semantics { contentDescription = label }
             .padding(
-                horizontal = 4.dp,
-                vertical = if (expandedLabels) 4.dp else 6.dp,
+                horizontal = if (label == "エクスポート") 0.dp else 4.dp,
+                vertical = if (needsTwoLineLabel) 4.dp else 6.dp,
             ),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(if (expandedLabels) 2.dp else 6.dp),
+        verticalArrangement = Arrangement.spacedBy(if (needsTwoLineLabel) 2.dp else 6.dp),
     ) {
         Icon(
             icon,
             contentDescription = null,
             tint = tint,
-            modifier = Modifier.size(if (expandedLabels) 32.dp else 36.dp),
+            modifier = Modifier.size(if (needsTwoLineLabel) 32.dp else 36.dp),
         )
         OrbitCappedFontScale(2.0f) {
             Text(

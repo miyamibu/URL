@@ -1424,17 +1424,20 @@ struct FilterChipButton: View {
     let label: String
     let selected: Bool
     let accessibilityLabel: String?
+    let usesManualTagSelectionStyle: Bool
     let action: (() -> Void)?
 
     init(
         label: String,
         selected: Bool,
         accessibilityLabel: String? = nil,
+        usesManualTagSelectionStyle: Bool = false,
         action: (() -> Void)? = nil
     ) {
         self.label = label
         self.selected = selected
         self.accessibilityLabel = accessibilityLabel
+        self.usesManualTagSelectionStyle = usesManualTagSelectionStyle
         self.action = action
     }
 
@@ -1457,7 +1460,7 @@ struct FilterChipButton: View {
                     }
             } else {
                 HStack(spacing: 6) {
-                    if selected {
+                    if selected && !usesManualTagSelectionStyle {
                         Image(systemName: "checkmark")
                             .font(.system(size: 12, weight: .heavy))
                             .accessibilityHidden(true)
@@ -1467,11 +1470,20 @@ struct FilterChipButton: View {
                         .truncationMode(.tail)
                 }
                 .font(.system(size: 14, weight: .heavy, design: .rounded))
-                .foregroundStyle(selected ? AppPalette.primaryStrong : Color.white.opacity(0.78))
+                .foregroundStyle(
+                    selected
+                        ? (usesManualTagSelectionStyle ? Color(UIColor(hex: 0x08111D)) : AppPalette.primaryStrong)
+                        : Color.white.opacity(0.78)
+                )
                 .padding(.horizontal, 18)
                 .padding(.vertical, 11)
                 .frame(maxWidth: 190, minHeight: 44)
-                .background(selected ? AppPalette.selectedSurface : AppPalette.panelStrong, in: Capsule())
+                .background(
+                    selected
+                        ? (usesManualTagSelectionStyle ? AppPalette.primary : AppPalette.selectedSurface)
+                        : AppPalette.panelStrong,
+                    in: Capsule()
+                )
             }
         }
         .buttonStyle(.plain)

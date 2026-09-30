@@ -258,9 +258,29 @@ def main() -> int:
             "main cards must receive local/custom tag assignments",
         ),
         lambda: require(
-            "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
-            'Text("+")',
+            "app/src/main/java/jp/mimac/urlsaver/ui/components/ServiceFilterRow.kt",
+            'label = "+",',
             "home local-tag creation/management route must remain visible as + only",
+        ),
+        lambda: require(
+            "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
+            'text = "タグを追加する"',
+            "manual input must use a readable tag-add button",
+        ),
+        lambda: require(
+            "ios/URLSaveriOS/UI/RootView.swift",
+            'Button("タグを追加する")',
+            "iOS manual input must use the same readable tag-add button",
+        ),
+        lambda: forbid(
+            "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
+            'label = "データの取り扱い"',
+            "Android hamburger menu must not restore the removed privacy item",
+        ),
+        lambda: forbid(
+            "ios/URLSaveriOS/UI/RootView.swift",
+            'menuItem("データの取り扱い"',
+            "iOS hamburger menu must not restore the removed privacy item",
         ),
         lambda: require(
             "app/src/main/java/jp/mimac/urlsaver/ui/UrlSaverRoot.kt",
