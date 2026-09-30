@@ -3725,8 +3725,7 @@ private struct ManualInputSheet: View {
                             ForEach(model.localTags) { tag in
                                 FilterChipButton(
                                     label: tag.name,
-                                    selected: selectedLocalTagIDs.contains(tag.id),
-                                    usesManualTagSelectionStyle: true
+                                    selected: selectedLocalTagIDs.contains(tag.id)
                                 ) {
                                     if selectedLocalTagIDs.contains(tag.id) {
                                         selectedLocalTagIDs.remove(tag.id)
