@@ -19,6 +19,7 @@ import jp.mimac.urlsaver.ui.MainListViewModel
 import jp.mimac.urlsaver.ui.ManualInputUiState
 import jp.mimac.urlsaver.ui.restoreManualInputUiState
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -179,6 +180,34 @@ class MainListViewModelTest {
 
     @Test
     @OptIn(ExperimentalCoroutinesApi::class)
+    fun manualInput_rapidSaveAndDismissKeepsOneSubmissionAndItsTagSnapshot() = runTest {
+        val saveGate = CompletableDeferred<Unit>()
+        val repository = FakeRepository().apply {
+            manualSaveResult = SaveResult(ShareSaveResult.CREATED, entryId = 44L)
+            manualSaveGate = saveGate
+        }
+        val viewModel = MainListViewModel(repository = repository)
+
+        viewModel.openManualInput()
+        viewModel.updateManualInputText("https://example.com/one-save")
+        viewModel.selectManualInputTag(31L)
+        viewModel.submitCurrentManualInput()
+        viewModel.submitCurrentManualInput()
+        viewModel.dismissManualInput()
+        viewModel.updateManualInputText("https://example.com/changed")
+        viewModel.toggleManualInputTag(32L)
+
+        assertTrue(viewModel.manualInputState.value.isSaving)
+        assertEquals("https://example.com/one-save", viewModel.manualInputState.value.inputText)
+        assertEquals(setOf(31L), viewModel.manualInputState.value.selectedLocalTagIds)
+        saveGate.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(listOf("https://example.com/one-save"), repository.manualInputCalls)
+        assertEquals(ManualInputUiState(), viewModel.manualInputState.value)
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun toggleEntryCardDisplayMode_updatesStore() = runTest {
         val store = FakeDisplayModeStore()
         val viewModel = MainListViewModel(FakeRepository(), store)
@@ -313,12 +342,14 @@ class MainListViewModelTest {
         var archiveResult: Boolean = false
         var pendingDeleteResult: Long? = null
         var manualSaveResult: SaveResult = SaveResult(ShareSaveResult.SAVE_FAILED)
+        var manualSaveGate: CompletableDeferred<Unit>? = null
 
         override fun observeActiveEntries(): Flow<List<UrlEntryEntity>> = activeEntriesFlow
         override fun observeLocalTagEntryRefs(): Flow<List<LocalTagEntryRef>> = localTagEntryRefs
 
         override suspend fun saveFromManualInput(input: String): SaveResult {
             manualInputCalls += input
+            manualSaveGate?.await()
             return manualSaveResult
         }
 

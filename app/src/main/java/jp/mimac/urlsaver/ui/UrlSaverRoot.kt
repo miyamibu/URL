@@ -41,6 +41,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -95,6 +96,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ModalBottomSheetDefaults
+import androidx.compose.material3.SheetValue
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -119,6 +122,8 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -1968,7 +1973,7 @@ internal fun mainBottomBarContentHeightDp(
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
-private fun ManualInputSheet(
+internal fun ManualInputSheet(
     visible: Boolean,
     inputText: String,
     inputError: ShareSaveResult?,
@@ -1985,141 +1990,199 @@ private fun ManualInputSheet(
 ) {
     if (!visible) return
 
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            OutlinedTextField(
-                value = inputText,
-                onValueChange = onInputChange,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("manual_input_field"),
-                label = { Text("URL / テキスト") },
-                placeholder = { Text("https://example.com または残したいメモ") },
-                singleLine = true,
-                maxLines = 1,
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Text,
-                    imeAction = ImeAction.Done,
-                ),
-                isError = inputError == ShareSaveResult.INVALID_URL ||
-                    inputError == ShareSaveResult.NO_URL_FOUND ||
-                    inputError == ShareSaveResult.INPUT_TOO_LARGE ||
-                    inputError == ShareSaveResult.PERSONAL_URL_LIMIT_REACHED ||
-                    inputError == ShareSaveResult.SAVE_FAILED,
-                supportingText = {
-                    when (inputError) {
-                        ShareSaveResult.INVALID_URL -> Text("URL形式が正しくありません。https:// から始まるURLを入力してください")
-                        ShareSaveResult.NO_URL_FOUND -> Text("入力内にURLが見つかりませんでした。URLをそのまま貼り付けてください")
-                        ShareSaveResult.INPUT_TOO_LARGE -> Text("入力が長すぎます。256KB以内のURLまたはテキストにしてください")
-                        ShareSaveResult.PERSONAL_URL_LIMIT_REACHED -> Text("現在のプランの保存上限に達しました。不要なURLを整理してから追加してください。")
-                        ShareSaveResult.SAVE_FAILED -> Text("保存できませんでした。入力とタグは残っています。通信状態を確認して、もう一度お試しください")
-                        else -> Unit
-                    }
-                },
-            )
-            Spacer(Modifier.height(12.dp))
-            TextButton(
-                onClick = onPaste,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("クリップボードを貼り付け")
-            }
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = "タグ",
-                style = MaterialTheme.typography.titleSmall,
-                modifier = Modifier.padding(bottom = 6.dp),
-            )
-            if (localTags.isEmpty()) {
-                Text(
-                    text = "タグがまだありません。必要なら作成してください",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+    val savingInProgress by rememberUpdatedState(isManualSaving)
+    val sheetState = rememberModalBottomSheetState(
+        skipPartiallyExpanded = true,
+        confirmValueChange = { target -> target != SheetValue.Hidden || !savingInProgress },
+    )
+    var tagQuery by remember(visible) { mutableStateOf("") }
+    val matchingTags = remember(localTags, tagQuery) {
+        val query = tagQuery.trim()
+        if (query.isEmpty()) localTags else localTags.filter { it.name.contains(query, ignoreCase = true) }
+    }
+    // Material3 1.2.1 captures native back properties when it creates the popup.
+    // Keep the draft and SheetState outside this key, and refresh only the popup's back policy.
+    key(isManualSaving) {
+        ModalBottomSheet(
+            onDismissRequest = { if (!savingInProgress) onDismiss() },
+            sheetState = sheetState,
+            properties = ModalBottomSheetDefaults.properties(shouldDismissOnBackPress = !isManualSaving),
+            modifier = Modifier.testTag("manual_input_sheet"),
+        ) {
+            BoxWithConstraints {
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                )
-            } else {
-                PackedTagAssignmentFlow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalSpacing = 8.dp,
-                    verticalSpacing = 8.dp,
+                        .heightIn(max = maxHeight * 0.9f)
+                        .imePadding()
+                        .padding(16.dp),
                 ) {
-                    localTags.forEach { tag ->
-                        val selected = tag.id in selectedLocalTagIds
-                        val tagPalette = selectableChipPalette(MaterialTheme.colorScheme, selected)
-                        Surface(
-                            shape = RoundedCornerShape(999.dp),
-                            color = tagPalette.container,
-                            contentColor = tagPalette.content,
-                            border = BorderStroke(1.dp, tagPalette.outline),
-                            modifier = Modifier.selectable(
-                                selected = selected,
-                                onClick = { onSelectLocalTag(tag.id) },
-                                role = Role.Checkbox,
-                            ).testTag("manual_input_tag_${tag.id}"),
+                    Column(
+                        modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
+                    ) {
+                        OutlinedTextField(
+                            value = inputText,
+                            onValueChange = onInputChange,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("manual_input_field"),
+                            label = { Text("URL / テキスト") },
+                            placeholder = { Text("https://example.com または残したいメモ") },
+                            singleLine = true,
+                            maxLines = 1,
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Text,
+                                imeAction = ImeAction.Done,
+                            ),
+                            enabled = !isManualSaving,
+                            isError = inputError == ShareSaveResult.INVALID_URL ||
+                                inputError == ShareSaveResult.NO_URL_FOUND ||
+                                inputError == ShareSaveResult.INPUT_TOO_LARGE ||
+                                inputError == ShareSaveResult.PERSONAL_URL_LIMIT_REACHED ||
+                                inputError == ShareSaveResult.SAVE_FAILED,
+                            supportingText = {
+                                when (inputError) {
+                                    ShareSaveResult.INVALID_URL -> Text("URL形式が正しくありません。https:// から始まるURLを入力してください")
+                                    ShareSaveResult.NO_URL_FOUND -> Text("入力内にURLが見つかりませんでした。URLをそのまま貼り付けてください")
+                                    ShareSaveResult.INPUT_TOO_LARGE -> Text("入力が長すぎます。256KB以内のURLまたはテキストにしてください")
+                                    ShareSaveResult.PERSONAL_URL_LIMIT_REACHED -> Text("現在のプランの保存上限に達しました。不要なURLを整理してから追加してください。")
+                                    ShareSaveResult.SAVE_FAILED -> Text("保存できませんでした。入力とタグは残っています。通信状態を確認して、もう一度お試しください")
+                                    else -> Unit
+                                }
+                            },
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        TextButton(
+                            onClick = onPaste,
+                            enabled = !isManualSaving,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("クリップボードを貼り付け")
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = "自作タグ（${selectedLocalTagIds.size}件選択中）",
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.padding(bottom = 6.dp),
+                        )
+                        if (selectedLocalTagIds.isNotEmpty()) {
+                            Text(
+                                text = "選択済み: " + localTags.filter { it.id in selectedLocalTagIds }.joinToString("、") { it.name },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.testTag("manual_input_selected_tags"),
+                            )
+                        }
+                        if (localTags.isNotEmpty()) {
+                            OutlinedTextField(
+                                value = tagQuery,
+                                onValueChange = { tagQuery = it },
+                                modifier = Modifier.fillMaxWidth().testTag("manual_input_tag_search"),
+                                label = { Text("自作タグを検索") },
+                                singleLine = true,
+                                enabled = !isManualSaving,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                        }
+                        if (localTags.isEmpty()) {
+                            Text(
+                                text = "タグがまだありません。必要なら作成してください",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                            )
+                        } else if (matchingTags.isEmpty()) {
+                            Text("一致する自作タグはありません", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else {
+                            PackedTagAssignmentFlow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalSpacing = 8.dp,
+                                verticalSpacing = 8.dp,
+                            ) {
+                                matchingTags.forEach { tag ->
+                                    val selected = tag.id in selectedLocalTagIds
+                                    val tagPalette = selectableChipPalette(MaterialTheme.colorScheme, selected)
+                                    Surface(
+                                        shape = RoundedCornerShape(999.dp),
+                                        color = tagPalette.container,
+                                        contentColor = tagPalette.content,
+                                        border = BorderStroke(1.dp, tagPalette.outline),
+                                        modifier = Modifier.selectable(
+                                            selected = selected,
+                                            enabled = !isManualSaving,
+                                            onClick = { onSelectLocalTag(tag.id) },
+                                            role = Role.Checkbox,
+                                        ).testTag("manual_input_tag_${tag.id}"),
+                                    ) {
+                                        Text(
+                                            text = if (selected) "✓ ${tag.name}" else tag.name,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier
+                                                .widthIn(max = 180.dp)
+                                                .heightIn(min = 48.dp)
+                                                .padding(horizontal = 12.dp, vertical = 12.dp),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        if (!manualLocalTagError.isNullOrBlank()) {
+                            Text(
+                                text = manualLocalTagError,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                            )
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        OutlinedButton(
+                            onClick = {
+                                tagQuery = ""
+                                onRequestCreateLocalTag()
+                            },
+                            enabled = !isManualSaving,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 56.dp)
+                                .testTag("manual_input_create_tag"),
                         ) {
                             Text(
-                                text = tag.name,
-                                style = MaterialTheme.typography.labelMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier
-                                    .widthIn(max = 180.dp)
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                text = "タグを追加する",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
                             )
                         }
                     }
-                }
-            }
-            if (!manualLocalTagError.isNullOrBlank()) {
-                Text(
-                    text = manualLocalTagError,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                )
-            }
-            Spacer(Modifier.height(6.dp))
-            OutlinedButton(
-                onClick = onRequestCreateLocalTag,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 56.dp)
-                    .testTag("manual_input_create_tag"),
-            ) {
-                Text(
-                    text = "タグを追加する",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-            Button(
-                onClick = onSave,
-                enabled = inputText.trim().isNotEmpty() && !isManualSaving,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("manual_input_save"),
-            ) {
-                if (isManualSaving) {
-                    CircularProgressIndicator(
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = onSave,
+                        enabled = inputText.trim().isNotEmpty() && !isManualSaving,
                         modifier = Modifier
-                            .width(16.dp)
-                            .height(16.dp),
-                        strokeWidth = 2.dp,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("保存中…")
-                } else {
-                    Text(if (inputError == ShareSaveResult.SAVE_FAILED) "もう一度保存" else "保存")
+                            .fillMaxWidth()
+                            .testTag("manual_input_save"),
+                    ) {
+                        if (isManualSaving) {
+                            CircularProgressIndicator(
+                                modifier = Modifier
+                                    .width(16.dp)
+                                    .height(16.dp),
+                                strokeWidth = 2.dp,
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text("保存中…")
+                        } else {
+                            Text(if (inputError == ShareSaveResult.SAVE_FAILED) "もう一度保存" else "保存")
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
                 }
             }
-            Spacer(Modifier.height(12.dp))
         }
     }
 }

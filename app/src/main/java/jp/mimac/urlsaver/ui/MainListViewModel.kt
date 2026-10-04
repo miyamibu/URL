@@ -145,14 +145,23 @@ class MainListViewModel(
     }
 
     fun openManualInput() {
+        if (manualInputState.value.isSaving) {
+            return
+        }
         updateManualInputState(ManualInputUiState(visible = true))
     }
 
     fun dismissManualInput() {
+        if (manualInputState.value.isSaving) {
+            return
+        }
         updateManualInputState(ManualInputUiState())
     }
 
     fun updateManualInputText(inputText: String) {
+        if (manualInputState.value.isSaving) {
+            return
+        }
         updateManualInputState(
             manualInputState.value.copy(
                 inputText = inputText,
@@ -163,6 +172,9 @@ class MainListViewModel(
 
     fun selectManualInputTag(tagId: Long) {
         val current = manualInputState.value
+        if (current.isSaving) {
+            return
+        }
         updateManualInputState(
             current.copy(
                 selectedLocalTagIds = current.selectedLocalTagIds + tagId,
@@ -173,6 +185,9 @@ class MainListViewModel(
 
     fun toggleManualInputTag(tagId: Long) {
         val current = manualInputState.value
+        if (current.isSaving) {
+            return
+        }
         updateManualInputState(
             current.copy(
                 selectedLocalTagIds = if (tagId in current.selectedLocalTagIds) {
