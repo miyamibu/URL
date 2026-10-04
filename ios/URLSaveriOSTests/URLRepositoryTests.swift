@@ -324,6 +324,22 @@ final class URLRepositoryTests: XCTestCase {
         XCTAssertEqual(try repository.loadLocalTags().map(\.id).prefix(4), [fourth.id, first.id, third.id, second.id])
     }
 
+    func testManualSavePersistsMultipleSelectedLocalTagsWithoutDuplicateEntries() throws {
+        let first = try XCTUnwrap(try repository.createLocalTag(name: "調査"))
+        let second = try XCTUnwrap(try repository.createLocalTag(name: "あとで読む"))
+        let url = "https://example.invalid/manual-tags"
+
+        let saved = try repository.saveFromManualInput(url, localTagIDs: [first.id, second.id, first.id])
+        let entryID = try XCTUnwrap(saved.entryID)
+        XCTAssertEqual(saved.result, .created)
+        XCTAssertEqual(try repository.loadLocalTagAssignments()[entryID], Set([first.id, second.id]))
+
+        let duplicate = try repository.saveFromManualInput(url, localTagIDs: [first.id, second.id])
+        XCTAssertEqual(duplicate.result, .duplicateActive)
+        XCTAssertEqual(duplicate.entryID, entryID)
+        XCTAssertEqual(try repository.loadLocalTagAssignments()[entryID], Set([first.id, second.id]))
+    }
+
     func testPendingDeleteRestorePreservesEntryAndSchedulesMetadataWhenNeeded() async throws {
         let created = try repository.saveFromManualInput("https://example.com/path")
         XCTAssertEqual(created.result, .created)
