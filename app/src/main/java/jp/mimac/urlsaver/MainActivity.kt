@@ -74,7 +74,11 @@ class MainActivity : ComponentActivity() {
                 SideEffect {
                     val insetsController = WindowCompat.getInsetsController(window, window.decorView)
                     enableEdgeToEdge(
-                        statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
+                        statusBarStyle = if (darkTheme) {
+                            SystemBarStyle.dark(Color.TRANSPARENT)
+                        } else {
+                            SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
+                        },
                         navigationBarStyle = if (darkTheme) {
                             SystemBarStyle.dark(navigationBarColor)
                         } else {

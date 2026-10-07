@@ -40,6 +40,57 @@ final class ServiceFilterTests: XCTestCase {
         XCTAssertEqual(serviceFilterOrder.map(\.rawValue), ["all", "youtube", "x", "instagram", "tiktok", "web"])
     }
 
+    func testHomeBackgroundPreferenceDefaultsToExistingCurrentGradientAndRejectsLegacyValues() {
+        XCTAssertEqual(HomeBackgroundStyle.allCases, [.current, .sakura, .lavender, .mint])
+        XCTAssertEqual(HomeBackgroundStyle.current.label, "今の背景")
+        XCTAssertEqual(HomeBackgroundPreferenceStore.resolve(rawValue: nil), .current)
+        XCTAssertEqual(HomeBackgroundPreferenceStore.resolve(rawValue: "beige"), .current)
+        XCTAssertEqual(HomeBackgroundPreferenceStore.resolve(rawValue: "system"), .current)
+        XCTAssertEqual(HomeBackgroundPreferenceStore.resolve(rawValue: "light"), .current)
+        XCTAssertEqual(HomeBackgroundPreferenceStore.resolve(rawValue: "dark"), .current)
+        XCTAssertEqual(HomeBackgroundPreferenceStore.resolve(rawValue: "unknown"), .current)
+        XCTAssertEqual(HomeBackgroundPreferenceStore.resolve(rawValue: " sakura "), .sakura)
+    }
+
+    func testHomeBackgroundPreferencePersistsLocallyAndStaysIndependentFromThemeModeKey() throws {
+        let suiteName = "home-background-preference-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set("dark", forKey: "appThemeMode")
+        XCTAssertEqual(HomeBackgroundPreferenceStore.load(from: defaults), .current)
+
+        for style in HomeBackgroundStyle.allCases {
+            HomeBackgroundPreferenceStore.save(style, to: defaults)
+            XCTAssertEqual(defaults.string(forKey: HomeBackgroundPreferenceStore.key), style.rawValue)
+            XCTAssertEqual(HomeBackgroundPreferenceStore.load(from: defaults), style)
+            XCTAssertEqual(defaults.string(forKey: "appThemeMode"), "dark")
+        }
+    }
+
+    func testDetailBodyProjectionKeepsFullBodyForPrefixAndBothDistinctTexts() {
+        let rawFullBody = "  Example   Domain は、ドメイン名の例として使用されるサイトです。 続きの本文です。 "
+        XCTAssertEqual(detailBodyProjection(
+            summary: "Example Domain は、ドメイン名の例として使用されるサイトです…",
+            body: rawFullBody
+        ), DetailBodyProjection(summary: nil, body: rawFullBody))
+
+        XCTAssertEqual(detailBodyProjection(
+            summary: "同じ本文です。",
+            body: "同じ本文です。"
+        ), DetailBodyProjection(summary: nil, body: "同じ本文です。"))
+
+        XCTAssertEqual(detailBodyProjection(
+            summary: "料金と契約の要点",
+            body: "導入方法と操作手順を説明します。"
+        ), DetailBodyProjection(summary: "料金と契約の要点", body: "導入方法と操作手順を説明します。"))
+
+        XCTAssertEqual(detailBodyProjection(
+            summary: "短い",
+            body: "短い言葉から始まる別の本文です。"
+        ), DetailBodyProjection(summary: "短い", body: "短い言葉から始まる別の本文です。"))
+    }
+
     func testFilteredEntriesIncludesTikTokWhenTikTokSelected() {
         let tiktok = makeRecord(id: 1, serviceType: .tiktok, host: "www.tiktok.com")
         let web = makeRecord(id: 2, serviceType: .web, host: "example.com")

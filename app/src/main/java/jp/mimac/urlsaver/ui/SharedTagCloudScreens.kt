@@ -14,6 +14,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -66,9 +70,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -95,6 +101,9 @@ import jp.mimac.urlsaver.domain.SharedTagInvitePreviewResult
 import jp.mimac.urlsaver.domain.UsageSummary
 import jp.mimac.urlsaver.domain.isPaidCourse
 import jp.mimac.urlsaver.ui.theme.AppThemeMode
+import jp.mimac.urlsaver.domain.HomeBackgroundStyle
+import jp.mimac.urlsaver.ui.theme.homeBackgroundGradientColors
+import jp.mimac.urlsaver.ui.theme.homeBackgroundLabel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -139,6 +148,8 @@ fun SharedTagCloudAuthScreen(
     viewModel: SharedTagAuthViewModel,
     themeMode: AppThemeMode,
     onThemeModeChange: (AppThemeMode) -> Unit,
+    homeBackgroundStyle: HomeBackgroundStyle,
+    onHomeBackgroundStyleChange: (HomeBackgroundStyle) -> Unit,
     onBack: () -> Unit,
     initialPromoCode: String? = null,
 ) {
@@ -412,6 +423,8 @@ fun SharedTagCloudAuthScreen(
                     },
                     themeMode = themeMode,
                     onThemeModeChange = onThemeModeChange,
+                    homeBackgroundStyle = homeBackgroundStyle,
+                    onHomeBackgroundStyleChange = onHomeBackgroundStyleChange,
                 )
                 ChatGptPersonalLinkSyncCard(
                     viewModel = viewModel,
@@ -1192,6 +1205,8 @@ private fun ProfileCard(
     onRemoveAvatar: () -> Unit,
     themeMode: AppThemeMode,
     onThemeModeChange: (AppThemeMode) -> Unit,
+    homeBackgroundStyle: HomeBackgroundStyle,
+    onHomeBackgroundStyleChange: (HomeBackgroundStyle) -> Unit,
 ) {
     var isEditingDisplayName by remember { mutableStateOf(false) }
     Column(
@@ -1272,6 +1287,11 @@ private fun ProfileCard(
         ThemeModeSelector(
             selectedMode = themeMode,
             onModeChange = onThemeModeChange,
+        )
+
+        HomeBackgroundSelector(
+            selectedStyle = homeBackgroundStyle,
+            onStyleChange = onHomeBackgroundStyleChange,
         )
 
         if (!isEditingDisplayName) {
@@ -1572,6 +1592,88 @@ private fun ThemeModeSelector(
                         Text(mode.label)
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeBackgroundSelector(
+    selectedStyle: HomeBackgroundStyle,
+    onStyleChange: (HomeBackgroundStyle) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            text = "ホームの背景",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = "この端末のホームだけに適用されます",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        HomeBackgroundStyle.entries.chunked(2).forEach { styles ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                styles.forEach { style ->
+                    val selected = style == selectedStyle
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(18.dp))
+                            .border(
+                                width = if (selected) 2.dp else 1.dp,
+                                color = if (selected) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.outlineVariant
+                                },
+                                shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp),
+                            )
+                            .selectable(
+                                selected = selected,
+                                role = Role.RadioButton,
+                                onClick = { onStyleChange(style) },
+                            )
+                            .padding(5.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(76.dp)
+                                .clip(androidx.compose.foundation.shape.RoundedCornerShape(14.dp))
+                                .background(Brush.verticalGradient(homeBackgroundGradientColors(style))),
+                            contentAlignment = Alignment.TopEnd,
+                        ) {
+                            if (selected) {
+                                Surface(
+                                    modifier = Modifier.padding(8.dp),
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                                ) {
+                                    Icon(
+                                        Icons.Outlined.Check,
+                                        contentDescription = "選択中",
+                                        modifier = Modifier.padding(4.dp).size(18.dp),
+                                    )
+                                }
+                            }
+                        }
+                        Text(
+                            text = homeBackgroundLabel(style),
+                            modifier = Modifier.fillMaxWidth(),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
+                if (styles.size == 1) Spacer(Modifier.weight(1f))
             }
         }
     }

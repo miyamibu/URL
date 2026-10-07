@@ -75,6 +75,9 @@ fun OrbitPanel(
     modifier: Modifier = Modifier,
     tone: OrbitPanelTone = OrbitPanelTone.DEFAULT,
     contentPadding: PaddingValues = PaddingValues(18.dp),
+    containerColorOverride: Color? = null,
+    contentColorOverride: Color? = null,
+    borderColorOverride: Color? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val containerColor = when (tone) {
@@ -90,9 +93,9 @@ fun OrbitPanel(
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(OrbitTokens.radiusPanel),
-        color = containerColor,
-        contentColor = contentColor,
-        border = BorderStroke(1.dp, OrbitTokens.outline.copy(alpha = 0.9f)),
+        color = containerColorOverride ?: containerColor,
+        contentColor = contentColorOverride ?: contentColor,
+        border = BorderStroke(1.dp, borderColorOverride ?: OrbitTokens.outline.copy(alpha = 0.9f)),
         tonalElevation = 1.dp,
     ) {
         Column(

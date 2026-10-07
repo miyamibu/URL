@@ -56,6 +56,29 @@ enum SharedContainer {
     }
 }
 
+enum HomeBackgroundPreferenceStore {
+    static let key = "homeBackgroundStyle"
+    static let defaultStyle = HomeBackgroundStyle.defaultStyle
+
+    static func resolve(rawValue: String?) -> HomeBackgroundStyle {
+        guard let rawValue,
+              let style = HomeBackgroundStyle(
+                rawValue: rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+              ) else {
+            return defaultStyle
+        }
+        return style
+    }
+
+    static func load(from defaults: UserDefaults = .standard) -> HomeBackgroundStyle {
+        resolve(rawValue: defaults.string(forKey: key))
+    }
+
+    static func save(_ style: HomeBackgroundStyle, to defaults: UserDefaults = .standard) {
+        defaults.set(style.rawValue, forKey: key)
+    }
+}
+
 struct ShareExtensionPendingOperation: Codable, Equatable, Sendable {
     static let currentVersion = 1
     static let recoveryWindow: TimeInterval = 15 * 60

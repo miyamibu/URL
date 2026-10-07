@@ -13,6 +13,7 @@ private enum ChatGptPersonalLinkSyncAction: Equatable {
 struct SharedTagCloudSheet: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("appThemeMode") private var themeModeRaw = AppThemeMode.system.rawValue
+    @AppStorage(HomeBackgroundPreferenceStore.key) private var homeBackgroundRaw = HomeBackgroundStyle.defaultStyle.rawValue
 
     @ObservedObject var model: URLSaverAppModel
     @State private var email = ""
@@ -73,6 +74,10 @@ struct SharedTagCloudSheet: View {
                     }
 
                     profileSection
+                    HomeBackgroundPicker(
+                        selectedStyle: HomeBackgroundPreferenceStore.resolve(rawValue: homeBackgroundRaw),
+                        onSelect: { homeBackgroundRaw = $0.rawValue }
+                    )
                     chatGptPersonalLinkSyncSection
                     #if DEBUG
                     if AiTransparencyFeature.isEnabled {
@@ -1479,6 +1484,73 @@ private struct ThemeModePicker: View {
                             )
                     }
                     .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+}
+
+private struct HomeBackgroundPicker: View {
+    let selectedStyle: HomeBackgroundStyle
+    let onSelect: (HomeBackgroundStyle) -> Void
+
+    private func colors(for style: HomeBackgroundStyle) -> [Color] {
+        switch style {
+        case .current:
+            return [Color(UIColor(hex: 0xF7F3EC)), Color(UIColor(hex: 0xEDE7DF)), Color(UIColor(hex: 0xE9E1D7))]
+        case .sakura:
+            return [Color(UIColor(hex: 0xFCF3F6)), Color(UIColor(hex: 0xF5E6EC)), Color(UIColor(hex: 0xEFDBE4))]
+        case .lavender:
+            return [Color(UIColor(hex: 0xF6F3FC)), Color(UIColor(hex: 0xECE7F5)), Color(UIColor(hex: 0xE3DDEC))]
+        case .mint:
+            return [Color(UIColor(hex: 0xF2F9F5)), Color(UIColor(hex: 0xE4F1E9)), Color(UIColor(hex: 0xD8E9DE))]
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("ホームの背景")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(AppPalette.textSecondary)
+            Text("この端末のホームだけに適用されます")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(AppPalette.textSecondary)
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                ForEach(HomeBackgroundStyle.allCases) { style in
+                    let selected = selectedStyle == style
+                    Button {
+                        onSelect(style)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 7) {
+                            ZStack(alignment: .topTrailing) {
+                                LinearGradient(
+                                    colors: colors(for: style),
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                                .frame(height: 84)
+                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                if selected {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 12, weight: .bold))
+                                        .foregroundStyle(Color.white)
+                                        .frame(width: 28, height: 28)
+                                        .background(Color(UIColor(hex: 0x855B76)), in: Circle())
+                                        .padding(8)
+                                }
+                            }
+                            Text(style.label)
+                                .font(.system(size: 14, weight: selected ? .bold : .medium))
+                                .foregroundStyle(AppPalette.textPrimary)
+                        }
+                        .padding(5)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 19, style: .continuous)
+                                .stroke(selected ? Color(UIColor(hex: 0x855B76)) : AppPalette.outlineSoft, lineWidth: selected ? 2 : 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityValue(selected ? "選択中" : "未選択")
                 }
             }
         }

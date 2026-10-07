@@ -50,6 +50,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -72,6 +73,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -539,16 +542,54 @@ fun TagDetailScreen(
     }
 
     if (showLocalTagShareDialog) {
+        val darkSurface = MaterialTheme.colorScheme.background.luminance() < 0.3f
         AlertDialog(
             onDismissRequest = { showLocalTagShareDialog = false },
             title = { Text("自作タグを共有") },
             text = {
-                Text(
-                    "タグ『${currentTag.name}』とURL ${viewModel.eligibleLocalTagShareEntryCount()}件を共有します。タイトル、メモ、共有タグの情報は含まれません。",
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(20.dp),
+                        color = if (darkSurface) Color(0xFF352632) else Color(0xFFFFF0F7),
+                        contentColor = if (darkSurface) Color(0xFFF8EAF1) else Color(0xFF3F2635),
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(18.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Icon(
+                                Icons.Outlined.IosShare,
+                                contentDescription = null,
+                                tint = Color(0xFF8C4669),
+                            )
+                            Text(currentTag.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                            Text(
+                                "URL ${viewModel.eligibleLocalTagShareEntryCount()}件",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    ShareContentsSummary(
+                        title = "共有される内容",
+                        lines = listOf("タグ名", "URL"),
+                        accent = Color(0xFF3C8B72),
+                    )
+                    ShareContentsSummary(
+                        title = "含まれない内容",
+                        lines = listOf("タイトル", "メモ", "共有タグ情報"),
+                        accent = Color(0xFF7D7890),
+                    )
+                    Text(
+                        text = "選択した内容だけを、次の画面で共有先へ渡します。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             },
             confirmButton = {
-                TextButton(
+                Button(
                     onClick = {
                         showLocalTagShareDialog = false
                         scope.launch {
@@ -781,6 +822,24 @@ fun TagDetailScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ShareContentsSummary(
+    title: String,
+    lines: List<String>,
+    accent: Color,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = accent)
+        lines.forEach { line ->
+            Text(
+                text = "・$line",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
         }
     }
 }

@@ -18,13 +18,18 @@ import jp.mimac.urlsaver.ui.ListFilterLoadState
 import jp.mimac.urlsaver.ui.MainListViewModel
 import jp.mimac.urlsaver.ui.ManualInputUiState
 import jp.mimac.urlsaver.ui.restoreManualInputUiState
+import jp.mimac.urlsaver.ui.SEARCH_DEBOUNCE_MILLIS
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -179,6 +184,34 @@ class MainListViewModelTest {
 
     @Test
     @OptIn(ExperimentalCoroutinesApi::class)
+    fun manualInput_rapidSaveAndDismissKeepsOneSubmissionAndItsTagSnapshot() = runTest {
+        val saveGate = CompletableDeferred<Unit>()
+        val repository = FakeRepository().apply {
+            manualSaveResult = SaveResult(ShareSaveResult.CREATED, entryId = 44L)
+            manualSaveGate = saveGate
+        }
+        val viewModel = MainListViewModel(repository = repository)
+
+        viewModel.openManualInput()
+        viewModel.updateManualInputText("https://example.com/one-save")
+        viewModel.selectManualInputTag(31L)
+        viewModel.submitCurrentManualInput()
+        viewModel.submitCurrentManualInput()
+        viewModel.dismissManualInput()
+        viewModel.updateManualInputText("https://example.com/changed")
+        viewModel.toggleManualInputTag(32L)
+
+        assertTrue(viewModel.manualInputState.value.isSaving)
+        assertEquals("https://example.com/one-save", viewModel.manualInputState.value.inputText)
+        assertEquals(setOf(31L), viewModel.manualInputState.value.selectedLocalTagIds)
+        saveGate.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(listOf("https://example.com/one-save"), repository.manualInputCalls)
+        assertEquals(ManualInputUiState(), viewModel.manualInputState.value)
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun toggleEntryCardDisplayMode_updatesStore() = runTest {
         val store = FakeDisplayModeStore()
         val viewModel = MainListViewModel(FakeRepository(), store)
@@ -188,6 +221,86 @@ class MainListViewModelTest {
 
         assertEquals(EntryCardDisplayMode.COMPACT, viewModel.entryCardDisplayMode.value)
         assertEquals(listOf(EntryCardDisplayMode.COMPACT), store.setCalls)
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun searchEntryIdsDebounced_waitsForThresholdAndPreservesMatchingIds() = runTest {
+        val repository = FakeRepository().apply {
+            searchResults = setOf(4L, 9L)
+        }
+        val viewModel = MainListViewModel(repository, FakeDisplayModeStore())
+
+        val result = async { viewModel.searchEntryIdsDebounced("research") }
+        advanceTimeBy(SEARCH_DEBOUNCE_MILLIS - 1)
+        runCurrent()
+        assertEquals(emptyList<String>(), repository.searchQueries)
+
+        advanceTimeBy(1)
+        runCurrent()
+        assertEquals(listOf("research"), repository.searchQueries)
+        assertEquals(setOf(4L, 9L), result.await())
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun searchEntryIdsDebounced_tenQueryBurstRunsOnlyLatestQuery() = runTest {
+        val repository = FakeRepository().apply {
+            searchResults = setOf(10L)
+        }
+        val viewModel = MainListViewModel(repository, FakeDisplayModeStore())
+        var activeSearch = launch { }
+
+        repeat(10) { index ->
+            activeSearch.cancel()
+            activeSearch = launch {
+                viewModel.searchEntryIdsDebounced("query-$index")
+            }
+            advanceTimeBy(SEARCH_DEBOUNCE_MILLIS - 1)
+        }
+        runCurrent()
+        assertEquals(emptyList<String>(), repository.searchQueries)
+
+        advanceTimeBy(1)
+        activeSearch.join()
+        assertEquals(listOf("query-9"), repository.searchQueries)
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun searchEntryIdsDebounced_blankQueriesBypassDelayAndRepository() = runTest {
+        val repository = FakeRepository()
+        val viewModel = MainListViewModel(repository, FakeDisplayModeStore())
+
+        assertEquals(emptySet<Long>(), viewModel.searchEntryIdsDebounced(""))
+        assertEquals(emptySet<Long>(), viewModel.searchEntryIdsDebounced("  \n\t"))
+        assertEquals(emptyList<String>(), repository.searchQueries)
+        assertEquals(0L, testScheduler.currentTime)
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun searchEntryIdsDebounced_cancellationDuringRepositorySearchDoesNotReturnFallbackResult() = runTest {
+        val searchGate = CompletableDeferred<Unit>()
+        val repository = FakeRepository().apply {
+            searchResultGate = searchGate
+            searchResults = setOf(7L)
+        }
+        val viewModel = MainListViewModel(repository, FakeDisplayModeStore())
+        var completedResult: Set<Long>? = null
+        val search = launch {
+            completedResult = viewModel.searchEntryIdsDebounced("cancel-me")
+        }
+
+        advanceTimeBy(SEARCH_DEBOUNCE_MILLIS)
+        runCurrent()
+        assertEquals(listOf("cancel-me"), repository.searchQueries)
+        search.cancel()
+        search.join()
+
+        assertTrue(search.isCancelled)
+        assertNull(completedResult)
+        searchGate.complete(Unit)
     }
 
     @Test
@@ -305,6 +418,7 @@ class MainListViewModelTest {
         val archiveCalls = mutableListOf<Long>()
         val pendingDeleteCalls = mutableListOf<Long>()
         val manualInputCalls = mutableListOf<String>()
+        val searchQueries = mutableListOf<String>()
         val activeEntries = MutableStateFlow<List<UrlEntryEntity>>(emptyList())
         var activeEntriesFlow: Flow<List<UrlEntryEntity>> = activeEntries
         val localTagEntryRefs = MutableStateFlow<List<LocalTagEntryRef>>(emptyList())
@@ -313,12 +427,22 @@ class MainListViewModelTest {
         var archiveResult: Boolean = false
         var pendingDeleteResult: Long? = null
         var manualSaveResult: SaveResult = SaveResult(ShareSaveResult.SAVE_FAILED)
+        var manualSaveGate: CompletableDeferred<Unit>? = null
+        var searchResultGate: CompletableDeferred<Unit>? = null
+        var searchResults: Set<Long> = emptySet()
 
         override fun observeActiveEntries(): Flow<List<UrlEntryEntity>> = activeEntriesFlow
         override fun observeLocalTagEntryRefs(): Flow<List<LocalTagEntryRef>> = localTagEntryRefs
 
+        override suspend fun searchEntryIds(query: String, recordState: RecordState): Set<Long> {
+            searchQueries += query
+            searchResultGate?.await()
+            return searchResults
+        }
+
         override suspend fun saveFromManualInput(input: String): SaveResult {
             manualInputCalls += input
+            manualSaveGate?.await()
             return manualSaveResult
         }
 

@@ -17,11 +17,13 @@ import jp.mimac.urlsaver.data.ChatGptPersonalLinkSyncSettingsStore
 import jp.mimac.urlsaver.data.ConfiguredContactSupportClient
 import jp.mimac.urlsaver.data.ContactSupportClient
 import jp.mimac.urlsaver.data.DataStoreEntryCardDisplayModeStore
+import jp.mimac.urlsaver.data.DataStoreHomeBackgroundStyleStore
 import jp.mimac.urlsaver.data.DataStoreEntitlementGrantStore
 import jp.mimac.urlsaver.data.DefaultAccountLinkedLocalDataCleaner
 import jp.mimac.urlsaver.data.DefaultTagRepository
 import jp.mimac.urlsaver.data.DefaultUrlRepository
 import jp.mimac.urlsaver.data.EntryCardDisplayModeStore
+import jp.mimac.urlsaver.data.HomeBackgroundStyleStore
 import jp.mimac.urlsaver.data.EntitlementGrantRepository
 import jp.mimac.urlsaver.data.EntitlementGrantStore
 import jp.mimac.urlsaver.data.ExportRepository
@@ -115,6 +117,9 @@ class AppContainer(context: Context) {
     }
     val entryCardDisplayModeStore: EntryCardDisplayModeStore by lazy {
         DataStoreEntryCardDisplayModeStore(appContext)
+    }
+    val homeBackgroundStyleStore: HomeBackgroundStyleStore by lazy {
+        DataStoreHomeBackgroundStyleStore(appContext)
     }
     val serviceFilterOrderStore: ServiceFilterOrderStore by lazy {
         DataStoreServiceFilterOrderStore(appContext)

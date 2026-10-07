@@ -118,7 +118,11 @@ fun EntryCard(
     val cardShape = RoundedCornerShape(20.dp)
     val cardBorder = BorderStroke(
         width = if (selected) 1.5.dp else 1.dp,
-        color = if (selected) MaterialTheme.colorScheme.primary else OrbitTokens.outline.copy(alpha = 0.9f),
+        color = if (selected) {
+            MaterialTheme.colorScheme.primary
+        } else {
+            MaterialTheme.colorScheme.outline.copy(alpha = 0.72f)
+        },
     )
 
     Surface(

@@ -17,6 +17,7 @@ import jp.mimac.urlsaver.domain.ServiceType
 import jp.mimac.urlsaver.domain.ShareSaveResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.catch
@@ -88,6 +89,12 @@ class MainListViewModel(
         return repository.searchEntryIds(query = query, recordState = RecordState.ACTIVE)
     }
 
+    suspend fun searchEntryIdsDebounced(query: String): Set<Long> {
+        if (query.isBlank()) return emptySet()
+        delay(SEARCH_DEBOUNCE_MILLIS)
+        return searchEntryIds(query)
+    }
+
     fun retryLoading() {
         entrySourceState.update { current ->
             current.copy(loadState = ListFilterLoadState.Loading)
@@ -145,14 +152,23 @@ class MainListViewModel(
     }
 
     fun openManualInput() {
+        if (manualInputState.value.isSaving) {
+            return
+        }
         updateManualInputState(ManualInputUiState(visible = true))
     }
 
     fun dismissManualInput() {
+        if (manualInputState.value.isSaving) {
+            return
+        }
         updateManualInputState(ManualInputUiState())
     }
 
     fun updateManualInputText(inputText: String) {
+        if (manualInputState.value.isSaving) {
+            return
+        }
         updateManualInputState(
             manualInputState.value.copy(
                 inputText = inputText,
@@ -163,6 +179,9 @@ class MainListViewModel(
 
     fun selectManualInputTag(tagId: Long) {
         val current = manualInputState.value
+        if (current.isSaving) {
+            return
+        }
         updateManualInputState(
             current.copy(
                 selectedLocalTagIds = current.selectedLocalTagIds + tagId,
@@ -173,6 +192,9 @@ class MainListViewModel(
 
     fun toggleManualInputTag(tagId: Long) {
         val current = manualInputState.value
+        if (current.isSaving) {
+            return
+        }
         updateManualInputState(
             current.copy(
                 selectedLocalTagIds = if (tagId in current.selectedLocalTagIds) {
@@ -363,6 +385,7 @@ internal fun restoreManualInputUiState(savedStateHandle: SavedStateHandle): Manu
 }
 
 private const val MANUAL_INPUT_VISIBLE_KEY = "manual_input.visible"
+internal const val SEARCH_DEBOUNCE_MILLIS = 250L
 private const val MANUAL_INPUT_TEXT_KEY = "manual_input.text"
 private const val MANUAL_INPUT_ERROR_KEY = "manual_input.error"
 private const val MANUAL_INPUT_TAG_IDS_KEY = "manual_input.local_tag_ids"

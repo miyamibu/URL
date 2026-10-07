@@ -20,6 +20,27 @@ enum ServiceType: String, Codable, CaseIterable, Sendable {
     }
 }
 
+enum HomeBackgroundStyle: String, CaseIterable, Hashable, Identifiable, Sendable {
+    // `.current` maps to the existing HomeMenuPalette gradient until a visual direction is approved.
+    case current = "current"
+    case sakura = "sakura"
+    case lavender = "lavender"
+    case mint = "mint"
+
+    static let defaultStyle: HomeBackgroundStyle = .current
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .current: return "今の背景"
+        case .sakura: return "さくら"
+        case .lavender: return "ラベンダー"
+        case .mint: return "ミント"
+        }
+    }
+}
+
 enum PlanType: String, Codable, CaseIterable, Sendable {
     case free
     case launchStandard = "launch_standard"

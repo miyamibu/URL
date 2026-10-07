@@ -23,6 +23,19 @@ private enum HomeMenuPalette {
     static let addButton = Color(hex: 0xB57C3C)
     static let aiButton = Color(hex: 0x302A34)
     static let aiText = Color(hex: 0xF7D7A2)
+
+    static func gradient(for style: HomeBackgroundStyle) -> [Color] {
+        switch style {
+        case .current:
+            return [backgroundTop, backgroundMiddle, backgroundBottom]
+        case .sakura:
+            return [Color(hex: 0xFCF3F6), Color(hex: 0xF5E6EC), Color(hex: 0xEFDBE4)]
+        case .lavender:
+            return [Color(hex: 0xF6F3FC), Color(hex: 0xECE7F5), Color(hex: 0xE3DDEC)]
+        case .mint:
+            return [Color(hex: 0xF2F9F5), Color(hex: 0xE4F1E9), Color(hex: 0xD8E9DE)]
+        }
+    }
 }
 
 func shouldShowPendingInviteBanner(hasPendingInvite: Bool) -> Bool {
@@ -413,8 +426,8 @@ struct RootView: View {
                 }
             .sheet(isPresented: $isShowingManualSheet) {
                 ManualInputSheet(model: model)
-                    .presentationDetents([.height(640)])
-                    .presentationDragIndicator(.hidden)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
                     .presentationCornerRadius(32)
             }
             .sheet(isPresented: $isShowingSharedTagCloudSheet) {
@@ -751,6 +764,7 @@ private struct LocalTagRenameAlertModifier: ViewModifier {
 }
 
 private struct MainScreen: View {
+    @AppStorage(HomeBackgroundPreferenceStore.key) private var homeBackgroundRaw = HomeBackgroundStyle.defaultStyle.rawValue
     let entries: [URLRecord]
     let totalEntries: [URLRecord]
     let pendingInviteRecord: PendingInviteRecord?
@@ -798,6 +812,10 @@ private struct MainScreen: View {
     @Environment(\.colorScheme) private var currentColorScheme
 
     var body: some View {
+        let localTagNamesByID = Dictionary(uniqueKeysWithValues: localTags.map { ($0.id, $0.name) })
+        let homeBackgroundStyle = HomeBackgroundPreferenceStore.resolve(rawValue: homeBackgroundRaw)
+        let homeGradient = HomeMenuPalette.gradient(for: homeBackgroundStyle)
+
         VStack(spacing: 0) {
             let trailingButtons = mainTrailingButtons
             ScreenHeader(
@@ -813,7 +831,7 @@ private struct MainScreen: View {
                     onCancelSelection()
                 }
             )
-            .background(isShowingUsageGuide ? AppPalette.background : HomeMenuPalette.backgroundTop)
+            .background(isShowingUsageGuide ? AppPalette.background : homeGradient[0])
 
             if isShowingUsageGuide {
                 UsageGuideView(onBack: {
@@ -923,7 +941,7 @@ private struct MainScreen: View {
                                             displayMode: displayMode,
                                             cardWidth: cardWidth,
                                             selected: selectedEntryIDs.contains(entry.id),
-                                            localTagNames: localTagNames(for: entry)
+                                            localTagNames: localTagNames(for: entry, namesByID: localTagNamesByID)
                                         )
                                         .frame(width: cardWidth)
                                     }
@@ -935,7 +953,7 @@ private struct MainScreen: View {
                                         entry: entry,
                                         displayMode: displayMode,
                                         cardWidth: cardWidth,
-                                        localTagNames: localTagNames(for: entry),
+                                        localTagNames: localTagNames(for: entry, namesByID: localTagNamesByID),
                                         onTap: { onOpenDetail(entry.id) },
                                         onArchive: { onArchive(entry.id) },
                                         onDelete: { onDelete(entry.id) },
@@ -960,11 +978,7 @@ private struct MainScreen: View {
                 AppPalette.background.ignoresSafeArea()
             } else {
                 LinearGradient(
-                    colors: [
-                        HomeMenuPalette.backgroundTop,
-                        HomeMenuPalette.backgroundMiddle,
-                        HomeMenuPalette.backgroundBottom,
-                    ],
+                    colors: homeGradient,
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
@@ -1001,8 +1015,7 @@ private struct MainScreen: View {
         ]
     }
 
-    private func localTagNames(for entry: URLRecord) -> [String] {
-        let namesByID = Dictionary(uniqueKeysWithValues: localTags.map { ($0.id, $0.name) })
+    private func localTagNames(for entry: URLRecord, namesByID: [Int64: String]) -> [String] {
         return (localTagAssignments[entry.id] ?? [])
             .compactMap { namesByID[$0] }
             .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
@@ -1094,6 +1107,7 @@ private struct MainTopMenu: View {
 }
 
 private struct BottomHomeActionBar: View {
+    @AppStorage(HomeBackgroundPreferenceStore.key) private var homeBackgroundRaw = HomeBackgroundStyle.defaultStyle.rawValue
     let onOpenGroups: () -> Void
     let onOpenExport: () -> Void
     let onOpenChatGpt: () -> Void
@@ -1119,7 +1133,9 @@ private struct BottomHomeActionBar: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            HomeMenuPalette.bottomSurface
+            (HomeMenuPalette.gradient(
+                for: HomeBackgroundPreferenceStore.resolve(rawValue: homeBackgroundRaw)
+            ).last ?? HomeMenuPalette.bottomSurface)
                 .frame(height: barBackgroundHeight + bottomSafeAreaInset)
                 .frame(maxHeight: .infinity, alignment: .bottom)
 
@@ -2448,6 +2464,8 @@ private struct ArchiveScreen: View {
     let onRetryLoad: () -> Void
 
     var body: some View {
+        let localTagNamesByID = Dictionary(uniqueKeysWithValues: localTags.map { ($0.id, $0.name) })
+
         VStack(spacing: 0) {
             ScreenHeader(
                 title: "アーカイブ",
@@ -2514,7 +2532,7 @@ private struct ArchiveScreen: View {
                                     entry: entry,
                                     displayMode: displayMode,
                                     cardWidth: cardWidth,
-                                    localTagNames: localTagNames(for: entry),
+                                    localTagNames: localTagNames(for: entry, namesByID: localTagNamesByID),
                                     onTap: { onOpenDetail(entry.id) },
                                     onRestore: { onRestore(entry.id) },
                                     onDelete: { onDelete(entry.id) }
@@ -2532,8 +2550,7 @@ private struct ArchiveScreen: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
-    private func localTagNames(for entry: URLRecord) -> [String] {
-        let namesByID = Dictionary(uniqueKeysWithValues: localTags.map { ($0.id, $0.name) })
+    private func localTagNames(for entry: URLRecord, namesByID: [Int64: String]) -> [String] {
         return (localTagAssignments[entry.id] ?? [])
             .compactMap { namesByID[$0] }
             .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
@@ -2692,6 +2709,10 @@ private struct SharedTagGroupScreen: View {
             }
         }
         .frame(width: cardWidth)
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(Color(hex: 0xD9C2D0), lineWidth: 1)
+        )
 
         Picker("", selection: $selectedTab) {
             ForEach(SharedTagGroupDetailTab.allCases) { tab in
@@ -2699,6 +2720,7 @@ private struct SharedTagGroupScreen: View {
             }
         }
         .pickerStyle(.segmented)
+        .tint(Color(hex: 0x855B76))
         .frame(width: cardWidth)
 
         switch selectedTab {
@@ -2770,7 +2792,10 @@ private struct SharedTagGroupScreen: View {
                             .lineLimit(1)
                         Text(member.role.displayName)
                             .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(AppPalette.textSecondary)
+                            .foregroundStyle(Color(hex: 0x245F4C))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(Color(hex: 0xE4F1E9), in: Capsule())
                         if group.currentUserRole == .owner && !member.isCurrentUser {
                             HStack {
                                 if member.role != .editor {
@@ -2859,6 +2884,8 @@ private struct SharedTagGroupScreen: View {
                 pendingAction = .deleteGroup(group: group)
             }
             .disabled(group.currentUserRole != .owner)
+            .frame(maxWidth: .infinity, minHeight: 48)
+            .background(Color(hex: 0xFFF4F3), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .frame(width: cardWidth)
     }
@@ -3100,7 +3127,7 @@ private enum SharedTagGroupPendingAction: Identifiable {
         case .removeMember(_, let member):
             return "「\(memberDisplayName(member))」をこのグループから削除します。"
         case .deleteGroup:
-            return "このグループを削除します。配下タグのまとめ共有とグループ招待は無効になります。"
+            return "このグループを削除します。まとめと招待は無効になりますが、保存したURLや共有タグ自体は削除されません。"
         }
     }
 
@@ -3655,116 +3682,156 @@ private struct ManualInputSheet: View {
     @State private var inputErrorMessage: String?
     @State private var isSaving = false
     @State private var selectedLocalTagIDs: Set<Int64> = []
+    @State private var tagQuery = ""
+    @State private var isCreatingTag = false
     @State private var pendingTagImport: ManualTagImportPreview?
     @State private var isShowingCreateTagAlert = false
     @State private var newTagName = ""
 
+    private var matchingLocalTags: [LocalTagSummary] {
+        let query = tagQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return model.localTags }
+        return model.localTags.filter { $0.name.localizedStandardContains(query) }
+    }
+
     var body: some View {
         ScreenContainer {
             VStack(alignment: .leading, spacing: 16) {
-                Capsule()
-                    .fill(AppPalette.outlineSoft)
-                    .frame(width: 72, height: 8)
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 10)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("URL / テキスト")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(inputError == nil && inputErrorMessage == nil ? AppPalette.textSecondary : AppPalette.danger)
+                            .padding(.top, 8)
 
-                Text("URL / テキスト")
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundStyle(inputError == nil && inputErrorMessage == nil ? AppPalette.textSecondary : AppPalette.danger)
-                    .padding(.top, 8)
+                        VStack(alignment: .leading, spacing: 10) {
+                            TextField("", text: $input, prompt: Text("https://example.com または残したいメモ").foregroundStyle(AppPalette.textMuted))
+                                .accessibilityLabel("URL / テキスト")
+                                .font(.system(size: 18, weight: .medium))
+                                .foregroundStyle(AppPalette.textPrimary)
+                                .tint(AppPalette.primaryStrong)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .keyboardType(.default)
+                                .padding(.horizontal, 18)
+                                .padding(.vertical, 14)
+                                .background(AppPalette.background, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                        .stroke(inputError == nil && inputErrorMessage == nil ? AppPalette.outlineSoft : AppPalette.danger, lineWidth: 2)
+                                )
 
-                VStack(alignment: .leading, spacing: 10) {
-                    TextField("", text: $input, prompt: Text("https://example.com または残したいメモ").foregroundStyle(AppPalette.textMuted))
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(AppPalette.textPrimary)
-                        .tint(AppPalette.primaryStrong)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .keyboardType(.default)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 20)
-                        .background(AppPalette.background, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .stroke(inputError == nil && inputErrorMessage == nil ? AppPalette.outlineSoft : AppPalette.danger, lineWidth: 2)
-                        )
-
-                    if let inputErrorMessage {
-                        Text(inputErrorMessage)
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundStyle(AppPalette.danger)
-                    } else if let inputError {
-                        Text(message(for: inputError))
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundStyle(AppPalette.danger)
-                    }
-                }
-
-                Button("クリップボードを貼り付け") {
-                    input = UIPasteboard.general.string ?? input
-                    inputError = nil
-                    inputErrorMessage = nil
-                }
-                .font(.system(size: 19, weight: .heavy))
-                .foregroundStyle(AppPalette.primaryStrong)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-
-                Text("タグ")
-                    .font(.system(size: 18, weight: .heavy))
-                    .foregroundStyle(AppPalette.textPrimary)
-                    .padding(.top, 8)
-
-                if model.localTags.isEmpty {
-                    Text("タグがまだありません。必要なら作成してください")
-                        .font(.system(size: 17, weight: .medium))
-                        .foregroundStyle(AppPalette.textSecondary)
-                } else {
-                    ScrollView(showsIndicators: false) {
-                        LocalTagManagementFlowLayout(horizontalSpacing: 8, verticalSpacing: 8) {
-                            ForEach(model.localTags) { tag in
-                                FilterChipButton(
-                                    label: tag.name,
-                                    selected: selectedLocalTagIDs.contains(tag.id)
-                                ) {
-                                    if selectedLocalTagIDs.contains(tag.id) {
-                                        selectedLocalTagIDs.remove(tag.id)
-                                    } else {
-                                        selectedLocalTagIDs.insert(tag.id)
-                                    }
-                                }
+                            if let inputErrorMessage {
+                                Text(inputErrorMessage)
+                                    .font(.system(size: 16, weight: .medium))
+                                    .foregroundStyle(AppPalette.danger)
+                            } else if let inputError {
+                                Text(message(for: inputError))
+                                    .font(.system(size: 16, weight: .medium))
+                                    .foregroundStyle(AppPalette.danger)
                             }
                         }
-                        .padding(.vertical, 2)
+
+                        Button("クリップボードを貼り付け") {
+                            input = UIPasteboard.general.string ?? input
+                            inputError = nil
+                            inputErrorMessage = nil
+                        }
+                        .font(.system(size: 19, weight: .heavy))
+                        .foregroundStyle(AppPalette.primaryStrong)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+
+                        HStack {
+                            Text("自作タグ")
+                                .font(.system(size: 18, weight: .heavy))
+                                .foregroundStyle(AppPalette.textPrimary)
+                                .padding(.top, 8)
+                            Spacer()
+                            Text("\(selectedLocalTagIDs.count)件選択中")
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundStyle(AppPalette.textSecondary)
+                                .accessibilityIdentifier("manual_tag_selection_count")
+                        }
+
+                        if !model.localTags.isEmpty {
+                            TextField("自作タグを検索", text: $tagQuery)
+                                .accessibilityLabel("自作タグを検索")
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .padding(.horizontal, 14)
+                                .frame(minHeight: 44)
+                                .background(AppPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 12))
+                                .accessibilityIdentifier("manual_tag_search")
+                        }
+
+                        if !selectedLocalTagIDs.isEmpty {
+                            Text("選択済み: \(model.localTags.filter { selectedLocalTagIDs.contains($0.id) }.map(\.name).joined(separator: "、"))")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(AppPalette.textSecondary)
+                                .lineLimit(2)
+                                .accessibilityIdentifier("manual_selected_tags")
+                        }
+
+                        if model.localTags.isEmpty {
+                            Text("タグがまだありません。必要なら作成してください")
+                                .font(.system(size: 17, weight: .medium))
+                                .foregroundStyle(AppPalette.textSecondary)
+                        } else if matchingLocalTags.isEmpty {
+                            Text("一致する自作タグはありません")
+                                .font(.system(size: 15))
+                                .foregroundStyle(AppPalette.textSecondary)
+                        } else {
+                            LocalTagManagementFlowLayout(horizontalSpacing: 8, verticalSpacing: 8) {
+                                ForEach(matchingLocalTags) { tag in
+                                    FilterChipButton(
+                                        label: tag.name,
+                                        selected: selectedLocalTagIDs.contains(tag.id)
+                                    ) {
+                                        if selectedLocalTagIDs.contains(tag.id) {
+                                            selectedLocalTagIDs.remove(tag.id)
+                                        } else {
+                                            selectedLocalTagIDs.insert(tag.id)
+                                        }
+                                    }
+                                    .accessibilityIdentifier("manual_tag_\(tag.id)")
+                                    .disabled(isSaving)
+                                }
+                            }
+                            .padding(.vertical, 2)
+                        }
+
+                        Button("タグを追加する") {
+                            isShowingCreateTagAlert = true
+                        }
+                        .font(.system(size: 17, weight: .heavy, design: .rounded))
+                        .foregroundStyle(AppPalette.primaryStrong)
+                        .frame(maxWidth: .infinity, minHeight: 56)
+                        .background(
+                            AppPalette.surfaceSoft,
+                            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        )
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .stroke(AppPalette.outlineSoft, lineWidth: 1)
+                        }
+                        .accessibilityLabel("タグを追加する")
+                        .disabled(isSaving)
                     }
-                    .frame(maxHeight: 180, alignment: .top)
                 }
-
-                Button("タグを追加する") {
-                    isShowingCreateTagAlert = true
-                }
-                .font(.system(size: 17, weight: .heavy, design: .rounded))
-                .foregroundStyle(AppPalette.primaryStrong)
-                .frame(maxWidth: .infinity, minHeight: 56)
-                .background(
-                    AppPalette.surfaceSoft,
-                    in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-                )
-                .overlay {
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(AppPalette.outlineSoft, lineWidth: 1)
-                }
-                .accessibilityLabel("タグを追加する")
-
-                Spacer(minLength: 8)
+                .scrollDismissesKeyboard(.interactively)
+                .disabled(isSaving || isCreatingTag)
 
                 AppActionButton(
                     tone: .primary,
-                    enabled: !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isSaving
+                    enabled: !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isSaving && !isCreatingTag
                 ) {
+                    guard !isSaving && !isCreatingTag else { return }
+                    isSaving = true
+                    let submittedInput = input
+                    let submittedTagIDs = selectedLocalTagIDs
                     Task {
-                        isSaving = true
-                        let outcome = await model.prepareManualSave(input: input, localTagIDs: selectedLocalTagIDs)
+                        let outcome = await model.prepareManualSave(input: submittedInput, localTagIDs: submittedTagIDs)
                         isSaving = false
                         switch outcome {
                         case .inputError(let error):
@@ -3809,15 +3876,20 @@ private struct ManualInputSheet: View {
                 inputErrorMessage = nil
             }
         }
+        .interactiveDismissDisabled(isSaving || isCreatingTag)
         .alert("タグを作成", isPresented: $isShowingCreateTagAlert) {
             TextField("タグ名", text: $newTagName)
             Button("作成") {
+                guard !isCreatingTag else { return }
                 let name = newTagName
                 newTagName = ""
+                isCreatingTag = true
                 Task {
                     if let tag = await model.createLocalTag(name: name) {
                         selectedLocalTagIDs.insert(tag.id)
+                        tagQuery = ""
                     }
+                    isCreatingTag = false
                 }
             }
             Button("キャンセル", role: .cancel) {

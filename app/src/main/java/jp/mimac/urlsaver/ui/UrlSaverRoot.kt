@@ -41,6 +41,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -95,6 +96,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ModalBottomSheetDefaults
+import androidx.compose.material3.SheetValue
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -119,6 +122,8 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -133,6 +138,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.CornerRadius
@@ -179,6 +185,7 @@ import jp.mimac.urlsaver.data.UrlEntryEntity
 import jp.mimac.urlsaver.data.VideoDownloadEntity
 import jp.mimac.urlsaver.domain.DetailEffect
 import jp.mimac.urlsaver.domain.EntryCardDisplayMode
+import jp.mimac.urlsaver.domain.HomeBackgroundStyle
 import jp.mimac.urlsaver.domain.MainNavigationEvent
 import jp.mimac.urlsaver.domain.MetadataState
 import jp.mimac.urlsaver.domain.RecordState
@@ -222,12 +229,14 @@ import jp.mimac.urlsaver.ui.theme.OrbitTokens
 import jp.mimac.urlsaver.ui.theme.AppThemeMode
 import jp.mimac.urlsaver.ui.theme.SwipeActionTone
 import jp.mimac.urlsaver.ui.theme.detailSupportingColor
+import jp.mimac.urlsaver.ui.theme.homeBackgroundGradientColors
 import jp.mimac.urlsaver.ui.theme.selectableChipPalette
 import jp.mimac.urlsaver.ui.theme.selectionBarPalette
 import jp.mimac.urlsaver.ui.theme.swipeActionPalette
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 import java.time.ZoneId
 import kotlin.math.abs
 import kotlin.math.min
@@ -251,7 +260,12 @@ fun UrlSaverRoot(
     val navController = rememberNavController()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    val homeBackgroundStyle by context.appContainer().homeBackgroundStyleStore.observeStyle()
+        .collectAsStateWithLifecycle(initialValue = HomeBackgroundStyle.DEFAULT)
+    val currentThemeMode = rememberUpdatedState(themeMode)
+    val currentHomeBackgroundStyle = rememberUpdatedState(homeBackgroundStyle)
     var showWarmHomeBars by remember { mutableStateOf(false) }
+    var homeBarsColor by remember { mutableStateOf(MainHomeHeaderColor) }
 
     var currentSnackbarKind by remember { mutableStateOf<SnackbarEventKind?>(null) }
 
@@ -375,7 +389,7 @@ fun UrlSaverRoot(
     }
 
     Scaffold(
-        containerColor = if (showWarmHomeBars) MainHomeHeaderColor else MaterialTheme.colorScheme.background,
+        containerColor = if (showWarmHomeBars) homeBarsColor else MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { paddingValues ->
         NavHost(
@@ -390,9 +404,24 @@ fun UrlSaverRoot(
                 navController = navController,
                 activityViewModel = activityViewModel,
                 snackbarHostState = snackbarHostState,
-                themeMode = themeMode,
+                themeModeState = currentThemeMode,
                 onThemeModeChange = onThemeModeChange,
-                onWarmHomeBarsChange = { showWarmHomeBars = it },
+                homeBackgroundStyleState = currentHomeBackgroundStyle,
+                onHomeBackgroundStyleChange = { style ->
+                    scope.launch {
+                        try {
+                            context.appContainer().homeBackgroundStyleStore.setStyle(style)
+                        } catch (cancellation: CancellationException) {
+                            throw cancellation
+                        } catch (_: java.io.IOException) {
+                            snackbarHostState.showSnackbar("背景を保存できませんでした。もう一度お試しください")
+                        }
+                    }
+                },
+                onWarmHomeBarsChange = { show, color ->
+                    showWarmHomeBars = show
+                    homeBarsColor = color
+                },
                 resolvedRoute = resolvedRoute,
             )
         }
@@ -401,13 +430,6 @@ fun UrlSaverRoot(
 
 private val MainTopBarActionIconSize = 30.dp
 private val MainTopBarHeight = 64.dp
-private val MainHomeBackgroundBrush = Brush.verticalGradient(
-    colors = listOf(
-        Color(0xFFF7F3EC),
-        Color(0xFFEDE7DF),
-        Color(0xFFE9E1D7),
-    ),
-)
 private val MainMenuSurfaceColor = Color(0xFF1C2030)
 private val MainMenuIconBackgroundColor = Color(0xFF3B3540)
 private val MainMenuWarmColor = Color(0xFFE9BF82)
@@ -440,9 +462,11 @@ private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
     navController: androidx.navigation.NavHostController,
     activityViewModel: MainActivityViewModel,
     snackbarHostState: SnackbarHostState,
-    themeMode: AppThemeMode,
+    themeModeState: androidx.compose.runtime.State<AppThemeMode>,
     onThemeModeChange: (AppThemeMode) -> Unit,
-    onWarmHomeBarsChange: (Boolean) -> Unit,
+    homeBackgroundStyleState: androidx.compose.runtime.State<HomeBackgroundStyle>,
+    onHomeBackgroundStyleChange: (HomeBackgroundStyle) -> Unit,
+    onWarmHomeBarsChange: (Boolean, Color) -> Unit,
     resolvedRoute: String?,
 ) {
     composable(Routes.MAIN) {
@@ -467,8 +491,10 @@ private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
             viewModel = vm,
             tagViewModel = tagVm,
             snackbarHostState = snackbarHostState,
-            themeMode = themeMode,
+            themeMode = themeModeState.value,
             onThemeModeChange = onThemeModeChange,
+            homeBackgroundStyle = homeBackgroundStyleState.value,
+            onHomeBackgroundStyleChange = onHomeBackgroundStyleChange,
             onWarmHomeBarsChange = onWarmHomeBarsChange,
             onOpenArchive = { navController.navigate(Routes.ARCHIVE) },
             onOpenDetail = { navController.navigate(Routes.detail(it)) },
@@ -626,8 +652,10 @@ private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
         )
         SharedTagCloudAuthScreen(
             viewModel = vm,
-            themeMode = themeMode,
+            themeMode = themeModeState.value,
             onThemeModeChange = onThemeModeChange,
+            homeBackgroundStyle = homeBackgroundStyleState.value,
+            onHomeBackgroundStyleChange = onHomeBackgroundStyleChange,
             onBack = { navController.popBackStack() },
             initialPromoCode = initialPromoCode,
         )
@@ -702,7 +730,9 @@ private fun MainScreen(
     snackbarHostState: SnackbarHostState,
     themeMode: AppThemeMode,
     onThemeModeChange: (AppThemeMode) -> Unit,
-    onWarmHomeBarsChange: (Boolean) -> Unit,
+    homeBackgroundStyle: HomeBackgroundStyle,
+    onHomeBackgroundStyleChange: (HomeBackgroundStyle) -> Unit,
+    onWarmHomeBarsChange: (Boolean, Color) -> Unit,
     onOpenArchive: () -> Unit,
     onOpenDetail: (Long) -> Unit,
     onOpenTagDetail: (Long) -> Unit,
@@ -793,9 +823,13 @@ private fun MainScreen(
             databaseSearchMatchIds = emptySet()
         } else {
             databaseSearchMatchIds = null
-            val matchingEntryIds = runCatching {
-                viewModel.searchEntryIds(requestedQuery)
-            }.getOrDefault(emptySet())
+            val matchingEntryIds = try {
+                viewModel.searchEntryIdsDebounced(requestedQuery)
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Throwable) {
+                emptySet()
+            }
             if (searchQueryLocal == requestedQuery) {
                 databaseSearchMatchIds = matchingEntryIds
             }
@@ -1576,6 +1610,8 @@ private fun MainScreen(
                 viewModel = profileVm,
                 themeMode = themeMode,
                 onThemeModeChange = onThemeModeChange,
+                homeBackgroundStyle = homeBackgroundStyle,
+                onHomeBackgroundStyleChange = onHomeBackgroundStyleChange,
                 onBack = { showProfileSheet = false },
             )
         }
@@ -1584,35 +1620,36 @@ private fun MainScreen(
     val isGroupPane = mainPane == MainPane.GROUPS && showSharedTagCloudUi && !showUsageGuide
     val isSearchActive = searchBarVisible || searchQueryLocal.isNotBlank()
     val showMainBottomBar = !selectionModeActive && selectedEntryIds.isEmpty() && !showUsageGuide && !isGroupPane && !isSearchActive
-    val useWarmHomeBackground = !showUsageGuide && !isGroupPane
+    val useWarmHomeBackground = !showUsageGuide && !isGroupPane && !MaterialTheme.colorScheme.background.luminance().let { it < 0.3f }
+    val selectedHomeBackgroundBrush = remember(homeBackgroundStyle) {
+        Brush.verticalGradient(homeBackgroundGradientColors(homeBackgroundStyle))
+    }
+    val selectedHomeBackgroundColors = remember(homeBackgroundStyle) {
+        homeBackgroundGradientColors(homeBackgroundStyle)
+    }
     val homeWindow = (context as? android.app.Activity)?.window
     val originalScreenBackground = MaterialTheme.colorScheme.background
     val originalWindowBackgroundColor = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp).toArgb()
-    val originalLightStatusIcons = remember(homeWindow) {
-        homeWindow?.let { WindowCompat.getInsetsController(it, it.decorView).isAppearanceLightStatusBars }
-    }
     SideEffect {
-        onWarmHomeBarsChange(useWarmHomeBackground)
+        onWarmHomeBarsChange(useWarmHomeBackground, selectedHomeBackgroundColors.first())
         homeWindow?.let { window ->
             val backgroundColor = if (useWarmHomeBackground) {
-                MainHomeHeaderColor
+                selectedHomeBackgroundColors.first()
             } else {
                 originalScreenBackground
             }
             window.setBackgroundDrawable(ColorDrawable(backgroundColor.toArgb()))
             WindowCompat.getInsetsController(window, window.decorView)
-                .isAppearanceLightStatusBars = useWarmHomeBackground
+                .isAppearanceLightStatusBars = backgroundColor.luminance() > 0.5f
         }
     }
     DisposableEffect(homeWindow, originalWindowBackgroundColor) {
         onDispose {
-            onWarmHomeBarsChange(false)
+            onWarmHomeBarsChange(false, selectedHomeBackgroundColors.first())
             homeWindow?.let { window ->
                 window.setBackgroundDrawable(ColorDrawable(originalWindowBackgroundColor))
-                if (originalLightStatusIcons != null) {
-                    WindowCompat.getInsetsController(window, window.decorView)
-                        .isAppearanceLightStatusBars = originalLightStatusIcons
-                }
+                WindowCompat.getInsetsController(window, window.decorView)
+                    .isAppearanceLightStatusBars = originalScreenBackground.luminance() > 0.5f
             }
         }
     }
@@ -1621,7 +1658,7 @@ private fun MainScreen(
             .fillMaxSize()
             .background(
                 if (useWarmHomeBackground) {
-                    MainHomeBackgroundBrush
+                    selectedHomeBackgroundBrush
                 } else {
                     SolidColor(MaterialTheme.colorScheme.background)
                 },
@@ -1656,12 +1693,12 @@ private fun MainScreen(
                                 )
                             }
                         },
-                        colors = if (showUsageGuide) {
+                        colors = if (showUsageGuide || !useWarmHomeBackground) {
                             orbitTopAppBarColors()
                         } else {
                             TopAppBarDefaults.topAppBarColors(
-                                containerColor = MainHomeHeaderColor,
-                                scrolledContainerColor = MainHomeHeaderColor,
+                                containerColor = selectedHomeBackgroundColors.first(),
+                                scrolledContainerColor = selectedHomeBackgroundColors.first(),
                                 titleContentColor = MainHomeTextColor,
                                 actionIconContentColor = MainHomeTextColor,
                                 navigationIconContentColor = MainHomeTextColor,
@@ -1895,6 +1932,12 @@ private fun MainScreen(
                     .offset(y = 4.dp),
                 contentHeight = mainBottomBarContentHeight,
                 expandedLabels = mainBottomBarExpandedLabels,
+                backgroundColor = if (useWarmHomeBackground) {
+                    selectedHomeBackgroundColors.last()
+                } else {
+                    MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp)
+                },
+                useWarmPalette = useWarmHomeBackground,
                 onOpenGroups = {
                     showUsageGuide = false
                     mainPane = MainPane.GROUPS
@@ -1968,7 +2011,7 @@ internal fun mainBottomBarContentHeightDp(
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
-private fun ManualInputSheet(
+internal fun ManualInputSheet(
     visible: Boolean,
     inputText: String,
     inputError: ShareSaveResult?,
@@ -1985,141 +2028,199 @@ private fun ManualInputSheet(
 ) {
     if (!visible) return
 
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            OutlinedTextField(
-                value = inputText,
-                onValueChange = onInputChange,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("manual_input_field"),
-                label = { Text("URL / テキスト") },
-                placeholder = { Text("https://example.com または残したいメモ") },
-                singleLine = true,
-                maxLines = 1,
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Text,
-                    imeAction = ImeAction.Done,
-                ),
-                isError = inputError == ShareSaveResult.INVALID_URL ||
-                    inputError == ShareSaveResult.NO_URL_FOUND ||
-                    inputError == ShareSaveResult.INPUT_TOO_LARGE ||
-                    inputError == ShareSaveResult.PERSONAL_URL_LIMIT_REACHED ||
-                    inputError == ShareSaveResult.SAVE_FAILED,
-                supportingText = {
-                    when (inputError) {
-                        ShareSaveResult.INVALID_URL -> Text("URL形式が正しくありません。https:// から始まるURLを入力してください")
-                        ShareSaveResult.NO_URL_FOUND -> Text("入力内にURLが見つかりませんでした。URLをそのまま貼り付けてください")
-                        ShareSaveResult.INPUT_TOO_LARGE -> Text("入力が長すぎます。256KB以内のURLまたはテキストにしてください")
-                        ShareSaveResult.PERSONAL_URL_LIMIT_REACHED -> Text("現在のプランの保存上限に達しました。不要なURLを整理してから追加してください。")
-                        ShareSaveResult.SAVE_FAILED -> Text("保存できませんでした。入力とタグは残っています。通信状態を確認して、もう一度お試しください")
-                        else -> Unit
-                    }
-                },
-            )
-            Spacer(Modifier.height(12.dp))
-            TextButton(
-                onClick = onPaste,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("クリップボードを貼り付け")
-            }
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = "タグ",
-                style = MaterialTheme.typography.titleSmall,
-                modifier = Modifier.padding(bottom = 6.dp),
-            )
-            if (localTags.isEmpty()) {
-                Text(
-                    text = "タグがまだありません。必要なら作成してください",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+    val savingInProgress by rememberUpdatedState(isManualSaving)
+    val sheetState = rememberModalBottomSheetState(
+        skipPartiallyExpanded = true,
+        confirmValueChange = { target -> target != SheetValue.Hidden || !savingInProgress },
+    )
+    var tagQuery by remember(visible) { mutableStateOf("") }
+    val matchingTags = remember(localTags, tagQuery) {
+        val query = tagQuery.trim()
+        if (query.isEmpty()) localTags else localTags.filter { it.name.contains(query, ignoreCase = true) }
+    }
+    // Material3 1.2.1 captures native back properties when it creates the popup.
+    // Keep the draft and SheetState outside this key, and refresh only the popup's back policy.
+    key(isManualSaving) {
+        ModalBottomSheet(
+            onDismissRequest = { if (!savingInProgress) onDismiss() },
+            sheetState = sheetState,
+            properties = ModalBottomSheetDefaults.properties(shouldDismissOnBackPress = !isManualSaving),
+            modifier = Modifier.testTag("manual_input_sheet"),
+        ) {
+            BoxWithConstraints {
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                )
-            } else {
-                PackedTagAssignmentFlow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalSpacing = 8.dp,
-                    verticalSpacing = 8.dp,
+                        .heightIn(max = maxHeight * 0.9f)
+                        .imePadding()
+                        .padding(16.dp),
                 ) {
-                    localTags.forEach { tag ->
-                        val selected = tag.id in selectedLocalTagIds
-                        val tagPalette = selectableChipPalette(MaterialTheme.colorScheme, selected)
-                        Surface(
-                            shape = RoundedCornerShape(999.dp),
-                            color = tagPalette.container,
-                            contentColor = tagPalette.content,
-                            border = BorderStroke(1.dp, tagPalette.outline),
-                            modifier = Modifier.selectable(
-                                selected = selected,
-                                onClick = { onSelectLocalTag(tag.id) },
-                                role = Role.Checkbox,
-                            ).testTag("manual_input_tag_${tag.id}"),
+                    Column(
+                        modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
+                    ) {
+                        OutlinedTextField(
+                            value = inputText,
+                            onValueChange = onInputChange,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("manual_input_field"),
+                            label = { Text("URL / テキスト") },
+                            placeholder = { Text("https://example.com または残したいメモ") },
+                            singleLine = true,
+                            maxLines = 1,
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Text,
+                                imeAction = ImeAction.Done,
+                            ),
+                            enabled = !isManualSaving,
+                            isError = inputError == ShareSaveResult.INVALID_URL ||
+                                inputError == ShareSaveResult.NO_URL_FOUND ||
+                                inputError == ShareSaveResult.INPUT_TOO_LARGE ||
+                                inputError == ShareSaveResult.PERSONAL_URL_LIMIT_REACHED ||
+                                inputError == ShareSaveResult.SAVE_FAILED,
+                            supportingText = {
+                                when (inputError) {
+                                    ShareSaveResult.INVALID_URL -> Text("URL形式が正しくありません。https:// から始まるURLを入力してください")
+                                    ShareSaveResult.NO_URL_FOUND -> Text("入力内にURLが見つかりませんでした。URLをそのまま貼り付けてください")
+                                    ShareSaveResult.INPUT_TOO_LARGE -> Text("入力が長すぎます。256KB以内のURLまたはテキストにしてください")
+                                    ShareSaveResult.PERSONAL_URL_LIMIT_REACHED -> Text("現在のプランの保存上限に達しました。不要なURLを整理してから追加してください。")
+                                    ShareSaveResult.SAVE_FAILED -> Text("保存できませんでした。入力とタグは残っています。通信状態を確認して、もう一度お試しください")
+                                    else -> Unit
+                                }
+                            },
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        TextButton(
+                            onClick = onPaste,
+                            enabled = !isManualSaving,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("クリップボードを貼り付け")
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = "自作タグ（${selectedLocalTagIds.size}件選択中）",
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.padding(bottom = 6.dp),
+                        )
+                        if (selectedLocalTagIds.isNotEmpty()) {
+                            Text(
+                                text = "選択済み: " + localTags.filter { it.id in selectedLocalTagIds }.joinToString("、") { it.name },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.testTag("manual_input_selected_tags"),
+                            )
+                        }
+                        if (localTags.isNotEmpty()) {
+                            OutlinedTextField(
+                                value = tagQuery,
+                                onValueChange = { tagQuery = it },
+                                modifier = Modifier.fillMaxWidth().testTag("manual_input_tag_search"),
+                                label = { Text("自作タグを検索") },
+                                singleLine = true,
+                                enabled = !isManualSaving,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                        }
+                        if (localTags.isEmpty()) {
+                            Text(
+                                text = "タグがまだありません。必要なら作成してください",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                            )
+                        } else if (matchingTags.isEmpty()) {
+                            Text("一致する自作タグはありません", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else {
+                            PackedTagAssignmentFlow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalSpacing = 8.dp,
+                                verticalSpacing = 8.dp,
+                            ) {
+                                matchingTags.forEach { tag ->
+                                    val selected = tag.id in selectedLocalTagIds
+                                    val tagPalette = selectableChipPalette(MaterialTheme.colorScheme, selected)
+                                    Surface(
+                                        shape = RoundedCornerShape(999.dp),
+                                        color = tagPalette.container,
+                                        contentColor = tagPalette.content,
+                                        border = BorderStroke(1.dp, tagPalette.outline),
+                                        modifier = Modifier.selectable(
+                                            selected = selected,
+                                            enabled = !isManualSaving,
+                                            onClick = { onSelectLocalTag(tag.id) },
+                                            role = Role.Checkbox,
+                                        ).testTag("manual_input_tag_${tag.id}"),
+                                    ) {
+                                        Text(
+                                            text = if (selected) "✓ ${tag.name}" else tag.name,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier
+                                                .widthIn(max = 180.dp)
+                                                .heightIn(min = 48.dp)
+                                                .padding(horizontal = 12.dp, vertical = 12.dp),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        if (!manualLocalTagError.isNullOrBlank()) {
+                            Text(
+                                text = manualLocalTagError,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                            )
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        OutlinedButton(
+                            onClick = {
+                                tagQuery = ""
+                                onRequestCreateLocalTag()
+                            },
+                            enabled = !isManualSaving,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 56.dp)
+                                .testTag("manual_input_create_tag"),
                         ) {
                             Text(
-                                text = tag.name,
-                                style = MaterialTheme.typography.labelMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier
-                                    .widthIn(max = 180.dp)
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                text = "タグを追加する",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
                             )
                         }
                     }
-                }
-            }
-            if (!manualLocalTagError.isNullOrBlank()) {
-                Text(
-                    text = manualLocalTagError,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                )
-            }
-            Spacer(Modifier.height(6.dp))
-            OutlinedButton(
-                onClick = onRequestCreateLocalTag,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 56.dp)
-                    .testTag("manual_input_create_tag"),
-            ) {
-                Text(
-                    text = "タグを追加する",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-            Button(
-                onClick = onSave,
-                enabled = inputText.trim().isNotEmpty() && !isManualSaving,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("manual_input_save"),
-            ) {
-                if (isManualSaving) {
-                    CircularProgressIndicator(
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = onSave,
+                        enabled = inputText.trim().isNotEmpty() && !isManualSaving,
                         modifier = Modifier
-                            .width(16.dp)
-                            .height(16.dp),
-                        strokeWidth = 2.dp,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("保存中…")
-                } else {
-                    Text(if (inputError == ShareSaveResult.SAVE_FAILED) "もう一度保存" else "保存")
+                            .fillMaxWidth()
+                            .testTag("manual_input_save"),
+                    ) {
+                        if (isManualSaving) {
+                            CircularProgressIndicator(
+                                modifier = Modifier
+                                    .width(16.dp)
+                                    .height(16.dp),
+                                strokeWidth = 2.dp,
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text("保存中…")
+                        } else {
+                            Text(if (inputError == ShareSaveResult.SAVE_FAILED) "もう一度保存" else "保存")
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
                 }
             }
-            Spacer(Modifier.height(12.dp))
         }
     }
 }
@@ -3150,45 +3251,78 @@ private fun SharedTagGroupListContent(
     onCreateGroup: () -> Unit,
     onOpenGroup: (SharedTagGroupRecord) -> Unit,
 ) {
+    val darkSurface = MaterialTheme.colorScheme.background.luminance() < 0.3f
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item {
-            Row(
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                IconButton(onClick = onBack) {
-                    Icon(
-                        Icons.AutoMirrored.Outlined.ArrowBack,
-                        contentDescription = "戻る",
-                        modifier = Modifier.size(34.dp),
-                    )
-                }
-                Text(
-                    text = "グループ",
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold,
-                )
-                TextButton(onClick = onOpenCloudAuth) {
-                    Text(if (isSignedIn) "プロフィール" else "サインイン")
-                }
-                Button(onClick = onCreateGroup) {
-                    Icon(
-                        imageVector = Icons.Outlined.Add,
-                        contentDescription = null,
-                        modifier = Modifier.size(22.dp),
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            Icons.AutoMirrored.Outlined.ArrowBack,
+                            contentDescription = "戻る",
+                            modifier = Modifier.size(34.dp),
+                        )
+                    }
                     Text(
-                        text = "作成",
-                        fontSize = 17.sp,
+                        text = "グループ",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        softWrap = false,
                     )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    OutlinedButton(
+                        onClick = onOpenCloudAuth,
+                        modifier = Modifier.heightIn(min = 48.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(
+                            1.dp,
+                            if (darkSurface) MaterialTheme.colorScheme.outline else Color(0xFFCDB7DE),
+                        ),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = if (darkSurface) MaterialTheme.colorScheme.onSurface else Color(0xFF38354A),
+                        ),
+                    ) {
+                        Text(if (isSignedIn) "プロフィール" else "サインイン")
+                    }
+                    Button(
+                        onClick = onCreateGroup,
+                        modifier = Modifier.heightIn(min = 48.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF855B76),
+                            contentColor = Color.White,
+                        ),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Add,
+                            contentDescription = null,
+                            modifier = Modifier.size(22.dp),
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "作成",
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
                 }
             }
         }
@@ -3376,11 +3510,15 @@ private fun GroupDetailSummaryCard(
     isOwner: Boolean,
     onRenameGroup: () -> Unit,
 ) {
+    val darkSurface = MaterialTheme.colorScheme.background.luminance() < 0.3f
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(28.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        color = if (darkSurface) MaterialTheme.colorScheme.surface else Color(0xFFFFFCF8),
+        border = BorderStroke(
+            1.dp,
+            if (darkSurface) MaterialTheme.colorScheme.outlineVariant else Color(0xFFE3D8D2),
+        ),
     ) {
         Box(
             modifier = Modifier.padding(horizontal = 18.dp, vertical = 18.dp),
@@ -3422,6 +3560,7 @@ private fun SharedTagGroupDetailTabSwitcher(
     selectedTab: SharedTagGroupDetailTab,
     onSelectTab: (SharedTagGroupDetailTab) -> Unit,
 ) {
+    val darkSurface = MaterialTheme.colorScheme.background.luminance() < 0.3f
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -3443,7 +3582,7 @@ private fun SharedTagGroupDetailTabSwitcher(
                         .clip(RoundedCornerShape(24.dp))
                         .background(
                             if (selected) {
-                                MaterialTheme.colorScheme.surface
+                                if (darkSurface) MaterialTheme.colorScheme.primaryContainer else Color(0xFFEEE8F6)
                             } else {
                                 Color.Transparent
                             },
@@ -3456,7 +3595,7 @@ private fun SharedTagGroupDetailTabSwitcher(
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Bold,
                         color = if (selected) {
-                            MaterialTheme.colorScheme.onSurface
+                            if (darkSurface) MaterialTheme.colorScheme.onPrimaryContainer else Color(0xFF493A54)
                         } else {
                             MaterialTheme.colorScheme.onSurfaceVariant
                         },
@@ -3558,10 +3697,11 @@ private fun SharedTagGroupMemberRow(
     onTransferOwnership: () -> Unit,
     onRemove: () -> Unit,
 ) {
+    val darkSurface = MaterialTheme.colorScheme.background.luminance() < 0.3f
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.surface,
+        color = if (darkSurface) MaterialTheme.colorScheme.surface else Color(0xFFFFFCF8),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column(
@@ -3588,13 +3728,13 @@ private fun SharedTagGroupMemberRow(
                 }
                 Surface(
                     shape = RoundedCornerShape(999.dp),
-                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    color = if (darkSurface) MaterialTheme.colorScheme.secondaryContainer else Color(0xFFDFF1E9),
                 ) {
                     Text(
                         text = sharedTagRoleLabel(member.role),
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        color = if (darkSurface) MaterialTheme.colorScheme.onSecondaryContainer else Color(0xFF245F4C),
                     )
                 }
             }
@@ -4801,6 +4941,7 @@ private fun DetailScreen(
     var memoInput by rememberSaveable { mutableStateOf("") }
     var memoTooLong by rememberSaveable { mutableStateOf(false) }
     var memoSaveFailed by rememberSaveable { mutableStateOf(false) }
+    var memoSaving by rememberSaveable { mutableStateOf(false) }
 
     var retryRequested by rememberSaveable { mutableStateOf(false) }
 
@@ -5108,32 +5249,50 @@ private fun DetailScreen(
             },
             title = { Text("メモを編集") },
             text = {
-                OutlinedTextField(
-                    value = memoInput,
-                    onValueChange = {
-                        memoInput = it
-                        memoTooLong = it.trim().length > 2000
-                        memoSaveFailed = false
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("detail_memo_input"),
-                    minLines = 4,
-                    isError = memoTooLong || memoSaveFailed,
-                    supportingText = {
-                        if (memoTooLong) {
-                            Text("2000文字以内で入力してください")
-                        } else if (memoSaveFailed) {
-                            Text("保存に失敗しました。もう一度お試しください。")
-                        }
-                    },
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "このURLについて、あとで見返したいことを残せます。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedTextField(
+                        value = memoInput,
+                        onValueChange = {
+                            memoInput = it
+                            memoTooLong = it.trim().length > 2000
+                            memoSaveFailed = false
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 220.dp)
+                            .testTag("detail_memo_input"),
+                        enabled = !memoSaving,
+                        minLines = 8,
+                        placeholder = { Text("ここにメモを入力してください") },
+                        isError = memoTooLong || memoSaveFailed,
+                        supportingText = {
+                            Row(modifier = Modifier.fillMaxWidth()) {
+                                Text(
+                                    text = when {
+                                        memoTooLong -> "2000文字以内で入力してください"
+                                        memoSaveFailed -> "保存に失敗しました。入力を残したまま再試行できます。"
+                                        else -> "入力内容はこのURLにだけ保存されます"
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Text("${memoInput.length} / 2000")
+                            }
+                        },
+                    )
+                }
             },
             confirmButton = {
-                TextButton(
+                Button(
                     modifier = Modifier.testTag("detail_memo_save"),
+                    enabled = !memoTooLong && !memoSaving,
                     onClick = {
                         scope.launch {
+                            memoSaving = true
                             when (viewModel.saveMemo(memoInput)) {
                                 SaveMemoUiResult.Success -> {
                                     onMemoSaved()
@@ -5150,12 +5309,13 @@ private fun DetailScreen(
                                     onMemoSaveFailed()
                                 }
                             }
+                            memoSaving = false
                         }
                     },
-                ) { Text(if (memoSaveFailed) "再試行" else "保存") }
+                ) { Text(if (memoSaving) "保存中…" else if (memoSaveFailed) "再試行" else "保存") }
             },
             dismissButton = {
-                TextButton(onClick = {
+                TextButton(enabled = !memoSaving, onClick = {
                     showMemoDialog = false
                     memoInput = current.memo
                     memoTooLong = false
@@ -5553,7 +5713,13 @@ private fun DetailScreen(
                     }
                 }
 
-                OrbitPanel(tone = OrbitPanelTone.STRONG) {
+                val darkDetailSurface = MaterialTheme.colorScheme.background.luminance() < 0.3f
+                OrbitPanel(
+                    tone = OrbitPanelTone.STRONG,
+                    containerColorOverride = if (darkDetailSurface) null else Color(0xFF855B76),
+                    contentColorOverride = if (darkDetailSurface) null else Color.White,
+                    borderColorOverride = if (darkDetailSurface) null else Color(0xFF936B82),
+                ) {
                     Row(
                         verticalAlignment = Alignment.Top,
                         modifier = Modifier.fillMaxWidth(),
@@ -5659,7 +5825,11 @@ private fun DetailScreen(
                         Text(
                             text = detailServiceLabelForEntry(current),
                             style = MaterialTheme.typography.bodyLarge,
-                            color = detailSupportingColor(MaterialTheme.colorScheme),
+                            color = if (darkDetailSurface) {
+                                detailSupportingColor(MaterialTheme.colorScheme)
+                            } else {
+                                Color(0xFFF4EAF0)
+                            },
                         )
                     }
                 }
@@ -5784,38 +5954,38 @@ private fun DetailScreen(
 
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     if (isTextCard) {
-                        OrbitActionButton(
+                        DetailPrimaryActionButton(
                             onClick = {
                                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                 clipboard.setPrimaryClip(ClipData.newPlainText("text", textCardBody))
                                 onCopySuccess()
                             },
-                            style = OrbitActionStyle.PRIMARY,
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            OrbitActionText("コピー")
+                            Text("コピー")
                         }
                     } else {
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        DetailPrimaryActionButton(
+                            onClick = {
+                                when (context.tryOpenExternalUrl(current.openUrl)) {
+                                    OpenUrlResult.Success -> Unit
+                                    OpenUrlResult.NoHandler,
+                                    OpenUrlResult.Failed,
+                                    -> onOpenFailed()
+                                }
+                            },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            OrbitActionButton(
-                                onClick = {
-                                    when (context.tryOpenExternalUrl(current.openUrl)) {
-                                        OpenUrlResult.Success -> Unit
-                                        OpenUrlResult.NoHandler,
-                                        OpenUrlResult.Failed,
-                                        -> onOpenFailed()
-                                    }
-                                },
-                                style = OrbitActionStyle.PRIMARY,
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                OrbitActionText("開く")
-                            }
+                            Text("開く")
+                        }
+                    }
 
-                            OrbitActionButton(
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        if (!isTextCard) {
+                            DetailSecondaryActionButton(
                                 onClick = {
                                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                     clipboard.setPrimaryClip(ClipData.newPlainText("url", current.openUrl))
@@ -5823,8 +5993,21 @@ private fun DetailScreen(
                                 },
                                 modifier = Modifier.weight(1f),
                             ) {
-                                OrbitActionText("コピー")
+                                Text("コピー")
                             }
+                        }
+                        DetailSecondaryActionButton(
+                            onClick = {
+                                if (current.recordState == RecordState.ARCHIVED) {
+                                    viewModel.unarchive()
+                                } else {
+                                    viewModel.archive()
+                                    AdsManager.registerMeaningfulActionAndMaybeShow(context)
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(if (current.recordState == RecordState.ARCHIVED) "アーカイブ解除" else "アーカイブ")
                         }
                     }
 
@@ -5857,49 +6040,22 @@ private fun DetailScreen(
                         }
                     }
 
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        OrbitActionButton(
-                            onClick = {
-                                if (current.recordState == RecordState.ARCHIVED) {
-                                    viewModel.unarchive()
-                                } else {
-                                    viewModel.archive()
-                                    AdsManager.registerMeaningfulActionAndMaybeShow(context)
-                                }
-                            },
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            OrbitActionText(if (current.recordState == RecordState.ARCHIVED) "アーカイブ解除" else "アーカイブ")
-                        }
-
-                        OrbitActionButton(
-                            onClick = { showDeleteConfirmDialog = true },
-                            enabled = current.recordState != RecordState.ARCHIVED,
-                            style = OrbitActionStyle.DANGER,
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            OrbitActionText("削除", emphasisColor = OrbitTokens.danger)
-                        }
-                    }
-
-                    OrbitActionButton(
-                        onClick = {
-                            memoInput = current.memo
-                            memoTooLong = false
-                            memoSaveFailed = false
-                            showMemoDialog = true
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        OrbitActionText("メモを編集")
-                    }
                 }
 
                 OrbitPanel(tone = OrbitPanelTone.SOFT) {
-                    OrbitSectionLabel("メモ")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OrbitSectionLabel("メモ", modifier = Modifier.weight(1f))
+                        IconButton(
+                            onClick = {
+                                memoInput = current.memo
+                                memoTooLong = false
+                                memoSaveFailed = false
+                                showMemoDialog = true
+                            },
+                        ) {
+                            Icon(Icons.Outlined.Edit, contentDescription = "メモを編集")
+                        }
+                    }
                     Text(
                         text = if (current.memo.isBlank()) stringResource(R.string.detail_memo_empty) else current.memo,
                         modifier = Modifier
@@ -5919,10 +6075,9 @@ private fun DetailScreen(
                     )
                 }
 
-                Row(
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.Top,
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     DetailTagSummaryPanel(
                         title = "自作タグ",
@@ -5931,7 +6086,7 @@ private fun DetailScreen(
                         onEdit = { showAddLocalTagSheet = true },
                         editButtonTestTag = "detail_local_tags_edit",
                         onRemove = ::removeDetailTag,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.fillMaxWidth(),
                     )
                     if (showSharedTagCloudUi) {
                         DetailTagSummaryPanel(
@@ -5941,7 +6096,7 @@ private fun DetailScreen(
                             onEdit = { showAddSharedTagSheet = true },
                             editButtonTestTag = "detail_shared_tags_edit",
                             onRemove = ::removeDetailTag,
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
                 }
@@ -5981,9 +6136,79 @@ private fun DetailScreen(
                         }
                     }
                 }
+
+                DetailDeleteActionButton(
+                    onClick = { showDeleteConfirmDialog = true },
+                    enabled = current.recordState != RecordState.ARCHIVED,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("削除")
+                }
             }
         }
     }
+}
+
+@Composable
+private fun DetailPrimaryActionButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit,
+) {
+    Button(
+        onClick = onClick,
+        modifier = modifier.heightIn(min = 56.dp),
+        shape = RoundedCornerShape(18.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = Color(0xFF855B76),
+            contentColor = Color.White,
+        ),
+        content = content,
+    )
+}
+
+@Composable
+private fun DetailSecondaryActionButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit,
+) {
+    val darkSurface = MaterialTheme.colorScheme.background.luminance() < 0.3f
+    OutlinedButton(
+        onClick = onClick,
+        modifier = modifier.heightIn(min = 56.dp),
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(
+            1.dp,
+            if (darkSurface) MaterialTheme.colorScheme.outline else Color(0xFFCDB7DE),
+        ),
+        colors = ButtonDefaults.outlinedButtonColors(
+            contentColor = if (darkSurface) MaterialTheme.colorScheme.onSurface else Color(0xFF38354A),
+        ),
+        content = content,
+    )
+}
+
+@Composable
+private fun DetailDeleteActionButton(
+    onClick: () -> Unit,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit,
+) {
+    val darkSurface = MaterialTheme.colorScheme.background.luminance() < 0.3f
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier.heightIn(min = 56.dp),
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, if (darkSurface) OrbitTokens.danger else Color(0xFFD69AAA)),
+        colors = ButtonDefaults.outlinedButtonColors(
+            contentColor = if (darkSurface) OrbitTokens.danger else Color(0xFF9A344F),
+            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+        ),
+        content = content,
+    )
 }
 
 private data class SavedMediaItem(
@@ -6547,8 +6772,12 @@ private fun DetailTagSummaryPanel(
     editButtonTestTag: String? = null,
     modifier: Modifier = Modifier,
 ) {
+    val darkDetailSurface = MaterialTheme.colorScheme.background.luminance() < 0.3f
     OrbitPanel(
-        modifier = modifier.heightIn(min = 194.dp),
+        modifier = modifier,
+        containerColorOverride = if (darkDetailSurface) null else Color(0xFFFFFCF8),
+        contentColorOverride = if (darkDetailSurface) null else Color(0xFF38354A),
+        borderColorOverride = if (darkDetailSurface) null else Color(0xFFDCCFE5),
     ) {
         Column(
             modifier = Modifier.fillMaxWidth(),
@@ -6583,7 +6812,7 @@ private fun DetailTagSummaryPanel(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 91.dp, max = 180.dp)
+                        .heightIn(max = 180.dp)
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(7.dp),
                 ) {
@@ -7103,6 +7332,8 @@ private fun MainBottomNavBar(
     modifier: Modifier = Modifier,
     contentHeight: Dp,
     expandedLabels: Boolean,
+    backgroundColor: Color,
+    useWarmPalette: Boolean,
     onOpenGroups: () -> Unit,
     onExport: () -> Unit,
     onOpenChatGpt: () -> Unit,
@@ -7112,7 +7343,7 @@ private fun MainBottomNavBar(
 ) {
     val navigationBarHeight = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val bottomFillHeight = if (navigationBarHeight < 32.dp) 32.dp else navigationBarHeight
-    val bottomBarColor = MainBottomBarColor
+    val bottomBarColor = backgroundColor
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -7140,6 +7371,7 @@ private fun MainBottomNavBar(
                             icon = Icons.Outlined.Groups,
                             label = "グループ",
                             expandedLabels = expandedLabels,
+                            useWarmPalette = useWarmPalette,
                             onClick = onOpenGroups,
                         )
                     }
@@ -7148,6 +7380,7 @@ private fun MainBottomNavBar(
                             icon = Icons.Outlined.IosShare,
                             label = "エクスポート",
                             expandedLabels = expandedLabels,
+                            useWarmPalette = useWarmPalette,
                             onClick = onExport,
                         )
                     }
@@ -7157,6 +7390,7 @@ private fun MainBottomNavBar(
                             icon = Icons.Outlined.Sell,
                             label = "タグ",
                             expandedLabels = expandedLabels,
+                            useWarmPalette = useWarmPalette,
                             onClick = onTagManage,
                         )
                     }
@@ -7165,6 +7399,7 @@ private fun MainBottomNavBar(
                             icon = Icons.Outlined.Archive,
                             label = "アーカイブ",
                             expandedLabels = expandedLabels,
+                            useWarmPalette = useWarmPalette,
                             onClick = onOpenArchive,
                         )
                     }
@@ -7177,7 +7412,7 @@ private fun MainBottomNavBar(
                 .offset(y = 61.dp)
                 .size(76.dp)
                 .background(
-                    color = MainCenterPlusColor,
+                    color = if (useWarmPalette) MainCenterPlusColor else MaterialTheme.colorScheme.primary,
                     shape = RoundedCornerShape(99.dp),
                 )
                 .clickable(onClick = onAdd)
@@ -7272,14 +7507,20 @@ private fun MainBottomNavItem(
     selected: Boolean = false,
     enabled: Boolean = true,
     expandedLabels: Boolean = false,
+    useWarmPalette: Boolean,
     onClick: () -> Unit,
 ) {
     val isExportLabel = label == "エクスポート"
     val needsTwoLineLabel = expandedLabels
     val tint = when {
-        !enabled -> MainBottomNavTextColor.copy(alpha = 0.38f)
-        selected -> MainCenterPlusColor
-        else -> MainBottomNavTextColor
+        !enabled -> if (useWarmPalette) {
+            MainBottomNavTextColor.copy(alpha = 0.38f)
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+        }
+        selected -> if (useWarmPalette) MainCenterPlusColor else MaterialTheme.colorScheme.primary
+        useWarmPalette -> MainBottomNavTextColor
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
     Column(
         modifier = Modifier

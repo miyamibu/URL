@@ -89,6 +89,10 @@ struct DetailView: View {
                 )
 
                 if let entry {
+                    let contentProjection = detailBodyProjection(
+                        summary: entry.bodySummary,
+                        body: entry.fetchedBody
+                    )
                     GeometryReader { proxy in
                         ScrollView(showsIndicators: false) {
                             VStack(spacing: 14) {
@@ -98,7 +102,7 @@ struct DetailView: View {
                                     }
                                 }
 
-                                AppPanel(strong: true) {
+                                DetailTitlePanel {
                                     HStack(alignment: .top, spacing: 12) {
                                         VStack(alignment: .leading, spacing: 12) {
                                             if isEditingTitle {
@@ -118,10 +122,25 @@ struct DetailView: View {
                                                     .onChange(of: titleText) { _, _ in
                                                         titleSaveError = nil
                                                     }
+                                                    .submitLabel(.done)
+                                                    .onSubmit {
+                                                        guard !isSavingTitle else { return }
+                                                        isSavingTitle = true
+                                                        Task {
+                                                            let saved = await model.saveTitle(entryID: entryID, text: titleText)
+                                                            isSavingTitle = false
+                                                            if saved {
+                                                                isEditingTitle = false
+                                                                titleSaveError = nil
+                                                            } else {
+                                                                titleSaveError = "タイトルを保存できませんでした。入力内容は保持されています。もう一度お試しください。"
+                                                            }
+                                                        }
+                                                    }
                                             } else {
                                                 Text(preferredDisplayTitle(for: entry))
                                                     .font(.system(.title2, design: .rounded).weight(.heavy))
-                                                    .foregroundStyle(Color.white.opacity(0.94))
+                                                    .foregroundStyle(Color.white.opacity(0.96))
                                                     .multilineTextAlignment(.leading)
                                                     .lineLimit(3)
                                                     .fixedSize(horizontal: false, vertical: true)
@@ -131,7 +150,7 @@ struct DetailView: View {
                                                 ServiceBadgeView(serviceType: entry.serviceType, badgeImageURL: entry.badgeImageURL)
                                                 Text(detailServiceLabel(for: entry))
                                                     .font(.system(size: 18, weight: .medium))
-                                                    .foregroundStyle(Color.white.opacity(0.75))
+                                                    .foregroundStyle(Color.white.opacity(0.84))
                                                     .lineLimit(1)
                                             }
                                         }
@@ -241,7 +260,7 @@ struct DetailView: View {
                                         }
                                     }
                                 } else {
-                                    if let summary = entry.bodySummary, !summary.isEmpty {
+                                    if let summary = contentProjection.summary, !summary.isEmpty {
                                         AppPanel {
                                             DetailSectionLabel(text: summaryLabel(for: entry))
                                             Text(summary)
@@ -250,7 +269,7 @@ struct DetailView: View {
                                         }
                                     }
 
-                                    if let body = detailBodyText(for: entry) {
+                                    if let body = contentProjection.body, !body.isEmpty {
                                         AppPanel {
                                             DetailSectionLabel(text: bodyLabel(for: entry))
                                             Text(body)
@@ -262,26 +281,41 @@ struct DetailView: View {
 
                                 VStack(spacing: 10) {
                                     if isTextCard {
-                                        AppActionButton(tone: .primary) {
+                                        ElegantDetailButton(tone: .primary) {
                                             UIPasteboard.general.string = textCardBody
                                         } label: {
                                             Text("コピー")
                                         }
                                     } else {
-                                        HStack(spacing: 10) {
-                                            AppActionButton(tone: .primary) {
-                                                if let url = URL(string: entry.openURL) {
-                                                    openURL(url)
-                                                }
-                                            } label: {
-                                                Text("開く")
+                                        ElegantDetailButton(tone: .primary) {
+                                            if let url = URL(string: entry.openURL) {
+                                                openURL(url)
                                             }
+                                        } label: {
+                                            Text("開く")
+                                        }
+                                    }
 
-                                            AppActionButton {
+                                    HStack(spacing: 10) {
+                                        if !isTextCard {
+                                            ElegantDetailButton(tone: .secondary) {
                                                 UIPasteboard.general.string = entry.openURL
                                             } label: {
                                                 Text("コピー")
                                             }
+                                        }
+
+                                        ElegantDetailButton(tone: .secondary) {
+                                            Task {
+                                                if entry.recordState == .archived {
+                                                    _ = await model.restoreFromArchive(entryID: entry.id)
+                                                } else {
+                                                    await model.archive(entryID: entry.id)
+                                                }
+                                                dismiss()
+                                            }
+                                        } label: {
+                                            Text(entry.recordState == .archived ? "アーカイブ解除" : "アーカイブ")
                                         }
                                     }
 
@@ -310,46 +344,33 @@ struct DetailView: View {
                                         }
                                     }
 
-                                    HStack(spacing: 10) {
-                                        AppActionButton {
-                                            Task {
-                                                if entry.recordState == .archived {
-                                                    _ = await model.restoreFromArchive(entryID: entry.id)
-                                                } else {
-                                                    await model.archive(entryID: entry.id)
-                                                }
-                                                dismiss()
-                                            }
-                                        } label: {
-                                            Text(entry.recordState == .archived ? "アーカイブ解除" : "アーカイブ")
-                                        }
-
-                                        AppActionButton(tone: .danger, enabled: entry.recordState == .active) {
-                                            isShowingDeleteConfirm = true
-                                        } label: {
-                                            Text("削除")
-                                        }
-                                    }
-
-                                    AppActionButton {
-                                        memoText = entry.memo
-                                        memoSaveError = nil
-                                        isSavingMemo = false
-                                        isShowingMemoEditor = true
-                                    } label: {
-                                        Text("メモを編集")
-                                    }
                                 }
 
                                 AppPanel {
-                                    DetailSectionLabel(text: "メモ")
+                                    HStack {
+                                        DetailSectionLabel(text: "メモ")
+                                        Spacer()
+                                        Button {
+                                            memoText = entry.memo
+                                            memoSaveError = nil
+                                            isSavingMemo = false
+                                            isShowingMemoEditor = true
+                                        } label: {
+                                            Image(systemName: "pencil")
+                                                .foregroundStyle(Color(UIColor(hex: 0x855B76)))
+                                                .frame(width: 42, height: 42)
+                                                .background(Color(UIColor(hex: 0xF7EAF0)), in: Circle())
+                                        }
+                                        .buttonStyle(.plain)
+                                        .accessibilityLabel("メモを編集")
+                                    }
                                     Text(entry.memo.isEmpty ? "メモはまだありません" : entry.memo)
                                         .font(.system(size: 17, weight: .medium))
                                         .foregroundStyle(entry.memo.isEmpty ? AppPalette.textSecondary : AppPalette.textPrimary)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                 }
 
-                                HStack(alignment: .top, spacing: 10) {
+                                VStack(spacing: 10) {
                                     DetailTagSummaryPanel(
                                         title: "自作タグ",
                                         emptyText: "まだ自作タグは付いていません",
@@ -432,6 +453,12 @@ struct DetailView: View {
                                         }
                                     }
                                 }
+
+                                ElegantDetailButton(tone: .danger, enabled: entry.recordState == .active) {
+                                    isShowingDeleteConfirm = true
+                                } label: {
+                                    Text("削除")
+                                }
                             }
                             .frame(width: max(proxy.size.width - 32, 0))
                             .padding(.horizontal, 16)
@@ -481,7 +508,8 @@ struct DetailView: View {
                     }
                 }
             )
-            .presentationDetents([.height(430)])
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
             .presentationCornerRadius(28)
         }
         .sheet(isPresented: $isShowingLocalTagEditor) {
@@ -583,14 +611,6 @@ struct DetailView: View {
         }
     }
 
-    private func detailBodyText(for entry: URLRecord) -> String? {
-        guard let body = entry.fetchedBody, !body.isEmpty else { return nil }
-        if body == entry.bodySummary {
-            return nil
-        }
-        return body
-    }
-
     private func socialDetailBodyText(for entry: URLRecord) -> String? {
         firstNonBlank(entry.fetchedBody, entry.description, entry.bodySummary)
     }
@@ -599,6 +619,115 @@ struct DetailView: View {
         values
             .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .first { !$0.isEmpty }
+    }
+}
+
+struct DetailBodyProjection: Equatable {
+    let summary: String?
+    let body: String?
+}
+
+func detailBodyProjection(summary: String?, body: String?) -> DetailBodyProjection {
+    func normalized(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let collapsed = value
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return collapsed.isEmpty ? nil : collapsed
+    }
+    guard let normalizedSummary = normalized(summary), let normalizedBody = normalized(body) else {
+        return DetailBodyProjection(summary: summary, body: body)
+    }
+    if normalizedSummary == normalizedBody {
+        return DetailBodyProjection(summary: nil, body: body)
+    }
+    let prefix = normalizedSummary
+        .trimmingCharacters(in: CharacterSet(charactersIn: "….。．").union(.whitespacesAndNewlines))
+    guard prefix.count >= 8, normalizedBody.hasPrefix(prefix) else {
+        return DetailBodyProjection(summary: summary, body: body)
+    }
+    return DetailBodyProjection(summary: nil, body: body)
+}
+
+private struct DetailTitlePanel<Content: View>: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) { content }
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(colorScheme == .dark ? AppPalette.panelStrong : Color(UIColor(hex: 0x855B76)), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .stroke(colorScheme == .dark ? AppPalette.outline : Color(UIColor(hex: 0x936B82)), lineWidth: 1)
+            )
+    }
+}
+
+private struct ElegantDetailButton<Label: View>: View {
+    enum Tone { case primary, secondary, danger }
+
+    let tone: Tone
+    let enabled: Bool
+    let action: () -> Void
+    let label: Label
+
+    init(
+        tone: Tone,
+        enabled: Bool = true,
+        action: @escaping () -> Void,
+        @ViewBuilder label: () -> Label
+    ) {
+        self.tone = tone
+        self.enabled = enabled
+        self.action = action
+        self.label = label()
+    }
+
+    var body: some View {
+        Button(action: action) {
+            label
+                .font(.system(.body, design: .rounded).weight(.bold))
+                .foregroundStyle(foreground)
+                .frame(maxWidth: .infinity, minHeight: 56)
+                .background(background, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(border, lineWidth: tone == .primary ? 0 : 1.2)
+                )
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.5)
+    }
+
+    private var background: Color {
+        switch tone {
+        case .primary: return Color(UIColor(hex: 0x855B76))
+        case .secondary: return AppPalette.surface
+        case .danger: return Color(UIColor(hex: 0xFFF4F3)).opacity(0.72)
+        }
+    }
+
+    private var foreground: Color {
+        switch tone {
+        case .primary: return .white
+        case .secondary: return Color(UIColor(hex: 0x38354A))
+        case .danger: return AppPalette.danger
+        }
+    }
+
+    private var border: Color {
+        switch tone {
+        case .primary: return .clear
+        case .secondary: return Color(UIColor(hex: 0xCDB7DE))
+        case .danger: return Color(UIColor(hex: 0xD69AAA))
+        }
     }
 }
 
@@ -854,19 +983,44 @@ private struct MemoEditorSheet: View {
                     .font(.system(size: 24, weight: .heavy, design: .rounded))
                     .foregroundStyle(AppPalette.textPrimary)
 
-                TextEditor(text: $memoText)
-                    .font(.system(.body).weight(.medium))
-                    .scrollContentBackground(.hidden)
-                    .padding(16)
-                    .background(AppPalette.background, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .stroke(AppPalette.outlineSoft, lineWidth: 1.5)
-                    )
-                    .frame(minHeight: 220)
-                    .onChange(of: memoText) { _, _ in
-                        saveError = nil
+                Text("このURLについて、あとで見返したいことを残せます。")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(AppPalette.textSecondary)
+
+                ZStack(alignment: .topLeading) {
+                    TextEditor(text: $memoText)
+                        .font(.system(.body).weight(.medium))
+                        .scrollContentBackground(.hidden)
+                        .padding(12)
+                        .disabled(isSaving)
+                        .onChange(of: memoText) { _, _ in
+                            saveError = nil
+                        }
+                    if memoText.isEmpty {
+                        Text("ここにメモを入力してください")
+                            .font(.system(.body).weight(.medium))
+                            .foregroundStyle(AppPalette.textMuted)
+                            .padding(.horizontal, 17)
+                            .padding(.vertical, 20)
+                            .allowsHitTesting(false)
                     }
+                }
+                .background(AppPalette.background, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(memoText.count > 2_000 || saveError != nil ? AppPalette.danger : Color(UIColor(hex: 0xCDB7DE)), lineWidth: 1.5)
+                )
+                .frame(minHeight: 260)
+
+                HStack {
+                    Text(memoText.count > 2_000 ? "2000文字以内で入力してください" : "入力内容はこのURLにだけ保存されます")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(memoText.count > 2_000 ? AppPalette.danger : AppPalette.textSecondary)
+                    Spacer()
+                    Text("\(memoText.count) / 2000")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(memoText.count > 2_000 ? AppPalette.danger : AppPalette.textSecondary)
+                }
 
                 if let saveError {
                     Label(saveError, systemImage: "exclamationmark.triangle.fill")
@@ -882,7 +1036,7 @@ private struct MemoEditorSheet: View {
                         Text("キャンセル")
                     }
 
-                    AppActionButton(tone: .primary, enabled: !isSaving) {
+                    ElegantDetailButton(tone: .primary, enabled: !isSaving && memoText.count <= 2_000) {
                         onSave()
                     } label: {
                         if isSaving {
@@ -1054,12 +1208,12 @@ private struct EntryLocalTagAssignmentSheet: View {
             .padding(.bottom, 24)
         }
         .task { reloadAssignedTags() }
-        .confirmationDialog("自作タグを共有", isPresented: Binding(
-            get: { pendingShareTag != nil },
-            set: { if !$0 { pendingShareTag = nil } }
-        ), titleVisibility: .visible) {
-            Button("共有先を選ぶ") {
-                guard let tag = pendingShareTag else { return }
+        .sheet(item: $pendingShareTag) { tag in
+            LocalTagShareConfirmationSheet(
+                tagName: tag.name,
+                urlCount: model.localTagShareURLCount(tagID: tag.id),
+                onCancel: { pendingShareTag = nil },
+                onShare: {
                 pendingShareTag = nil
                 guard model.localTagShareURLCount(tagID: tag.id) > 0,
                       let fileURL = model.localTagShareFileURL(tagID: tag.id) else {
@@ -1068,14 +1222,11 @@ private struct EntryLocalTagAssignmentSheet: View {
                 }
                 shareItems = [fileURL]
                 isShowingShareSheet = true
-            }
-            Button("キャンセル", role: .cancel) {
-                pendingShareTag = nil
-            }
-        } message: {
-            if let tag = pendingShareTag {
-                Text("タグ『\(tag.name)』とURL \(model.localTagShareURLCount(tagID: tag.id))件を共有します。タイトル、メモ、共有タグの情報は含まれません。")
-            }
+                }
+            )
+            .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
+            .presentationCornerRadius(28)
         }
         .sheet(isPresented: $isShowingShareSheet) {
             ActivityShareSheet(items: shareItems)
@@ -1084,6 +1235,57 @@ private struct EntryLocalTagAssignmentSheet: View {
 
     private func reloadAssignedTags() {
         assignedTags = model.loadLocalTagsForEntry(entryID: entryID)
+    }
+}
+
+private struct LocalTagShareConfirmationSheet: View {
+    let tagName: String
+    let urlCount: Int
+    let onCancel: () -> Void
+    let onShare: () -> Void
+
+    var body: some View {
+        VStack(spacing: 18) {
+            VStack(spacing: 7) {
+                Image(systemName: "tag.fill")
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(Color(UIColor(hex: 0x936B82)))
+                    .frame(width: 62, height: 62)
+                    .background(Color(UIColor(hex: 0xF7EAF0)), in: Circle())
+                Text(tagName)
+                    .font(.system(size: 24, weight: .heavy, design: .rounded))
+                    .foregroundStyle(AppPalette.textPrimary)
+                Text("URL \(urlCount)件")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(AppPalette.textSecondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(16)
+            .background(Color(UIColor(hex: 0xFFF4F8)), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+
+            HStack(alignment: .top, spacing: 16) {
+                shareSummary(title: "共有される内容", items: ["タグ名", "URL"], color: Color(UIColor(hex: 0x3C8B72)))
+                shareSummary(title: "含まれない内容", items: ["タイトル", "メモ", "共有タグ情報"], color: Color(UIColor(hex: 0x7D7890)))
+            }
+
+            HStack(spacing: 10) {
+                ElegantDetailButton(tone: .secondary, action: onCancel) { Text("キャンセル") }
+                ElegantDetailButton(tone: .primary, enabled: urlCount > 0, action: onShare) { Text("共有先を選ぶ") }
+            }
+        }
+        .padding(20)
+    }
+
+    private func shareSummary(title: String, items: [String], color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.system(size: 15, weight: .bold)).foregroundStyle(color)
+            ForEach(items, id: \.self) { item in
+                Text("・\(item)")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(AppPalette.textPrimary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -1224,7 +1426,7 @@ private struct DetailTagSummaryPanel: View {
     let onEdit: () -> Void
 
     var body: some View {
-        AppPanel {
+        VStack(alignment: .leading, spacing: 9) {
             VStack(alignment: .leading, spacing: 9) {
                 HStack(alignment: .center, spacing: 8) {
                     DetailSectionLabel(text: title)
@@ -1254,14 +1456,18 @@ private struct DetailTagSummaryPanel: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
-                    .frame(minHeight: 42, maxHeight: 91)
+                    .frame(maxHeight: 120)
                 }
-
-                Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity, minHeight: 154, alignment: .topLeading)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .frame(maxWidth: .infinity, minHeight: 194, alignment: .topLeading)
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(Color(UIColor(hex: 0xDCCFE5)), lineWidth: 1)
+        )
     }
 }
 
