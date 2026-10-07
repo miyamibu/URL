@@ -1,6 +1,15 @@
 # REPO_GO Evidence
 
-Final status: REPO_GO (1.0.23 source, CI, and signed artifacts reverified 2026-10-01) / APPLE_BUILD_PROCESSING / GOOGLE_PLAY_IN_REVIEW
+
+## 2026-10-05 store submission: 1.0.24 (39)
+
+Both stores accepted the latest manual-link/tag selection update for review. Google Play production submission `23` is `審査中` (pre-review quick check running), submitted 17:44 JST; App Store submission `69537c4e-a83a-491b-a836-811d681d1382` contains `1.0.24 (39)` and is `審査待ち`, submitted 17:47 JST. Approval/public availability are not verified. Exact source/artifact/test and receipt details are in [the current release record](final-submission-checklist.md#2026-10-05-release-record-1024-39) and `artifacts/store-submission-logs/2026-10-05-1.0.24-39-receipt.json`. Source and release-document changes were left uncommitted at the time of that submission.
+
+## 2026-10-08 source snapshot
+
+The user authorized committing and pushing the accumulated local changes. Later UI/performance changes and their unresolved visual findings are summarized in [the mobile review status](../ui-review/2026-10-08-design-performance-status.md). The October 5 Store receipts do not cover these later source changes; this source snapshot is not a new release or Store submission.
+
+Historical status recorded 2026-10-01: REPO_GO (1.0.23 source, CI, and signed artifacts reverified) / APPLE_BUILD_PROCESSING / GOOGLE_PLAY_IN_REVIEW. Superseded for the current candidate by the 2026-10-05 submission record above.
 
 ## 2026-10-01 1.0.23 (38) mobile UI release candidate
 
@@ -105,8 +114,8 @@ Still open at the time of the 2026-08-22 freeze (external, owner-gated): product
 
 ## Current source snapshot (manifest-backed)
 
-- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.23`, `versionCode=38`
-- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.23`, `build=38`; share extension `com.mibu.codebridge.ios.share`
+- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.24`, `versionCode=39`
+- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.24`, `build=39`; share extension `com.mibu.codebridge.ios.share`
 - Supabase migration head: `20260824090000_fix_apply_personal_link_ops_conflict.sql`
 - Machine-readable source: `docs/release/release-manifest.json`
 
