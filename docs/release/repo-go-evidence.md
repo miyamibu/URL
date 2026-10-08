@@ -2,7 +2,7 @@
 
 ## 2026-10-08 AI handoff release candidate: 1.0.25 (40)
 
-Final status: REPO_GO for the authorized mobile Store update; Store review and public availability remain separate external states.
+Final status: REPO_GO for the authorized mobile Store update; Store review and public availability remain separate external states. Google Play submission `24` is `審査中` and App Store submission `50cb7c3a-bd84-483f-bd02-cc90185655ed` is `審査待ち` as of 2026-10-08 12:22 JST. See [the release record](final-submission-checklist.md#2026-10-08-release-record-1025-40).
 
 - Source commit `befc926df95b84537b2d37db544a8482e0c383b0` is pushed to `origin/main`. It adds official provider icons and simplifies the AI flow to tag selection, eligible/excluded counts and one send action with snapshot revalidation. The candidate includes the previously committed detail/save/search improvements.
 - Android verification: 510 unit tests with zero failures/errors/skips, Debug build/lint, one emulator AI handoff flow test, and the signed Release AAB passed. Package/version/SDK metadata, R8 mapping, unchanged payload after signing and the previous accepted upload certificate were verified.

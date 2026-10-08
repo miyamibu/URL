@@ -1,5 +1,16 @@
 # Final Store Submission Checklist
 
+## 2026-10-08 release record: 1.0.25 (40)
+
+Status: BOTH_STORES_SUBMITTED_REVIEW_PENDING. Source commit `befc926df95b84537b2d37db544a8482e0c383b0` contains official AI-provider icons and the simplified tag/count/send flow, together with the earlier detail/save/search improvements. Source and release documentation are pushed to `origin/main`.
+
+- Google Play: production release `22`, [submission `24`](https://play.google.com/console/u/0/developers/6026364900028455951/app/4976058498782318560/publishing/submission-activity/24/details), sent 2026-10-08 12:18 JST, `審査中`. The only submitted change is `1.0.25 (40)`. Managed publishing remains off, rollout remains 100%, and no supported devices were lost. Google's pre-review quick check is external processing.
+- App Store: [submission `50cb7c3a-bd84-483f-bd02-cc90185655ed`](https://appstoreconnect.apple.com/apps/6771251450/distribution/reviewsubmissions/details/50cb7c3a-bd84-483f-bd02-cc90185655ed), sent 2026-10-08 12:22 JST, `審査待ち`. Build `f0e54bc8-7bc5-4648-9565-74e7389af60f` completed processing and is associated with `1.0.25 (40)`. Automatic release after approval, no phased release and retained ratings are preserved.
+- Signed AAB: `build/store/rinbam-1.0.25-40-play-signed.aab`, SHA-256 `d4440c09bffbef21b692928eed86a64088aa737be73aa469d0bd4dd6a5b28bf8`. Canonical package/version/SDK, mapping metadata, signed payload equality and the previously accepted upload certificate were verified.
+- Distribution IPA: `build/app-store/1.0.25-40/りんばむ.ipa`, SHA-256 `586e487b7a4a7c8f647e5dee0d92bb7f16778b90fab786070c947631887b1d87`. App/extension signatures, canonical IDs, team, version and existing runtime configuration were verified.
+- Release hygiene, manifest, mobile UI contract and launch-readiness script passed. Android 510 tests, iOS 33 export tests and emulator/simulator visual evidence are recorded in [candidate evidence](repo-go-evidence.md#2026-10-08-ai-handoff-release-candidate-1025-40). GitHub Production feature contracts passed; cross-platform CI was still running at submission.
+- Full local receipt, logs and screenshots: `artifacts/store-submission-logs/2026-10-08-1.0.25-40-receipt.json`. Approval and public availability remain unverified. Physical-device and final AI-service receipt checks were not rerun.
+
 ## Date
 2026-06-28 historical submission log; current source re-baseline added 2026-07-09; public-state recheck added 2026-08-13.
 
