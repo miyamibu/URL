@@ -11,6 +11,15 @@ enum AIHandoffProvider: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var displayName: String { rawValue }
 
+    var iconAssetName: String {
+        switch self {
+        case .chatGPT: return "AiChatGPT"
+        case .gemini: return "AiGemini"
+        case .claude: return "AiClaude"
+        case .deepSeek: return "AiDeepSeek"
+        }
+    }
+
     var officialDestination: URL {
         switch self {
         case .chatGPT: return URL(string: "https://chatgpt.com/")!
@@ -20,11 +29,23 @@ enum AIHandoffProvider: String, CaseIterable, Identifiable {
         }
     }
 
-    var officialAssetAvailable: Bool {
-        switch self {
-        case .chatGPT, .claude: return true
-        case .gemini, .deepSeek: return false
-        }
+}
+
+struct AIProviderIconView: View {
+    let provider: AIHandoffProvider
+    var size: CGFloat = 32
+
+    var body: some View {
+        Image(provider.iconAssetName)
+            .resizable()
+            .scaledToFit()
+            .frame(width: size * 0.76, height: size * 0.76)
+            .frame(width: size, height: size)
+            .background(
+                provider == .chatGPT ? AppPalette.panelStrong : AppPalette.surfaceSoft,
+                in: RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
+            )
+            .accessibilityHidden(true)
     }
 }
 
@@ -97,7 +118,6 @@ struct ExportSheet: View {
     @State private var chatGptPreviewTask: Task<Void, Never>?
     @State private var chatGptPreparationTask: Task<Void, Never>?
     @State private var chatGptFileCleanupTask: Task<Void, Never>?
-    @State private var hasConfirmedChatGptPreview = false
     @State private var preparedChatGptFileURL: URL?
     @State private var preparedChatGptEntryCount: Int?
     @State private var preparedChatGptSnapshotToken: String?
@@ -309,22 +329,21 @@ struct ExportSheet: View {
     }
 
     private var chatGptExportContent: some View {
-        ScrollView(showsIndicators: false) {
-            LazyVStack(alignment: .leading, spacing: 16) {
-                fixedChatGptContentCard(
-                    title: "\(aiProvider.displayName)への渡し方",
-                    icon: "bubble.left.and.text.bubble.right",
-                    items: [
-                        "りんばむでは質問を入力しません。",
-                        "確認した内容をZIPにし、質問とモデル選択は\(aiProvider.displayName)側で行います。"
-                    ]
-                )
+        let displayedSelection = selectedChatGptLocalTagIDs
+        let displayedPreview = chatGptPreview
 
-                sectionLabel("1. 渡したい自作タグを選択")
+        return ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(spacing: 12) {
+                    Text("送りたい自作タグを選んでください")
+                        .font(.system(size: 19, weight: .heavy, design: .rounded))
+                        .foregroundStyle(AppPalette.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 if chatGptLocalTags.isEmpty {
-                    Text("URLが付いた自作タグがありません")
-                        .font(.system(size: 15, weight: .semibold))
+                    Text("自作タグがまだありません")
+                        .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(AppPalette.textSecondary)
                 } else {
                     TagFlowLayout(horizontalSpacing: 8, verticalSpacing: 8) {
@@ -333,32 +352,6 @@ struct ExportSheet: View {
                         }
                     }
                 }
-
-                sectionLabel("2. 渡す内容を確認")
-                fixedChatGptContentCard(
-                    title: "含まれるもの",
-                    icon: "doc.text.magnifyingglass",
-                    items: [
-                        "URL、タイトル、自作タグ、保存日時、メモ抜粋",
-                        "取得できた著者・要約・抜粋など、下に表示する伏せ字後の全JSON"
-                    ]
-                )
-                fixedChatGptContentCard(
-                    title: "含まれないもの",
-                    icon: "nosign",
-                    items: [
-                        "質問、PDF・画像本体、取得本文全文",
-                        "共有タグと参加者、削除待ち・アーカイブ・共有参照のURL"
-                    ]
-                )
-                fixedChatGptContentCard(
-                    title: "伏せ字の限界",
-                    icon: "exclamationmark.triangle",
-                    items: [
-                        "メールアドレス、電話番号、token・secret、JWT、Supabase情報、端末内パスは検出できた範囲を伏せ字にします。",
-                        "未知の形式の秘密は残る可能性があります。下の伏せ字後の全内容を必ず確認してください。"
-                    ]
-                )
 
                 if isLoadingChatGptPreview {
                     HStack(spacing: 10) {
@@ -370,42 +363,42 @@ struct ExportSheet: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                if selectedChatGptLocalTagIDs.isEmpty {
-                    Text("自作タグを1つ以上選んでください")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(AppPalette.textSecondary)
-                }
-
-                if let preview = chatGptPreview {
-                    HStack(spacing: 8) {
+                if let preview = displayedPreview {
+                    HStack(spacing: 12) {
                         previewCountBadge(label: "対象", count: preview.eligibleCount, highlighted: true)
-                        if preview.excludedCount > 0 {
-                            previewCountBadge(label: "除外", count: preview.excludedCount, highlighted: false)
-                        }
+                        previewCountBadge(label: "除外", count: preview.excludedCount, highlighted: false)
                     }
                     if preview.eligibleItems.isEmpty {
                         Text("送れる保存リンクがありません")
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(AppPalette.danger)
-                    } else {
-                        if !preview.selectedLocalTagNames.isEmpty {
-                            Text("ZIPに入る自作タグ名（伏せ字後）：\(preview.selectedLocalTagNames.joined(separator: "、"))")
-                                .font(.system(.caption, design: .rounded, weight: .semibold))
-                                .foregroundStyle(AppPalette.textSecondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        ForEach(ChatGptExportExclusionReason.allCases, id: \.rawValue) { reason in
-                            if let count = preview.exclusionReasonCounts[reason], count > 0 {
-                                Text("・\(reason.displayName)：\(count)件")
-                                    .font(.system(.caption, design: .rounded, weight: .semibold))
-                                    .foregroundStyle(AppPalette.textSecondary)
-                            }
-                        }
-                        ForEach(preview.eligibleItems) { item in
-                            chatGptPreviewItem(item)
-                        }
                     }
                 }
+
+                DisclosureGroup("送る内容について") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("URL・タイトル・メモの抜粋などを渡します。")
+                        Text("共有タグ・削除待ち・アーカイブは対象外です。")
+                        Text("個人情報の伏せ字は完全ではありません。")
+                        Text("質問と送信はAI側で行います。")
+                        if let displayedPreview,
+                           displayedPreview.excludedCount > 0 {
+                            ForEach(ChatGptExportExclusionReason.allCases, id: \.rawValue) { reason in
+                                if let count = displayedPreview.exclusionReasonCounts[reason], count > 0 {
+                                    Text("・\(reason.displayName)：\(count)件")
+                                }
+                            }
+                        }
+                    }
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(AppPalette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 8)
+                }
+                .font(.system(size: 16, weight: .heavy, design: .rounded))
+                .foregroundStyle(AppPalette.textPrimary)
+                .padding(14)
+                .background(AppPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
 
                 if let chatGptPreviewError {
                     VStack(alignment: .leading, spacing: 10) {
@@ -428,7 +421,7 @@ struct ExportSheet: View {
                                 )
                         }
                         .buttonStyle(.plain)
-                        .disabled(isLoadingChatGptPreview)
+                        .disabled(isLoadingChatGptPreview || isPreparingChatGpt)
                     }
                 }
 
@@ -438,24 +431,19 @@ struct ExportSheet: View {
                         .foregroundStyle(AppPalette.danger)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-
-                if chatGptPreview?.eligibleItems.isEmpty == false, !isLoadingChatGptPreview {
-                    Toggle(isOn: $hasConfirmedChatGptPreview) {
-                        Text("対象URLと伏せ字後の全内容を確認し、未知の秘密が含まれていないことを確認しました")
-                            .font(.system(.body, design: .rounded, weight: .semibold))
-                            .foregroundStyle(AppPalette.textPrimary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .toggleStyle(.switch)
-                    .accessibilityHint("オンにすると\(aiProvider.displayName)用ZIPを作成できます")
-                }
-
-                sectionLabel("3. \(aiProvider.displayName)用ZIPを作成")
-                AppActionButton(
-                    tone: .primary,
-                    enabled: canPrepareChatGptFile
-                ) {
-                    prepareChatGptFile()
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, 28)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 8) {
+                AppActionButton(tone: .primary, enabled: canSendToChatGpt) {
+                    sendChatGptFile(
+                        displayedSelectedTagIDs: displayedSelection,
+                        displayedSnapshotToken: displayedPreview?.snapshotToken,
+                        displayedEntryCount: displayedPreview?.eligibleCount
+                    )
                 } label: {
                     if isPreparingChatGpt {
                         HStack(spacing: 8) {
@@ -463,75 +451,25 @@ struct ExportSheet: View {
                             Text("準備しています")
                         }
                     } else {
-                        Text("\(aiProvider.displayName)用ZIPを作成")
-                    }
-                }
-
-                sectionLabel("4. \(aiProvider.displayName)に送る")
-                if let preparedChatGptEntryCount {
-                    fixedChatGptContentCard(
-                        title: "生成済みZIP",
-                        icon: "doc.zipper",
-                        items: [
-                            "生成時点の対象 \(preparedChatGptEntryCount)件",
-                            "送信後、\(aiProvider.displayName)で質問を入力してください。"
-                        ]
-                    )
-                    AppActionButton(tone: .secondary, enabled: canSendToChatGpt) {
-                        sharePreparedChatGptFile()
-                    } label: {
                         Text("\(aiProvider.displayName)に送る")
                     }
-                } else {
-                    Text("先に対象を確認してZIPを作成してください。作成しただけでは共有されません。")
-                        .font(.system(.body, design: .rounded, weight: .medium))
-                        .foregroundStyle(AppPalette.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.bottom, 30)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
+            .background(AppPalette.surface.opacity(0.98))
         }
     }
 
     private var canSendToChatGpt: Bool {
-        preparedChatGptFileURL.map { FileManager.default.fileExists(atPath: $0.path) } == true &&
-            preparedChatGptSnapshotToken == chatGptPreview?.snapshotToken &&
-            preparedChatGptSelectedTagIDs == selectedChatGptLocalTagIDs &&
-            preparedChatGptGenerationID == chatGptGenerationID &&
-            hasConfirmedChatGptPreview &&
-            !isPreparingChatGpt &&
-            !isStandardExporting
-    }
-
-    private var canPrepareChatGptFile: Bool {
         !isPreparingChatGpt &&
             !isStandardExporting &&
             !isLoadingChatGptPreview &&
+            !isShowingShareSheet &&
             chatGptPreviewError == nil &&
-            hasConfirmedChatGptPreview &&
+            !selectedChatGptLocalTagIDs.isEmpty &&
             chatGptPreview?.eligibleItems.isEmpty == false
-    }
-
-    private func fixedChatGptContentCard(title: String, icon: String, items: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(title, systemImage: icon)
-                .font(.system(size: 15, weight: .heavy, design: .rounded))
-                .foregroundStyle(AppPalette.textPrimary)
-            ForEach(items, id: \.self) { item in
-                Text("・\(item)")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(AppPalette.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AppPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(AppPalette.outlineSoft, lineWidth: 1)
-        )
     }
 
     private func previewCountBadge(label: String, count: Int, highlighted: Bool) -> some View {
@@ -546,31 +484,6 @@ struct ExportSheet: View {
             )
     }
 
-    private func chatGptPreviewItem(_ item: ChatGptExportPreviewItem) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(item.title)
-                .font(.system(size: 15, weight: .heavy, design: .rounded))
-                .foregroundStyle(AppPalette.textPrimary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Text(item.localTagNames.isEmpty ? "自作タグなし" : "自作タグ：\(item.localTagNames.joined(separator: "、"))")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(AppPalette.textSecondary)
-            Text("ZIPに入る伏せ字後のJSON内容")
-                .font(.system(size: 12, weight: .heavy, design: .rounded))
-                .foregroundStyle(AppPalette.textSecondary)
-            Text(item.archiveEntryJSON)
-                .font(.system(.caption, design: .monospaced, weight: .regular))
-                .foregroundStyle(AppPalette.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
-        }
-        .padding(12)
-        .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(AppPalette.outlineSoft, lineWidth: 1)
-        )
-    }
 
     private var exportControlSheet: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -620,12 +533,22 @@ struct ExportSheet: View {
             .buttonStyle(.plain)
             .accessibilityLabel("閉じる")
 
-            Text(exportMode == .chatGpt ? aiProvider.displayName : "エクスポート")
-                .font(.system(size: 27, weight: .heavy, design: .rounded))
-                .foregroundStyle(AppPalette.textPrimary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.82)
-                .layoutPriority(2)
+            if exportMode == .chatGpt {
+                AIProviderIconView(provider: aiProvider, size: 36)
+                Text(aiProvider.displayName)
+                    .font(.system(size: 27, weight: .heavy, design: .rounded))
+                    .foregroundStyle(AppPalette.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+                    .layoutPriority(2)
+            } else {
+                Text("エクスポート")
+                    .font(.system(size: 27, weight: .heavy, design: .rounded))
+                    .foregroundStyle(AppPalette.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+                    .layoutPriority(2)
+            }
 
             Spacer(minLength: 6)
         }
@@ -900,7 +823,6 @@ struct ExportSheet: View {
         let generationID = UUID()
         chatGptPreviewRequestID = requestID
         chatGptGenerationID = generationID
-        hasConfirmedChatGptPreview = false
         invalidatePreparedChatGptFile()
         chatGptPreview = nil
         chatGptPreviewError = nil
@@ -936,20 +858,36 @@ struct ExportSheet: View {
         chatGptPreviewTask = task
     }
 
-    private func prepareChatGptFile() {
+    private func sendChatGptFile(
+        displayedSelectedTagIDs: Set<Int64>,
+        displayedSnapshotToken: String?,
+        displayedEntryCount: Int?
+    ) {
+        guard !isLoadingChatGptPreview,
+              !isPreparingChatGpt,
+              !isShowingShareSheet else { return }
         errorMessage = nil
         successMessage = nil
-        guard hasConfirmedChatGptPreview,
-              let preview = chatGptPreview,
-              !preview.eligibleItems.isEmpty else {
+        guard let preview = chatGptPreview else {
+            chatGptPreviewError = "\(aiProvider.displayName)に送れる保存リンクがありません。タグを選び、対象を確認してからもう一度お試しください。"
+            return
+        }
+        guard !displayedSelectedTagIDs.isEmpty,
+              displayedSnapshotToken == preview.snapshotToken,
+              displayedEntryCount == preview.eligibleCount,
+              displayedSelectedTagIDs == selectedChatGptLocalTagIDs else {
+            errorMessage = "対象が変わりました。もう一度確認してください。"
+            return
+        }
+        guard !preview.eligibleItems.isEmpty else {
             chatGptPreviewError = "\(aiProvider.displayName)に送れる保存リンクがありません。タグを選び、対象を確認してからもう一度お試しください。"
             return
         }
 
         chatGptPreparationTask?.cancel()
-        let selectedTagIDs = selectedChatGptLocalTagIDs
-        let expectedSnapshotToken = preview.snapshotToken
-        let expectedEntryCount = preview.eligibleCount
+        let selectedTagIDs = displayedSelectedTagIDs
+        let expectedSnapshotToken = displayedSnapshotToken ?? ""
+        let expectedEntryCount = displayedEntryCount ?? 0
         let generationID = chatGptGenerationID
         invalidatePreparedChatGptFile()
         isPreparingChatGpt = true
@@ -969,8 +907,7 @@ struct ExportSheet: View {
                 try Task.checkCancellation()
                 guard selectedTagIDs == selectedChatGptLocalTagIDs,
                       generationID == chatGptGenerationID,
-                      chatGptPreview?.snapshotToken == expectedSnapshotToken,
-                      hasConfirmedChatGptPreview else {
+                      chatGptPreview?.snapshotToken == expectedSnapshotToken else {
                     removeChatGptTemporaryFile(at: fileURL)
                     generatedFileURL = nil
                     throw URLExportError.invalidRequest("選択または対象の内容が変わりました。内容を確認して、もう一度お試しください。")
@@ -981,7 +918,7 @@ struct ExportSheet: View {
                 preparedChatGptSelectedTagIDs = selectedTagIDs
                 preparedChatGptGenerationID = generationID
                 generatedFileURL = nil
-                successMessage = "\(archive.entryCount)件のZIPを作成しました"
+                sharePreparedChatGptFile()
             } catch is CancellationError {
                 if let generatedFileURL {
                     removeChatGptTemporaryFile(at: generatedFileURL)
@@ -1009,9 +946,8 @@ struct ExportSheet: View {
               FileManager.default.fileExists(atPath: preparedChatGptFileURL.path),
               preparedChatGptSnapshotToken == chatGptPreview?.snapshotToken,
               preparedChatGptSelectedTagIDs == selectedChatGptLocalTagIDs,
-              preparedChatGptGenerationID == chatGptGenerationID,
-              hasConfirmedChatGptPreview else {
-            errorMessage = "先に\(aiProvider.displayName)用ファイルを作成してください。"
+              preparedChatGptGenerationID == chatGptGenerationID else {
+            errorMessage = "対象が変わりました。もう一度確認してください。"
             return
         }
         errorMessage = nil

@@ -68,8 +68,8 @@ struct RootView: View {
     @State private var isShowingSharedTagGroupCreateSheet = false
     @State private var isShowingExportSheet = false
     @State private var isShowingAIProviderChooser = false
-    @State private var isShowingChatGptSheet = false
-    @State private var selectedAIProvider: AIHandoffProvider = .chatGPT
+    @State private var pendingAIProvider: AIHandoffProvider?
+    @State private var presentedAIProvider: AIHandoffProvider?
     @State private var isShowingShareSheet = false
     @State private var isShowingPrivacyInfoSheet = false
     @State private var shareItems: [Any] = []
@@ -119,7 +119,7 @@ struct RootView: View {
            !isShowingSharedTagCloudSheet,
            !isShowingExportSheet,
            !isShowingAIProviderChooser,
-           !isShowingChatGptSheet {
+           presentedAIProvider == nil {
             OnboardingGuideOverlay(
                 pageIndex: firstRunOnboardingPageIndex,
                 onFinish: {
@@ -504,22 +504,23 @@ struct RootView: View {
                     .presentationDragIndicator(.visible)
                     .presentationCornerRadius(32)
             }
-            .sheet(isPresented: $isShowingChatGptSheet) {
-                ChatGptExportSheet(model: model, provider: selectedAIProvider)
+            .sheet(item: $presentedAIProvider) { provider in
+                ChatGptExportSheet(model: model, provider: provider)
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
                     .presentationCornerRadius(32)
             }
-            .confirmationDialog("AIを選ぶ", isPresented: $isShowingAIProviderChooser, titleVisibility: .visible) {
-                ForEach(AIHandoffProvider.allCases) { provider in
-                    Button(provider.displayName) {
-                        selectedAIProvider = provider
-                        isShowingChatGptSheet = true
-                    }
+            .sheet(isPresented: $isShowingAIProviderChooser, onDismiss: {
+                guard let pendingAIProvider else { return }
+                self.pendingAIProvider = nil
+                presentedAIProvider = pendingAIProvider
+            }) {
+                AIProviderChooserSheet { provider in
+                    pendingAIProvider = provider
                 }
-                Button("キャンセル", role: .cancel) {}
-            } message: {
-                Text("各サービスのロゴは、公式配布条件を確認できた場合だけ表示します。")
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+                .presentationCornerRadius(32)
             }
             .sheet(isPresented: $isShowingShareSheet) {
                 ActivityShareSheet(items: shareItems)
@@ -1103,6 +1104,63 @@ private struct MainTopMenu: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(title)
+    }
+}
+
+private struct AIProviderChooserSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let onSelect: (AIHandoffProvider) -> Void
+
+    var body: some View {
+        ScreenContainer {
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack {
+                        Text("AIを選ぶ")
+                            .font(.system(size: 28, weight: .heavy, design: .rounded))
+                            .foregroundStyle(AppPalette.textPrimary)
+                        Spacer()
+                        Button("閉じる") { dismiss() }
+                            .font(.system(size: 16, weight: .bold, design: .rounded))
+                            .foregroundStyle(AppPalette.primaryStrong)
+                    }
+
+                    VStack(spacing: 10) {
+                        ForEach(AIHandoffProvider.allCases) { provider in
+                            Button {
+                                onSelect(provider)
+                                dismiss()
+                            } label: {
+                                HStack(spacing: 14) {
+                                    AIProviderIconView(provider: provider, size: 42)
+                                    Text(provider.displayName)
+                                        .font(.system(size: 19, weight: .heavy, design: .rounded))
+                                        .foregroundStyle(AppPalette.textPrimary)
+                                        .lineLimit(1)
+                                    Spacer(minLength: 8)
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 15, weight: .bold))
+                                        .foregroundStyle(AppPalette.textMuted)
+                                }
+                                .padding(.horizontal, 14)
+                                .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+                                .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                        .stroke(AppPalette.outlineSoft, lineWidth: 1)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(provider.displayName)
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+                .padding(.bottom, 24)
+            }
+        }
     }
 }
 

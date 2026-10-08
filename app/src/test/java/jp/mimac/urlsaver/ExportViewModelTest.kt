@@ -49,8 +49,7 @@ class ExportViewModelTest {
 
         viewModel.toggleChatGptTagSelection(1L)
         advanceUntilIdle()
-        viewModel.setChatGptContentConfirmed(true)
-        viewModel.prepareChatGptExport()
+        viewModel.requestCurrentPreviewSend()
         assertTrue(viewModel.chatGptUiState.value.isArchivePreparing)
 
         viewModel.toggleChatGptTagSelection(2L)
@@ -62,7 +61,6 @@ class ExportViewModelTest {
         val state = viewModel.chatGptUiState.value
         assertEquals(setOf(1L, 2L), state.selectedTagIds)
         assertEquals("snapshot-two", state.preview?.snapshotToken)
-        assertFalse(state.isContentConfirmed)
         assertFalse(state.isArchivePreparing)
         assertNull(state.preparedArchive)
         assertNull(state.archiveSuccessMessage)
@@ -71,33 +69,51 @@ class ExportViewModelTest {
     }
 
     @Test
-    fun chatGptConfirmationRevoked_neverAcceptsNonCancellableArchiveCompletion() = runTest {
-        val staleArchiveDeferred = CompletableDeferred<PreparedExportArchive>()
+    fun chatGptSend_rejectsDisplayedSnapshotThatIsNoLongerCurrent() = runTest {
         val repository = FakeExportRepository(
             previews = mapOf(setOf(1L) to preview("snapshot-one", setOf(1L))),
-            prepareBlock = { _, _ ->
-                withContext(NonCancellable) { staleArchiveDeferred.await() }
-            },
         )
         val viewModel = ExportViewModel(repository)
 
         viewModel.toggleChatGptTagSelection(1L)
         advanceUntilIdle()
-        viewModel.setChatGptContentConfirmed(true)
-        viewModel.prepareChatGptExport()
-        assertTrue(viewModel.chatGptUiState.value.isArchivePreparing)
-
-        viewModel.setChatGptContentConfirmed(false)
-        val revokedArchive = archive("revoked.zip", "snapshot-one")
-        staleArchiveDeferred.complete(revokedArchive)
+        viewModel.requestChatGptSend(
+            displayedTagIds = setOf(1L),
+            displayedSnapshotToken = "stale-snapshot",
+            displayedTargetCount = 1,
+        )
         advanceUntilIdle()
 
         val state = viewModel.chatGptUiState.value
-        assertFalse(state.isContentConfirmed)
         assertFalse(state.isArchivePreparing)
         assertNull(state.preparedArchive)
         assertNull(state.archiveSuccessMessage)
-        assertEquals(listOf(revokedArchive), repository.releasedArchives)
+        assertTrue(state.archiveError.orEmpty().contains("対象が変わりました"))
+        assertTrue(repository.prepareRequests.isEmpty())
+    }
+
+    @Test
+    fun chatGptSend_ignoresSecondRequestWhilePreparationIsRunning() = runTest {
+        val archiveDeferred = CompletableDeferred<PreparedExportArchive>()
+        val repository = FakeExportRepository(
+            previews = mapOf(setOf(1L) to preview("snapshot-one", setOf(1L))),
+            prepareBlock = { _, _ -> archiveDeferred.await() },
+        )
+        val viewModel = ExportViewModel(repository)
+        viewModel.toggleChatGptTagSelection(1L)
+        advanceUntilIdle()
+
+        viewModel.requestCurrentPreviewSend()
+        runCurrent()
+        assertTrue(viewModel.chatGptUiState.value.isArchivePreparing)
+        viewModel.requestCurrentPreviewSend()
+        assertTrue(viewModel.chatGptUiState.value.isArchivePreparing)
+        assertEquals(1, repository.prepareRequests.size)
+
+        archiveDeferred.complete(archive("prepared.zip", "snapshot-one"))
+        advanceUntilIdle()
+        assertTrue(viewModel.chatGptUiState.value.preparedArchive != null)
+        assertEquals(1, repository.prepareRequests.size)
     }
 
     @Test
@@ -116,8 +132,7 @@ class ExportViewModelTest {
 
         viewModel.toggleChatGptTagSelection(1L)
         advanceUntilIdle()
-        viewModel.setChatGptContentConfirmed(true)
-        viewModel.prepareChatGptExport()
+        viewModel.requestCurrentPreviewSend()
 
         viewModel.toggleChatGptTagSelection(2L)
         advanceUntilIdle()
@@ -125,7 +140,6 @@ class ExportViewModelTest {
         advanceUntilIdle()
         assertEquals(setOf(1L), viewModel.chatGptUiState.value.selectedTagIds)
         assertEquals("snapshot-one", viewModel.chatGptUiState.value.preview?.snapshotToken)
-        assertFalse(viewModel.chatGptUiState.value.isContentConfirmed)
 
         val abaArchive = archive("aba.zip", "snapshot-one")
         staleArchiveDeferred.complete(abaArchive)
@@ -133,14 +147,13 @@ class ExportViewModelTest {
 
         val state = viewModel.chatGptUiState.value
         assertFalse(state.isArchivePreparing)
-        assertFalse(state.isContentConfirmed)
         assertNull(state.preparedArchive)
         assertNull(state.archiveSuccessMessage)
         assertEquals(listOf(abaArchive), repository.releasedArchives)
     }
 
     @Test
-    fun chatGptPreviewRefresh_resetsExplicitConfirmationForNewSnapshot() = runTest {
+    fun chatGptPreviewRefresh_replacesSnapshotAndClearsPreparedArchive() = runTest {
         var previewCallCount = 0
         val repository = FakeExportRepository(
             previewBlock = {
@@ -152,14 +165,14 @@ class ExportViewModelTest {
 
         viewModel.toggleChatGptTagSelection(1L)
         advanceUntilIdle()
-        viewModel.setChatGptContentConfirmed(true)
-        assertTrue(viewModel.chatGptUiState.value.isContentConfirmed)
+        viewModel.requestCurrentPreviewSend()
+        advanceUntilIdle()
+        assertTrue(viewModel.chatGptUiState.value.preparedArchive != null)
 
         viewModel.retryChatGptPreview()
         advanceUntilIdle()
 
         assertEquals("snapshot-2", viewModel.chatGptUiState.value.preview?.snapshotToken)
-        assertFalse(viewModel.chatGptUiState.value.isContentConfirmed)
         assertNull(viewModel.chatGptUiState.value.preparedArchive)
     }
 
@@ -189,7 +202,6 @@ class ExportViewModelTest {
         advanceUntilIdle()
 
         assertEquals("new-snapshot", viewModel.chatGptUiState.value.preview?.snapshotToken)
-        assertFalse(viewModel.chatGptUiState.value.isContentConfirmed)
     }
 
     @Test
@@ -201,9 +213,7 @@ class ExportViewModelTest {
         val viewModel = ExportViewModel(repository)
         viewModel.toggleChatGptTagSelection(1L)
         advanceUntilIdle()
-        viewModel.setChatGptContentConfirmed(true)
-
-        viewModel.prepareChatGptExport()
+        viewModel.requestCurrentPreviewSend()
         advanceUntilIdle()
 
         val error = viewModel.chatGptUiState.value.archiveError.orEmpty()
@@ -213,7 +223,7 @@ class ExportViewModelTest {
     }
 
     @Test
-    fun chatGptPrepare_withoutExplicitConfirmationNeverCallsRepository() = runTest {
+    fun chatGptSend_withMismatchedDisplayedCountNeverCallsRepository() = runTest {
         val repository = FakeExportRepository(
             previews = mapOf(setOf(1L) to preview("snapshot", setOf(1L))),
         )
@@ -221,12 +231,16 @@ class ExportViewModelTest {
         viewModel.toggleChatGptTagSelection(1L)
         advanceUntilIdle()
 
-        viewModel.prepareChatGptExport()
+        viewModel.requestChatGptSend(
+            displayedTagIds = setOf(1L),
+            displayedSnapshotToken = "snapshot",
+            displayedTargetCount = 2,
+        )
         advanceUntilIdle()
 
         assertTrue(repository.prepareRequests.isEmpty())
         assertNull(viewModel.chatGptUiState.value.preparedArchive)
-        assertTrue(viewModel.chatGptUiState.value.archiveError.orEmpty().contains("確認欄"))
+        assertTrue(viewModel.chatGptUiState.value.archiveError.orEmpty().contains("対象が変わりました"))
     }
 
     @Test
@@ -237,13 +251,11 @@ class ExportViewModelTest {
         val viewModel = ExportViewModel(repository)
         viewModel.toggleChatGptTagSelection(1L)
         advanceUntilIdle()
-        viewModel.setChatGptContentConfirmed(true)
-
-        viewModel.prepareChatGptExport()
+        viewModel.requestCurrentPreviewSend()
         advanceUntilIdle()
         val firstArchive = requireNotNull(viewModel.chatGptUiState.value.preparedArchive)
 
-        viewModel.prepareChatGptExport()
+        viewModel.requestCurrentPreviewSend()
         advanceUntilIdle()
         val secondArchive = requireNotNull(viewModel.chatGptUiState.value.preparedArchive)
         assertTrue(firstArchive != secondArchive)
@@ -281,6 +293,16 @@ class ExportViewModelTest {
         deferredArchive.complete(lateArchive)
         assertTrue(runCatching { cancelledResult.await() }.isFailure)
         assertEquals(listOf(firstArchive, lateArchive), repository.releasedArchives)
+    }
+
+    private fun ExportViewModel.requestCurrentPreviewSend() {
+        val state = chatGptUiState.value
+        val preview = requireNotNull(state.preview)
+        requestChatGptSend(
+            displayedTagIds = state.selectedTagIds,
+            displayedSnapshotToken = preview.snapshotToken,
+            displayedTargetCount = preview.entries.size,
+        )
     }
 
     private fun archive(fileName: String, token: String): PreparedExportArchive {

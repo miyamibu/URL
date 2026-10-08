@@ -42,7 +42,6 @@ data class ChatGptExportUiState(
     val preview: ChatGptExportPreview? = null,
     val isPreviewLoading: Boolean = false,
     val previewError: String? = null,
-    val isContentConfirmed: Boolean = false,
     val preparedArchive: PreparedExportArchive? = null,
     val isArchivePreparing: Boolean = false,
     val archiveError: String? = null,
@@ -182,32 +181,27 @@ class ExportViewModel(
         refreshChatGptPreview()
     }
 
-    fun setChatGptContentConfirmed(confirmed: Boolean) {
+    fun requestChatGptSend(
+        displayedTagIds: Set<Long>,
+        displayedSnapshotToken: String,
+        displayedTargetCount: Int,
+    ) {
         val current = chatGptUiStateFlow.value
-        val canConfirm = current.preview?.entries?.isNotEmpty() == true && !current.isPreviewLoading
-        val nextConfirmed = confirmed && canConfirm
-        if (!nextConfirmed) {
-            invalidatePreparedChatGptArchive()
-        }
-        chatGptUiStateFlow.value = chatGptUiStateFlow.value.copy(
-            isContentConfirmed = nextConfirmed,
-        )
-    }
-
-    fun prepareChatGptExport() {
-        val current = chatGptUiStateFlow.value
+        if (current.isPreviewLoading || current.isArchivePreparing) return
         val preview = current.preview
         if (
             current.selectedTagIds.isEmpty() ||
             preview == null ||
             preview.entries.isEmpty() ||
-            !current.isContentConfirmed
+            current.selectedTagIds != displayedTagIds ||
+            preview.snapshotToken != displayedSnapshotToken ||
+            preview.entries.size != displayedTargetCount
         ) {
             current.preparedArchive?.let(exportRepository::releasePreparedArchive)
             chatGptUiStateFlow.value = current.copy(
                 preparedArchive = null,
                 isArchivePreparing = false,
-                archiveError = CHATGPT_PREPARE_REQUIRES_PREVIEW_MESSAGE,
+                archiveError = CHATGPT_SEND_REQUIRES_CURRENT_PREVIEW_MESSAGE,
                 archiveSuccessMessage = null,
             )
             return
@@ -329,7 +323,6 @@ class ExportViewModel(
             preview = null,
             isPreviewLoading = true,
             previewError = null,
-            isContentConfirmed = false,
             preparedArchive = null,
             isArchivePreparing = false,
             archiveError = preservedArchiveError,
@@ -407,7 +400,6 @@ class ExportViewModel(
         return chatGptPrepareGeneration == request.generationId &&
             chatGptPrepareJob === runningJob &&
             current.isArchivePreparing &&
-            current.isContentConfirmed &&
             current.selectedTagIds == request.selectedTagIds &&
             current.preview?.snapshotToken == request.snapshotToken
     }
@@ -421,8 +413,8 @@ class ExportViewModel(
     private companion object {
         const val CHATGPT_PREVIEW_FAILED_MESSAGE =
             "対象URLを確認できませんでした。時間をおいてもう一度お試しください。"
-        const val CHATGPT_PREPARE_REQUIRES_PREVIEW_MESSAGE =
-            "対象URLと表示内容を確認し、確認欄にチェックを入れてください。"
+        const val CHATGPT_SEND_REQUIRES_CURRENT_PREVIEW_MESSAGE =
+            "対象が変わりました。表示された件数をもう一度確認してください。"
         const val CHATGPT_PREPARE_FAILED_MESSAGE =
             "ChatGPT用ZIPを作成できませんでした。もう一度お試しください。"
     }

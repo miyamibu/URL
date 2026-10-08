@@ -18,6 +18,7 @@ import jp.mimac.urlsaver.FirstRunOnboardingStore
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -147,6 +148,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.core.view.WindowCompat
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.input.pointer.pointerInput
@@ -7478,19 +7480,41 @@ private fun AiProviderChooserDialog(
                             .fillMaxWidth()
                             .heightIn(min = 48.dp),
                     ) {
-                        Text(
-                            text = provider.displayName,
+                        Row(
                             modifier = Modifier.fillMaxWidth(),
-                            textAlign = TextAlign.Start,
-                            style = MaterialTheme.typography.titleMedium,
-                        )
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .then(
+                                        if (provider == AiHandoffProvider.CHAT_GPT) {
+                                            Modifier.background(
+                                                color = Color(0xFF202124),
+                                                shape = RoundedCornerShape(8.dp),
+                                            )
+                                        } else {
+                                            Modifier
+                                        },
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Image(
+                                    painter = painterResource(provider.iconResource),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(28.dp),
+                                )
+                            }
+                            Text(
+                                text = provider.displayName,
+                                modifier = Modifier.weight(1f),
+                                textAlign = TextAlign.Start,
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                        }
                     }
                 }
-                Text(
-                    text = "各サービスのロゴは、公式配布条件を確認できた場合だけ表示します。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
         },
         confirmButton = {},
@@ -7499,6 +7523,14 @@ private fun AiProviderChooserDialog(
         },
     )
 }
+
+private val AiHandoffProvider.iconResource: Int
+    get() = when (this) {
+        AiHandoffProvider.CHAT_GPT -> R.drawable.ai_chatgpt
+        AiHandoffProvider.GEMINI -> R.drawable.ai_gemini
+        AiHandoffProvider.CLAUDE -> R.drawable.ai_claude
+        AiHandoffProvider.DEEP_SEEK -> R.drawable.ai_deepseek
+    }
 
 @Composable
 private fun MainBottomNavItem(

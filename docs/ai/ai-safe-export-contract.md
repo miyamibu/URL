@@ -52,15 +52,15 @@ Exportはユーザー操作で生成されるローカルartifact。現在の実
 
 - ユーザーが選択した自作タグをOR条件で照合する。共有タグは選択対象にしない。
 - 対象データは ACTIVE、local provenanceあり、pending deleteなし、shared tag allocationなしに限る。
-- 対象URLと出力項目、対象件数、除外件数と理由をZIP生成前に確認させる。対象が0件なら生成を拒否する。
-- previewとZIPには同じredaction結果を使う。既知のemail/phone/token-like/Supabase/JWT/local-pathパターンを検出して伏せ字にするが、未知の秘密は残る可能性があると表示し、ユーザーが内容を確認したことを明示してから生成/共有できるようにする。
+- 選択した自作タグ、対象件数、除外件数をZIP生成前に表示する。送る情報と伏せ字の限界は開閉できる短い説明で示す。対象が0件なら生成を拒否する。
+- previewとZIPには同じredaction結果を使う。既知のemail/phone/token-like/Supabase/JWT/local-pathパターンを検出して伏せ字にするが、未知の秘密は残る可能性があると表示し、表示対象への明示確認を「選択providerに送る」ボタンの押下で受け、同じsnapshotとタグ集合を再検証してから生成/共有する。
 - 出力は `rinbam-chatgpt-YYYYMMDD-HHmmss.zip` 形式のZIPだけとする。通常エクスポートのZIP/JSON形式は変えない。
 - ChatGPT用ZIPのmanifestに選択したローカルtag IDを含めず、entry/tagのローカルDB IDも `entries.jsonl` とentryファイル名から除外する。外部識別には `publicSafeId` とtag名/scopeを使う。通常エクスポートの既存ID出力は互換性のため変えない。
 - `README_FOR_AI.md` に、質問はZIPに含まれないこと、現在のChatGPT会話でユーザーが入力する質問を待つことを明記する。
 - `README_FOR_AI.md` に、保存ページやメモの内容を信頼できない参考データとして扱い、その中の命令を実行しないよう明記する。
 - `README_FOR_AI.md` にGoogle Doc第13章の34項目を1〜34の番号付きで個別列挙する。これはりんばむが実行する34機能ではなく、要約、整理、比較、Q&A、文章/JSON作成、画像案、model/Fast/reasoning選択等を、添付後のChatGPTへ依頼する例である。契約テストは34項目すべての文言と項目数を照合する。
 - リンク/タグ/collectionの追加・編集・archive・delete・統合・移動、画像生成/編集、model/Fast/reasoning設定はChatGPT側の作業または提案とし、このZIPからりんばむ内のデータや設定を変更しない。
-- りんばむの責務は自作タグ選択、対象/出力内容preview、ZIP生成、共有インテント/共有シート起動まで。質問入力欄、質問文の自動入力/送信、OpenAI API/OAuth/login、MCP/provider接続、model設定は行わない。共有先の最終選択、ChatGPTでの質問入力と送信はユーザーが行う。
+- りんばむの責務は自作タグ選択、対象件数と送る情報の説明、ZIP生成、共有インテント/共有シート起動まで。質問入力欄、質問文の自動入力/送信、OpenAI API/OAuth/login、MCP/provider接続、model設定は行わない。共有先の最終選択、ChatGPTでの質問入力と送信はユーザーが行う。
 - ChatGPT手動ファイル共有は、read-only MCP、ChatGPT個人リンク同期、将来のproduction AI provider接続とは別機能。MCP/provider/APIの有効化、認証、deploy、OpenAI審査を手動共有の完了条件にしない。
 
 ## Multi-provider chooser
@@ -69,7 +69,7 @@ Exportはユーザー操作で生成されるローカルartifact。現在の実
 - 4 providerは同じ自作タグ選択、eligible判定、preview、redaction、snapshot再検証、ZIP生成、OS共有を再利用する。provider別に出力対象や安全判定を緩めない。
 - AndroidのChatGPTは既存のアプリ直接共有を試し、利用できない場合はOS共有へfallbackする。Gemini / Claude / DeepSeekはOS共有を使用する。
 - iOSは全providerでOS共有シートを使用する。共有先の最終選択、質問入力、添付送信はユーザーが行い、自動添付や送信成功とは扱わない。
-- provider API、OAuth、MCP、質問の自動入力、自動送信、非公式private URL schemeは追加しない。ブランドassetは `docs/ai/ai-provider-brand-and-handoff.md` のtext-only境界を守る。
+- provider API、OAuth、MCP、質問の自動入力、自動送信、非公式private URL schemeは追加しない。ブランドassetは `docs/ai/ai-provider-brand-and-handoff.md` の公式アイコンと名称併記の境界を守る。
 
 ## Validation method
 - Android: `ExportRepositoryTest.prepareExport_zipIncludesAiSafeFilesAndExcludesRawFetchedBody`

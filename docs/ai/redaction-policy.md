@@ -14,7 +14,7 @@ redactionは既知パターンに対するbest-effortの安全策であり、未
 - ChatGPT手動共有ではURL、title、author、tag、legacy compatibility用collectionフィールド、`bodySummary`、`bodyExcerpt`、`description`、`memoExcerpt`を含む全出力文字列を既知パターン検出に通す。collectionフィールドの検査は現行Collection UIを意味しない。excerpt系は長さ制限も適用する。
 - email、phone、token-like value、URLエンコードされたtoken区切り、一般的なprovider接頭辞型token（`sk-`、`ghp_`、`xoxb-`、`AIza`、`AKIA`等）、Supabase URL/JWT風文字列、local pathは既知のredaction対象として伏せ字にする。
 - 既知パターン検出を通過しても、未知の秘密、任意形式の認証情報、URL query/fragmentやtitle/tag等に埋め込まれた新形式の秘密が残る可能性を共有前画面に明示する。
-- 手動共有は、対象URLと出力内容をユーザーが確認し、未知の秘密が含まれていないことを明示確認してからZIP生成/OS共有へ進む。
+- 手動共有は、選択タグと対象/除外件数、送る情報と伏せ字の限界を提示し、送るボタンの押下を表示対象への明示確認として受ける。snapshotとタグ集合を再検証してからZIP生成/OS共有へ進む。
 - publicSafeIdはopaque。raw DB idを外部境界に出さない。
 - shared tag由来URLは表示できてもAI対象はdefault `aiEligible=false`。
 - archived/pending deleteもdefault AI対象外。
@@ -23,7 +23,7 @@ redactionは既知パターンに対するbest-effortの安全策であり、未
 ## Done when
 - Exportに `schema.json`、`README_FOR_AI.md`、`redaction_report.json` が含まれる。
 - `savedSnapshotNotice` が保存時点metadataに付く。
-- ChatGPT手動共有のpreviewとZIPで同じredaction結果を使い、既知パターンが伏せ字になり、未知の秘密に関する警告と共有前確認が表示される。
+- ChatGPT手動共有のpreviewとZIPで同じredaction結果を使い、既知パターンが伏せ字になり、未知の秘密に関する警告と送るボタンによる明示確認が求められる。
 - MCPはraw bodyを返さず、write/external callをしない。
 
 ## Validation

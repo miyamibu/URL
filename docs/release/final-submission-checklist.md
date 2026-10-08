@@ -7,13 +7,13 @@
 この文書の下部に残る `1.0.11` の表は、2026-06-27/28 の Google Play / App Store 提出時点の履歴ログとして扱う。現在の repo source はmanifestと実ソースで照合し、この履歴ログだけでは次回提出可否を判断しない。
 
 ## Current source snapshot (manifest-backed)
-- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.24`, `versionCode=39`
-- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.24`, `build=39`; share extension `com.mibu.codebridge.ios.share`
+- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.25`, `versionCode=40`
+- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.25`, `build=40`; share extension `com.mibu.codebridge.ios.share`
 - Supabase migration head: `20260824090000_fix_apply_personal_link_ops_conflict.sql`
 - Machine-readable source: `docs/release/release-manifest.json`.
 - The dated provider and store records below are historical evidence and do not become current proof without a fresh recheck.
 - Current release/ops readiness tracker: `docs/release/launch-go-checklist.md`.
-- Current candidate: `1.0.24 (39)` for the approved manual link/tag selection update. Build, upload, processing, review submission, approval, and public availability are tracked separately. The 2026-09-14 `1.0.22 (37)` release record below is historical evidence, not a receipt for this candidate.
+- Current candidate: `1.0.25 (40)` for the approved manual link/tag selection update. Build, upload, processing, review submission, approval, and public availability are tracked separately. The 2026-09-14 `1.0.22 (37)` release record below is historical evidence, not a receipt for this candidate.
 - AI-safe export, manual ChatGPT handoff, and MCP source contracts are tracked separately under `docs/ai/`. Manual handoff is local ZIP + OS share with no question/API/OAuth; those local docs do not mean production MCP deployment, production OAuth registration, OpenAI submission, store submission, production secret entry, or store/live recheck is complete.
 - The `1.0.11` store submission, public URL, screenshot, signing, and console rows below are historical evidence, not current proof for the manifest-backed source.
 - Rows below that say `DONE` are historical `1.0.11` evidence unless the row explicitly names a current repo gate. Do not use them as `LAUNCH_GO` evidence without re-running the manual launch checklist.

@@ -22,15 +22,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.toggleable
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -45,7 +42,6 @@ import androidx.compose.material.icons.outlined.Tag
 import androidx.compose.material.icons.outlined.Today
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -57,6 +53,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -77,14 +74,12 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import jp.mimac.urlsaver.data.ChatGptExportPreviewEntry
 import jp.mimac.urlsaver.data.ExportRecordStateFilter
 import jp.mimac.urlsaver.data.PreparedExportArchive
 import jp.mimac.urlsaver.data.ExportScope
@@ -363,6 +358,13 @@ fun ChatGptExportScreen(
     val context = LocalContext.current
     var shareRequested by remember { mutableStateOf(false) }
     var shareError by remember { mutableStateOf<String?>(null) }
+    val displayedPreview = uiState.preview
+    val sendEnabled = !shareRequested && uiState.preparedArchive == null && isAiSendEnabled(
+        selectedTagCount = uiState.selectedTagIds.size,
+        targetCount = displayedPreview?.entries?.size ?: 0,
+        isPreviewLoading = uiState.isPreviewLoading,
+        isPreparingArchive = uiState.isArchivePreparing,
+    )
 
     DisposableEffect(viewModel) {
         onDispose {
@@ -414,6 +416,41 @@ fun ChatGptExportScreen(
                 windowInsets = WindowInsets(0.dp),
             )
         },
+        bottomBar = {
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 3.dp,
+            ) {
+                Button(
+                    onClick = {
+                        val preview = displayedPreview ?: return@Button
+                        shareError = null
+                        shareRequested = true
+                        viewModel.requestChatGptSend(
+                            displayedTagIds = uiState.selectedTagIds,
+                            displayedSnapshotToken = preview.snapshotToken,
+                            displayedTargetCount = preview.entries.size,
+                        )
+                    },
+                    enabled = sendEnabled,
+                    modifier = Modifier
+                        .navigationBarsPadding()
+                        .padding(horizontal = 18.dp, vertical = 12.dp)
+                        .fillMaxWidth()
+                        .height(56.dp),
+                ) {
+                    if (uiState.isArchivePreparing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                        )
+                        Text("準備しています", modifier = Modifier.padding(start = 10.dp))
+                    } else {
+                        Text("${provider.displayName}に送る")
+                    }
+                }
+            }
+        },
         containerColor = Color.Transparent,
     ) { paddingValues ->
         Column(
@@ -428,27 +465,13 @@ fun ChatGptExportScreen(
             ChatGptExportContent(
                 availableTags = availableTags,
                 uiState = uiState,
-                preparedArchive = uiState.preparedArchive,
-                isPreparingArchive = uiState.isArchivePreparing,
                 error = shareError ?: uiState.archiveError,
-                successMessage = uiState.preparedArchive?.let {
-                    "${it.entryCount}件のZIPを${provider.displayName}へ渡す準備ができました。内容を変えずに共有します。"
-                },
                 providerDisplayName = provider.displayName,
                 onToggleTag = { tagID ->
                     shareError = null
                     viewModel.toggleChatGptTagSelection(tagID)
                 },
                 onRetryPreview = viewModel::retryChatGptPreview,
-                onContentConfirmedChange = viewModel::setChatGptContentConfirmed,
-                onPrepareArchive = {
-                    shareError = null
-                    viewModel.prepareChatGptExport()
-                },
-                onSendToChatGpt = {
-                    shareError = null
-                    shareRequested = true
-                },
             )
         }
     }
@@ -457,16 +480,14 @@ fun ChatGptExportScreen(
 internal fun shouldShowSharedTagExportPreset(isSharedTagCloudEnabled: Boolean): Boolean =
     isSharedTagCloudEnabled
 
-internal fun isChatGptZipCreationEnabled(
+internal fun isAiSendEnabled(
     selectedTagCount: Int,
     targetCount: Int,
-    isContentConfirmed: Boolean,
     isPreviewLoading: Boolean,
     isPreparingArchive: Boolean,
 ): Boolean {
     return selectedTagCount > 0 &&
         targetCount > 0 &&
-        isContentConfirmed &&
         !isPreviewLoading &&
         !isPreparingArchive
 }
@@ -536,44 +557,15 @@ private fun ExportModeSelector(
 private fun ChatGptExportContent(
     availableTags: List<ExportTagOption>,
     uiState: ChatGptExportUiState,
-    preparedArchive: PreparedExportArchive?,
-    isPreparingArchive: Boolean,
     error: String?,
-    successMessage: String?,
     providerDisplayName: String,
     onToggleTag: (Long) -> Unit,
     onRetryPreview: () -> Unit,
-    onContentConfirmedChange: (Boolean) -> Unit,
-    onPrepareArchive: () -> Unit,
-    onSendToChatGpt: () -> Unit,
 ) {
-    val preview = preparedArchive?.chatGptPreview ?: uiState.preview
-    val targetCount = preview?.entries?.size ?: 0
+    var explanationExpanded by remember { mutableStateOf(false) }
+    val preview = uiState.preview
 
-    ElevatedCard(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.extraLarge,
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp),
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(
-                text = providerDisplayName,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                text = "りんばむでは質問を入力しません。確認したリンクをZIPにして渡し、質問とモデル選択は${providerDisplayName}の通常のトーク画面で行います。",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-
-    ExportSectionLabel("1. 渡したい自作タグを選択")
+    ExportSectionLabel("渡したい自作タグ")
     if (availableTags.isEmpty()) {
         Text(
             text = "URLが付いた自作タグがありません",
@@ -588,13 +580,10 @@ private fun ChatGptExportContent(
         )
     }
 
-    ExportSectionLabel("2. 渡す内容を確認")
-    ChatGptContentBoundaryCard()
-
     when {
         uiState.selectedTagIds.isEmpty() -> {
             Text(
-                text = "自作タグを1つ以上選ぶと、対象URLを全件表示します。",
+                text = "自作タグを1つ以上選んでください",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -620,254 +609,79 @@ private fun ChatGptExportContent(
             }
         }
         preview != null -> {
-            val snapshotLabel = if (preparedArchive != null) "生成後の対象" else "対象"
-            Text(
-                text = "$snapshotLabel ${preview.entries.size}件 / 除外 ${preview.excludedCount}件",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
-            if (preview.selectedTagNames.isNotEmpty()) {
-                Text(
-                    text = "ZIPに入る自作タグ名（伏せ字後）: ${preview.selectedTagNames.joinToString("、")}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            if (preview.excludedCount > 0) {
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    chatGptExclusionReasonOrder.forEach { reason ->
-                        val count = preview.exclusionsByReason[reason].orZero()
-                        if (count > 0) {
-                            Text(
-                                text = "・${chatGptExclusionReasonLabel(reason)}: ${count}件",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                AiCountCard(label = "対象", count = preview.entries.size, modifier = Modifier.weight(1f))
+                AiCountCard(label = "除外", count = preview.excludedCount, modifier = Modifier.weight(1f))
             }
             if (preview.entries.isEmpty()) {
                 Text(
                     text = "選択した自作タグに、${providerDisplayName}へ渡せるURLがありません。",
                     color = MaterialTheme.colorScheme.error,
                 )
-            } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 420.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    itemsIndexed(
-                        items = preview.entries,
-                        key = { index, entry -> "${entry.publicSafeId}:$index" },
-                    ) { index, entry ->
-                        ChatGptPreviewEntryCard(index = index + 1, entry = entry)
-                    }
-                }
             }
-        }
-    }
-
-    if (preview != null && preview.entries.isNotEmpty() && !uiState.isPreviewLoading) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .toggleable(
-                    value = uiState.isContentConfirmed,
-                    role = Role.Checkbox,
-                    onValueChange = onContentConfirmedChange,
-                )
-                .padding(vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Checkbox(
-                checked = uiState.isContentConfirmed,
-                onCheckedChange = null,
-            )
-            Text(
-                text = "対象URLと表示内容を確認し、未知の秘密が含まれていないことを確認しました",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-        }
-    }
-
-    ExportSectionLabel("3. ${providerDisplayName}用ファイルを作成")
-    Button(
-        onClick = onPrepareArchive,
-        enabled = isChatGptZipCreationEnabled(
-            selectedTagCount = uiState.selectedTagIds.size,
-            targetCount = targetCount,
-            isContentConfirmed = uiState.isContentConfirmed,
-            isPreviewLoading = uiState.isPreviewLoading,
-            isPreparingArchive = isPreparingArchive,
-        ),
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(56.dp),
-    ) {
-        if (isPreparingArchive) {
-            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-            Text(
-                text = "ZIPを作成しています",
-                modifier = Modifier.padding(start = 10.dp),
-            )
-        } else {
-            Text("${providerDisplayName}用ZIPを作成")
         }
     }
 
     if (error != null) {
         Text(text = error, color = MaterialTheme.colorScheme.error)
     }
-    if (successMessage != null) {
+
+    TextButton(onClick = { explanationExpanded = !explanationExpanded }) {
         Text(
-            text = successMessage,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            text = if (explanationExpanded) "送る内容を閉じる" else "送る内容について",
         )
     }
-
-    ExportSectionLabel("4. ${providerDisplayName}に送る")
-    if (preparedArchive == null) {
+    if (explanationExpanded) {
         Text(
-            text = "先に対象を確認してZIPを作成してください。作成しただけでは共有されません。",
-            style = MaterialTheme.typography.bodyMedium,
+            text = "URL・タイトル・自作タグ・メモの抜粋などを渡します。共有タグ・削除待ち・アーカイブ・共有中のURLは対象外です。個人情報の伏せ字は完全ではありません。質問の入力と最終送信は${providerDisplayName}で行います。",
+            style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-    } else {
-        OutlinedCard(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface),
-        ) {
-            Column(
-                modifier = Modifier.padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Text(
-                    text = preparedArchive.fileName,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    text = "生成時点の対象 ${preparedArchive.entryCount}件。送信後、${providerDisplayName}で質問を入力してください。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        OutlinedButton(
-            onClick = onSendToChatGpt,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp),
-        ) {
-            Icon(
-                imageVector = Icons.Outlined.IosShare,
-                contentDescription = null,
-                modifier = Modifier.size(20.dp),
-            )
-            Text(
-                text = "${providerDisplayName}に送る",
-                modifier = Modifier.padding(start = 8.dp),
-            )
-        }
-    }
-}
-
-@Composable
-private fun ChatGptContentBoundaryCard() {
-    OutlinedCard(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface),
-    ) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(
-                text = "含まれるもの（固定）",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                text = "URL、タイトル、自作タグ、保存日時、メモ抜粋、取得できた著者・要約・抜粋などの保存時点情報",
-                style = MaterialTheme.typography.bodySmall,
-            )
-            Text(
-                text = "含まれないもの（固定）",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                text = "質問、PDF・画像本体、取得本文全文、共有タグと参加者、削除待ち・アーカイブ・共有参照のURL",
-                style = MaterialTheme.typography.bodySmall,
-            )
-            Text(
-                text = "伏せ字になるもの",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                text = "メールアドレス、電話番号、token・secret、JWT、Supabase情報、端末内パスは、検出できた範囲を伏せ字にします。未知の形式の秘密は残る可能性があります。共有前に、下の伏せ字後の全内容を必ず確認してください。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-@Composable
-private fun ChatGptPreviewEntryCard(
-    index: Int,
-    entry: ChatGptExportPreviewEntry,
-) {
-    OutlinedCard(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface),
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Text(
-                text = "$index. ${entry.effectiveTitle}",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(
-                text = entry.normalizedUrl,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (entry.localTagNames.isNotEmpty()) {
-                Text(
-                    text = "自作タグ: ${entry.localTagNames.joinToString("、")}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Text(
-                text = "ZIPに入る伏せ字後の内容",
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(top = 6.dp),
-            )
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.48f),
-                shape = MaterialTheme.shapes.small,
-            ) {
-                SelectionContainer {
-                    Text(
-                        text = entry.archiveEntryJson,
-                        modifier = Modifier.padding(10.dp),
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+        if (preview != null && preview.excludedCount > 0) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                chatGptExclusionReasonOrder.forEach { reason ->
+                    val count = preview.exclusionsByReason[reason].orZero()
+                    if (count > 0) {
+                        Text(
+                            text = "・${chatGptExclusionReasonLabel(reason)}: ${count}件",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun AiCountCard(
+    label: String,
+    count: Int,
+    modifier: Modifier = Modifier,
+) {
+    OutlinedCard(
+        modifier = modifier,
+        colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = "${count}件",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+            )
         }
     }
 }

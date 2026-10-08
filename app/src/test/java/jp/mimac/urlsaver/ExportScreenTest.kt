@@ -14,7 +14,7 @@ import jp.mimac.urlsaver.ui.buildChatGptDirectShareIntent
 import jp.mimac.urlsaver.ui.cacheExportArchive
 import jp.mimac.urlsaver.ui.cachedExportFileNamesToPrune
 import jp.mimac.urlsaver.ui.copyPreparedExportArchive
-import jp.mimac.urlsaver.ui.isChatGptZipCreationEnabled
+import jp.mimac.urlsaver.ui.isAiSendEnabled
 import jp.mimac.urlsaver.ui.shouldFallbackToChatGptChooser
 import jp.mimac.urlsaver.ui.shouldShowSharedTagExportPreset
 import jp.mimac.urlsaver.ui.writeCachedExportArchive
@@ -65,30 +65,27 @@ class ExportScreenTest {
     }
 
     @Test
-    fun isChatGptZipCreationEnabled_requiresSelectionAndEligibleTarget() {
+    fun isAiSendEnabled_requiresSelectionAndEligibleTarget() {
         assertFalse(
-            isChatGptZipCreationEnabled(
+            isAiSendEnabled(
                 selectedTagCount = 0,
                 targetCount = 1,
-                isContentConfirmed = true,
                 isPreviewLoading = false,
                 isPreparingArchive = false,
             ),
         )
         assertFalse(
-            isChatGptZipCreationEnabled(
+            isAiSendEnabled(
                 selectedTagCount = 1,
                 targetCount = 0,
-                isContentConfirmed = true,
                 isPreviewLoading = false,
                 isPreparingArchive = false,
             ),
         )
         assertTrue(
-            isChatGptZipCreationEnabled(
+            isAiSendEnabled(
                 selectedTagCount = 2,
                 targetCount = 3,
-                isContentConfirmed = true,
                 isPreviewLoading = false,
                 isPreparingArchive = false,
             ),
@@ -96,34 +93,19 @@ class ExportScreenTest {
     }
 
     @Test
-    fun isChatGptZipCreationEnabled_requiresExplicitContentConfirmation() {
+    fun isAiSendEnabled_blocksWhilePreviewOrArchiveIsBusy() {
         assertFalse(
-            isChatGptZipCreationEnabled(
+            isAiSendEnabled(
                 selectedTagCount = 1,
                 targetCount = 1,
-                isContentConfirmed = false,
-                isPreviewLoading = false,
-                isPreparingArchive = false,
-            ),
-        )
-    }
-
-    @Test
-    fun isChatGptZipCreationEnabled_blocksWhilePreviewOrArchiveIsBusy() {
-        assertFalse(
-            isChatGptZipCreationEnabled(
-                selectedTagCount = 1,
-                targetCount = 1,
-                isContentConfirmed = true,
                 isPreviewLoading = true,
                 isPreparingArchive = false,
             ),
         )
         assertFalse(
-            isChatGptZipCreationEnabled(
+            isAiSendEnabled(
                 selectedTagCount = 1,
                 targetCount = 1,
-                isContentConfirmed = true,
                 isPreviewLoading = false,
                 isPreparingArchive = true,
             ),

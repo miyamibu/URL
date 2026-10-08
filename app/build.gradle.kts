@@ -115,8 +115,8 @@ android {
         applicationId = "jp.miyamibu.urlalbum"
         minSdk = 26
         targetSdk = 36
-        versionCode = 39
-        versionName = "1.0.24"
+        versionCode = 40
+        versionName = "1.0.25"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
