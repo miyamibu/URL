@@ -1,5 +1,15 @@
 # REPO_GO Evidence
 
+## 2026-10-08 AI handoff release candidate: 1.0.25 (40)
+
+Final status: REPO_GO for the authorized mobile Store update; Store review and public availability remain separate external states.
+
+- Source commit `befc926df95b84537b2d37db544a8482e0c383b0` is pushed to `origin/main`. It adds official provider icons and simplifies the AI flow to tag selection, eligible/excluded counts and one send action with snapshot revalidation. The candidate includes the previously committed detail/save/search improvements.
+- Android verification: 510 unit tests with zero failures/errors/skips, Debug build/lint, one emulator AI handoff flow test, and the signed Release AAB passed. Package/version/SDK metadata, R8 mapping, unchanged payload after signing and the previous accepted upload certificate were verified.
+- iOS verification: 33 export tests passed at the recorded test revision; subsequent UI changes passed the final build and actual simulator operation of all four provider choices, tag selection and native ZIP sharing. The distribution archive/IPA passed signature, canonical IDs, version, disabled debug entitlement and existing production runtime configuration checks.
+- Mobile UI contract, release manifest, whitespace and release hygiene checks passed. Evidence is retained locally under `artifacts/ui-review/2026-10-08/ai-handoff-brief/` and `artifacts/store-submission-logs/2026-10-08-*`.
+- The prior blank AI share-sheet finding was resolved on the correctly signed simulator candidate. Other earlier contrast/style findings in [the broader visual audit](../ui-review/2026-10-08-design-performance-status.md) remain known limitations outside this AI-screen change. Authenticated multi-device, purchase, physical-device and final external AI receipt checks were not rerun. This gate does not claim full production/backend launch or approval/publication.
+
 
 ## 2026-10-05 store submission: 1.0.24 (39)
 
