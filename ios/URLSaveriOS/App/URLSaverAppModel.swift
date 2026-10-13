@@ -257,6 +257,7 @@ final class URLSaverAppModel: ObservableObject {
     private var deleteTimerTokens: [Int64: UUID] = [:]
     private var hasBootstrapped = false
     private var isReloading = false
+    private var isConsumingShareHandoff = false
 
     init(services: AppServices) {
         self.services = services
@@ -564,44 +565,69 @@ final class URLSaverAppModel: ObservableObject {
     }
 
     func consumeShareHandoffReport() async {
-        guard let report = try? await services.handoffStore.consume() else { return }
-        handleShareReport(report)
-        await assignSharedTagsFromShareHandoff(report)
-        if let entryID = report.entryID, report.result == .created || report.result == .restoredFromPendingDelete {
-            if report.result == .created || report.result == .restoredFromPendingDelete {
-                Task {
-                    _ = await services.metadataCoordinator.enqueue(entryID: entryID)
-                    await reload()
+        guard !isConsumingShareHandoff else { return }
+        isConsumingShareHandoff = true
+        defer { isConsumingShareHandoff = false }
+        let pendingReports: [PendingShareHandoff]
+        do {
+            pendingReports = try await services.handoffStore.pendingReports()
+        } catch {
+            enqueueNotification(AppNotification(
+                message: "共有保存の引き継ぎを読み込めませんでした。保存済みのURLは保持しています",
+                actionLabel: nil, action: nil, autoDismissAfter: 5
+            ))
+            return
+        }
+        for pending in pendingReports {
+            let report = pending.report
+            handleShareReport(report)
+            if let entryID = report.entryID, report.result == .created || report.result == .restoredFromPendingDelete {
+                _ = await services.metadataCoordinator.enqueue(entryID: entryID)
+            }
+            let failedAssignments = await assignSharedTagsFromShareHandoff(report)
+            do {
+                if failedAssignments.isEmpty {
+                    try await services.handoffStore.acknowledge(pending)
+                } else {
+                    try await services.handoffStore.retain(pending, assignments: failedAssignments)
                 }
+            } catch {
+                enqueueNotification(AppNotification(message: "共有タグへの追加状況を保存できませんでした。次回起動時に再確認します", actionLabel: nil, action: nil, autoDismissAfter: 5))
             }
         }
         await reload()
     }
 
-    private func assignSharedTagsFromShareHandoff(_ report: ShareHandoffReport) async {
-        let remoteTagIDs = report.sharedTagRemoteIDs ?? []
-        let entryIDs = report.entryIDs ?? report.entryID.map { [$0] } ?? []
-        guard !remoteTagIDs.isEmpty, !entryIDs.isEmpty else { return }
+    private func assignSharedTagsFromShareHandoff(_ report: ShareHandoffReport) async -> [ShareHandoffAssignment] {
+        let assignments = report.sharedTagAssignments
+        guard !assignments.isEmpty else { return [] }
+        guard report.canAssignSharedTags(authUserID: services.sharedTagCloud.currentSession()?.authUserID) else {
+            enqueueNotification(AppNotification(
+                message: "URLは端末に保存済みです。共有タグへの追加は保留しています。共有時のアカウントでサインインしてください。アカウントが不明な場合は共有タグを選び直してください",
+                actionLabel: nil, action: nil, autoDismissAfter: 5
+            ))
+            return assignments
+        }
 
-        var failed = 0
-        for entryID in entryIDs {
-            for remoteTagID in remoteTagIDs {
-                if await services.sharedTagCloud.assignEntry(remoteTagID: remoteTagID, entryID: entryID) != .success {
-                    failed += 1
-                }
+        var failed: [ShareHandoffAssignment] = []
+        for assignment in assignments {
+            // Recheck after each suspension so an account switch never sends the remaining pairs.
+            guard report.canAssignSharedTags(authUserID: services.sharedTagCloud.currentSession()?.authUserID) else {
+                failed.append(assignment)
+                continue
+            }
+            if await services.sharedTagCloud.assignEntry(remoteTagID: assignment.remoteTagID, entryID: assignment.entryID, expectedAuthUserID: report.authUserID) != .success {
+                failed.append(assignment)
             }
         }
-        if failed > 0 {
-            enqueueNotification(
-                AppNotification(
-                    message: "URLの端末保存のみ完了し、一部の共有タグへの追加は完了していません",
-                    actionLabel: nil,
-                    action: nil,
-                    autoDismissAfter: 5
-                )
-            )
+        if !failed.isEmpty {
+            enqueueNotification(AppNotification(
+                message: "URLの端末保存は完了しました。未完了の共有タグへの追加は保持し、次回起動時に再試行します",
+                actionLabel: nil, action: nil, autoDismissAfter: 5
+            ))
         }
         await refreshSharedTagCloudState()
+        return failed
     }
 
     func refreshAfterReturningToForeground() async {
@@ -970,6 +996,14 @@ final class URLSaverAppModel: ObservableObject {
         services.sharedTagCloud.googleOAuthURL()
     }
 
+    func googleIdentityLinkURLForSharedTagCloud() async -> Result<URL, SharedTagCloudError> {
+        await services.sharedTagCloud.googleIdentityLinkURL()
+    }
+
+    func cancelGoogleIdentityLinkForSharedTagCloud() async {
+        _ = await services.sharedTagCloud.cancelPendingIdentityLink()
+    }
+
     func signInWithAppleForSharedTagCloud(idToken: String, nonce: String) async {
         switch await services.sharedTagCloud.signInWithAppleIDToken(idToken: idToken, nonce: nonce) {
         case .success(let email):
@@ -997,9 +1031,21 @@ final class URLSaverAppModel: ObservableObject {
         }
     }
 
+    func linkAppleIdentityForSharedTagCloud(idToken: String, nonce: String, expectedAuthUserID: String? = nil) async {
+        switch await services.sharedTagCloud.linkAppleIdentity(idToken: idToken, nonce: nonce, expectedAuthUserID: expectedAuthUserID) {
+        case .success:
+            await refreshSharedTagCloudState()
+            profileStatusMessage = "Appleアカウントを現在の共有タグアカウントに連携しました。"
+            enqueueNotification(AppNotification(message: "Appleアカウントを連携しました", actionLabel: nil, action: nil, autoDismissAfter: 4))
+        case .failure(let message):
+            profileStatusMessage = message
+            enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 4))
+        }
+    }
+
     private func handleSharedTagAuthCallback(_ url: URL) async {
         switch await services.sharedTagCloud.handleOAuthCallback(url: url) {
-        case .success(let email):
+        case .signIn(.success(let email)):
             await refreshSharedTagCloudState()
             await refreshEntitlements()
             profileStatusMessage = "Googleでサインインしました。プロフィールと共有タグを使えます。"
@@ -1015,10 +1061,18 @@ final class URLSaverAppModel: ObservableObject {
             await refreshSharedTagCloudState()
             await refreshEntitlements()
             await acceptPendingInviteIfPossible()
-        case .needsEmailConfirmation:
+        case .signIn(.needsEmailConfirmation):
             profileStatusMessage = "メール確認後に再度サインインしてください。"
             enqueueNotification(AppNotification(message: "メール確認後に共有タグクラウドへサインインしてください", actionLabel: nil, action: nil, autoDismissAfter: 5))
-        case .failure(let message):
+        case .signIn(.failure(let message)):
+            profileStatusMessage = message
+            enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 4))
+        case .identityLink(.success(let provider)):
+            await refreshSharedTagCloudState()
+            let providerName = provider == "apple" ? "Apple" : "Google"
+            profileStatusMessage = "\(providerName)アカウントを現在の共有タグアカウントに連携しました。"
+            enqueueNotification(AppNotification(message: "\(providerName)アカウントを連携しました", actionLabel: nil, action: nil, autoDismissAfter: 4))
+        case .identityLink(.failure(let message)):
             profileStatusMessage = message
             enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 4))
         }

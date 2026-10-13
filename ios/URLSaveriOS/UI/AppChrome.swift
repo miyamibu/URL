@@ -81,6 +81,71 @@ enum EntryListDisplayMode: String {
     case compact
 }
 
+enum HomeEntryLayout: String, CaseIterable, Identifiable {
+    case list
+    case thumbnailGrid
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .list: return "一覧"
+        case .thumbnailGrid: return "2列"
+        }
+    }
+}
+
+enum EntryListSortOption: String, CaseIterable, Identifiable {
+    case addedDate
+    case title
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .addedDate: return "追加日"
+        case .title: return "タイトル"
+        }
+    }
+}
+
+func canRenameSharedTag(currentUserRole: SharedTagMemberRole?) -> Bool {
+    currentUserRole == .owner || currentUserRole == .editor
+}
+
+func canContributeSharedTagToGroup(
+    groupRole: SharedTagMemberRole?,
+    tagRole: SharedTagMemberRole?
+) -> Bool {
+    groupRole != nil && tagRole == .owner
+}
+
+func sortedEntriesForDisplay(
+    _ entries: [URLRecord],
+    by option: EntryListSortOption,
+    ascending: Bool
+) -> [URLRecord] {
+    entries.sorted { lhs, rhs in
+        let primaryOrder: ComparisonResult
+        switch option {
+        case .addedDate:
+            primaryOrder = lhs.createdAt == rhs.createdAt
+                ? .orderedSame
+                : (lhs.createdAt < rhs.createdAt ? .orderedAscending : .orderedDescending)
+        case .title:
+            primaryOrder = lhs.effectiveTitle.localizedStandardCompare(rhs.effectiveTitle)
+        }
+
+        if primaryOrder != .orderedSame {
+            return ascending ? primaryOrder == .orderedAscending : primaryOrder == .orderedDescending
+        }
+        if lhs.createdAt != rhs.createdAt {
+            return ascending ? lhs.createdAt < rhs.createdAt : lhs.createdAt > rhs.createdAt
+        }
+        return ascending ? lhs.id < rhs.id : lhs.id > rhs.id
+    }
+}
+
 enum AppButtonTone {
     case primary
     case secondary
@@ -352,6 +417,7 @@ struct EntryCardView: View {
     let selected: Bool
     let localTagNames: [String]
     let localTagTints: [String: TagTint]
+    let gridInfoVisible: Bool?
     let footerContent: (() -> AnyView)?
 
     init(
@@ -362,6 +428,7 @@ struct EntryCardView: View {
         selected: Bool = false,
         localTagNames: [String] = [],
         localTagTints: [String: TagTint] = [:],
+        gridInfoVisible: Bool? = nil,
         footerContent: (() -> AnyView)? = nil
     ) {
         self.entry = entry
@@ -371,14 +438,16 @@ struct EntryCardView: View {
         self.selected = selected
         self.localTagNames = localTagNames
         self.localTagTints = localTagTints
+        self.gridInfoVisible = gridInfoVisible
         self.footerContent = footerContent
     }
 
     var body: some View {
-        let visibleLocalTagNames = entryCardVisibleLocalTagNames(localTagNames)
         AppPanel(padded: false) {
             VStack(alignment: .leading, spacing: 0) {
-                if displayMode == .rich, let thumbnailURL = entry.thumbnailURL, let url = URL(string: thumbnailURL) {
+                if let gridInfoVisible {
+                    homeGridThumbnail(infoVisible: gridInfoVisible)
+                } else if displayMode == .rich, let thumbnailURL = entry.thumbnailURL, let url = URL(string: thumbnailURL) {
                     RemoteURLImage(url: url) { image in
                         image.resizable().scaledToFill()
                     } placeholder: {
@@ -398,72 +467,9 @@ struct EntryCardView: View {
                     )
                 }
 
-                HStack(alignment: .top, spacing: 12) {
-                    RoundedRectangle(cornerRadius: 999, style: .continuous)
-                        .fill(serviceAccentGradient(for: entry.serviceType))
-                        .frame(width: 4, height: 48)
-                        .padding(.top, 3)
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(alignment: .top, spacing: 8) {
-                            ServiceBadgeView(serviceType: entry.serviceType, badgeImageURL: entry.badgeImageURL, reloadKey: entry.metadataFetchedAt)
-                                .padding(.top, 0)
-
-                            if visibleLocalTagNames.isEmpty {
-                                HStack(spacing: 8) {
-                                    if let headerText = entryCardDistinctHeaderText(for: entry) {
-                                        Text(headerText)
-                                            .font(.system(.body).weight(.medium))
-                                            .foregroundStyle(AppPalette.textSecondary)
-                                            .lineLimit(2)
-                                            .fixedSize(horizontal: false, vertical: true)
-                                    }
-
-                                    if entry.contentContext != .standard {
-                                        Text(contentContextLabel(for: entry.contentContext))
-                                            .font(.system(.caption, design: .rounded).weight(.bold))
-                                            .foregroundStyle(AppPalette.textSecondary)
-                                            .padding(.horizontal, 12)
-                                            .padding(.vertical, 6)
-                                            .background(AppPalette.surfaceSoft, in: Capsule())
-                                            .overlay(
-                                                Capsule()
-                                                    .stroke(AppPalette.outline, lineWidth: 1.5)
-                                            )
-                                    }
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            } else {
-                                EntryLocalTagFlow(tagNames: visibleLocalTagNames, tints: localTagTints)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                        }
-
-                        Text(preferredDisplayTitle(for: entry))
-                            .font(.system(.headline, design: .rounded).weight(.bold))
-                            .foregroundStyle(AppPalette.textPrimary)
-                            .lineLimit(displayMode == .rich ? 3 : 2)
-                            .multilineTextAlignment(.leading)
-                            .fixedSize(horizontal: false, vertical: true)
-
-                        if displayMode == .rich, let summary = entry.description ?? entry.bodySummary, !summary.isEmpty {
-                            Text(summary)
-                                .font(.system(.subheadline).weight(.medium))
-                                .foregroundStyle(AppPalette.textMuted)
-                                .lineLimit(3)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-
-                        if let metadataText = MetadataStatusText.listText(for: entry) {
-                            Text(metadataText)
-                                .font(.system(.footnote).weight(.semibold))
-                                .foregroundStyle(metadataTextColor(for: entry.metadataState))
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                if gridInfoVisible != false {
+                    entryInformation
                 }
-                .padding(18)
-                .frame(maxWidth: .infinity, alignment: .leading)
 
                 if let footerContent {
                     footerContent()
@@ -488,6 +494,117 @@ struct EntryCardView: View {
             }
         }
         .accessibilityValue(selected ? "選択中" : "")
+    }
+
+    private var visibleLocalTagNames: [String] {
+        entryCardVisibleLocalTagNames(localTagNames)
+    }
+
+    private var entryInformation: some View {
+        HStack(alignment: .top, spacing: 12) {
+            RoundedRectangle(cornerRadius: 999, style: .continuous)
+                .fill(serviceAccentGradient(for: entry.serviceType))
+                .frame(width: 4, height: 48)
+                .padding(.top, 3)
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 8) {
+                    ServiceBadgeView(serviceType: entry.serviceType, badgeImageURL: entry.badgeImageURL, reloadKey: entry.metadataFetchedAt)
+
+                    if visibleLocalTagNames.isEmpty {
+                        HStack(spacing: 8) {
+                            if let headerText = entryCardDistinctHeaderText(for: entry) {
+                                Text(headerText)
+                                    .font(.system(.body).weight(.medium))
+                                    .foregroundStyle(AppPalette.textSecondary)
+                                    .lineLimit(gridInfoVisible == nil ? 2 : 1)
+                                    .truncationMode(.tail)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+
+                            if entry.contentContext != .standard {
+                                Text(contentContextLabel(for: entry.contentContext))
+                                    .font(.system(.caption, design: .rounded).weight(.bold))
+                                    .foregroundStyle(AppPalette.textSecondary)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(AppPalette.surfaceSoft, in: Capsule())
+                                    .overlay(Capsule().stroke(AppPalette.outline, lineWidth: 1.5))
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        EntryLocalTagFlow(tagNames: visibleLocalTagNames, tints: localTagTints)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+                Text(preferredDisplayTitle(for: entry))
+                    .font(.system(.headline, design: .rounded).weight(.bold))
+                    .foregroundStyle(AppPalette.textPrimary)
+                    .lineLimit(gridInfoVisible == nil ? (displayMode == .rich ? 3 : 2) : 2)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if (displayMode == .rich || gridInfoVisible == true),
+                   let summary = entry.description ?? entry.bodySummary,
+                   !summary.isEmpty {
+                    Text(summary)
+                        .font(.system(.subheadline).weight(.medium))
+                        .foregroundStyle(AppPalette.textMuted)
+                        .lineLimit(gridInfoVisible == nil ? 3 : 2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if let metadataText = MetadataStatusText.listText(for: entry) {
+                    Text(metadataText)
+                        .font(.system(.footnote).weight(.semibold))
+                        .foregroundStyle(metadataTextColor(for: entry.metadataState))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func homeGridThumbnail(infoVisible: Bool) -> some View {
+        let tileSize = cardWidth ?? 180
+        return Group {
+            if let thumbnailURL = entry.thumbnailURL, let url = URL(string: thumbnailURL) {
+                RemoteURLImage(url: url) { image in
+                    image.resizable().scaledToFill()
+                } placeholder: {
+                    homeGridThumbnailPlaceholder
+                }
+            } else {
+                homeGridThumbnailPlaceholder
+            }
+        }
+        .frame(width: tileSize, height: tileSize)
+        .frame(maxWidth: .infinity)
+        .clipped()
+        .clipShape(
+            UnevenRoundedRectangle(
+                topLeadingRadius: 24,
+                bottomLeadingRadius: infoVisible ? 0 : 24,
+                bottomTrailingRadius: infoVisible ? 0 : 24,
+                topTrailingRadius: 24,
+                style: .continuous
+            )
+        )
+        .accessibilityHidden(true)
+    }
+
+    private var homeGridThumbnailPlaceholder: some View {
+        Rectangle()
+            .fill(AppPalette.surfaceSoft)
+            .overlay {
+                Image(systemName: "photo")
+                    .font(.system(size: 28, weight: .regular))
+                    .foregroundStyle(AppPalette.textMuted)
+                    .accessibilityHidden(true)
+            }
     }
 
     private var thumbnailHeight: CGFloat {
@@ -658,6 +775,7 @@ struct SwipeableEntryCard: View {
     let cardWidth: CGFloat
     let localTagNames: [String]
     var localTagTints: [String: TagTint] = [:]
+    var gridInfoVisible: Bool? = nil
     let onTap: () -> Void
     let onArchive: () -> Void
     let onDelete: () -> Void
@@ -667,25 +785,7 @@ struct SwipeableEntryCard: View {
 
     var body: some View {
         ZStack {
-            HStack(spacing: 0) {
-                SwipeActionHint(
-                    systemImage: "archivebox.fill",
-                    label: "アーカイブ",
-                    color: AppPalette.secondarySurface,
-                    alignment: .leading
-                )
-
-                Spacer(minLength: 0)
-
-                SwipeActionHint(
-                    systemImage: "trash.fill",
-                    label: "削除",
-                    color: AppPalette.dangerSurface,
-                    alignment: .trailing
-                )
-            }
-            .frame(width: cardWidth)
-            .opacity(dragOffset == 0 ? 0 : 1)
+            swipeActionBackground
 
             EntryCardView(
                 entry: entry,
@@ -693,7 +793,8 @@ struct SwipeableEntryCard: View {
                 displayMode: displayMode,
                 cardWidth: cardWidth,
                 localTagNames: localTagNames,
-                localTagTints: localTagTints
+                localTagTints: localTagTints,
+                gridInfoVisible: gridInfoVisible
             )
             .offset(x: dragOffset)
             .contentShape(Rectangle())
@@ -720,6 +821,64 @@ struct SwipeableEntryCard: View {
         .accessibilityAction { onTap() }
         .accessibilityAction(named: Text("アーカイブ")) { onArchive() }
         .accessibilityAction(named: Text("削除")) { onDelete() }
+    }
+
+    @ViewBuilder
+    private var swipeActionBackground: some View {
+        if gridInfoVisible == nil {
+            HStack(spacing: 0) {
+                SwipeActionHint(
+                    systemImage: "archivebox.fill",
+                    label: "アーカイブ",
+                    color: AppPalette.secondarySurface,
+                    alignment: .leading
+                )
+
+                Spacer(minLength: 0)
+
+                SwipeActionHint(
+                    systemImage: "trash.fill",
+                    label: "削除",
+                    color: AppPalette.dangerSurface,
+                    alignment: .trailing
+                )
+            }
+            .frame(width: cardWidth)
+            .opacity(dragOffset == 0 ? 0 : 1)
+        } else {
+            HStack(spacing: 0) {
+                gridSwipeActionHint(
+                    systemImage: "archivebox.fill",
+                    label: "アーカイブ",
+                    color: AppPalette.secondarySurface
+                )
+                gridSwipeActionHint(
+                    systemImage: "trash.fill",
+                    label: "削除",
+                    color: AppPalette.dangerSurface
+                )
+            }
+            .frame(width: cardWidth)
+            .opacity(dragOffset == 0 ? 0 : 1)
+            .clipped()
+            .accessibilityHidden(true)
+        }
+    }
+
+    private func gridSwipeActionHint(systemImage: String, label: String, color: Color) -> some View {
+        VStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .font(.system(size: 18, weight: .bold))
+            Text(label)
+                .font(.system(.caption2, design: .rounded).weight(.heavy))
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+        }
+        .foregroundStyle(Color.white.opacity(0.95))
+        .frame(width: cardWidth / 2)
+        .frame(maxHeight: .infinity)
+        .background(color)
+        .accessibilityHidden(true)
     }
 
     private func handleSwipeEnd(offset: CGFloat, velocity: CGFloat) {
@@ -1357,8 +1516,14 @@ struct TagAppearanceSheet: View {
     @State private var isSaving = false
     @State private var error: String?
 
-    init(name: String, key: String, allowsRename: Bool = false, onSaveName: ((String) async -> Bool)? = nil) {
-        title = allowsRename ? "自作タグを編集" : "共有タグの色"
+    init(
+        name: String,
+        key: String,
+        title: String? = nil,
+        allowsRename: Bool = false,
+        onSaveName: ((String) async -> Bool)? = nil
+    ) {
+        self.title = title ?? (allowsRename ? "自作タグを編集" : "共有タグの色")
         self.key = key
         self.allowsRename = allowsRename
         self.onSaveName = onSaveName
@@ -1505,6 +1670,9 @@ struct ServiceFilterRow: View {
                         }
                     )
                     .accessibilityAction { select(item) }
+                    .accessibilityAction(named: Text("タグ名と色を編集")) {
+                        if let localTag { onRenameLocalTag(localTag) }
+                    }
                     .accessibilityHint("長押ししてドラッグすると並び替えできます")
                     .onDrag {
                         draggingFilterToken = item.token
@@ -1702,6 +1870,7 @@ struct SharedTagSection: View {
     var accountID: String? = nil
     let onCreateTag: (() -> Void)?
     let onOpenTag: ((String) -> Void)?
+    let onRenameTag: ((String, String) async -> Bool)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1721,6 +1890,7 @@ struct SharedTagSection: View {
                     )
 
                     ForEach(tags) { tag in
+                        let canRename = canRenameSharedTag(currentUserRole: tag.currentUserRole)
                         FilterChipButton(
                             label: tag.name,
                             selected: false,
@@ -1733,7 +1903,7 @@ struct SharedTagSection: View {
                             }
                         })
                         .accessibilityAction { onOpenTag?(tag.remoteTagID) }
-                        .accessibilityAction(named: "色を変更") { editingTag = tag }
+                        .accessibilityAction(named: Text(canRename ? "共有タグ名と色を編集" : "共有タグの色を変更")) { editingTag = tag }
                     }
                 }
                 .padding(.horizontal, 14)
@@ -1741,9 +1911,166 @@ struct SharedTagSection: View {
         }
         .sheet(item: $editingTag) { tag in
             if let key = TagTintPreferences.sharedKey(accountID: accountID, remoteID: tag.remoteTagID) {
-                TagAppearanceSheet(name: tag.name, key: key)
+                let canRename = canRenameSharedTag(currentUserRole: tag.currentUserRole)
+                TagAppearanceSheet(
+                    name: tag.name,
+                    key: key,
+                    title: canRename ? "共有タグを編集" : "共有タグの色",
+                    allowsRename: canRename,
+                    onSaveName: canRename ? { name in
+                        guard name.trimmingCharacters(in: .whitespacesAndNewlines) != tag.name else { return true }
+                        return await onRenameTag?(tag.remoteTagID, name) ?? false
+                    } : nil
+                )
             }
         }
+    }
+}
+
+struct MainEntryListControlRow: View {
+    @Binding var sortOption: EntryListSortOption
+    @Binding var isAscending: Bool
+    @Binding var displayMode: EntryListDisplayMode
+    @Binding var homeEntryLayout: HomeEntryLayout
+    @Binding var gridInfoVisible: Bool
+
+    @ViewBuilder
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                sortMenu(expanded: false)
+                displayMethodControl(expanded: false)
+                imageVisibilityControl(expanded: false)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    sortMenu(expanded: false)
+                    displayMethodControl(expanded: false)
+                }
+                imageVisibilityControl(expanded: false)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                sortMenu(expanded: true)
+                displayMethodControl(expanded: true)
+                imageVisibilityControl(expanded: true)
+            }
+        }
+        .padding(.horizontal, 14)
+    }
+
+    private var sortDirectionTitle: String {
+        if sortOption == .addedDate {
+            return isAscending ? "古い順" : "新しい順"
+        }
+        return isAscending ? "昇順" : "降順"
+    }
+
+    private var visibilityIsOn: Bool {
+        homeEntryLayout == .list ? displayMode == .rich : gridInfoVisible
+    }
+
+    private var visibilityActionLabel: String {
+        if homeEntryLayout == .list {
+            return displayMode == .rich ? "画像を非表示" : "画像を表示"
+        }
+        return gridInfoVisible ? "タイトルなどを非表示" : "タイトルなどを表示"
+    }
+
+    private func sortMenu(expanded: Bool) -> some View {
+        Menu {
+            Section("並び替え") {
+                Picker("項目", selection: $sortOption) {
+                    ForEach(EntryListSortOption.allCases) { option in
+                        Text(option.label).tag(option)
+                    }
+                }
+                .accessibilityIdentifier("home_sort_key")
+            }
+            Section("表示順") {
+                Picker("表示順", selection: $isAscending) {
+                    Text(sortOption == .addedDate ? "新しい順" : "降順").tag(false)
+                    Text(sortOption == .addedDate ? "古い順" : "昇順").tag(true)
+                }
+                .accessibilityIdentifier("home_sort_direction")
+            }
+        } label: {
+            controlLabel(
+                title: sortOption.label,
+                icon: "arrow.up.arrow.down",
+                trailingIcon: "chevron.down",
+                expanded: expanded
+            )
+        }
+        .accessibilityLabel("並び替え")
+        .accessibilityValue("\(sortOption.label)、\(sortDirectionTitle)")
+        .accessibilityIdentifier("home_sort_menu")
+    }
+
+    private func displayMethodControl(expanded: Bool) -> some View {
+        Button {
+            homeEntryLayout = homeEntryLayout == .list ? .thumbnailGrid : .list
+        } label: {
+            controlLabel(
+                title: "表示方法",
+                icon: homeEntryLayout == .list ? "list.bullet" : "square.grid.2x2",
+                emphasized: true,
+                expanded: expanded
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("表示方法")
+        .accessibilityValue(homeEntryLayout == .list ? "一覧" : "2列サムネイル")
+        .accessibilityHint("タップして一覧と2列表示を切り替えます")
+        .accessibilityIdentifier("home_display_method")
+    }
+
+    private func imageVisibilityControl(expanded: Bool) -> some View {
+        Button {
+            if homeEntryLayout == .list {
+                displayMode = displayMode == .rich ? .compact : .rich
+            } else {
+                gridInfoVisible.toggle()
+            }
+        } label: {
+            controlLabel(
+                title: visibilityIsOn ? "表示" : "非表示",
+                icon: visibilityIsOn ? "eye" : "eye.slash",
+                expanded: expanded
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(visibilityActionLabel)
+        .accessibilityValue(visibilityIsOn ? "表示中" : "非表示")
+        .accessibilityHint(homeEntryLayout == .list ? "タップして画像表示を切り替えます" : "タップしてタイトルなどの表示を切り替えます")
+        .accessibilityIdentifier("home_image_visibility")
+    }
+
+    private func controlLabel(
+        title: String,
+        icon: String,
+        trailingIcon: String? = nil,
+        emphasized: Bool = false,
+        expanded: Bool
+    ) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: icon)
+                .font(.system(.caption, design: .rounded).weight(.semibold))
+            Text(title)
+                .font(.system(.caption, design: .rounded).weight(.semibold))
+                .lineLimit(expanded ? nil : 1)
+            if let trailingIcon {
+                Image(systemName: trailingIcon)
+                    .font(.system(size: 10, weight: .semibold))
+            }
+        }
+        .foregroundStyle(emphasized ? Color.white : AppPalette.textSecondary)
+        .padding(.horizontal, 10)
+        .frame(maxWidth: expanded ? .infinity : nil, minHeight: 44, alignment: .leading)
+        .background(emphasized ? AppPalette.primaryStrong : AppPalette.surfaceSoft, in: Capsule())
+        .contentShape(Capsule())
+        .fixedSize(horizontal: !expanded, vertical: false)
     }
 }
 

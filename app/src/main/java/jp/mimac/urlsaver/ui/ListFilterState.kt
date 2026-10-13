@@ -46,3 +46,16 @@ private fun List<UrlEntryEntity>.defaultListFilterLoadState(): ListFilterLoadSta
         ListFilterLoadState.Content
     }
 }
+
+internal fun sortListEntries(entries: List<UrlEntryEntity>, order: jp.mimac.urlsaver.domain.EntryListSortOrder): List<UrlEntryEntity> {
+    if (order.key == jp.mimac.urlsaver.domain.EntryListSortKey.ADDED_DATE) {
+        val comparator = compareBy<UrlEntryEntity> { it.createdAt }.thenBy { it.id }
+        return entries.sortedWith(if (order.ascending) comparator else comparator.reversed())
+    }
+    // Compute display titles once per snapshot instead of allocating them on every comparison.
+    val titled = entries.map { entry -> entry to jp.mimac.urlsaver.domain.UrlRules.effectiveTitle(
+        entry.userTitle, entry.fetchedTitle, entry.serviceType, entry.normalizedHost,
+    ).lowercase(java.util.Locale.ROOT) }
+    val comparator = compareBy<Pair<UrlEntryEntity, String>> { it.second }.thenBy { it.first.id }
+    return titled.sortedWith(if (order.ascending) comparator else comparator.reversed()).map { it.first }
+}

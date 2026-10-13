@@ -39,6 +39,7 @@ import androidx.compose.ui.semantics.SemanticsPropertyReceiver
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -98,6 +99,8 @@ fun EntryCard(
     onLongClick: (() -> Unit)? = null,
     footerContent: (@Composable ColumnScope.() -> Unit)? = null,
     onClick: () -> Unit,
+    outerHorizontalPadding: Dp = OrbitTokens.screenHorizontalPadding,
+    outerVerticalPadding: Dp = 7.dp,
 ) {
     val showThumbnail = displayMode == EntryCardDisplayMode.RICH && !entry.thumbnailUrl.isNullOrBlank()
     val showDescription = displayMode == EntryCardDisplayMode.RICH
@@ -145,7 +148,7 @@ fun EntryCard(
                 entryCardSupportingColor = cardPalette.supporting.toArgb()
             }
             .fillMaxWidth()
-            .padding(horizontal = OrbitTokens.screenHorizontalPadding, vertical = 7.dp)
+            .padding(horizontal = outerHorizontalPadding, vertical = outerVerticalPadding)
             .entryCardClickable(
                 onClick = onClick,
                 onLongClick = onLongClick,

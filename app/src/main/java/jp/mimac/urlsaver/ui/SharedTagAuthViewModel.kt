@@ -193,6 +193,16 @@ class SharedTagAuthViewModel(
         return tagRepository.googleOAuthUrl()
     }
 
+    fun appleOAuthUrl(): String? {
+        return tagRepository.appleOAuthUrl()
+    }
+
+    suspend fun googleIdentityLinkUrl(): Result<String> = tagRepository.googleIdentityLinkUrl()
+
+    suspend fun appleIdentityLinkUrl(): Result<String> = tagRepository.appleIdentityLinkUrl()
+
+    suspend fun cancelIdentityLink() = tagRepository.cancelIdentityLink()
+
     suspend fun signOut() {
         tagRepository.signOut()
         _entitlements.value = tagRepository.featureEntitlements()
@@ -270,6 +280,12 @@ class SharedTagAuthViewModel(
         if (authSessionProvider == null || authSessionProvider.session.value?.authUserId == expectedAuthUserId) {
             _entitlements.value = tagRepository.featureEntitlements()
         }
+    }
+
+    suspend fun restorePaidCourses(): Result<Unit> = runCatching {
+        val billing = requireNotNull(googlePlayBillingService) { "購入の復元はこのビルドで利用できません" }
+        billing.processCurrentPurchases()
+        refreshEntitlementsForCurrentSession()
     }
 
     suspend fun purchasePaidCourse(

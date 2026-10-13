@@ -236,6 +236,33 @@ class DefaultTagRepository(
         }
     }
 
+    override suspend fun renameSharedTagWithResult(tagId: Long, name: String): CreateTagResult =
+        withAccountOperation(blockedResult = { CreateTagResult.Failed }) {
+            val normalized = normalizeSharedTagName(name)
+            if (validateSharedTagName(normalized) != null) return@withAccountOperation CreateTagResult.InvalidName
+            val session = currentSyncSessionOrNull() ?: return@withAccountOperation CreateTagResult.Failed
+            val result = runCatching { database.withTransaction {
+                val tag = tagDao.findTagById(tagId) ?: return@withTransaction CreateTagResult.Failed
+                val remoteTagId = tag.remoteTagId ?: return@withTransaction CreateTagResult.Failed
+                val member = tagDao.findCurrentUserMember(tagId, session.authUserId)
+                if (tag.scope != SharedTagScope.SYNCED || tag.authUserId != session.authUserId || tag.deletedAt != null || member?.role !in setOf(SharedTagMemberRole.OWNER, SharedTagMemberRole.EDITOR)) {
+                    return@withTransaction CreateTagResult.Failed
+                }
+                if (tagDao.getVisibleTagsWithCount(session.authUserId).any { it.scope == SharedTagScope.SYNCED && it.id != tagId && normalizeSharedTagName(it.name) == normalized }) {
+                    return@withTransaction CreateTagResult.Duplicate
+                }
+                if (tag.name == normalized) return@withTransaction CreateTagResult.Success(tagId)
+                tagDao.upsertTags(listOf(tag.copy(name = normalized, syncStatus = SharedTagSyncStatus.PENDING_PUSH, syncErrorMessage = null)))
+                enqueueOutbox(session, SharedTagSyncOperation(
+                    opId = UUID.randomUUID().toString(), clientId = syncCoordinator.ensureClientId(session.authUserId),
+                    type = SharedTagSyncOperationType.RENAME_TAG, submittedAt = clock.nowEpochMillis(), tagId = remoteTagId, name = normalized,
+                ))
+                CreateTagResult.Success(tagId)
+            } }.getOrElse { CreateTagResult.Failed }
+            if (result is CreateTagResult.Success) scheduleSync(session.authUserId)
+            result
+        }
+
     override suspend fun deleteTag(tagId: Long) =
         withAccountOperation(blockedResult = { Unit }) {
             deleteTagWithinFence(tagId)
@@ -669,14 +696,36 @@ class DefaultTagRepository(
         }
     }
 
-    override fun googleOAuthUrl(): String? {
+    override fun googleOAuthUrl(): String? = oauthUrl("google")
+
+    override fun appleOAuthUrl(): String? = oauthUrl("apple")
+
+    private fun oauthUrl(provider: String): String? {
         if (!remoteConfig.isConfigured) return null
         return runCatching {
             authRemoteDataSource.oauthUrl(
-                provider = "google",
+                provider = provider,
                 redirectTo = "urlsaver://auth/callback",
             )
         }.getOrNull()
+    }
+
+    override suspend fun googleIdentityLinkUrl(): Result<String> = identityLinkUrl("google")
+
+    override suspend fun appleIdentityLinkUrl(): Result<String> = identityLinkUrl("apple")
+
+    private suspend fun identityLinkUrl(provider: String): Result<String> =
+        accountOperationFence.withExclusiveOperation {
+            runCatching {
+                check(localAccountCleanupStore.pending.value == null) { ACCOUNT_CLEANUP_IN_PROGRESS_MESSAGE }
+                check(remoteConfig.isConfigured) { "クラウド共有はまだ設定されていません" }
+                val session = requireNotNull(authSessionProvider.session.value) { "サインインしてください" }
+                authRemoteDataSource.linkIdentityOAuthUrl(provider, session, "urlsaver://auth/callback")
+            }
+        }
+
+    override suspend fun cancelIdentityLink() {
+        accountOperationFence.withExclusiveOperation { authRemoteDataSource.cancelIdentityLink() }
     }
 
     override suspend fun handleOAuthCallback(callbackUrl: String): SharedTagAuthResult =
@@ -692,17 +741,26 @@ class DefaultTagRepository(
         if (!remoteConfig.isConfigured) {
             return SharedTagAuthResult.Failure("クラウド共有はまだ設定されていません")
         }
+        val expectedUserId = authRemoteDataSource.pendingIdentityLinkUserId()
+        if (expectedUserId != null && authSessionProvider.session.value?.authUserId != expectedUserId) {
+            authRemoteDataSource.cancelIdentityLink()
+            return SharedTagAuthResult.Failure("アカウントが変更されたためログイン方法を追加できませんでした")
+        }
         return runCatching {
             when (val result = authRemoteDataSource.signInWithOAuthCallback(callbackUrl)) {
                 SharedTagAuthRemoteResult.NeedsEmailConfirmation -> SharedTagAuthResult.NeedsEmailConfirmation
                 is SharedTagAuthRemoteResult.SignedIn -> {
+                    if (expectedUserId != null &&
+                        (result.session.authUserId != expectedUserId || authSessionProvider.session.value?.authUserId != expectedUserId)) {
+                        return@runCatching SharedTagAuthResult.Failure("元のアカウントと異なるためログイン方法を追加できませんでした")
+                    }
                     authSessionProvider.updateSession(result.session)
                     scheduleSync(result.session.authUserId)
                     SharedTagAuthResult.Success(result.session.userEmail)
                 }
             }
         }.getOrElse { error ->
-            SharedTagAuthResult.Failure(error.message ?: "Googleでサインインできませんでした")
+            SharedTagAuthResult.Failure(error.message ?: "サインインできませんでした")
         }
     }
 

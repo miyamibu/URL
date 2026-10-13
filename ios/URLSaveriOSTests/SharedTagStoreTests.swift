@@ -308,6 +308,259 @@ final class SharedTagStoreTests: XCTestCase {
         )
     }
 
+    func testGoogleIdentityLinkUsesAuthenticatedPKCEAndKeepsTheSameAccount() async throws {
+        let (service, sessionStore, oauthStateStore) = try makeIdentityLinkService()
+        let linkedSessionResponse = try authSessionResponse(
+            userID: "link-owner-a",
+            accessToken: "linked-access-token",
+            refreshToken: "linked-refresh-token"
+        )
+        AuthLinkMockURLProtocol.install { request in
+            request.url?.path == "/auth/v1/user/identities/authorize"
+                ? .json(#"{"url":"https://accounts.google.com/o/oauth2/v2/auth"}"#)
+                : .data(linkedSessionResponse)
+        }
+        defer { AuthLinkMockURLProtocol.reset() }
+
+        let authorizationResult = await service.googleIdentityLinkURL()
+        let authorizationURL: URL
+        if case .success(let url) = authorizationResult {
+            authorizationURL = url
+        } else {
+            return XCTFail("Google identity linking did not produce an authorization URL")
+        }
+        XCTAssertEqual(authorizationURL.host, "accounts.google.com")
+        let authorizationRequest = try XCTUnwrap(AuthLinkMockURLProtocol.takeRequests().first)
+        XCTAssertEqual(authorizationRequest.httpMethod, "GET")
+        XCTAssertEqual(authorizationRequest.value(forHTTPHeaderField: "Authorization"), "Bearer old-access-token")
+        XCTAssertEqual(authorizationRequest.value(forHTTPHeaderField: "apikey"), "test-publishable-key")
+
+        let authorizationRequestURL = try XCTUnwrap(authorizationRequest.url)
+        let query = URLComponents(url: authorizationRequestURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertEqual(query.first(where: { $0.name == "provider" })?.value, "google")
+        XCTAssertEqual(query.first(where: { $0.name == "scopes" })?.value, "openid email")
+        XCTAssertEqual(query.first(where: { $0.name == "redirect_to" })?.value, "urlsaver://auth/callback")
+        XCTAssertEqual(query.first(where: { $0.name == "code_challenge_method" })?.value, "S256")
+        XCTAssertEqual(query.first(where: { $0.name == "skip_http_redirect" })?.value, "true")
+        XCTAssertFalse(query.first(where: { $0.name == "code_challenge" })?.value?.isEmpty ?? true)
+
+        let pending = try XCTUnwrap(oauthStateStore.loadPending())
+        XCTAssertEqual(pending.flow, .some(.identityLink))
+        XCTAssertEqual(pending.expectedAuthUserID, "link-owner-a")
+
+        let callbackURL = try XCTUnwrap(URL(string: "urlsaver://auth/callback?code=link-code&provider=google"))
+        let result = await service.handleOAuthCallback(url: callbackURL)
+        XCTAssertEqual(result, .identityLink(.success(provider: "google")))
+
+        let exchangeRequest = try XCTUnwrap(AuthLinkMockURLProtocol.takeRequests().first)
+        XCTAssertEqual(exchangeRequest.httpMethod, "POST")
+        XCTAssertEqual(exchangeRequest.value(forHTTPHeaderField: "Authorization"), nil)
+        let exchangeBody = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: XCTUnwrap(exchangeRequest.httpBody)) as? [String: String]
+        )
+        XCTAssertEqual(exchangeBody["auth_code"], "link-code")
+        XCTAssertEqual(exchangeBody["code_verifier"], pending.codeVerifier)
+
+        let savedSession = try XCTUnwrap(sessionStore.load())
+        XCTAssertEqual(savedSession.authUserID, "link-owner-a")
+        XCTAssertEqual(savedSession.accessToken, "linked-access-token")
+        XCTAssertEqual(savedSession.refreshToken, "linked-refresh-token")
+    }
+
+    func testGoogleIdentityLinkCancellationAndMismatchedCallbackPreserveSessionAndCache() async throws {
+        let (service, sessionStore, _) = try makeIdentityLinkService()
+        try seedSharedTagCache(authUserID: "link-owner-a", tagID: "cached-tag-a", name: "keep-a")
+        let originalSession = try XCTUnwrap(sessionStore.load())
+        let linkedSessionResponse = try authSessionResponse(
+            userID: "different-owner",
+            accessToken: "wrong-access-token",
+            refreshToken: "wrong-refresh-token"
+        )
+        AuthLinkMockURLProtocol.install { request in
+            request.url?.path == "/auth/v1/user/identities/authorize"
+                ? .json(#"{"url":"https://accounts.google.com/o/oauth2/v2/auth"}"#)
+                : .data(linkedSessionResponse)
+        }
+        defer { AuthLinkMockURLProtocol.reset() }
+
+        _ = await service.googleIdentityLinkURL()
+        let cancelURL = try XCTUnwrap(URL(string: "urlsaver://auth/callback?error=access_denied&provider=google"))
+        guard case .identityLink(.failure) = await service.handleOAuthCallback(url: cancelURL) else {
+            return XCTFail("OAuth cancellation should be reported as an identity-link failure")
+        }
+        XCTAssertEqual(try sessionStore.load(), originalSession)
+        XCTAssertEqual(try store.loadVisibleTags(authUserID: "link-owner-a").map(\.name), ["keep-a"])
+        XCTAssertEqual(AuthLinkMockURLProtocol.takeRequests().count, 1)
+
+        _ = await service.googleIdentityLinkURL()
+        let mismatchURL = try XCTUnwrap(URL(string: "urlsaver://auth/callback?code=wrong-user-code&provider=google"))
+        guard case .identityLink(.failure) = await service.handleOAuthCallback(url: mismatchURL) else {
+            return XCTFail("OAuth linking must reject a session for a different user")
+        }
+        XCTAssertEqual(try sessionStore.load(), originalSession)
+        XCTAssertEqual(try store.loadVisibleTags(authUserID: "link-owner-a").map(\.name), ["keep-a"])
+    }
+
+    func testGoogleIdentityLinkCallbackDoesNotSwitchAnAccountChangedDuringOAuth() async throws {
+        let (service, sessionStore, _) = try makeIdentityLinkService()
+        let expectedSessionResponse = try authSessionResponse(
+            userID: "link-owner-a",
+            accessToken: "link-owner-a-linked-access",
+            refreshToken: "link-owner-a-linked-refresh"
+        )
+        AuthLinkMockURLProtocol.install { request in
+            request.url?.path == "/auth/v1/user/identities/authorize"
+                ? .json(#"{"url":"https://accounts.google.com/o/oauth2/v2/auth"}"#)
+                : .data(expectedSessionResponse)
+        }
+        defer { AuthLinkMockURLProtocol.reset() }
+
+        _ = await service.googleIdentityLinkURL()
+        let otherSession = SharedTagAuthSession(
+            authUserID: "link-owner-b",
+            accessToken: "owner-b-access",
+            refreshToken: "owner-b-refresh",
+            userEmail: "owner-b@example.com"
+        )
+        try sessionStore.save(otherSession)
+
+        let callbackURL = try XCTUnwrap(URL(string: "urlsaver://auth/callback?code=link-owner-a-code&provider=google"))
+        guard case .identityLink(.failure) = await service.handleOAuthCallback(url: callbackURL) else {
+            return XCTFail("OAuth linking must not switch back after the active account changes")
+        }
+        XCTAssertEqual(try sessionStore.load(), otherSession)
+    }
+
+    func testExplicitlyCancelingGoogleIdentityLinkPreservesSessionAndSharedCache() async throws {
+        let (service, sessionStore, oauthStateStore) = try makeIdentityLinkService()
+        try seedSharedTagCache(authUserID: "link-owner-a", tagID: "cached-tag-a", name: "keep-a")
+        let originalSession = try XCTUnwrap(sessionStore.load())
+        AuthLinkMockURLProtocol.install { _ in
+            .json(#"{"url":"https://accounts.google.com/o/oauth2/v2/auth"}"#)
+        }
+        defer { AuthLinkMockURLProtocol.reset() }
+
+        let authorizationResult = await service.googleIdentityLinkURL()
+        guard case .success = authorizationResult else {
+            return XCTFail("Google identity linking did not produce an authorization URL")
+        }
+        let pending = try XCTUnwrap(oauthStateStore.loadPending())
+        XCTAssertEqual(pending.expectedAuthUserID, "link-owner-a")
+        XCTAssertNil(service.googleOAuthURL(), "A sign-in flow must not overwrite a pending identity link")
+        XCTAssertEqual(try oauthStateStore.loadPending(), pending)
+        let cancelled = await service.cancelPendingIdentityLink()
+
+        XCTAssertTrue(cancelled)
+        XCTAssertNil(try oauthStateStore.loadPending())
+        XCTAssertEqual(try sessionStore.load(), originalSession)
+        XCTAssertEqual(try store.loadVisibleTags(authUserID: "link-owner-a").map(\.name), ["keep-a"])
+    }
+
+    func testAppleIdentityLinkSavesRotatedSessionForTheSameUser() async throws {
+        let (service, sessionStore, _) = try makeIdentityLinkService()
+        let linkedSessionResponse = try authSessionResponse(
+            userID: "link-owner-a",
+            accessToken: "apple-linked-access",
+            refreshToken: "apple-linked-refresh"
+        )
+        AuthLinkMockURLProtocol.install { _ in .data(linkedSessionResponse) }
+        defer { AuthLinkMockURLProtocol.reset() }
+
+        let result = await service.linkAppleIdentity(idToken: "test-apple-id-token", nonce: "test-raw-nonce")
+
+        XCTAssertEqual(result, .success(provider: "apple"))
+        let savedSession = try XCTUnwrap(sessionStore.load())
+        XCTAssertEqual(savedSession.authUserID, "link-owner-a")
+        XCTAssertEqual(savedSession.accessToken, "apple-linked-access")
+        XCTAssertEqual(savedSession.refreshToken, "apple-linked-refresh")
+    }
+
+    func testAppleIdentityLinkUsesCurrentBearerAndDoesNotReplaceAnotherUserSession() async throws {
+        let (service, sessionStore, _) = try makeIdentityLinkService()
+        try seedSharedTagCache(authUserID: "link-owner-a", tagID: "cached-tag-a", name: "keep-a")
+        let originalSession = try XCTUnwrap(sessionStore.load())
+        let mismatchedResponse = try authSessionResponse(
+            userID: "different-owner",
+            accessToken: "wrong-access-token",
+            refreshToken: "wrong-refresh-token"
+        )
+        AuthLinkMockURLProtocol.install { _ in .data(mismatchedResponse) }
+        defer { AuthLinkMockURLProtocol.reset() }
+
+        let result = await service.linkAppleIdentity(idToken: "test-apple-id-token", nonce: "test-raw-nonce")
+        guard case .failure = result else {
+            return XCTFail("Apple linking must reject a response for a different user")
+        }
+
+        let request = try XCTUnwrap(AuthLinkMockURLProtocol.takeRequests().first)
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer old-access-token")
+        XCTAssertEqual(request.url?.path, "/auth/v1/token")
+        XCTAssertEqual(URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "grant_type" })?.value, "id_token")
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as? [String: Any])
+        XCTAssertEqual(body["provider"] as? String, "apple")
+        XCTAssertEqual(body["id_token"] as? String, "test-apple-id-token")
+        XCTAssertEqual(body["nonce"] as? String, "test-raw-nonce")
+        XCTAssertEqual(body["link_identity"] as? Bool, true)
+        XCTAssertEqual(try sessionStore.load(), originalSession)
+        XCTAssertEqual(try store.loadVisibleTags(authUserID: "link-owner-a").map(\.name), ["keep-a"])
+    }
+
+    func testAppleIdentityLinkRejectsOwnerChangedWhileNativeAuthorizationIsOpen() async throws {
+        let (service, sessionStore, _) = try makeIdentityLinkService()
+        try seedSharedTagCache(authUserID: "link-owner-a", tagID: "cached-tag-a", name: "keep-a")
+        try seedSharedTagCache(authUserID: "link-owner-b", tagID: "cached-tag-b", name: "keep-b")
+        let switchedSession = SharedTagAuthSession(
+            authUserID: "link-owner-b", accessToken: "owner-b-access",
+            refreshToken: "owner-b-refresh", userEmail: "owner-b@example.com"
+        )
+        try sessionStore.save(switchedSession)
+        AuthLinkMockURLProtocol.install { _ in
+            .json(#"{"message":"Unexpected network call"}"#, statusCode: 500)
+        }
+        defer { AuthLinkMockURLProtocol.reset() }
+
+        let result = await service.linkAppleIdentity(
+            idToken: "test-apple-id-token", nonce: "test-raw-nonce", expectedAuthUserID: "link-owner-a"
+        )
+        guard case .failure(let message) = result else {
+            return XCTFail("Apple linking must retain the account selected when authorization began")
+        }
+        XCTAssertTrue(message.contains("開始後にアカウントが変更"))
+        XCTAssertTrue(AuthLinkMockURLProtocol.takeRequests().isEmpty)
+        XCTAssertEqual(try sessionStore.load(), switchedSession)
+        XCTAssertEqual(try store.loadVisibleTags(authUserID: "link-owner-a").map(\.name), ["keep-a"])
+        XCTAssertEqual(try store.loadVisibleTags(authUserID: "link-owner-b").map(\.name), ["keep-b"])
+    }
+
+    func testHandoffAssignmentRejectsAccountSwitchInsideOperationGate() async throws {
+        let firstStorage = SignOutTestAuthStorage()
+        let secondStorage = SignOutTestAuthStorage()
+        try SharedTagAuthSessionStore(storage: firstStorage).save(
+            SharedTagAuthSession(authUserID: "handoff-owner-a", accessToken: "test-a", refreshToken: nil, userEmail: nil)
+        )
+        try SharedTagAuthSessionStore(storage: secondStorage).save(
+            SharedTagAuthSession(authUserID: "handoff-owner-b", accessToken: "test-b", refreshToken: nil, userEmail: nil)
+        )
+        let switchingStorage = HandoffAccountSwitchAuthStorage(
+            first: try XCTUnwrap(firstStorage.load()),
+            subsequent: try XCTUnwrap(secondStorage.load())
+        )
+        let sessionStore = SharedTagAuthSessionStore(storage: switchingStorage)
+        let service = SharedTagCloudService(
+            config: SharedTagCloudConfig(enabled: false, supabaseURL: "", anonKey: ""),
+            sessionStore: sessionStore, store: store, repository: repository,
+            accountOperationGate: SharedTagAccountOperationGate()
+        )
+        let switched = await service.assignEntry(remoteTagID: "missing-tag", entryID: 1, expectedAuthUserID: "handoff-owner-a")
+        XCTAssertEqual(switched, .authRequired)
+        XCTAssertGreaterThanOrEqual(switchingStorage.loadCount, 2)
+        let sameOwner = await service.assignEntry(remoteTagID: "missing-tag", entryID: 1, expectedAuthUserID: "handoff-owner-b")
+        XCTAssertEqual(sameOwner, .failure("共有タグが見つかりませんでした"))
+        let existingCaller = await service.assignEntry(remoteTagID: "missing-tag", entryID: 1)
+        XCTAssertEqual(existingCaller, .failure("共有タグが見つかりませんでした"))
+    }
+
     func testLoadVisibleTagsForEntryAndEntryIDsForTag() throws {
         let local = try repository.saveFromResolvedURL("https://example.com/shared-article")
         XCTAssertEqual(local.entryID, 1)
@@ -444,6 +697,81 @@ final class SharedTagStoreTests: XCTestCase {
         XCTAssertTrue(try repository.loadChatGptPersonalLinkSnapshot().allSatisfy { $0.normalizedURL != "https://example.com/old-state" })
     }
 
+    private func makeIdentityLinkService() throws -> (
+        SharedTagCloudService,
+        SharedTagAuthSessionStore,
+        SharedTagOAuthStateStore
+    ) {
+        let sessionStore = SharedTagAuthSessionStore(storage: SignOutTestAuthStorage())
+        try sessionStore.save(
+            SharedTagAuthSession(
+                authUserID: "link-owner-a",
+                accessToken: "old-access-token",
+                refreshToken: "old-refresh-token",
+                userEmail: "owner-a@example.com"
+            )
+        )
+        let oauthStateStore = SharedTagOAuthStateStore(storage: SignOutTestAuthStorage())
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [AuthLinkMockURLProtocol.self]
+        let urlSession = URLSession(configuration: sessionConfiguration)
+        let service = SharedTagCloudService(
+            config: SharedTagCloudConfig(
+                enabled: true,
+                supabaseURL: "https://supabase.test",
+                anonKey: "test-publishable-key"
+            ),
+            sessionStore: sessionStore,
+            store: store,
+            repository: repository,
+            oauthStateStore: oauthStateStore,
+            authURLSession: urlSession
+        )
+        return (service, sessionStore, oauthStateStore)
+    }
+
+    private func seedSharedTagCache(authUserID: String, tagID: String, name: String) throws {
+        try store.applySnapshot(
+            authUserID: authUserID,
+            snapshot: PullSharedTagSnapshotResponse(
+                pulledAt: "2026-10-13T00:00:00Z",
+                normalizationVersion: 1,
+                tags: [
+                    RemoteSharedTag(
+                        id: tagID,
+                        name: name,
+                        createdAt: "2026-10-13T00:00:00Z",
+                        updatedAt: "2026-10-13T00:00:00Z",
+                        deletedAt: nil
+                    )
+                ],
+                members: [
+                    RemoteSharedTagMember(
+                        tagID: tagID,
+                        userID: authUserID,
+                        displayName: nil,
+                        role: "owner",
+                        status: "active",
+                        createdAt: "2026-10-13T00:00:00Z",
+                        updatedAt: "2026-10-13T00:00:00Z"
+                    )
+                ],
+                urls: []
+            )
+        )
+    }
+
+    private func authSessionResponse(userID: String, accessToken: String, refreshToken: String) throws -> Data {
+        try JSONSerialization.data(withJSONObject: [
+            "access_token": accessToken,
+            "refresh_token": refreshToken,
+            "user": [
+                "id": userID,
+                "email": "\(userID)@example.com",
+            ],
+        ])
+    }
+
     private func makeSnapshot(
         pulledAt: String,
         tagID: String,
@@ -498,4 +826,156 @@ private final class SignOutTestAuthStorage: SharedTagAuthSecureStorage, @uncheck
         payload = nil
         lock.unlock()
     }
+}
+
+
+private final class HandoffAccountSwitchAuthStorage: SharedTagAuthSecureStorage, @unchecked Sendable {
+    private let lock = NSLock()
+    private let first: Data
+    private var subsequent: Data?
+    private(set) var loadCount = 0
+
+    init(first: Data, subsequent: Data) {
+        self.first = first
+        self.subsequent = subsequent
+    }
+
+    func load() throws -> Data? {
+        lock.lock()
+        defer { lock.unlock() }
+        loadCount += 1
+        return loadCount == 1 ? first : subsequent
+    }
+
+    func save(_ data: Data) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        subsequent = data
+    }
+
+    func clear() throws {
+        lock.lock()
+        defer { lock.unlock() }
+        subsequent = nil
+    }
+}
+
+private struct AuthLinkStubResponse: Sendable {
+    let statusCode: Int
+    let body: Data
+
+    static func json(_ value: String, statusCode: Int = 200) -> AuthLinkStubResponse {
+        AuthLinkStubResponse(statusCode: statusCode, body: Data(value.utf8))
+    }
+
+    static func data(_ value: Data, statusCode: Int = 200) -> AuthLinkStubResponse {
+        AuthLinkStubResponse(statusCode: statusCode, body: value)
+    }
+}
+
+private final class AuthLinkMockURLProtocolState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var responseHandler: (@Sendable (URLRequest) -> AuthLinkStubResponse)?
+    private var recordedRequests: [URLRequest] = []
+
+    func install(_ handler: @escaping @Sendable (URLRequest) -> AuthLinkStubResponse) {
+        lock.lock()
+        responseHandler = handler
+        recordedRequests = []
+        lock.unlock()
+    }
+
+    func reset() {
+        lock.lock()
+        responseHandler = nil
+        recordedRequests = []
+        lock.unlock()
+    }
+
+    func response(for request: URLRequest) -> AuthLinkStubResponse {
+        lock.lock()
+        recordedRequests.append(request)
+        let handler = responseHandler
+        lock.unlock()
+        return handler?(request) ?? .json(#"{"message":"No auth link mock response was registered"}"#, statusCode: 500)
+    }
+
+    func takeRequests() -> [URLRequest] {
+        lock.lock()
+        defer { lock.unlock() }
+        let requests = recordedRequests
+        recordedRequests = []
+        return requests
+    }
+}
+
+private final class AuthLinkMockURLProtocol: URLProtocol, @unchecked Sendable {
+    private static let state = AuthLinkMockURLProtocolState()
+
+    static func install(_ handler: @escaping @Sendable (URLRequest) -> AuthLinkStubResponse) {
+        state.install(handler)
+    }
+
+    static func reset() {
+        state.reset()
+    }
+
+    static func takeRequests() -> [URLRequest] {
+        state.takeRequests()
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "supabase.test"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let requestURL = request.url else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+        let capturedRequest: URLRequest
+        do {
+            capturedRequest = try Self.capturingBody(of: request)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+            return
+        }
+        let stub = Self.state.response(for: capturedRequest)
+        guard let response = HTTPURLResponse(
+            url: requestURL,
+            statusCode: stub.statusCode,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/json"]
+        ) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: stub.body)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    private static func capturingBody(of request: URLRequest) throws -> URLRequest {
+        guard request.httpBody == nil, let stream = request.httpBodyStream else { return request }
+        stream.open()
+        defer { stream.close() }
+        var body = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let count = stream.read(&buffer, maxLength: 4096)
+            if count == 0 { break }
+            if count < 0 { throw stream.streamError ?? URLError(.cannotDecodeRawData) }
+            body.append(contentsOf: buffer.prefix(count))
+        }
+        var captured = request
+        captured.httpBodyStream = nil
+        captured.httpBody = body
+        return captured
+    }
+
+    override func stopLoading() {}
 }

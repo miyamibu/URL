@@ -53,6 +53,38 @@ import org.junit.Test
 class SharedTagAuthViewModelTest {
 
     @Test
+    fun identityLink_exposesProviderResultAndCancelWithoutSigningOut() = runBlocking {
+        val repository = FakeTagRepository()
+        val viewModel = SharedTagAuthViewModel(
+            tagRepository = repository, userProfileStore = FakeUserProfileStore(),
+            entitlementGrantRepository = fakeEntitlementGrantRepository(),
+        )
+        assertEquals("https://example.com/link/google", viewModel.googleIdentityLinkUrl().getOrNull())
+        assertTrue(viewModel.appleIdentityLinkUrl().isFailure)
+        viewModel.cancelIdentityLink()
+        assertTrue(repository.linkCancelled)
+        assertFalse(repository.signedOut)
+    }
+
+    @Test
+    fun oauthProviders_exposeRepositoryAvailabilityWithoutChangingProvider() {
+        val repository = FakeTagRepository(appleUrl = "https://example.com/apple", googleUrl = "https://example.com/google")
+        val viewModel = SharedTagAuthViewModel(
+            tagRepository = repository,
+            userProfileStore = FakeUserProfileStore(),
+            entitlementGrantRepository = fakeEntitlementGrantRepository(),
+        )
+        assertEquals("https://example.com/apple", viewModel.appleOAuthUrl())
+        assertEquals("https://example.com/google", viewModel.googleOAuthUrl())
+        val unavailable = SharedTagAuthViewModel(
+            tagRepository = FakeTagRepository(),
+            userProfileStore = FakeUserProfileStore(),
+            entitlementGrantRepository = fakeEntitlementGrantRepository(),
+        )
+        assertEquals(null, unavailable.appleOAuthUrl())
+    }
+
+    @Test
     fun canApplyPromoCode_blankInputIsRejected() {
         val viewModel = SharedTagAuthViewModel(
             tagRepository = FakeTagRepository(),
@@ -260,9 +292,19 @@ private object FakeClock : AppClock {
 }
 
 private class FakeTagRepository(
+    private val appleUrl: String? = null,
+    private val googleUrl: String? = null,
     private val entitlements: FeatureEntitlements = LaunchStandardPlan.entitlements,
     private val acceptInviteResult: SharedTagInviteAcceptanceResult = SharedTagInviteAcceptanceResult.AuthRequired,
 ) : TagRepository {
+    var linkCancelled = false
+    var signedOut = false
+    override suspend fun googleIdentityLinkUrl(): Result<String> = Result.success("https://example.com/link/google")
+    override suspend fun appleIdentityLinkUrl(): Result<String> = Result.failure(IllegalStateException("manual linking disabled"))
+    override suspend fun cancelIdentityLink() { linkCancelled = true }
+    override fun appleOAuthUrl(): String? = appleUrl
+    override fun googleOAuthUrl(): String? = googleUrl
+
     override val isSyncAvailable: Flow<Boolean> = flowOf(false)
     override val cloudState: Flow<SharedTagCloudState> = flowOf(
         SharedTagCloudState(
@@ -318,7 +360,7 @@ private class FakeTagRepository(
         SharedTagAuthResult.Failure("not implemented")
     override suspend fun signUp(email: String, password: String): SharedTagAuthResult =
         SharedTagAuthResult.Failure("not implemented")
-    override suspend fun signOut() = Unit
+    override suspend fun signOut() { signedOut = true }
     override suspend fun deleteAccount(): SharedTagAccountDeletionResult = SharedTagAccountDeletionResult.AuthRequired
     override suspend fun retryLocalAccountCleanup(): SharedTagAccountDeletionResult =
         SharedTagAccountDeletionResult.AuthRequired

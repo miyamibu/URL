@@ -79,6 +79,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
@@ -533,6 +534,31 @@ fun SharedTagCloudAuthScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         } else if (cloudState.isSignedIn) {
+                            Text("ログイン方法を追加", style = MaterialTheme.typography.titleSmall)
+                            Text("現在のアカウントに連携し、Android・iPhoneで同じ保存内容を使えます。", style = MaterialTheme.typography.bodySmall)
+                            listOf("Google", "Apple").forEach { provider ->
+                                OutlinedButton(
+                                    modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("auth_link_${provider.lowercase()}"),
+                                    enabled = !isSubmitting,
+                                    onClick = {
+                                        scope.launch {
+                                            isSubmitting = true
+                                            val result = if (provider == "Google") viewModel.googleIdentityLinkUrl() else viewModel.appleIdentityLinkUrl()
+                                            result.fold(
+                                                onSuccess = { url ->
+                                                    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                                                        .onSuccess { accountMessage = "$provider の連携を完了してください。元のアカウントは保持しています。" }
+                                                        .onFailure { accountMessage = "$provider の連携画面を開けませんでした" }
+                                                },
+                                                onFailure = { accountMessage = it.message ?: "ログイン方法を追加できませんでした" },
+                                            )
+                                            isSubmitting = false
+                                        }
+                                    },
+                                ) { Text("$provider を連携する") }
+                            }
+                            OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text("ChatGPTで続ける（準備中）") }
+                            TextButton(onClick = { scope.launch { viewModel.cancelIdentityLink(); accountMessage = "ログイン方法の追加をキャンセルしました。元のアカウントは保持しています。" } }, enabled = !isSubmitting) { Text("ログイン方法の追加をキャンセル") }
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                                 ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
                                 PackageManager.PERMISSION_GRANTED
@@ -604,6 +630,12 @@ fun SharedTagCloudAuthScreen(
                                         accountMessage = "Googleサインイン画面を開けませんでした"
                                     }
                                 },
+                                onAppleSignIn = {
+                                    val url = viewModel.appleOAuthUrl()
+                                    if (url == null) accountMessage = "Appleサインインを開始できませんでした"
+                                    else runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                                        .onFailure { accountMessage = "Appleサインイン画面を開けませんでした" }
+                                },
                                 onSignIn = {
                                     scope.launch {
                                         isSubmitting = true
@@ -650,19 +682,28 @@ fun SharedTagCloudAuthScreen(
                         }
                     },
                     planDetails = {
-                        if (cloudState.isConfigured) {
+                        if (cloudState.isConfigured && !entitlements.planType.isPaidCourse) {
                             PaidCourseSection(
                                 isEnabled = !isSubmitting && !isPurchasing,
                                 isPurchasing = isPurchasing,
                                 showMonthlyOptions = !entitlements.planType.isPaidCourse,
                                 onPurchase = ::purchasePaidCourse,
                             )
-                        } else {
+                        } else if (!cloudState.isConfigured) {
                             Text(
                                 text = "このビルドでは共有タグのクラウド同期が設定されていません。",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
+                        OutlinedButton(onClick = {
+                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/account/subscriptions"))) }
+                                .onFailure { planMessage = "契約管理を開けませんでした" }
+                        }, modifier = Modifier.fillMaxWidth()) { Text("契約を管理") }
+                        OutlinedButton(onClick = { scope.launch {
+                            isSubmitting = true
+                            planMessage = viewModel.restorePaidCourses().fold({ "購入状況を確認しました" }, { it.message ?: "購入を復元できませんでした" })
+                            isSubmitting = false
+                        } }, enabled = !isSubmitting && cloudState.isSignedIn, modifier = Modifier.fillMaxWidth()) { Text("購入を復元") }
                         PromoCodeSection(
                             promoCode = promoCode,
                             promoMessage = promoMessage,
@@ -1030,6 +1071,12 @@ fun SharedTagInviteScreen(
                             }.onFailure {
                                 message = "Googleサインイン画面を開けませんでした"
                             }
+                        },
+                        onAppleSignIn = {
+                            val url = viewModel.appleOAuthUrl()
+                            if (url == null) message = "Appleサインインを開始できませんでした"
+                            else runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                                .onFailure { message = "Appleサインイン画面を開けませんでした" }
                         },
                         onSignIn = {
                             scope.launch {
@@ -2118,27 +2165,31 @@ private fun SharedTagAuthForm(
     onEmailChange: (String) -> Unit,
     onPasswordChange: (String) -> Unit,
     onGoogleSignIn: () -> Unit,
+    onAppleSignIn: () -> Unit,
     onSignIn: () -> Unit,
     onSignUp: () -> Unit,
     onResendConfirmation: () -> Unit,
     onPasswordRecovery: () -> Unit,
 ) {
     var passwordVisible by remember { mutableStateOf(false) }
+    var emailExpanded by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
 
     OutlinedButton(
         onClick = onGoogleSignIn,
         modifier = Modifier
             .fillMaxWidth()
-            .height(56.dp),
+            .height(56.dp)
+            .testTag("auth_google"),
         enabled = !isSubmitting,
     ) {
         Text("Googleで続ける")
     }
-    Text(
-        text = "Googleで登録済みの場合は、メール/パスワードではなくGoogleでサインインしてください。",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+    OutlinedButton(onClick = onAppleSignIn, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("auth_apple"), enabled = !isSubmitting) { Text("Appleで続ける") }
+    OutlinedButton(onClick = {}, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("auth_chatgpt"), enabled = false) { Text("ChatGPTで続ける（準備中）") }
+    TextButton(onClick = { emailExpanded = !emailExpanded }, modifier = Modifier.fillMaxWidth().testTag("auth_email")) {
+        Text(if (emailExpanded) "メールで続ける ▲" else "メールで続ける ▼")
+    }
+    if (emailExpanded) {
     OutlinedTextField(
         value = email,
         onValueChange = onEmailChange,
@@ -2222,6 +2273,7 @@ private fun SharedTagAuthForm(
             Text("パスワード再設定")
         }
     }
+    }
     if (isSubmitting) {
         CircularProgressIndicator()
     }
@@ -2249,61 +2301,61 @@ private fun PaidCourseSection(
             style = MaterialTheme.typography.titleMedium,
         )
         if (showMonthlyOptions) {
-            Row(
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 PaidCourseButton(
                     label = "Standard 月額",
                     enabled = isEnabled,
                     isPurchasing = isPurchasing,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                     onClick = { onPurchase(PlanType.STANDARD, BillingPeriod.MONTHLY) },
                 )
                 PaidCourseButton(
                     label = "Standard 年払い",
                     enabled = isEnabled,
                     isPurchasing = isPurchasing,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                     onClick = { onPurchase(PlanType.STANDARD, BillingPeriod.YEARLY) },
                 )
             }
-            Row(
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 PaidCourseButton(
                     label = "Pro 月額",
                     enabled = isEnabled,
                     isPurchasing = isPurchasing,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                     onClick = { onPurchase(PlanType.PRO, BillingPeriod.MONTHLY) },
                 )
                 PaidCourseButton(
                     label = "Pro 年払い",
                     enabled = isEnabled,
                     isPurchasing = isPurchasing,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                     onClick = { onPurchase(PlanType.PRO, BillingPeriod.YEARLY) },
                 )
             }
         } else {
-            Row(
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 PaidCourseButton(
                     label = "Standard 年払い",
                     enabled = isEnabled,
                     isPurchasing = isPurchasing,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                     onClick = { onPurchase(PlanType.STANDARD, BillingPeriod.YEARLY) },
                 )
                 PaidCourseButton(
                     label = "Pro 年払い",
                     enabled = isEnabled,
                     isPurchasing = isPurchasing,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                     onClick = { onPurchase(PlanType.PRO, BillingPeriod.YEARLY) },
                 )
             }
@@ -2322,9 +2374,9 @@ private fun PaidCourseButton(
     OutlinedButton(
         onClick = onClick,
         enabled = enabled,
-        modifier = modifier.height(56.dp),
+        modifier = modifier.heightIn(min = 56.dp).testTag("paid_course_${label.replace(" ", "_")}"),
     ) {
-        Text(if (isPurchasing) "処理中" else label)
+        Text(if (isPurchasing) "処理中" else label, maxLines = 1, softWrap = false)
     }
 }
 

@@ -24,6 +24,10 @@ private const val AUTH_CALLBACK_URL = "urlsaver://auth/callback"
 interface SharedTagAuthRemoteDataSource {
     fun oauthUrl(provider: String, redirectTo: String): String =
         throw IOException("OAuth sign-in is not configured.")
+    suspend fun linkIdentityOAuthUrl(provider: String, session: SharedTagAuthSession, redirectTo: String): String =
+        throw IOException("ログイン方法の追加は設定されていません")
+    fun pendingIdentityLinkUserId(): String? = null
+    fun cancelIdentityLink() = Unit
     suspend fun signInWithOAuthCallback(callbackUrl: String): SharedTagAuthRemoteResult =
         throw IOException("OAuth sign-in is not configured.")
     suspend fun signUp(email: String, password: String): SharedTagAuthRemoteResult
@@ -53,6 +57,7 @@ class SupabaseSharedTagAuthRemoteDataSource(
 
     override fun oauthUrl(provider: String, redirectTo: String): String {
         check(config.isConfigured) { "Supabase shared tag sync is not configured." }
+        check(pendingIdentityLinkUserId() == null) { "ログイン方法の追加を完了またはキャンセルしてください" }
         val pending = SharedTagOAuthPendingState.create(redirectTo = redirectTo)
         oauthStateStore.save(pending)
         val encodedProvider = URLEncoder.encode(provider, Charsets.UTF_8.name())
@@ -65,26 +70,52 @@ class SupabaseSharedTagAuthRemoteDataSource(
             "&code_challenge_method=S256"
     }
 
+    override suspend fun linkIdentityOAuthUrl(provider: String, session: SharedTagAuthSession, redirectTo: String): String {
+        require(provider == "google" || provider == "apple") { "このログイン方法は追加できません" }
+        require(session.authUserId.isNotBlank() && session.accessToken.isNotBlank()) { "サインインしてください" }
+        require(redirectTo == AUTH_CALLBACK_URL) { "callback URLが不正です" }
+        check(pendingIdentityLinkUserId() == null) { "ログイン方法の追加を完了またはキャンセルしてください" }
+        val pending = SharedTagOAuthPendingState.create(redirectTo).copy(expectedAuthUserId = session.authUserId)
+        val path = "/auth/v1/user/identities/authorize" +
+            "?provider=${URLEncoder.encode(provider, "UTF-8")}" +
+            "&redirect_to=${URLEncoder.encode(redirectTo, "UTF-8")}" +
+            "&code_challenge=${pending.codeChallenge}&code_challenge_method=S256&skip_http_redirect=true"
+        val response = withContext(Dispatchers.IO) {
+            executeAuthRequest(path, method = "GET", accessToken = session.accessToken)
+        }
+        val url = json.decodeFromString<SupabaseIdentityLinkResponse>(response).url
+        val uri = runCatching { URI(url) }.getOrNull()
+        require(uri?.scheme == "https" && !uri.host.isNullOrBlank()) { "ログイン方法の追加URLが不正です" }
+        oauthStateStore.save(pending)
+        return url
+    }
+
+    override fun pendingIdentityLinkUserId(): String? = oauthStateStore.load()?.expectedAuthUserId
+
+    override fun cancelIdentityLink() {
+        if (pendingIdentityLinkUserId() != null) oauthStateStore.clear()
+    }
+
     override suspend fun signInWithOAuthCallback(callbackUrl: String): SharedTagAuthRemoteResult {
         validateCallbackUrl(callbackUrl)
         val params = parseCallbackParams(callbackUrl)
-        params["error_description"]?.takeIf { it.isNotBlank() }?.let { throw IOException(it) }
-        params["error"]?.takeIf { it.isNotBlank() }?.let { throw IOException(it) }
+        params["error_description"]?.takeIf { it.isNotBlank() }?.let { oauthStateStore.clear(); throw IOException(it) }
+        params["error"]?.takeIf { it.isNotBlank() }?.let { oauthStateStore.clear(); throw IOException(it) }
         if (!params["access_token"].isNullOrBlank() || !params["refresh_token"].isNullOrBlank()) {
             oauthStateStore.clear()
             throw IOException("OAuth callbackにtokenが含まれています。PKCE code callbackだけを受け付けます。")
         }
         val code = params["code"]?.takeIf { it.isNotBlank() }
-            ?: throw IOException("Googleサインインの認可コードを受け取れませんでした。")
+            ?: throw IOException("サインインの認可コードを受け取れませんでした。")
         val pending = oauthStateStore.load()
-            ?: throw IOException("Googleサインインの開始情報が見つかりません。もう一度やり直してください。")
+            ?: throw IOException("サインインの開始情報が見つかりません。もう一度やり直してください。")
         if (pending.isExpired()) {
             oauthStateStore.clear()
-            throw IOException("Googleサインインの有効期限が切れました。もう一度やり直してください。")
+            throw IOException("サインインの有効期限が切れました。もう一度やり直してください。")
         }
         if (pending.redirectTo != AUTH_CALLBACK_URL) {
             oauthStateStore.clear()
-            throw IOException("Googleサインインのstate検証に失敗しました。")
+            throw IOException("サインインのstate検証に失敗しました。")
         }
         return try {
             val response = withContext(Dispatchers.IO) {
@@ -98,7 +129,11 @@ class SupabaseSharedTagAuthRemoteDataSource(
                     ),
                 )
             }
-            SharedTagAuthRemoteResult.SignedIn(parseSession(requireSession(response)))
+            val session = parseSession(requireSession(response))
+            if (pending.expectedAuthUserId != null && session.authUserId != pending.expectedAuthUserId) {
+                throw IOException("元のアカウントと異なるためログイン方法を追加できませんでした")
+            }
+            SharedTagAuthRemoteResult.SignedIn(session)
         } finally {
             oauthStateStore.clear()
         }
@@ -200,20 +235,24 @@ class SupabaseSharedTagAuthRemoteDataSource(
 
     private fun executeAuthRequest(
         path: String,
-        requestBody: String,
+        requestBody: String? = null,
+        method: String = "POST",
+        accessToken: String? = null,
     ): String {
         check(config.isConfigured) { "Supabase shared tag sync is not configured." }
         val url = URL(config.supabaseUrl.trimEnd('/') + path)
         val connection = (url.openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            doOutput = true
+            requestMethod = method
+            doOutput = requestBody != null
+            if (method == "GET") instanceFollowRedirects = false
             connectTimeout = CONNECT_TIMEOUT_MS
             readTimeout = READ_TIMEOUT_MS
             setRequestProperty("Content-Type", "application/json")
             setRequestProperty("apikey", config.anonKey)
+            accessToken?.let { setRequestProperty("Authorization", "Bearer $it") }
         }
 
-        connection.outputStream.use { it.write(requestBody.toByteArray(Charsets.UTF_8)) }
+        requestBody?.let { body -> connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) } }
         val responseCode = connection.responseCode
         val body = runCatching {
             val stream = if (responseCode in 200..299) connection.inputStream else connection.errorStream
@@ -269,6 +308,7 @@ class SharedPreferencesSharedTagOAuthStateStore(context: Context) : SharedTagOAu
             .putString(KEY_CHALLENGE, state.codeChallenge)
             .putString(KEY_REDIRECT_TO, state.redirectTo)
             .putLong(KEY_CREATED_AT, state.createdAtMillis)
+            .putString(KEY_EXPECTED_AUTH_USER_ID, state.expectedAuthUserId)
             .apply()
     }
 
@@ -277,7 +317,7 @@ class SharedPreferencesSharedTagOAuthStateStore(context: Context) : SharedTagOAu
         val challenge = prefs.getString(KEY_CHALLENGE, null)?.takeIf { it.isNotBlank() } ?: return null
         val redirectTo = prefs.getString(KEY_REDIRECT_TO, null)?.takeIf { it.isNotBlank() } ?: return null
         val createdAt = prefs.getLong(KEY_CREATED_AT, 0L).takeIf { it > 0L } ?: return null
-        return SharedTagOAuthPendingState(verifier, challenge, redirectTo, createdAt)
+        return SharedTagOAuthPendingState(verifier, challenge, redirectTo, createdAt, prefs.getString(KEY_EXPECTED_AUTH_USER_ID, null))
     }
 
     override fun clear() {
@@ -289,6 +329,7 @@ class SharedPreferencesSharedTagOAuthStateStore(context: Context) : SharedTagOAu
         const val KEY_CHALLENGE = "code_challenge"
         const val KEY_REDIRECT_TO = "redirect_to"
         const val KEY_CREATED_AT = "created_at"
+        const val KEY_EXPECTED_AUTH_USER_ID = "expected_auth_user_id"
     }
 }
 
@@ -308,6 +349,7 @@ data class SharedTagOAuthPendingState(
     val codeChallenge: String,
     val redirectTo: String,
     val createdAtMillis: Long,
+    val expectedAuthUserId: String? = null,
 ) {
     fun isExpired(nowMillis: Long = System.currentTimeMillis()): Boolean =
         nowMillis - createdAtMillis > EXPIRY_MILLIS
@@ -329,9 +371,9 @@ data class SharedTagOAuthPendingState(
 
 private fun validateCallbackUrl(callbackUrl: String) {
     val uri = runCatching { URI(callbackUrl) }.getOrNull()
-        ?: throw IOException("Googleサインインのcallback URLが不正です。")
+        ?: throw IOException("サインインのcallback URLが不正です。")
     if (uri.scheme != "urlsaver" || uri.host != "auth" || uri.path != "/callback") {
-        throw IOException("Googleサインインのcallback URLを検証できませんでした。")
+        throw IOException("サインインのcallback URLを検証できませんでした。")
     }
 }
 
@@ -422,3 +464,6 @@ private data class SupabaseAuthUser(
 private data class SupabaseAuthErrorResponse(
     val message: String,
 )
+
+@Serializable
+private data class SupabaseIdentityLinkResponse(val url: String)

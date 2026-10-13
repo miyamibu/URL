@@ -1,5 +1,17 @@
 # REPO_GO Evidence
 
+## 2026-10-13 sharing, accounts and display release candidate: 1.0.26 (41)
+
+Status: CANDIDATE_PREPARATION. The owner authorized organizing all current changes, committing/pushing them, then submitting the mobile update to both Stores. Release artifact validation and actual Store review submission remain pending. This scope does not authorize the separately proposed production Supabase migration or new provider/account security settings.
+
+- Home controls below the shared-tag row provide sorting, a direct list/two-column display-method toggle without a trailing arrow, and contextual eye controls. Grid information OFF retains square thumbnails; ON adds existing title/tag information underneath. Home preferences do not overwrite existing list/archive/detail settings.
+- The candidate includes shared-tag selection from external shares with durable partial retry, Google/Apple identity linking guards, email/password entry, local/shared-tag edit gestures, paid-offer visibility and one-line annual labels. ChatGPT sign-in remains disabled/preparing pending provider eligibility and client registration.
+- The new auto-group invitation acceptance and viewer-owned-tag contribution SQL is included in source and was tested in an isolated local database. It is not deployed to production. Contributors do not import unrelated direct tag members into the group.
+- Android evidence: 556 unit tests, Debug assemble/lint passed; the final presentation adjustment passed 21 related tests and assemble. iOS evidence: 65 auth/share tests and 35 display/domain tests passed; final UI changes passed generic build. Both canonical apps were operated on task-owned emulator/simulator through Appium; physical-device, live provider login/linking and live shared-tag group flows remain unverified.
+- Actual two-column/eye/sorting/persistence/detail/selection/swipe/Undo and text-size evidence is retained in `artifacts/ui-review/2026-10-13/sharing-account-controls/`. The temporary test devices were cleaned up and all review artifacts were retained. The free-account annual buttons were not observed on a live account.
+- Release train: preserve existing production runtime configuration, signing identities and release modes. Reuse the above checks where code is unchanged; validate the new signed AAB and distribution IPA before upload.
+
+
 ## 2026-10-08 AI handoff release candidate: 1.0.25 (40)
 
 Final status: REPO_GO for the authorized mobile Store update; Store review and public availability remain separate external states. Google Play submission `24` is `審査中` and App Store submission `50cb7c3a-bd84-483f-bd02-cc90185655ed` is `審査待ち` as of 2026-10-08 12:22 JST. See [the release record](final-submission-checklist.md#2026-10-08-release-record-1025-40).
@@ -124,9 +136,9 @@ Still open at the time of the 2026-08-22 freeze (external, owner-gated): product
 
 ## Current source snapshot (manifest-backed)
 
-- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.25`, `versionCode=40`
-- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.25`, `build=40`; share extension `com.mibu.codebridge.ios.share`
-- Supabase migration head: `20260824090000_fix_apply_personal_link_ops_conflict.sql`
+- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.26`, `versionCode=41`
+- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.26`, `build=41`; share extension `com.mibu.codebridge.ios.share`
+- Supabase migration head: `20261013090000_auto_group_for_shared_tag_invite_accept.sql`
 - Machine-readable source: `docs/release/release-manifest.json`
 
 > Dated provider, store, and device captures below are historical evidence unless they are explicitly re-run for the current source. They must not be treated as current proof solely because they appear in this document.

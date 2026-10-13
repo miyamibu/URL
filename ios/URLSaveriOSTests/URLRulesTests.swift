@@ -1,6 +1,42 @@
 import XCTest
 
 final class URLRulesTests: XCTestCase {
+    func testSharedShareSelectionSurvivesRecreationAndLocksForRetry() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        var operation = ShareExtensionPendingOperation(
+            createdAt: now,
+            updatedAt: now,
+            originalURLs: ["https://example.com/shared"],
+            memo: nil,
+            degradationNotice: nil
+        )
+        operation.updateTagSelection([7], sharedTagRemoteIDs: ["shared-b", "shared-a"], at: now)
+        let data = try JSONEncoder().encode(operation)
+        var restored = try JSONDecoder().decode(ShareExtensionPendingOperation.self, from: data)
+        XCTAssertEqual(restored.selectedTagIDs, [7])
+        XCTAssertEqual(restored.selectedSharedTagRemoteIDs, ["shared-a", "shared-b"])
+        restored.lockTagSelection([7], sharedTagRemoteIDs: ["shared-a", "shared-b"], at: now)
+        restored.updateTagSelection([8], sharedTagRemoteIDs: ["shared-c"], at: now.addingTimeInterval(1))
+        XCTAssertEqual(restored.selectedTagIDs, [7])
+        XCTAssertEqual(restored.selectedSharedTagRemoteIDs, ["shared-a", "shared-b"])
+    }
+
+    func testCompletedShareRemainsRecoverableUntilHostHandoffIsSaved() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let url = "https://example.com/shared"
+        let operation = ShareExtensionPendingOperation(
+            createdAt: now,
+            updatedAt: now,
+            originalURLs: [url],
+            memo: nil,
+            degradationNotice: nil,
+            pendingItems: [],
+            completedItems: [ShareExtensionCompletedItem(url: url, result: .created, entryID: 7)]
+        )
+        XCTAssertTrue(operation.isRecoverable(at: now))
+        XCTAssertFalse(operation.isRecoverable(at: now.addingTimeInterval(ShareExtensionPendingOperation.recoveryWindow + 1)))
+    }
+
     func testNormalizeAppliesPhaseRules() {
         XCTAssertEqual(
             URLRules.normalize("HTTPS://Example.COM:443/path/?a=1#frag"),
@@ -773,6 +809,142 @@ final class URLRulesTests: XCTestCase {
         )
         XCTAssertFalse(FirstRunOnboardingStore.shouldShow(defaults: existingDefaults))
     }
+    func testShareHandoffQueuePreservesConsecutiveSharesAndOnlyAcknowledgesSnapshot() async throws {
+        let directory = try makeHandoffTestDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("legacy.json")
+        let store = ShareHandoffStore(fileURL: file)
+        let first = makeHandoffReport(entryID: 11)
+        let second = makeHandoffReport(entryID: 22)
+        try await store.write(first)
+        let firstSnapshots = try await store.pendingReports()
+        let firstSnapshot = try XCTUnwrap(firstSnapshots.first)
+        try await store.write(second)
+        let acknowledged = try await store.acknowledge(firstSnapshot)
+        XCTAssertTrue(acknowledged)
+        let remaining = try await ShareHandoffStore(fileURL: file).pendingReports()
+        XCTAssertEqual(remaining.map(\.report.entryID), [22])
+        let acknowledgedAgain = try await store.acknowledge(firstSnapshot)
+        XCTAssertFalse(acknowledgedAgain)
+        XCTAssertEqual(remaining.first?.report.operationID, second.operationID)
+    }
+
+    func testShareHandoffPartialFailureSurvivesRecreationAndOldAckCannotDeleteProgress() async throws {
+        let directory = try makeHandoffTestDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("legacy.json")
+        let store = ShareHandoffStore(fileURL: file)
+        let report = makeHandoffReport(entryID: 11, tags: ["tag-a", "tag-b"])
+        try await store.write(report)
+        let snapshots = try await store.pendingReports()
+        let pending = try XCTUnwrap(snapshots.first)
+        let failed = [ShareHandoffAssignment(entryID: 11, remoteTagID: "tag-b")]
+        let retained = try await store.retain(pending, assignments: failed)
+        XCTAssertTrue(retained)
+        let staleAck = try await store.acknowledge(pending)
+        XCTAssertFalse(staleAck)
+        let recreated = ShareHandoffStore(fileURL: file)
+        let restored = try await recreated.pendingReports()
+        XCTAssertEqual(restored.first?.report.sharedTagAssignments, failed)
+        XCTAssertEqual(restored.first?.report.entryID, 11)
+        XCTAssertEqual(restored.first?.report.operationID, report.operationID)
+        let finalSnapshot = try XCTUnwrap(restored.first)
+        let acknowledged = try await recreated.acknowledge(finalSnapshot)
+        XCTAssertTrue(acknowledged)
+        let empty = try await recreated.pendingReports()
+        XCTAssertTrue(empty.isEmpty)
+    }
+
+    func testShareHandoffLegacyDecodeIsNonDestructiveAndChangedLegacyCannotBeAcknowledged() async throws {
+        let directory = try makeHandoffTestDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("legacy.json")
+        var report = makeHandoffReport(entryID: 11)
+        report.operationID = nil
+        report.authUserID = nil
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(report).write(to: file)
+        let store = ShareHandoffStore(fileURL: file)
+        let snapshots = try await store.pendingReports()
+        let legacy = try XCTUnwrap(snapshots.first)
+        XCTAssertNil(legacy.report.operationID)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+        // A producer replaced the legacy singleton after the consumer read it.
+        let replacement = makeHandoffReport(entryID: 22)
+        try encoder.encode(replacement).write(to: file, options: .atomic)
+        let acknowledged = try await store.acknowledge(legacy)
+        XCTAssertFalse(acknowledged)
+        let remaining = try await store.pendingReports()
+        XCTAssertEqual(remaining.first?.report.entryID, 22)
+    }
+
+    func testShareHandoffConflictingOperationNeverOverwritesUnfinishedSelection() async throws {
+        let directory = try makeHandoffTestDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ShareHandoffStore(fileURL: directory.appendingPathComponent("legacy.json"))
+        let original = makeHandoffReport(entryID: 11, tags: ["tag-a"])
+        try await store.write(original)
+        try await store.write(original)
+        var conflicting = makeHandoffReport(entryID: 22, tags: ["tag-b"])
+        conflicting.operationID = original.operationID
+        do {
+            try await store.write(conflicting)
+            XCTFail("Conflicting operation must fail without replacing the original")
+        } catch ShareHandoffStoreError.operationConflict {
+            // Expected: extension keeps its pending operation for recovery.
+        }
+        let pending = try await store.pendingReports()
+        XCTAssertEqual(pending.count, 1)
+        XCTAssertEqual(pending.first?.report, original)
+    }
+
+    func testShareHandoffAccountBindingSurvivesRecreationAndLegacySharedSelectionFailsClosed() throws {
+        var operation = ShareExtensionPendingOperation(
+            originalURLs: ["https://example.com/shared"], memo: nil, degradationNotice: nil
+        )
+        operation.selectedSharedTagAuthUserID = "owner-a"
+        operation.lockTagSelection([], sharedTagRemoteIDs: ["tag-a"])
+        let restored = try JSONDecoder().decode(ShareExtensionPendingOperation.self, from: JSONEncoder().encode(operation))
+        XCTAssertEqual(restored.selectedSharedTagAuthUserID, "owner-a")
+        var report = makeHandoffReport(entryID: 11, tags: ["tag-a"])
+        XCTAssertTrue(report.canAssignSharedTags(authUserID: "owner-a"))
+        XCTAssertFalse(report.canAssignSharedTags(authUserID: "owner-b"))
+        XCTAssertFalse(report.canAssignSharedTags(authUserID: nil))
+        report.authUserID = nil
+        XCTAssertFalse(report.canAssignSharedTags(authUserID: "owner-a"))
+        XCTAssertTrue(makeHandoffReport(entryID: 22).canAssignSharedTags(authUserID: nil))
+    }
+
+    func testUnreadableShareHandoffRemainsIntactForRecovery() async throws {
+        let directory = try makeHandoffTestDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("legacy.json")
+        let bytes = Data("invalid report".utf8)
+        try bytes.write(to: file)
+        do {
+            _ = try await ShareHandoffStore(fileURL: file).pendingReports()
+            XCTFail("Unreadable report must be surfaced rather than consumed")
+        } catch {
+            XCTAssertEqual(try Data(contentsOf: file), bytes)
+        }
+    }
+
+    private func makeHandoffTestDirectory() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("RinbamHandoffTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
+    private func makeHandoffReport(entryID: Int64, tags: [String] = []) -> ShareHandoffReport {
+        ShareHandoffReport(
+            operationID: UUID(), authUserID: "owner-a", result: .created,
+            entryID: entryID, normalizedURL: "https://example.com/\(entryID)",
+            sharedTagRemoteIDs: tags, degradationNotice: nil, batchSummary: nil,
+            createdAt: Date(timeIntervalSince1970: 1_800_000_000)
+        )
+    }
+
 }
 
 private struct URLNormalizationVector: Decodable {

@@ -9,6 +9,8 @@ import jp.mimac.urlsaver.data.SHARE_DEGRADATION_TRUNCATED_TO_MAX_URLS
 import jp.mimac.urlsaver.domain.AssignTagResult
 import jp.mimac.urlsaver.domain.CreateTagResult
 import jp.mimac.urlsaver.domain.SaveResult
+import jp.mimac.urlsaver.domain.SharedTagMemberRole
+import jp.mimac.urlsaver.domain.SharedTagScope
 import jp.mimac.urlsaver.domain.ShareSaveResult
 import jp.mimac.urlsaver.domain.UrlRules
 import jp.mimac.urlsaver.domain.normalizeSharedTagName
@@ -18,6 +20,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
@@ -28,6 +31,7 @@ import java.util.UUID
 internal interface ShareReceiverOperations {
     suspend fun saveURL(url: String, memo: String?): SaveResult
     suspend fun assignTag(entryId: Long, tagId: Long): AssignTagResult
+    suspend fun canAssignSharedTag(tagId: Long): Boolean = false
     suspend fun createLocalTag(name: String): CreateTagResult
     suspend fun findLocalTagIdByName(name: String): Long?
 }
@@ -43,6 +47,15 @@ internal class RepositoryShareReceiverOperations(
         return container.tagRepository.assignTagWithResult(tagId = tagId, entryId = entryId)
     }
 
+    override suspend fun canAssignSharedTag(tagId: Long): Boolean {
+        val cloudState = container.tagRepository.cloudState.first()
+        if (!cloudState.isConfigured || !cloudState.isSignedIn) return false
+        val tag = container.tagRepository.observeTag(tagId).first() ?: return false
+        return tag.scope == SharedTagScope.SYNCED && tag.remoteTagId != null &&
+            (tag.currentUserRole == SharedTagMemberRole.OWNER ||
+                tag.currentUserRole == SharedTagMemberRole.EDITOR)
+    }
+
     override suspend fun createLocalTag(name: String): CreateTagResult {
         return container.tagRepository.createLocalTagWithResult(name)
     }
@@ -54,10 +67,12 @@ internal class RepositoryShareReceiverOperations(
 
 internal data class ShareReceiverUiState(
     val selectedLocalTagIds: Set<Long> = emptySet(),
+    val selectedSharedTagIds: Set<Long> = emptySet(),
     val newTagName: String = "",
     val tagCreateError: String? = null,
     val isTagSelectionLocked: Boolean = false,
     val isCreatingTag: Boolean = false,
+    val isCheckingSharedTag: Boolean = false,
     val isSaving: Boolean = false,
     val resultMessage: String? = null,
     val retryMessage: String? = null,
@@ -77,6 +92,7 @@ internal class ShareReceiverViewModel(
     private var durableState = restoreDurableState()
     private var isSaving = false
     private var isCreatingTag = false
+    private var sharedTagChecks = 0
     private var createTagJob: Job? = null
     private var tagCreationGeneration = 0L
     private val _uiState = MutableStateFlow(buildUiState())
@@ -116,6 +132,40 @@ internal class ShareReceiverViewModel(
             tagCreateError = null,
         )
         persistAndPublish()
+    }
+
+    fun toggleSharedTag(tagId: Long) {
+        if (isTagEditingDisabled() || tagId <= 0) return
+        val operationId = durableState.operationId
+        sharedTagChecks += 1
+        publish()
+        viewModelScope.launch {
+            try {
+                val selected = tagId in durableState.selectedSharedTagIds
+                val eligible = selected || try {
+                    operations.canAssignSharedTag(tagId)
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (_: Exception) {
+                    false
+                }
+                if (isTagEditingDisabled() || durableState.operationId != operationId) return@launch
+                if (!eligible) {
+                    updateTagCreateError("この共有タグには追加できません")
+                    return@launch
+                }
+                val current = durableState.selectedSharedTagIds.toSet()
+                durableState = durableState.copy(
+                    selectedSharedTagIds = if (tagId in current) (current - tagId).sorted()
+                        else (current + tagId).sorted(),
+                    tagCreateError = null,
+                )
+                persistAndPublish()
+            } finally {
+                sharedTagChecks -= 1
+                publish()
+            }
+        }
     }
 
     fun updateNewTagName(name: String) {
@@ -175,12 +225,15 @@ internal class ShareReceiverViewModel(
     }
 
     fun savePendingShare() {
-        if (isSaving || isCreatingTag || durableState.pendingItems.isEmpty()) return
+        if (isSaving || isCreatingTag || sharedTagChecks > 0 || durableState.pendingItems.isEmpty()) return
         isSaving = true
         val operationTagIds = durableState.operationSelectedLocalTagIds
             ?: durableState.selectedLocalTagIds.distinct().sorted()
+        val operationSharedTagIds = durableState.operationSelectedSharedTagIds
+            ?: durableState.selectedSharedTagIds.distinct().sorted()
         durableState = durableState.copy(
             operationSelectedLocalTagIds = operationTagIds,
+            operationSelectedSharedTagIds = operationSharedTagIds,
             retryMessage = null,
             resultMessage = null,
         )
@@ -191,7 +244,7 @@ internal class ShareReceiverViewModel(
                 val workItems = durableState.pendingItems
                 val retryItems = mutableListOf<ShareReceiverPendingItem>()
                 for ((index, item) in workItems.withIndex()) {
-                    val attempt = attempt(item, operationTagIds)
+                    val attempt = attempt(item, operationTagIds, operationSharedTagIds)
                     registeredMeaningfulAction = registeredMeaningfulAction || attempt.meaningfulAction
                     val completed = durableState.completedItems + attempt.completedItems
                     attempt.retryItem?.let(retryItems::add)
@@ -238,16 +291,18 @@ internal class ShareReceiverViewModel(
     private suspend fun attempt(
         item: ShareReceiverPendingItem,
         operationTagIds: List<Long>,
+        operationSharedTagIds: List<Long>,
     ): ShareReceiverItemAttempt {
         if (!item.needsUrlSave) {
             val entryId = item.entryId
             if (entryId == null) {
                 return ShareReceiverItemAttempt(
-                    retryItem = item.copy(needsUrlSave = true, pendingTagIds = emptyList()),
+                    retryItem = item.copy(needsUrlSave = true, pendingTagIds = emptyList(), pendingSharedTagIds = emptyList()),
                 )
             }
             val failedTagIds = assignTags(entryId, item.pendingTagIds)
-            return if (failedTagIds.isEmpty()) {
+            val failedSharedTagIds = assignSharedTags(entryId, item.pendingSharedTagIds)
+            return if (failedTagIds.isEmpty() && failedSharedTagIds.isEmpty()) {
                 ShareReceiverItemAttempt(
                     completedItems = listOf(
                         ShareReceiverCompletedItem(
@@ -258,28 +313,55 @@ internal class ShareReceiverViewModel(
                 )
             } else {
                 ShareReceiverItemAttempt(
-                    retryItem = item.copy(pendingTagIds = failedTagIds.sorted()),
+                    retryItem = item.copy(
+                        pendingTagIds = failedTagIds.sorted(),
+                        pendingSharedTagIds = failedSharedTagIds.sorted(),
+                    ),
                 )
             }
         }
 
-        val saveResult = runCatching { operations.saveURL(item.url, durableState.memo) }
-            .getOrElse { SaveResult(ShareSaveResult.SAVE_FAILED) }
+        val saveResult = try {
+            operations.saveURL(item.url, durableState.memo)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Exception) {
+            SaveResult(ShareSaveResult.SAVE_FAILED)
+        }
         if (saveResult.result == ShareSaveResult.SAVE_FAILED) {
             return ShareReceiverItemAttempt(retryItem = item)
         }
 
+        if (shouldAssignShareTags(saveResult.result, saveResult.entryId)) {
+            // Persist the saved URL before suspending on assignments so recreation only retries tags.
+            durableState = durableState.copy(pendingItems = durableState.pendingItems.map { pending ->
+                if (pending.url == item.url) pending.copy(
+                    needsUrlSave = false,
+                    entryId = saveResult.entryId,
+                    pendingTagIds = operationTagIds,
+                    pendingSharedTagIds = operationSharedTagIds,
+                    savedResult = saveResult.result.name,
+                ) else pending
+            })
+            persistAndPublish()
+        }
         val failedTagIds = if (shouldAssignShareTags(saveResult.result, saveResult.entryId)) {
             assignTags(requireNotNull(saveResult.entryId), operationTagIds)
         } else {
             emptyList()
         }
-        if (failedTagIds.isNotEmpty()) {
+        val failedSharedTagIds = if (shouldAssignShareTags(saveResult.result, saveResult.entryId)) {
+            assignSharedTags(requireNotNull(saveResult.entryId), operationSharedTagIds)
+        } else {
+            emptyList()
+        }
+        if (failedTagIds.isNotEmpty() || failedSharedTagIds.isNotEmpty()) {
             return ShareReceiverItemAttempt(
                 retryItem = item.copy(
                     needsUrlSave = false,
                     entryId = saveResult.entryId,
                     pendingTagIds = failedTagIds.sorted(),
+                    pendingSharedTagIds = failedSharedTagIds.sorted(),
                     savedResult = saveResult.result.name,
                 ),
                 meaningfulAction = saveResult.result == ShareSaveResult.CREATED ||
@@ -294,19 +376,48 @@ internal class ShareReceiverViewModel(
         )
     }
 
-    private suspend fun assignTags(entryId: Long, tagIds: Collection<Long>): List<Long> {
+    private suspend fun assignTags(entryId: Long, tagIds: Collection<Long>, shared: Boolean = false): List<Long> {
         val failed = mutableListOf<Long>()
         tagIds.distinct().forEach { tagId ->
-            val result = runCatching { operations.assignTag(entryId, tagId) }
-                .getOrDefault(AssignTagResult.Failed)
+            val result = try {
+                operations.assignTag(entryId, tagId)
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
+                AssignTagResult.Failed
+            }
             when (result) {
                 AssignTagResult.Success,
                 AssignTagResult.AlreadyAssigned,
-                -> Unit
+                -> {
+                    durableState = durableState.copy(pendingItems = durableState.pendingItems.map { item ->
+                        if (item.entryId != entryId) item else if (shared) {
+                            item.copy(pendingSharedTagIds = item.pendingSharedTagIds - tagId)
+                        } else {
+                            item.copy(pendingTagIds = item.pendingTagIds - tagId)
+                        }
+                    })
+                    persistAndPublish()
+                }
                 is AssignTagResult.LimitReached,
                 AssignTagResult.Failed,
                 -> failed += tagId
             }
+        }
+        return failed
+    }
+
+    private suspend fun assignSharedTags(entryId: Long, tagIds: Collection<Long>): List<Long> {
+        val failed = mutableListOf<Long>()
+        for (tagId in tagIds.distinct()) {
+            val eligible = try {
+                operations.canAssignSharedTag(tagId)
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
+                false
+            }
+            if (!eligible || assignTags(entryId, listOf(tagId), shared = true).isNotEmpty()) failed += tagId
         }
         return failed
     }
@@ -336,7 +447,10 @@ internal class ShareReceiverViewModel(
                 restored.completedItems.isNotEmpty() ||
                 restored.pendingItems.any { !it.needsUrlSave })
         return if (requiresLegacyOperationLock) {
-            restored.copy(operationSelectedLocalTagIds = restored.selectedLocalTagIds.distinct().sorted())
+            restored.copy(
+                operationSelectedLocalTagIds = restored.selectedLocalTagIds.distinct().sorted(),
+                operationSelectedSharedTagIds = restored.selectedSharedTagIds.distinct().sorted(),
+            )
         } else {
             restored
         }
@@ -356,10 +470,12 @@ internal class ShareReceiverViewModel(
     private fun buildUiState(): ShareReceiverUiState {
         return ShareReceiverUiState(
             selectedLocalTagIds = durableState.selectedLocalTagIds.toSet(),
+            selectedSharedTagIds = durableState.selectedSharedTagIds.toSet(),
             newTagName = durableState.newTagName,
             tagCreateError = durableState.tagCreateError,
             isTagSelectionLocked = isTagSelectionLocked(),
             isCreatingTag = isCreatingTag,
+            isCheckingSharedTag = sharedTagChecks > 0,
             isSaving = isSaving,
             resultMessage = durableState.resultMessage,
             retryMessage = durableState.retryMessage,
@@ -474,7 +590,9 @@ private data class ShareReceiverDurableState(
     val memo: String? = null,
     val degradationNotice: String? = null,
     val selectedLocalTagIds: List<Long> = emptyList(),
+    val selectedSharedTagIds: List<Long> = emptyList(),
     val operationSelectedLocalTagIds: List<Long>? = null,
+    val operationSelectedSharedTagIds: List<Long>? = null,
     val newTagName: String = "",
     val tagCreateError: String? = null,
     val pendingItems: List<ShareReceiverPendingItem> = emptyList(),
@@ -489,6 +607,7 @@ private data class ShareReceiverPendingItem(
     val needsUrlSave: Boolean = true,
     val entryId: Long? = null,
     val pendingTagIds: List<Long> = emptyList(),
+    val pendingSharedTagIds: List<Long> = emptyList(),
     val savedResult: String? = null,
 )
 

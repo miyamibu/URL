@@ -10,6 +10,16 @@ private enum ChatGptPersonalLinkSyncAction: Equatable {
     case sync
 }
 
+private enum GoogleOAuthPresentationPurpose {
+    case signIn
+    case identityLink
+
+    var isIdentityLink: Bool {
+        if case .identityLink = self { return true }
+        return false
+    }
+}
+
 struct SharedTagCloudSheet: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage(HomeBackgroundPreferenceStore.key) private var homeBackgroundRaw = HomeBackgroundStyle.defaultStyle.rawValue
@@ -18,6 +28,7 @@ struct SharedTagCloudSheet: View {
     @State private var email = ""
     @State private var password = ""
     @State private var isPasswordVisible = false
+    @State private var isShowingEmailPassword = false
     @State private var displayNameDraft = ""
     @State private var isEditingDisplayName = false
     @State private var selectedAvatarItem: PhotosPickerItem?
@@ -34,8 +45,10 @@ struct SharedTagCloudSheet: View {
     @State private var promoMessage: String?
     @State private var isRedeemingPromoCode = false
     @State private var googleOAuthURL: URL?
+    @State private var googleOAuthPurpose: GoogleOAuthPresentationPurpose = .signIn
     @State private var pendingAppleNonce: String?
     @State private var pendingAppleState: String?
+    @State private var pendingAppleExpectedAuthUserID: String?
     @State private var pendingChatGptPersonalLinkSyncAction: ChatGptPersonalLinkSyncAction?
     @State private var isShowingAiTransparency = false
     @StateObject private var appleSignInCoordinator = AppleSignInCoordinator()
@@ -152,6 +165,7 @@ struct SharedTagCloudSheet: View {
             if isSignedIn {
                 email = ""
                 password = ""
+                isShowingEmailPassword = false
             }
         }
         .onChange(of: selectedAvatarItem) { _, newItem in
@@ -235,7 +249,7 @@ struct SharedTagCloudSheet: View {
                 get: { googleOAuthURL != nil },
                 set: { isPresented in
                     if !isPresented {
-                        googleOAuthURL = nil
+                        dismissGoogleOAuthSheet()
                     }
                 }
             )
@@ -396,12 +410,11 @@ struct SharedTagCloudSheet: View {
             Text("アカウント・共有").font(.system(.headline, design: .rounded).weight(.heavy))
             if !model.sharedTagCloudState.isConfigured {
                 profileSettingRow(title: "共有アカウント", value: "現在利用できません", icon: "person.crop.circle", showsChevron: false)
-            } else if !model.sharedTagCloudState.isSignedIn && model.sharedTagAccountLocalCleanupState == nil {
-                DisclosureGroup {
-                    signedOutSection
-                } label: {
-                    profileSettingRow(title: "サインイン", value: "未ログイン", icon: "person.crop.circle", showsChevron: false)
-                }
+            }
+            if !model.sharedTagCloudState.isSignedIn && model.sharedTagAccountLocalCleanupState == nil {
+                signedOutSection
+            } else if model.sharedTagCloudState.isSignedIn && model.sharedTagCloudState.isConfigured {
+                identityLinkSection
             }
             if model.chatGptPersonalLinkSettings.operationEnabled {
                 DisclosureGroup {
@@ -413,7 +426,9 @@ struct SharedTagCloudSheet: View {
                 profileSettingRow(title: "ChatGPT連携", value: "現在利用できません", icon: "link", showsChevron: false)
             }
             DisclosureGroup(isExpanded: $isShowingPlanDetails) {
-                paidCourseSection
+                if !model.entitlements.planType.isPaidCourse {
+                    paidCourseSection
+                }
                 promoCodeSection
             } label: {
                 profileSettingRow(title: "プラン・優待", value: nil, icon: "checkmark.seal", showsChevron: false)
@@ -484,47 +499,101 @@ struct SharedTagCloudSheet: View {
 
     private var signedOutSection: some View {
         AppPanel {
+            profileSettingRow(title: "サインイン", value: "未ログイン", icon: "person.crop.circle", showsChevron: false)
             Text("共有タグに参加するにはサインインが必要です")
                 .font(.system(size: 18, weight: .heavy, design: .rounded))
                 .foregroundStyle(AppPalette.textPrimary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.68)
+                .fixedSize(horizontal: false, vertical: true)
 
-            HStack(spacing: 10) {
-                AppActionButton(
-                    enabled: !isWorking
-                ) {
-                    guard !isWorking else { return }
-                    if let url = model.googleOAuthURLForSharedTagCloud() {
-                        googleOAuthURL = url
-                    } else {
-                        model.showProfileStatusMessage("Googleサインインを開始できませんでした。クラウド設定を確認してください。")
-                    }
-                } label: {
-                    Text("Googleで続ける")
-                }
-
-                Button {
-                    startAppleSignIn()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "apple.logo")
-                            .font(.system(size: 17, weight: .semibold))
-                        Text("Appleで続ける")
-                            .font(.system(size: 15, weight: .semibold))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.72)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 56)
-                    .foregroundStyle(Color.white)
-                    .background(Color.black, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Appleで続ける")
-                .disabled(isWorking)
+            if !model.sharedTagCloudState.isConfigured {
+                Text("アカウント連携は現在準備中です。設定の準備が整うまでサインイン操作は利用できません。")
+                    .font(.footnote)
+                    .foregroundStyle(AppPalette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            VStack(spacing: 10) {
+                authProviderButton(
+                    title: model.sharedTagCloudState.isConfigured ? "Googleで続ける" : "Googleで続ける（準備中）",
+                    systemImage: "globe",
+                    identifier: "auth_google",
+                    background: AppPalette.surfaceSoft,
+                    foreground: AppPalette.textPrimary,
+                    enabled: model.sharedTagCloudState.isConfigured && !isWorking,
+                    action: startGoogleSignIn
+                )
+                authProviderButton(
+                    title: model.sharedTagCloudState.isConfigured ? "Appleで続ける" : "Appleで続ける（準備中）",
+                    systemImage: "apple.logo",
+                    identifier: "auth_apple",
+                    background: Color.black,
+                    foreground: Color.white,
+                    enabled: model.sharedTagCloudState.isConfigured && !isWorking,
+                    action: { startAppleSignIn() }
+                )
+                authProviderButton(
+                    title: "ChatGPTで続ける（準備中）",
+                    systemImage: "message",
+                    identifier: "auth_chatgpt",
+                    background: AppPalette.surfaceSoft,
+                    foreground: AppPalette.textMuted,
+                    enabled: false,
+                    action: {}
+                )
             }
 
+            DisclosureGroup(isExpanded: $isShowingEmailPassword) {
+                emailPasswordForm
+            } label: {
+                profileSettingRow(title: "メールアドレス・パスワード", value: model.sharedTagCloudState.isConfigured ? nil : "準備中", icon: "envelope", showsChevron: false)
+            }
+            .accessibilityIdentifier("auth_email")
+        }
+    }
+
+    private var identityLinkSection: some View {
+        AppPanel {
+            Text("ログイン方法を追加")
+                .font(.system(size: 18, weight: .heavy, design: .rounded))
+                .foregroundStyle(AppPalette.textPrimary)
+            Text("GoogleまたはAppleを連携すると、AndroidとiPhoneで同じ共有タグアカウントを使えます。")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(AppPalette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(spacing: 10) {
+                authProviderButton(
+                    title: "Googleをこのアカウントに連携",
+                    systemImage: "globe",
+                    identifier: "auth_link_google",
+                    background: AppPalette.surfaceSoft,
+                    foreground: AppPalette.textPrimary,
+                    enabled: !isWorking && model.sharedTagCloudState.authUserID != nil,
+                    action: startGoogleIdentityLink
+                )
+                authProviderButton(
+                    title: "Appleをこのアカウントに連携",
+                    systemImage: "apple.logo",
+                    identifier: "auth_link_apple",
+                    background: Color.black,
+                    foreground: Color.white,
+                    enabled: !isWorking && model.sharedTagCloudState.authUserID != nil,
+                    action: startAppleIdentityLink
+                )
+                authProviderButton(
+                    title: "ChatGPT　準備中",
+                    systemImage: "message",
+                    identifier: "auth_chatgpt",
+                    background: AppPalette.surfaceSoft,
+                    foreground: AppPalette.textMuted,
+                    enabled: false,
+                    action: {}
+                )
+            }
+        }
+    }
+
+    private var emailPasswordForm: some View {
+        VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 10) {
                 Text("メールアドレス")
                     .font(.system(size: 16, weight: .bold))
@@ -539,10 +608,7 @@ struct SharedTagCloudSheet: View {
                     .padding(.horizontal, 18)
                     .padding(.vertical, 18)
                     .background(AppPalette.background, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(AppPalette.outlineSoft, lineWidth: 1.5)
-                    )
+                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(AppPalette.outlineSoft, lineWidth: 1.5))
             }
 
             VStack(alignment: .leading, spacing: 10) {
@@ -563,9 +629,7 @@ struct SharedTagCloudSheet: View {
                     .foregroundStyle(AppPalette.textPrimary)
                     .tint(AppPalette.primaryStrong)
 
-                    Button {
-                        isPasswordVisible.toggle()
-                    } label: {
+                    Button { isPasswordVisible.toggle() } label: {
                         Image(systemName: isPasswordVisible ? "eye.slash" : "eye")
                             .font(.system(size: 18, weight: .semibold))
                             .foregroundStyle(AppPalette.textSecondary)
@@ -573,20 +637,14 @@ struct SharedTagCloudSheet: View {
                     }
                     .accessibilityLabel(isPasswordVisible ? "パスワードを隠す" : "パスワードを表示")
                 }
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 18)
-                    .background(AppPalette.background, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(AppPalette.outlineSoft, lineWidth: 1.5)
-                    )
+                .padding(.horizontal, 18)
+                .padding(.vertical, 18)
+                .background(AppPalette.background, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(AppPalette.outlineSoft, lineWidth: 1.5))
             }
 
             HStack(spacing: 10) {
-                AppActionButton(
-                    tone: .primary,
-                    enabled: canSubmitAuth && !isWorking
-                ) {
+                AppActionButton(tone: .primary, enabled: canSubmitAuth && !isWorking) {
                     guard !isWorking else { return }
                     isWorking = true
                     Task {
@@ -594,16 +652,9 @@ struct SharedTagCloudSheet: View {
                         isWorking = false
                     }
                 } label: {
-                    if isWorking {
-                        ProgressView().tint(AppPalette.textPrimary)
-                    } else {
-                        Text("サインイン")
-                    }
+                    if isWorking { ProgressView().tint(AppPalette.textPrimary) } else { Text("サインイン") }
                 }
-
-                AppActionButton(
-                    enabled: canSubmitAuth && !isWorking
-                ) {
+                AppActionButton(enabled: canSubmitAuth && !isWorking) {
                     guard !isWorking else { return }
                     isWorking = true
                     Task {
@@ -626,7 +677,6 @@ struct SharedTagCloudSheet: View {
                 } label: {
                     Text("確認メール再送")
                 }
-
                 AppActionButton(enabled: canSubmitEmailOnly && !isWorking) {
                     guard !isWorking else { return }
                     isWorking = true
@@ -639,6 +689,43 @@ struct SharedTagCloudSheet: View {
                 }
             }
         }
+        .padding(.top, 8)
+        .disabled(!model.sharedTagCloudState.isConfigured)
+    }
+
+    private func authProviderButton(
+        title: String,
+        systemImage: String,
+        identifier: String,
+        background: Color,
+        foreground: Color,
+        enabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: systemImage)
+                    .font(.system(.body, design: .rounded).weight(.semibold))
+                    .frame(width: 24)
+                Text(title)
+                    .font(.system(.body, design: .rounded).weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, minHeight: 52)
+            .foregroundStyle(foreground)
+            .background(background, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(AppPalette.outlineSoft, lineWidth: 1))
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.62)
+        .accessibilityIdentifier(identifier)
+        .accessibilityLabel(title)
+        .accessibilityHint(enabled ? "" : (!model.sharedTagCloudState.isConfigured || title.contains("ChatGPT") ? "現在準備中です" : "サインイン状態を確認してください"))
     }
 
     private var chatGptPersonalLinkSyncSection: some View {
@@ -1048,7 +1135,10 @@ struct SharedTagCloudSheet: View {
                     .foregroundStyle(AppPalette.primaryStrong)
                     .accessibilityLabel("Proが有効です。追加購入は必要ありません")
             } else {
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                let columns = dynamicTypeSize.isAccessibilitySize
+                    ? [GridItem(.flexible())]
+                    : [GridItem(.flexible()), GridItem(.flexible())]
+                LazyVGrid(columns: columns, spacing: 10) {
                     ForEach(options, id: \.self) { option in
                         paidCourseButton(
                             title: paidCourseOptionTitle(option),
@@ -1080,10 +1170,12 @@ struct SharedTagCloudSheet: View {
             }
         } label: {
             Text(title)
-                .font(.system(size: 15, weight: .heavy, design: .rounded))
-                .lineLimit(2)
-                .minimumScaleFactor(0.82)
+                .font(.system(.subheadline, design: .rounded).weight(.heavy))
+                .lineLimit(1)
+                .minimumScaleFactor(0.74)
+                .allowsTightening(true)
         }
+        .accessibilityIdentifier("paid_course_\(plan.rawValue)_\(period.rawValue)")
     }
 
     private var canSubmitAuth: Bool {
@@ -1115,6 +1207,60 @@ struct SharedTagCloudSheet: View {
     private func normalizeAvatarImageData(_ data: Data) -> Data {
         guard let image = UIImage(data: data) else { return data }
         return image.jpegData(compressionQuality: 0.82) ?? data
+    }
+
+    private func startGoogleSignIn() {
+        guard !isWorking else { return }
+        guard let url = model.googleOAuthURLForSharedTagCloud() else {
+            model.showProfileStatusMessage("Googleサインインを開始できませんでした。クラウド設定を確認してください。")
+            return
+        }
+        googleOAuthPurpose = .signIn
+        googleOAuthURL = url
+    }
+
+    private func startGoogleIdentityLink() {
+        guard !isWorking else { return }
+        guard model.sharedTagCloudState.isSignedIn,
+              let expectedAuthUserID = model.sharedTagCloudState.authUserID else {
+            model.showProfileStatusMessage("連携する共有タグアカウントを確認できませんでした。")
+            return
+        }
+        isWorking = true
+        Task {
+            let result = await model.googleIdentityLinkURLForSharedTagCloud()
+            isWorking = false
+            guard model.sharedTagCloudState.authUserID == expectedAuthUserID else {
+                await model.cancelGoogleIdentityLinkForSharedTagCloud()
+                model.showProfileStatusMessage("ログイン中のアカウントが変わったため、Google連携を開始しませんでした。")
+                return
+            }
+            switch result {
+            case .success(let url):
+                googleOAuthPurpose = .identityLink
+                googleOAuthURL = url
+            case .failure(let error):
+                model.showProfileStatusMessage(error.userMessage)
+            }
+        }
+    }
+
+    private func dismissGoogleOAuthSheet() {
+        let shouldCancelIdentityLink = googleOAuthPurpose.isIdentityLink
+        googleOAuthURL = nil
+        googleOAuthPurpose = .signIn
+        if shouldCancelIdentityLink {
+            Task { await model.cancelGoogleIdentityLinkForSharedTagCloud() }
+        }
+    }
+
+    private func startAppleIdentityLink() {
+        guard let expectedAuthUserID = model.sharedTagCloudState.authUserID,
+              model.sharedTagCloudState.isSignedIn else {
+            model.showProfileStatusMessage("連携する共有タグアカウントを確認できませんでした。")
+            return
+        }
+        startAppleSignIn(expectedAuthUserID: expectedAuthUserID)
     }
 
     private func redeemPromoCode() {
@@ -1151,11 +1297,19 @@ struct SharedTagCloudSheet: View {
     }
 
     private func handleAppleSignInCompletion(_ result: Result<ASAuthorization, Error>) {
-        guard !isWorking else { return }
+        guard !isWorking else {
+            pendingAppleNonce = nil
+            pendingAppleState = nil
+            pendingAppleExpectedAuthUserID = nil
+            return
+        }
         switch result {
         case .failure(let error):
+            pendingAppleNonce = nil
+            pendingAppleState = nil
+            pendingAppleExpectedAuthUserID = nil
             if (error as? ASAuthorizationError)?.code == .canceled { return }
-            model.showProfileStatusMessage("Appleサインインを完了できませんでした。")
+            model.showProfileStatusMessage("Apple認証を完了できませんでした。")
         case .success(let authorization):
             guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
                   let identityToken = credential.identityToken,
@@ -1166,25 +1320,42 @@ struct SharedTagCloudSheet: View {
                   credential.state == expectedState else {
                 pendingAppleNonce = nil
                 pendingAppleState = nil
-                model.showProfileStatusMessage("Appleサインインの認証情報を検証できませんでした。")
+                pendingAppleExpectedAuthUserID = nil
+                model.showProfileStatusMessage("Apple認証の情報を検証できませんでした。")
                 return
             }
+            let expectedAuthUserID = pendingAppleExpectedAuthUserID
             pendingAppleNonce = nil
             pendingAppleState = nil
+            pendingAppleExpectedAuthUserID = nil
             isWorking = true
             Task {
-                await model.signInWithAppleForSharedTagCloud(idToken: token, nonce: nonce)
+                if let expectedAuthUserID {
+                    await model.linkAppleIdentityForSharedTagCloud(
+                        idToken: token,
+                        nonce: nonce,
+                        expectedAuthUserID: expectedAuthUserID
+                    )
+                } else {
+                    await model.signInWithAppleForSharedTagCloud(idToken: token, nonce: nonce)
+                }
                 isWorking = false
             }
         }
     }
 
-    private func startAppleSignIn() {
+    private func startAppleSignIn(expectedAuthUserID: String? = nil) {
         guard !isWorking else { return }
+        if let expectedAuthUserID,
+           model.sharedTagCloudState.authUserID != expectedAuthUserID || !model.sharedTagCloudState.isSignedIn {
+            model.showProfileStatusMessage("ログイン中のアカウントが変わったため、Apple連携を開始しませんでした。")
+            return
+        }
         let nonce = randomAppleNonce()
         let state = randomAppleNonce(byteCount: 24)
         pendingAppleNonce = nonce
         pendingAppleState = state
+        pendingAppleExpectedAuthUserID = expectedAuthUserID
 
         let request = ASAuthorizationAppleIDProvider().createRequest()
         request.requestedScopes = [.email]

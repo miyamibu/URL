@@ -84,6 +84,73 @@ final class ServiceFilterTests: XCTestCase {
         XCTAssertEqual(serviceFilterOrder.map(\.rawValue), ["all", "youtube", "x", "instagram", "tiktok", "web"])
     }
 
+    func testEntryListSortUsesPrimaryKeyAndStableTies() {
+        let newestApple = makeRecord(
+            id: 2,
+            serviceType: .web,
+            host: "apple.example",
+            userTitle: "Apple",
+            createdAt: Date(timeIntervalSince1970: 200)
+        )
+        let newestAppleTie = makeRecord(
+            id: 3,
+            serviceType: .web,
+            host: "apple-tie.example",
+            userTitle: "Apple",
+            createdAt: Date(timeIntervalSince1970: 200)
+        )
+        let olderZebra = makeRecord(
+            id: 1,
+            serviceType: .web,
+            host: "zebra.example",
+            userTitle: "Zebra",
+            createdAt: Date(timeIntervalSince1970: 100)
+        )
+        let records = [olderZebra, newestAppleTie, newestApple]
+
+        XCTAssertEqual(
+            sortedEntriesForDisplay(records, by: .addedDate, ascending: false).map(\.id),
+            [3, 2, 1]
+        )
+        XCTAssertEqual(
+            sortedEntriesForDisplay(records, by: .addedDate, ascending: true).map(\.id),
+            [1, 2, 3]
+        )
+        XCTAssertEqual(
+            sortedEntriesForDisplay(records, by: .title, ascending: true).map(\.id),
+            [2, 3, 1]
+        )
+        XCTAssertEqual(
+            sortedEntriesForDisplay(records, by: .title, ascending: false).map(\.id),
+            [1, 3, 2]
+        )
+    }
+
+    func testProviderAndGroupPermissionsKeepIdentityAndRoleBoundaries() {
+        XCTAssertTrue(canRenameSharedTag(currentUserRole: .owner))
+        XCTAssertTrue(canRenameSharedTag(currentUserRole: .editor))
+        XCTAssertFalse(canRenameSharedTag(currentUserRole: .viewer))
+        XCTAssertFalse(canRenameSharedTag(currentUserRole: nil))
+
+        XCTAssertTrue(canContributeSharedTagToGroup(groupRole: .viewer, tagRole: .owner))
+        XCTAssertTrue(canContributeSharedTagToGroup(groupRole: .editor, tagRole: .owner))
+        XCTAssertFalse(canContributeSharedTagToGroup(groupRole: .viewer, tagRole: .editor))
+        XCTAssertFalse(canContributeSharedTagToGroup(groupRole: nil, tagRole: .owner))
+    }
+
+    func testThumbnailOnlyGridCardRetainsTitleAndLocalTagAccessibility() {
+        let record = makeRecord(
+            id: 71,
+            serviceType: .web,
+            host: "grid.example",
+            userTitle: "Grid item title"
+        )
+
+        let label = entryCardAccessibilityLabel(for: record, localTagNames: ["Work"])
+        XCTAssertTrue(label.contains("Grid item title"))
+        XCTAssertTrue(label.contains("自作タグ: Work"))
+    }
+
     func testHomeBackgroundPreferenceDefaultsToExistingCurrentGradientAndRejectsLegacyValues() {
         XCTAssertEqual(HomeBackgroundStyle.allCases, [.current, .sakura, .lavender, .mint])
         XCTAssertEqual(HomeBackgroundStyle.current.label, "今の背景")
@@ -495,7 +562,9 @@ final class ServiceFilterTests: XCTestCase {
         fetchedBody: String? = nil,
         bodySummary: String? = nil,
         description: String? = nil,
-        memo: String = ""
+        memo: String = "",
+        userTitle: String? = nil,
+        createdAt: Date = .distantPast
     ) -> URLSaveriOS.URLRecord {
         URLSaveriOS.URLRecord(
             id: id,
@@ -508,7 +577,7 @@ final class ServiceFilterTests: XCTestCase {
             collectionID: collectionID,
             serviceType: serviceType,
             contentContext: .standard,
-            userTitle: nil,
+            userTitle: userTitle,
             fetchedTitle: nil,
             fetchedAuthorName: fetchedAuthorName,
             fetchedBody: fetchedBody,
@@ -526,7 +595,7 @@ final class ServiceFilterTests: XCTestCase {
             recordState: .active,
             localProvenanceCount: localProvenanceCount,
             sharedReferenceCount: 0,
-            createdAt: .distantPast,
+            createdAt: createdAt,
             updatedAt: .distantPast,
             archivedAt: nil,
             pendingDeletionUntil: nil

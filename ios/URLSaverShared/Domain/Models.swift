@@ -704,7 +704,15 @@ struct BatchSaveSummary: Codable, Equatable, Sendable {
     let failed: Int
 }
 
+struct ShareHandoffAssignment: Codable, Equatable, Sendable {
+    let entryID: Int64
+    let remoteTagID: String
+}
+
 struct ShareHandoffReport: Codable, Equatable, Sendable {
+    var operationID: UUID? = nil
+    var authUserID: String? = nil
+    var pendingSharedTagAssignments: [ShareHandoffAssignment]? = nil
     let result: ShareSaveResult
     let entryID: Int64?
     var entryIDs: [Int64]? = nil
@@ -713,6 +721,21 @@ struct ShareHandoffReport: Codable, Equatable, Sendable {
     let degradationNotice: ShareDegradationNotice?
     let batchSummary: BatchSaveSummary?
     let createdAt: Date
+
+    var sharedTagAssignments: [ShareHandoffAssignment] {
+        if let pendingSharedTagAssignments { return pendingSharedTagAssignments }
+        let entries = Array(Set(entryIDs ?? entryID.map { [$0] } ?? [])).sorted()
+        let tags = Array(Set(sharedTagRemoteIDs ?? [])).sorted()
+        return entries.flatMap { entry in
+            tags.map { ShareHandoffAssignment(entryID: entry, remoteTagID: $0) }
+        }
+    }
+
+    func canAssignSharedTags(authUserID currentUserID: String?) -> Bool {
+        guard !sharedTagAssignments.isEmpty else { return true }
+        guard let authUserID, !authUserID.isEmpty else { return false }
+        return authUserID == currentUserID
+    }
 }
 
 struct MetadataUpdate: Equatable, Sendable {

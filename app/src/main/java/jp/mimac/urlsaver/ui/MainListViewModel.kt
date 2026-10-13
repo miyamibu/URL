@@ -58,6 +58,12 @@ class MainListViewModel(
     val entryCardDisplayMode: StateFlow<EntryCardDisplayMode> = displayModeStore.observeDisplayMode()
         .stateIn(viewModelScope, SharingStarted.Eagerly, EntryCardDisplayMode.RICH)
 
+    val homeDisplayPreferences = displayModeStore.observeHomeDisplayPreferences()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, jp.mimac.urlsaver.domain.HomeEntryDisplayPreferences())
+
+    val listSortOrder = displayModeStore.observeSortOrder()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, jp.mimac.urlsaver.domain.EntryListSortOrder())
+
     val serviceFilterOrder: StateFlow<List<ServiceType>> = serviceFilterOrderStore.observeServiceOrder()
         .stateIn(
             viewModelScope,
@@ -71,9 +77,10 @@ class MainListViewModel(
     val uiState: StateFlow<ListFilterUiState> = combine(
         entrySourceState,
         selectedService,
-    ) { sourceState, selectedService ->
+        listSortOrder,
+    ) { sourceState, selectedService, order ->
         buildListFilterUiState(
-            entries = sourceState.entries,
+            entries = sortListEntries(sourceState.entries, order),
             selectedService = selectedService,
             loadState = sourceState.loadState,
         )
@@ -106,6 +113,28 @@ class MainListViewModel(
         viewModelScope.launch {
             displayModeStore.setDisplayMode(entryCardDisplayMode.value.toggled())
         }
+    }
+
+    fun toggleHomeLayout() {
+        viewModelScope.launch {
+            val current = homeDisplayPreferences.value
+            displayModeStore.setHomeDisplayPreferences(current.copy(layout = current.layout.toggled()))
+        }
+    }
+
+    fun toggleHomeGridInfo() {
+        viewModelScope.launch {
+            val current = homeDisplayPreferences.value
+            displayModeStore.setHomeDisplayPreferences(current.copy(gridShowsInfo = !current.gridShowsInfo))
+        }
+    }
+
+    fun setListSortKey(key: jp.mimac.urlsaver.domain.EntryListSortKey) {
+        viewModelScope.launch { displayModeStore.setSortOrder(listSortOrder.value.copy(key = key)) }
+    }
+
+    fun toggleListSortDirection() {
+        viewModelScope.launch { displayModeStore.setSortOrder(listSortOrder.value.copy(ascending = !listSortOrder.value.ascending)) }
     }
 
     fun reorderServices(serviceOrder: List<ServiceType>) {

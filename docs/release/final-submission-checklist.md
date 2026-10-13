@@ -1,5 +1,14 @@
 # Final Store Submission Checklist
 
+## 2026-10-13 release record: 1.0.26 (41)
+
+Status: SOURCE_PREPARATION. The owner authorized committing/pushing the accumulated sharing/account/display changes and then submitting both mobile Stores. Both live Store consoles were authenticated and their newest existing build 40 was confirmed before choosing version 1.0.26/build 41. Existing production track and automatic-after-approval modes are preserved.
+
+Scope and local verification: [mobile change record](../ui-review/2026-10-13-sharing-account-display-status.md). Android/iOS runtime/signing settings remain unchanged except for the version/build. The Supabase migration is included in source, not applied to production; ChatGPT login remains visibly preparing. This submission must not advertise those external gates as completed functionality.
+
+Next: reviewed source commit/push, signed Release AAB/IPA validation, upload, processing/association, then actual review submission. Per-store receipts will be saved locally under `artifacts/store-submission-logs/2026-10-13-1.0.26-41-receipt.json`. Approval and public availability remain separate later states.
+
+
 ## 2026-10-08 release record: 1.0.25 (40)
 
 Status: BOTH_STORES_SUBMITTED_REVIEW_PENDING. Source commit `befc926df95b84537b2d37db544a8482e0c383b0` contains official AI-provider icons and the simplified tag/count/send flow, together with the earlier detail/save/search improvements. Source and release documentation are pushed to `origin/main`.
@@ -18,9 +27,9 @@ Status: BOTH_STORES_SUBMITTED_REVIEW_PENDING. Source commit `befc926df95b84537b2
 この文書の下部に残る `1.0.11` の表は、2026-06-27/28 の Google Play / App Store 提出時点の履歴ログとして扱う。現在の repo source はmanifestと実ソースで照合し、この履歴ログだけでは次回提出可否を判断しない。
 
 ## Current source snapshot (manifest-backed)
-- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.25`, `versionCode=40`
-- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.25`, `build=40`; share extension `com.mibu.codebridge.ios.share`
-- Supabase migration head: `20260824090000_fix_apply_personal_link_ops_conflict.sql`
+- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.26`, `versionCode=41`
+- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.26`, `build=41`; share extension `com.mibu.codebridge.ios.share`
+- Supabase migration head: `20261013090000_auto_group_for_shared_tag_invite_accept.sql`
 - Machine-readable source: `docs/release/release-manifest.json`.
 - The dated provider and store records below are historical evidence and do not become current proof without a fresh recheck.
 - Current release/ops readiness tracker: `docs/release/launch-go-checklist.md`.

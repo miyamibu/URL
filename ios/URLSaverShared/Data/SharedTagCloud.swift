@@ -435,11 +435,20 @@ private struct KeychainSharedTagAuthSecureStorage: SharedTagAuthSecureStorage {
     }
 }
 
+enum SharedTagOAuthFlow: String, Codable, Equatable, Sendable {
+    case signIn
+    case identityLink
+}
+
 struct SharedTagOAuthPendingState: Codable, Equatable, Sendable {
     let provider: String
     let codeVerifier: String
     let redirectTo: String
     let expiresAt: Date
+    let flow: SharedTagOAuthFlow?
+    let expectedAuthUserID: String?
+
+    var isIdentityLink: Bool { flow == .identityLink }
 }
 
 final class SharedTagOAuthStateStore: @unchecked Sendable {
@@ -464,19 +473,35 @@ final class SharedTagOAuthStateStore: @unchecked Sendable {
     }
 
     func save(_ pending: SharedTagOAuthPendingState) throws {
+        if let existing = try loadPending() {
+            let identityLinkIsPending = existing.isIdentityLink && existing.expiresAt > nowProvider()
+            let newFlowIsIdentityLink = pending.isIdentityLink && existing.expiresAt > nowProvider()
+            guard !identityLinkIsPending && !newFlowIsIdentityLink else {
+                throw SharedTagCloudError.message("共有タグ認証を処理中です。先に開いている認証を完了またはキャンセルしてください。")
+            }
+            try storage.clear()
+        }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         try storage.save(try encoder.encode(pending))
     }
 
+    func loadPending() throws -> SharedTagOAuthPendingState? {
+        guard let data = try storage.load() else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(SharedTagOAuthPendingState.self, from: data)
+    }
+
+    func isExpired(_ pending: SharedTagOAuthPendingState) -> Bool {
+        pending.expiresAt <= nowProvider()
+    }
+
     func consume(provider: String, redirectTo: String) throws -> SharedTagOAuthPendingState {
-        guard let data = try storage.load() else {
+        guard let pending = try loadPending() else {
             throw SharedTagCloudError.message("OAuth state is missing.")
         }
         try storage.clear()
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let pending = try decoder.decode(SharedTagOAuthPendingState.self, from: data)
         guard pending.provider == provider,
               pending.redirectTo == redirectTo else {
             throw SharedTagCloudError.message("OAuth state is invalid.")
@@ -485,6 +510,22 @@ final class SharedTagOAuthStateStore: @unchecked Sendable {
             throw SharedTagCloudError.message("OAuth state expired.")
         }
         return pending
+    }
+
+    func clearIdentityLink(codeVerifier: String, expectedAuthUserID: String) throws {
+        guard let pending = try loadPending(),
+              pending.isIdentityLink,
+              pending.codeVerifier == codeVerifier,
+              pending.expectedAuthUserID == expectedAuthUserID else {
+            return
+        }
+        try storage.clear()
+    }
+
+    func cancelIdentityLink() throws -> Bool {
+        guard let pending = try loadPending(), pending.isIdentityLink else { return false }
+        try storage.clear()
+        return true
     }
 
     func clear() throws {
@@ -497,18 +538,38 @@ private enum SharedTagAuthRemoteResult {
     case needsEmailConfirmation
 }
 
+private enum SharedTagOAuthRemoteResult {
+    case signedIn(SharedTagAuthSession)
+    case needsEmailConfirmation
+    case identityLinked(SharedTagAuthSession, provider: String, expectedAuthUserID: String)
+    case identityLinkFailure(provider: String, message: String)
+}
+
+enum SharedTagIdentityLinkResult: Equatable, Sendable {
+    case success(provider: String)
+    case failure(String)
+}
+
+enum SharedTagOAuthCallbackResult: Equatable, Sendable {
+    case signIn(SharedTagAuthResult)
+    case identityLink(SharedTagIdentityLinkResult)
+}
+
 private struct SharedTagAuthRemoteDataSource {
     private let config: SharedTagCloudConfig
     private let oauthStateStore: SharedTagOAuthStateStore
+    private let urlSession: URLSession
     private static let authCallbackURL = "urlsaver://auth/callback"
     private static let oauthStateTTL: TimeInterval = 10 * 60
 
     init(
         config: SharedTagCloudConfig,
-        oauthStateStore: SharedTagOAuthStateStore = SharedTagOAuthStateStore()
+        oauthStateStore: SharedTagOAuthStateStore = SharedTagOAuthStateStore(),
+        urlSession: URLSession = .shared
     ) {
         self.config = config
         self.oauthStateStore = oauthStateStore
+        self.urlSession = urlSession
     }
 
     func oauthURL(provider: String, redirectTo: String) throws -> URL {
@@ -525,7 +586,9 @@ private struct SharedTagAuthRemoteDataSource {
                 provider: provider,
                 codeVerifier: codeVerifier,
                 redirectTo: redirectTo,
-                expiresAt: Date().addingTimeInterval(Self.oauthStateTTL)
+                expiresAt: Date().addingTimeInterval(Self.oauthStateTTL),
+                flow: .signIn,
+                expectedAuthUserID: nil
             )
         )
         let query = [
@@ -540,33 +603,148 @@ private struct SharedTagAuthRemoteDataSource {
         return url
     }
 
-    func signInWithOAuthCallback(url: URL) async throws -> SharedTagAuthRemoteResult {
+    func identityLinkOAuthURL(
+        provider: String,
+        redirectTo: String,
+        session: SharedTagAuthSession
+    ) async throws -> URL {
+        guard provider == "google" else {
+            throw SharedTagCloudError.message("このOAuthリンク方式ではGoogleのみ利用できます")
+        }
+        guard config.isConfigured else {
+            throw SharedTagCloudError.message("共有タグクラウドの設定がありません")
+        }
+        guard Self.isAllowedAuthCallback(URL(string: redirectTo)),
+              !session.authUserID.isEmpty,
+              !session.accessToken.isEmpty else {
+            throw SharedTagCloudError.message("ログイン状態を確認できませんでした")
+        }
+
+        let codeVerifier = Self.randomURLSafeString(byteCount: 48)
+        let codeChallenge = Self.pkceCodeChallenge(for: codeVerifier)
+        let pending = SharedTagOAuthPendingState(
+            provider: provider,
+            codeVerifier: codeVerifier,
+            redirectTo: redirectTo,
+            expiresAt: Date().addingTimeInterval(Self.oauthStateTTL),
+            flow: .identityLink,
+            expectedAuthUserID: session.authUserID
+        )
+        try oauthStateStore.save(pending)
+
+        do {
+            let responseData = try await SharedTagRemoteRequestExecutor(
+                config: config,
+                urlSession: urlSession
+            ).executeGET(
+                path: "/auth/v1/user/identities/authorize",
+                queryItems: [
+                    URLQueryItem(name: "provider", value: provider),
+                    URLQueryItem(name: "scopes", value: "openid email"),
+                    URLQueryItem(name: "redirect_to", value: redirectTo),
+                    URLQueryItem(name: "code_challenge", value: codeChallenge),
+                    URLQueryItem(name: "code_challenge_method", value: "S256"),
+                    URLQueryItem(name: "skip_http_redirect", value: "true"),
+                ],
+                bearerToken: session.accessToken
+            )
+            let response = try makeSharedTagCloudDecoder().decode(SupabaseOAuthLinkURLResponse.self, from: responseData)
+            guard let url = URL(string: response.url),
+                  url.scheme == "https",
+                  url.host == "accounts.google.com" else {
+                throw SharedTagCloudError.message("Googleの認証URLを確認できませんでした")
+            }
+            return url
+        } catch {
+            try? oauthStateStore.clearIdentityLink(
+                codeVerifier: codeVerifier,
+                expectedAuthUserID: session.authUserID
+            )
+            throw error
+        }
+    }
+
+    func signInWithOAuthCallback(url: URL) async throws -> SharedTagOAuthRemoteResult {
         guard Self.isAllowedAuthCallback(url) else {
-            try? oauthStateStore.clear()
             throw SharedTagCloudError.message("OAuth callback URL is invalid.")
         }
         let params = callbackParameters(from: url)
+        guard let storedPending = try oauthStateStore.loadPending() else {
+            throw SharedTagCloudError.message("OAuth state is missing.")
+        }
+        let callbackProvider = params["provider"] ?? storedPending.provider
+        guard callbackProvider == storedPending.provider,
+              storedPending.redirectTo == Self.authCallbackURL else {
+            if storedPending.isIdentityLink {
+                return .identityLinkFailure(provider: storedPending.provider, message: "Google連携の認証状態を確認できませんでした")
+            }
+            throw SharedTagCloudError.message("OAuth state is invalid.")
+        }
+        guard !oauthStateStore.isExpired(storedPending) else {
+            try? oauthStateStore.consume(provider: storedPending.provider, redirectTo: Self.authCallbackURL)
+            if storedPending.isIdentityLink {
+                return .identityLinkFailure(provider: storedPending.provider, message: "Google連携の有効期限が切れました。もう一度お試しください。")
+            }
+            throw SharedTagCloudError.message("OAuth state expired.")
+        }
         if let error = params["error_description"] ?? params["error"], !error.isEmpty {
-            try? oauthStateStore.clear()
+            try? oauthStateStore.consume(provider: storedPending.provider, redirectTo: Self.authCallbackURL)
+            if storedPending.isIdentityLink {
+                return .identityLinkFailure(provider: storedPending.provider, message: "Google連携がキャンセルまたは失敗しました")
+            }
             throw SharedTagCloudError.message(error)
         }
         if params["access_token"]?.isEmpty == false || params["refresh_token"]?.isEmpty == false || url.fragment?.isEmpty == false {
-            try? oauthStateStore.clear()
+            try? oauthStateStore.consume(provider: storedPending.provider, redirectTo: Self.authCallbackURL)
+            if storedPending.isIdentityLink {
+                return .identityLinkFailure(provider: storedPending.provider, message: "Google連携の応答形式を確認できませんでした")
+            }
             throw SharedTagCloudError.message("OAuth token callback is not accepted.")
         }
         guard let code = params["code"], !code.isEmpty else {
-            try? oauthStateStore.clear()
+            try? oauthStateStore.consume(provider: storedPending.provider, redirectTo: Self.authCallbackURL)
+            if storedPending.isIdentityLink {
+                return .identityLinkFailure(provider: storedPending.provider, message: "Google連携の認証コードがありません")
+            }
             throw SharedTagCloudError.message("OAuth code callback is missing.")
         }
-        let pending = try oauthStateStore.consume(
-            provider: params["provider"] ?? "google",
-            redirectTo: Self.authCallbackURL
-        )
-        let response = try await executeAuthRequest(
-            path: "/auth/v1/token?grant_type=pkce",
-            body: SupabasePKCEAuthRequest(authCode: code, codeVerifier: pending.codeVerifier)
-        )
-        return .signedIn(try requireSession(from: response))
+        let pending: SharedTagOAuthPendingState
+        do {
+            pending = try oauthStateStore.consume(
+                provider: callbackProvider,
+                redirectTo: Self.authCallbackURL
+            )
+        } catch let error as SharedTagCloudError {
+            if storedPending.isIdentityLink {
+                return .identityLinkFailure(provider: storedPending.provider, message: error.userMessage)
+            }
+            throw error
+        }
+        let session: SharedTagAuthSession
+        do {
+            let response = try await executeAuthRequest(
+                path: "/auth/v1/token?grant_type=pkce",
+                body: SupabasePKCEAuthRequest(authCode: code, codeVerifier: pending.codeVerifier)
+            )
+            session = try requireSession(from: response)
+        } catch let error as SharedTagCloudError {
+            if pending.isIdentityLink {
+                return .identityLinkFailure(provider: pending.provider, message: error.userMessage)
+            }
+            throw error
+        } catch {
+            if pending.isIdentityLink {
+                return .identityLinkFailure(provider: pending.provider, message: "Google連携に失敗しました。もう一度お試しください。")
+            }
+            throw error
+        }
+        if pending.isIdentityLink {
+            guard let expectedAuthUserID = pending.expectedAuthUserID else {
+                return .identityLinkFailure(provider: pending.provider, message: "連携先アカウントを確認できませんでした")
+            }
+            return .identityLinked(session, provider: pending.provider, expectedAuthUserID: expectedAuthUserID)
+        }
+        return .signedIn(session)
     }
 
     func signUp(email: String, password: String) async throws -> SharedTagAuthRemoteResult {
@@ -619,6 +797,36 @@ private struct SharedTagAuthRemoteDataSource {
         return try parseSessionResult(response)
     }
 
+    func linkAppleIdentity(idToken: String, nonce: String, session: SharedTagAuthSession) async throws -> SharedTagAuthSession {
+        guard !idToken.isEmpty, !nonce.isEmpty, !session.accessToken.isEmpty else {
+            throw SharedTagCloudError.message("Apple連携情報を確認できませんでした")
+        }
+        let response = try await executeAuthRequest(
+            path: "/auth/v1/token?grant_type=id_token",
+            body: SupabaseIDTokenLinkAuthRequest(
+                provider: "apple",
+                idToken: idToken,
+                nonce: nonce,
+                linkIdentity: true
+            ),
+            bearerToken: session.accessToken
+        )
+        return try requireSession(from: response)
+    }
+
+    func cancelPendingIdentityLink() throws -> Bool {
+        try oauthStateStore.cancelIdentityLink()
+    }
+
+    func pendingIdentityLinkProvider() -> String? {
+        guard let pending = try? oauthStateStore.loadPending(),
+              pending.isIdentityLink,
+              !oauthStateStore.isExpired(pending) else {
+            return nil
+        }
+        return pending.provider
+    }
+
     private func parseSessionResult(_ data: Data) throws -> SharedTagAuthRemoteResult {
         let response = try makeSharedTagCloudDecoder().decode(SupabaseAuthSessionResponse.self, from: data)
         if response.accessToken?.isEmpty != false || response.refreshToken?.isEmpty != false {
@@ -646,11 +854,12 @@ private struct SharedTagAuthRemoteDataSource {
 
     private func executeAuthRequest<T: Encodable>(
         path: String,
-        body: T
+        body: T,
+        bearerToken: String? = nil
     ) async throws -> Data {
-        try await SharedTagRemoteRequestExecutor(config: config).execute(
+        try await SharedTagRemoteRequestExecutor(config: config, urlSession: urlSession).execute(
             path: path,
-            bearerToken: nil,
+            bearerToken: bearerToken,
             body: body
         )
     }
@@ -992,11 +1201,25 @@ private struct SharedTagSyncRemoteDataSource {
     }
 }
 
+private final class SharedTagNoRedirectURLSessionDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        completionHandler(nil)
+    }
+}
+
 private struct SharedTagRemoteRequestExecutor {
     private let config: SharedTagCloudConfig
+    private let urlSession: URLSession
 
-    init(config: SharedTagCloudConfig) {
+    init(config: SharedTagCloudConfig, urlSession: URLSession = .shared) {
         self.config = config
+        self.urlSession = urlSession
     }
 
     func execute<T: Encodable>(
@@ -1022,7 +1245,47 @@ private struct SharedTagRemoteRequestExecutor {
         }
         request.httpBody = try makeSharedTagCloudEncoder().encode(body)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        return try await execute(request)
+    }
+
+    func executeGET(
+        path: String,
+        queryItems: [URLQueryItem],
+        bearerToken: String
+    ) async throws -> Data {
+        guard config.isConfigured else {
+            throw SharedTagCloudError.message("Shared tag cloud is not configured.")
+        }
+
+        let baseURL = config.supabaseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + path
+        guard var components = URLComponents(string: baseURL) else {
+            throw SharedTagCloudError.message("Supabase URL is invalid.")
+        }
+        components.queryItems = queryItems
+        guard let url = components.url else {
+            throw SharedTagCloudError.message("Supabase URL is invalid.")
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
+        return try await execute(request, disallowRedirects: true)
+    }
+
+    private func execute(_ request: URLRequest, disallowRedirects: Bool = false) async throws -> Data {
+        let data: Data
+        let response: URLResponse
+        if disallowRedirects {
+            (data, response) = try await urlSession.data(
+                for: request,
+                delegate: SharedTagNoRedirectURLSessionDelegate()
+            )
+        } else {
+            (data, response) = try await urlSession.data(for: request)
+        }
         guard let httpResponse = response as? HTTPURLResponse else {
             throw SharedTagCloudError.message("Supabase response was invalid.")
         }
@@ -2711,7 +2974,9 @@ final class SharedTagCloudService: @unchecked Sendable {
         cleanupStateStore: (any SharedTagAccountLocalCleanupStateStore)? = nil,
         deletionRequestStore: (any SharedTagAccountDeletionRequestStore)? = nil,
         personalLinkSettingsStore: (any ChatGptPersonalLinkSettingsStore)? = nil,
-        accountOperationGate: SharedTagAccountOperationGate? = nil
+        accountOperationGate: SharedTagAccountOperationGate? = nil,
+        oauthStateStore: SharedTagOAuthStateStore? = nil,
+        authURLSession: URLSession = .shared
     ) {
         self.config = config
         self.sessionStore = sessionStore
@@ -2740,7 +3005,11 @@ final class SharedTagCloudService: @unchecked Sendable {
         self.accountOperationGate = accountOperationGate ?? SharedTagAccountOperationGate(
             cleanupStateStore: resolvedCleanupStateStore
         )
-        self.authRemoteDataSource = SharedTagAuthRemoteDataSource(config: config)
+        self.authRemoteDataSource = SharedTagAuthRemoteDataSource(
+            config: config,
+            oauthStateStore: oauthStateStore ?? SharedTagOAuthStateStore(),
+            urlSession: authURLSession
+        )
         self.syncRemoteDataSource = SharedTagSyncRemoteDataSource(
             config: config,
             authRemoteDataSource: authRemoteDataSource,
@@ -2768,6 +3037,40 @@ final class SharedTagCloudService: @unchecked Sendable {
 
     func googleOAuthURL() -> URL? {
         try? authRemoteDataSource.oauthURL(provider: "google", redirectTo: "urlsaver://auth/callback")
+    }
+
+    func googleIdentityLinkURL() async -> Result<URL, SharedTagCloudError> {
+        await accountOperationGate.withExclusiveOperation { [self] in
+            guard localAccountCleanupState == nil else {
+                return .failure(.message(Self.cleanupInProgressMessage))
+            }
+            guard config.isConfigured else {
+                return .failure(.message("共有タグクラウドの設定がありません"))
+            }
+            guard let session = try? sessionStore.load(),
+                  !session.authUserID.isEmpty,
+                  !session.accessToken.isEmpty else {
+                return .failure(.authRequired)
+            }
+            do {
+                let url = try await authRemoteDataSource.identityLinkOAuthURL(
+                    provider: "google",
+                    redirectTo: "urlsaver://auth/callback",
+                    session: session
+                )
+                return .success(url)
+            } catch let error as SharedTagCloudError {
+                return .failure(error)
+            } catch {
+                return .failure(.message(error.localizedDescription))
+            }
+        }
+    }
+
+    func cancelPendingIdentityLink() async -> Bool {
+        await accountOperationGate.withExclusiveOperation { [self] in
+            (try? authRemoteDataSource.cancelPendingIdentityLink()) ?? false
+        }
     }
 
     func loadVisibleTags() throws -> [SharedTagSummary] {
@@ -2837,35 +3140,103 @@ final class SharedTagCloudService: @unchecked Sendable {
         return try store.loadActiveMembersForTag(authUserID: session.authUserID, remoteTagID: remoteTagID)
     }
 
-    func handleOAuthCallback(url: URL) async -> SharedTagAuthResult {
+    func handleOAuthCallback(url: URL) async -> SharedTagOAuthCallbackResult {
         await accountOperationGate.withExclusiveOperation { [self] in
             await handleOAuthCallbackWithinAccountOperation(url: url)
         }
     }
 
-    private func handleOAuthCallbackWithinAccountOperation(url: URL) async -> SharedTagAuthResult {
-        guard localAccountCleanupState == nil else { return .failure(Self.cleanupInProgressMessage) }
+    private func handleOAuthCallbackWithinAccountOperation(url: URL) async -> SharedTagOAuthCallbackResult {
+        guard localAccountCleanupState == nil else { return oauthCallbackFailure(Self.cleanupInProgressMessage) }
         guard config.isConfigured else {
-            return .failure("共有タグクラウドの設定がありません")
+            return oauthCallbackFailure("共有タグクラウドの設定がありません")
         }
         do {
             switch try await authRemoteDataSource.signInWithOAuthCallback(url: url) {
             case .signedIn(let session):
                 try sessionStore.save(session)
-                return .success(email: session.userEmail)
+                return .signIn(.success(email: session.userEmail))
             case .needsEmailConfirmation:
-                return .needsEmailConfirmation
+                return .signIn(.needsEmailConfirmation)
+            case .identityLinkFailure(_, let message):
+                return .identityLink(.failure(message))
+            case .identityLinked(let linkedSession, let provider, let expectedAuthUserID):
+                guard linkedSession.authUserID == expectedAuthUserID,
+                      let currentSession = try? sessionStore.load(),
+                      currentSession.authUserID == expectedAuthUserID,
+                      let refreshToken = linkedSession.refreshToken,
+                      !refreshToken.isEmpty else {
+                    return .identityLink(.failure("連携先のアカウントが現在のログインと異なるため、端末のログイン状態は変更していません"))
+                }
+                do {
+                    try sessionStore.save(linkedSession)
+                } catch {
+                    return .identityLink(.failure("連携には成功しましたが、この端末のセッションを更新できませんでした。再ログインしてください。"))
+                }
+                return .identityLink(.success(provider: provider))
             }
         } catch let error as SharedTagCloudError {
-            return .failure(error.userMessage)
+            return oauthCallbackFailure(error.userMessage)
         } catch {
-            return .failure(error.localizedDescription)
+            return oauthCallbackFailure(error.localizedDescription)
         }
+    }
+
+    private func oauthCallbackFailure(_ message: String) -> SharedTagOAuthCallbackResult {
+        if authRemoteDataSource.pendingIdentityLinkProvider() != nil {
+            return .identityLink(.failure(message))
+        }
+        return .signIn(.failure(message))
     }
 
     func signInWithAppleIDToken(idToken: String, nonce: String) async -> SharedTagAuthResult {
         await accountOperationGate.withExclusiveOperation { [self] in
             await signInWithAppleIDTokenWithinAccountOperation(idToken: idToken, nonce: nonce)
+        }
+    }
+
+    func linkAppleIdentity(idToken: String, nonce: String, expectedAuthUserID: String? = nil) async -> SharedTagIdentityLinkResult {
+        await accountOperationGate.withExclusiveOperation { [self] in
+            await linkAppleIdentityWithinAccountOperation(idToken: idToken, nonce: nonce, expectedAuthUserID: expectedAuthUserID)
+        }
+    }
+
+    private func linkAppleIdentityWithinAccountOperation(
+        idToken: String,
+        nonce: String,
+        expectedAuthUserID: String?
+    ) async -> SharedTagIdentityLinkResult {
+        guard localAccountCleanupState == nil else { return .failure(Self.cleanupInProgressMessage) }
+        guard config.isConfigured else {
+            return .failure("共有タグクラウドの設定がありません")
+        }
+        guard let session = try? sessionStore.load(),
+              !session.authUserID.isEmpty,
+              !session.accessToken.isEmpty else {
+            return .failure("先に共有タグクラウドへサインインしてください")
+        }
+        if let expectedAuthUserID, session.authUserID != expectedAuthUserID {
+            return .failure("Apple連携の開始後にアカウントが変更されたため、端末のログイン状態は変更していません")
+        }
+        do {
+            let linkedSession = try await authRemoteDataSource.linkAppleIdentity(
+                idToken: idToken,
+                nonce: nonce,
+                session: session
+            )
+            guard linkedSession.authUserID == session.authUserID,
+                  let refreshToken = linkedSession.refreshToken,
+                  !refreshToken.isEmpty,
+                  let currentSession = try? sessionStore.load(),
+                  currentSession.authUserID == session.authUserID else {
+                return .failure("連携先のアカウントが現在のログインと異なるため、端末のログイン状態は変更していません")
+            }
+            try sessionStore.save(linkedSession)
+            return .success(provider: "apple")
+        } catch let error as SharedTagCloudError {
+            return .failure(error.userMessage)
+        } catch {
+            return .failure(error.localizedDescription)
         }
     }
 
@@ -3669,21 +4040,25 @@ final class SharedTagCloudService: @unchecked Sendable {
         }
     }
 
-    func assignEntry(remoteTagID: String, entryID: Int64) async -> SharedTagMutationResult {
+    func assignEntry(remoteTagID: String, entryID: Int64, expectedAuthUserID: String? = nil) async -> SharedTagMutationResult {
         let authUserID = (try? sessionStore.load())?.authUserID
         return await accountOperationGate.withAccountOperation(
             authUserID: authUserID,
             blocked: .authRequired
         ) { [self] in
-            await assignEntryWithinAccountOperation(remoteTagID: remoteTagID, entryID: entryID)
+            await assignEntryWithinAccountOperation(remoteTagID: remoteTagID, entryID: entryID, expectedAuthUserID: expectedAuthUserID)
         }
     }
 
     private func assignEntryWithinAccountOperation(
         remoteTagID: String,
-        entryID: Int64
+        entryID: Int64,
+        expectedAuthUserID: String?
     ) async -> SharedTagMutationResult {
         guard let session = try? sessionStore.load() else {
+            return .authRequired
+        }
+        if let expectedAuthUserID, session.authUserID != expectedAuthUserID {
             return .authRequired
         }
         do {
@@ -4398,6 +4773,24 @@ private struct SupabaseIDTokenAuthRequest: Encodable {
         case idToken = "id_token"
         case nonce
     }
+}
+
+private struct SupabaseIDTokenLinkAuthRequest: Encodable {
+    let provider: String
+    let idToken: String
+    let nonce: String
+    let linkIdentity: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case provider
+        case idToken = "id_token"
+        case nonce
+        case linkIdentity = "link_identity"
+    }
+}
+
+private struct SupabaseOAuthLinkURLResponse: Decodable {
+    let url: String
 }
 
 private struct SupabaseEmailRedirectOptions: Encodable {

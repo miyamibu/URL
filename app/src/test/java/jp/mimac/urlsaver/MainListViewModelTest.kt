@@ -43,6 +43,67 @@ class MainListViewModelTest {
     val mainDispatcherRule = MainDispatcherRule()
 
     @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun homeGrid_preferencesSurviveLayoutChangesWithoutMutatingListImagesSortOrEntries() = runTest {
+        val repository = FakeRepository()
+        val snapshot = listOf(entry(id = 1, serviceType = ServiceType.WEB, collectionId = 1))
+        repository.activeEntries.value = snapshot
+        val store = FakeDisplayModeStore()
+        store.setDisplayMode(EntryCardDisplayMode.COMPACT)
+        val viewModel = MainListViewModel(repository, store)
+        advanceUntilIdle()
+        viewModel.setListSortKey(jp.mimac.urlsaver.domain.EntryListSortKey.TITLE)
+        viewModel.toggleListSortDirection()
+        advanceUntilIdle()
+        val sortBefore = viewModel.listSortOrder.value
+        viewModel.toggleHomeLayout()
+        advanceUntilIdle()
+        assertEquals(jp.mimac.urlsaver.domain.HomeEntryLayout.THUMBNAILS, viewModel.homeDisplayPreferences.value.layout)
+        assertTrue(viewModel.homeDisplayPreferences.value.gridShowsInfo)
+        assertEquals(EntryCardDisplayMode.COMPACT, viewModel.entryCardDisplayMode.value)
+        viewModel.toggleHomeGridInfo()
+        advanceUntilIdle()
+        assertEquals(false, viewModel.homeDisplayPreferences.value.gridShowsInfo)
+        viewModel.toggleHomeLayout()
+        advanceUntilIdle()
+        viewModel.toggleHomeLayout()
+        advanceUntilIdle()
+        val recreated = MainListViewModel(repository, store)
+        advanceUntilIdle()
+        assertEquals(viewModel.homeDisplayPreferences.value, recreated.homeDisplayPreferences.value)
+        assertEquals(false, recreated.homeDisplayPreferences.value.gridShowsInfo)
+        assertEquals(EntryCardDisplayMode.COMPACT, recreated.entryCardDisplayMode.value)
+        assertEquals(sortBefore, recreated.listSortOrder.value)
+        assertEquals(snapshot, repository.activeEntries.value)
+        assertEquals(listOf(EntryCardDisplayMode.COMPACT), store.setCalls)
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun listSort_updatesEntriesAndRestoresOrderWithoutChangingImageMode() = runTest {
+        val repository = FakeRepository()
+        repository.activeEntries.value = listOf(
+            entry(id = 1, serviceType = ServiceType.WEB, collectionId = 1).copy(userTitle = "Beta"),
+            entry(id = 2, serviceType = ServiceType.WEB, collectionId = 1).copy(userTitle = "Alpha"),
+        )
+        val store = FakeDisplayModeStore()
+        val viewModel = MainListViewModel(repository, store)
+        advanceUntilIdle()
+        viewModel.setListSortKey(jp.mimac.urlsaver.domain.EntryListSortKey.TITLE)
+        advanceUntilIdle()
+        assertEquals(listOf(1L, 2L), viewModel.uiState.value.entries.map { it.id })
+        viewModel.toggleListSortDirection()
+        advanceUntilIdle()
+        assertEquals(listOf(2L, 1L), viewModel.uiState.value.entries.map { it.id })
+        val recreated = MainListViewModel(repository, store)
+        advanceUntilIdle()
+        assertEquals(viewModel.listSortOrder.value, recreated.listSortOrder.value)
+        assertEquals(listOf(2L, 1L), recreated.uiState.value.entries.map { it.id })
+        assertEquals(EntryCardDisplayMode.RICH, recreated.entryCardDisplayMode.value)
+        assertTrue(store.setCalls.isEmpty())
+    }
+
+    @Test
     fun archiveEntry_delegatesToRepository() = runTest {
         val repository = FakeRepository().apply {
             archiveResult = true
@@ -464,6 +525,13 @@ class MainListViewModelTest {
     private class FakeDisplayModeStore : EntryCardDisplayModeStore {
         private val displayMode = MutableStateFlow(EntryCardDisplayMode.RICH)
         val setCalls = mutableListOf<EntryCardDisplayMode>()
+        private val homeDisplay = MutableStateFlow(jp.mimac.urlsaver.domain.HomeEntryDisplayPreferences())
+        override fun observeHomeDisplayPreferences(): Flow<jp.mimac.urlsaver.domain.HomeEntryDisplayPreferences> = homeDisplay
+        override suspend fun setHomeDisplayPreferences(value: jp.mimac.urlsaver.domain.HomeEntryDisplayPreferences) { homeDisplay.value = value }
+        private val sortOrder = MutableStateFlow(jp.mimac.urlsaver.domain.EntryListSortOrder())
+        override fun observeSortOrder(): Flow<jp.mimac.urlsaver.domain.EntryListSortOrder> = sortOrder
+        override suspend fun setSortOrder(order: jp.mimac.urlsaver.domain.EntryListSortOrder) { sortOrder.value = order }
+
 
         override fun observeDisplayMode(): Flow<EntryCardDisplayMode> = displayMode
 

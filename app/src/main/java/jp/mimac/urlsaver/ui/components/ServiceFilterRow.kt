@@ -29,6 +29,8 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -398,6 +400,12 @@ fun ServiceFilterRow(
                         },
                     )
                     .semantics {
+                        if (localTag != null) {
+                            customActions = listOf(
+                                CustomAccessibilityAction("名前を編集") { onRenameLocalTag?.invoke(localTag); onRenameLocalTag != null },
+                                CustomAccessibilityAction("色を編集") { onEditLocalTagColor?.invoke(localTag); onEditLocalTagColor != null },
+                            )
+                        }
                         selected = selectedState
                         stateDescription = if (draggedState) {
                             "並べ替え中"

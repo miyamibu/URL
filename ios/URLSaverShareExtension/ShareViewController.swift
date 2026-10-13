@@ -48,6 +48,7 @@ final class ShareViewController: UIViewController {
     private var pendingOperation: ShareExtensionPendingOperation?
     private var selectedLocalTagIDs = Set<Int64>()
     private var selectedSharedTagRemoteIDs = Set<String>()
+    private var sharedTagPickerAuthUserID: String?
     private var isSaving = false
     private var processTask: Task<Void, Never>?
     private var saveTask: Task<Void, Never>?
@@ -434,7 +435,8 @@ final class ShareViewController: UIViewController {
     private func presentTagPicker(repository: URLRepository, share: PendingExtensionShare) async {
         let tags = (try? repository.loadLocalTags()) ?? []
         let syncedTags: [SharedTagSummary]
-        if let authUserID = SharedTagExtensionAuthContextStore().loadAuthUserID(),
+        let pickerAuthUserID = SharedTagExtensionAuthContextStore().loadAuthUserID()
+        if let authUserID = pickerAuthUserID,
            let store = try? SharedTagStore(database: repository.database) {
             isSharedTagSignedIn = true
             syncedTags = ((try? store.loadVisibleTags(authUserID: authUserID)) ?? [])
@@ -460,6 +462,7 @@ final class ShareViewController: UIViewController {
         await MainActor.run {
             localTags = tags
             sharedTags = syncedTags
+            sharedTagPickerAuthUserID = pickerAuthUserID
             pendingOperation = operation
             selectedLocalTagIDs = Set(operation.selectedTagIDs)
             selectedSharedTagRemoteIDs = Set(operation.selectedSharedTagRemoteIDs ?? [])
@@ -656,6 +659,7 @@ final class ShareViewController: UIViewController {
             } else {
                 selectedSharedTagRemoteIDs.insert(remoteID)
             }
+            persistSelectedTags()
             rebuildTagButtons()
         }
     }
@@ -751,8 +755,15 @@ final class ShareViewController: UIViewController {
 
     private func persistSelectedTags() {
         guard !isTagSelectionLocked, var operation = pendingOperation else { return }
-        operation.selectedTagIDs = selectedLocalTagIDs.sorted()
-        operation.updatedAt = Date()
+        if selectedSharedTagRemoteIDs.isEmpty {
+            operation.selectedSharedTagAuthUserID = nil
+        } else if (operation.selectedSharedTagRemoteIDs ?? []).isEmpty {
+            operation.selectedSharedTagAuthUserID = sharedTagPickerAuthUserID
+        }
+        operation.updateTagSelection(
+            selectedLocalTagIDs,
+            sharedTagRemoteIDs: selectedSharedTagRemoteIDs
+        )
         pendingOperation = operation
         try? pendingOperationStore.write(operation)
     }
@@ -763,7 +774,7 @@ final class ShareViewController: UIViewController {
               saveTask == nil,
               let repository,
               var operation = pendingOperation,
-              !operation.pendingItems.isEmpty else {
+              !operation.pendingItems.isEmpty || !operation.completedItems.isEmpty else {
             return
         }
         operation.lockTagSelection(
@@ -842,7 +853,7 @@ final class ShareViewController: UIViewController {
             }
 
             let report = handoffReport(for: operation)
-            try? await ShareHandoffStore().write(report)
+            try await ShareHandoffStore().write(report)
             try? pendingOperationStore.clear(operationID: operation.operationID)
             pendingOperation = nil
             let statusText = completionMessage(for: operation)
@@ -988,6 +999,8 @@ final class ShareViewController: UIViewController {
     private func handoffReport(for operation: ShareExtensionPendingOperation) -> ShareHandoffReport {
         if operation.originalURLs.count == 1, let item = operation.completedItems.first {
             return ShareHandoffReport(
+                operationID: operation.operationID,
+                authUserID: operation.selectedSharedTagAuthUserID,
                 result: item.result,
                 entryID: item.entryID,
                 entryIDs: item.entryID.map { [$0] },
@@ -995,10 +1008,12 @@ final class ShareViewController: UIViewController {
                 sharedTagRemoteIDs: operation.selectedSharedTagRemoteIDs,
                 degradationNotice: operation.degradationNotice,
                 batchSummary: nil,
-                createdAt: Date()
+                createdAt: operation.createdAt
             )
         }
         return ShareHandoffReport(
+            operationID: operation.operationID,
+            authUserID: operation.selectedSharedTagAuthUserID,
             result: .batchProcessed,
             entryID: nil,
             entryIDs: operation.completedItems.compactMap(\.entryID),
@@ -1006,7 +1021,7 @@ final class ShareViewController: UIViewController {
             sharedTagRemoteIDs: operation.selectedSharedTagRemoteIDs,
             degradationNotice: operation.degradationNotice,
             batchSummary: batchSummary(for: operation),
-            createdAt: Date()
+            createdAt: operation.createdAt
         )
     }
 

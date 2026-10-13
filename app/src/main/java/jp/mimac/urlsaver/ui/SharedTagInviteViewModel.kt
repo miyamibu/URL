@@ -86,6 +86,8 @@ class SharedTagInviteViewModel(
         return tagRepository.sendPasswordRecovery(email)
     }
 
+    fun appleOAuthUrl(): String? = tagRepository.appleOAuthUrl()
+
     fun googleOAuthUrl(): String? {
         return tagRepository.googleOAuthUrl()
     }

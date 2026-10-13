@@ -64,6 +64,7 @@ import jp.mimac.urlsaver.domain.TagSharePayload
 import jp.mimac.urlsaver.domain.TagShareUrl
 import jp.mimac.urlsaver.domain.TransferSharedTagOwnershipResponse
 import jp.mimac.urlsaver.domain.AssignTagResult
+import jp.mimac.urlsaver.domain.SharedTagAuthResult
 import jp.mimac.urlsaver.domain.SharedTagAccountDeletionResult
 import jp.mimac.urlsaver.domain.SaveResult
 import jp.mimac.urlsaver.domain.ShareSaveResult
@@ -99,6 +100,7 @@ class TagRepositoryTest {
     private lateinit var repository: DefaultTagRepository
     private lateinit var authProvider: FakeAuthSessionProvider
     private lateinit var syncScheduler: FakeSyncScheduler
+    private lateinit var authRemote: FakeAuthRemoteDataSource
     private lateinit var remote: FakeRemoteDataSource
     private lateinit var aiTransparencyRepository: AiTransparencyRepository
     private lateinit var aiLocalDataClearer: CountingAiLocalDataClearer
@@ -118,6 +120,7 @@ class TagRepositoryTest {
         authProvider = FakeAuthSessionProvider()
         syncScheduler = FakeSyncScheduler()
         remote = FakeRemoteDataSource()
+        authRemote = FakeAuthRemoteDataSource()
         localAccountCleanupStore = InMemoryLocalAccountCleanupStore()
         notificationCleaner = CountingNotificationCleaner()
         accountLinkedLocalDataCleaner = CountingAccountLinkedLocalDataCleaner()
@@ -137,7 +140,7 @@ class TagRepositoryTest {
             clock = clock,
             metadataScheduler = scheduler,
             authSessionProvider = authProvider,
-            authRemoteDataSource = FakeAuthRemoteDataSource(),
+            authRemoteDataSource = authRemote,
             syncScheduler = syncScheduler,
             syncCoordinator = SharedTagSyncCoordinator(
                 database = db,
@@ -1043,6 +1046,139 @@ class TagRepositoryTest {
         assertEquals(listOf(authUserId), syncScheduler.enqueued)
     }
 
+    @Test
+    fun oauthProviders_useSameCallbackAndPreserveGoogle() {
+        assertEquals("https://example.supabase.co/authorize/apple", repository.appleOAuthUrl())
+        assertEquals("https://example.supabase.co/authorize/google", repository.googleOAuthUrl())
+        assertEquals(
+            listOf("apple" to "urlsaver://auth/callback", "google" to "urlsaver://auth/callback"),
+            authRemote.oauthRequests,
+        )
+    }
+
+    @Test
+    fun appleOAuth_unconfiguredOrRemoteFailureDoesNotStartAuthentication() {
+        val unconfigured = createRepository(SharedTagSyncRemoteConfig(enabled = false, supabaseUrl = "", anonKey = ""))
+        assertNull(unconfigured.appleOAuthUrl())
+        assertTrue(authRemote.oauthRequests.isEmpty())
+        authRemote.oauthFailure = IllegalStateException("not configured")
+        assertNull(repository.appleOAuthUrl())
+        assertNull(authProvider.session.value)
+    }
+
+    @Test
+    fun appleOAuthCallback_updatesSessionAndSchedulesSync() = runBlocking {
+        repository.appleOAuthUrl()
+        val callback = "urlsaver://auth/callback?code=apple-code"
+        val result = repository.handleOAuthCallback(callback)
+        assertEquals(SharedTagAuthResult.Success("apple@example.com"), result)
+        assertEquals(callback, authRemote.lastCallback)
+        assertEquals("auth-apple", authProvider.session.value?.authUserId)
+        assertEquals(listOf("auth-apple"), syncScheduler.enqueued)
+    }
+
+    @Test
+    fun appleOAuthCallback_failureKeepsSessionAndDoesNotScheduleSync() = runBlocking {
+        repository.appleOAuthUrl()
+        authRemote.callbackFailure = IllegalStateException()
+        val result = repository.handleOAuthCallback("urlsaver://auth/callback?code=apple-code")
+        assertEquals(SharedTagAuthResult.Failure("サインインできませんでした"), result)
+        assertNull(authProvider.session.value)
+        assertTrue(syncScheduler.enqueued.isEmpty())
+    }
+
+    @Test
+    fun identityLink_requiresSessionAndPreservesAccountAndTagsOnFailureAndCancel() = runBlocking {
+        assertTrue(repository.googleIdentityLinkUrl().isFailure)
+        assertTrue(authRemote.linkProviders.isEmpty())
+        repository.signIn("owner@example.com", "test-password")
+        val original = authProvider.session.value
+        val tagID = repository.createLocalTagWithResult("keep-local")
+        authRemote.linkFailure = IllegalStateException("manual linking disabled")
+        assertTrue(repository.appleIdentityLinkUrl().isFailure)
+        assertEquals(original, authProvider.session.value)
+        authRemote.linkFailure = null
+        assertTrue(repository.appleIdentityLinkUrl().isSuccess)
+        repository.cancelIdentityLink()
+        assertNull(authRemote.linkExpectedUserId)
+        assertEquals(original, authProvider.session.value)
+        assertTrue(tagID is CreateTagResult.Success)
+        assertEquals("keep-local", repository.observeAllTagsWithCount().first().single().name)
+    }
+
+    @Test
+    fun identityLink_callbackOnlyUpdatesOriginalUserAndRejectsAccountSwitch() = runBlocking {
+        repository.signIn("owner@example.com", "test-password")
+        val original = requireNotNull(authProvider.session.value)
+        repository.googleIdentityLinkUrl()
+        authRemote.callbackSession = original.copy(accessToken = "linked-access")
+        assertEquals(SharedTagAuthResult.Success("owner@example.com"), repository.handleOAuthCallback("urlsaver://auth/callback?code=linked"))
+        assertEquals("linked-access", authProvider.session.value?.accessToken)
+        val linked = authProvider.session.value
+        repository.appleIdentityLinkUrl()
+        authRemote.callbackSession = original.copy(authUserId = "different-user")
+        assertTrue(repository.handleOAuthCallback("urlsaver://auth/callback?code=wrong") is SharedTagAuthResult.Failure)
+        assertEquals(linked, authProvider.session.value)
+        repository.appleIdentityLinkUrl()
+        val differentAccount = original.copy(authUserId = "switched-user")
+        authProvider.updateSession(differentAccount)
+        authRemote.lastCallback = null
+        assertTrue(repository.handleOAuthCallback("urlsaver://auth/callback?code=switched") is SharedTagAuthResult.Failure)
+        assertNull(authRemote.lastCallback)
+        assertEquals(differentAccount, authProvider.session.value)
+    }
+
+    @Test
+    fun identityLink_callbackErrorDoesNotReplaceOriginalSession() = runBlocking {
+        repository.signIn("owner@example.com", "test-password")
+        val original = authProvider.session.value
+        repository.googleIdentityLinkUrl()
+        authRemote.callbackFailure = IllegalStateException("access denied")
+        assertEquals(SharedTagAuthResult.Failure("access denied"), repository.handleOAuthCallback("urlsaver://auth/callback?error=access_denied"))
+        assertEquals(original, authProvider.session.value)
+    }
+
+    @Test
+    fun identityLink_pendingOwnerSurvivesPreferencesAndBlocksNormalSignIn() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateStore = jp.mimac.urlsaver.data.SharedPreferencesSharedTagOAuthStateStore(context)
+        stateStore.save(jp.mimac.urlsaver.data.SharedTagOAuthPendingState.create("urlsaver://auth/callback").copy(expectedAuthUserId = "original-user"))
+        val recreated = jp.mimac.urlsaver.data.SupabaseSharedTagAuthRemoteDataSource(
+            SharedTagSyncRemoteConfig(enabled = true, supabaseUrl = "http://127.0.0.1:1", anonKey = "test"),
+            jp.mimac.urlsaver.data.SharedPreferencesSharedTagOAuthStateStore(context),
+        )
+        assertEquals("original-user", recreated.pendingIdentityLinkUserId())
+        assertTrue(runCatching { recreated.oauthUrl("google", "urlsaver://auth/callback") }.isFailure)
+        assertEquals("original-user", stateStore.load()?.expectedAuthUserId)
+        recreated.cancelIdentityLink()
+        assertNull(stateStore.load())
+    }
+
+    @Test
+    fun sharedTagRename_ownerAndEditorQueueRenameAndViewerAndNameConflictsAreProtected() = runBlocking {
+        repository.signIn("owner@example.com", "test-password")
+        val userID = requireNotNull(authProvider.session.value).authUserId
+        val created = repository.createSyncedTagWithResult("Original") as CreateTagResult.Success
+        val tagID = created.tagId
+        assertEquals(CreateTagResult.Success(tagID), repository.renameSharedTagWithResult(tagID, " Renamed "))
+        val tag = requireNotNull(db.tagDao().findTagById(tagID))
+        assertEquals("Renamed", tag.name)
+        assertEquals(SharedTagSyncStatus.PENDING_PUSH, tag.syncStatus)
+        val pending = db.sharedTagSyncDao().getPendingOutbox(userID)
+        assertEquals(SharedTagSyncOperationType.RENAME_TAG, pending.last().operationType)
+        assertEquals(CreateTagResult.InvalidName, repository.renameSharedTagWithResult(tagID, " "))
+        repository.createSyncedTagWithResult("Existing")
+        assertEquals(CreateTagResult.Duplicate, repository.renameSharedTagWithResult(tagID, "Existing"))
+        val owner = requireNotNull(db.tagDao().findCurrentUserMember(tagID, userID))
+        db.sharedTagSyncDao().upsertMembers(listOf(owner.copy(role = SharedTagMemberRole.EDITOR)))
+        assertEquals(CreateTagResult.Success(tagID), repository.renameSharedTagWithResult(tagID, "Editor renamed"))
+        assertEquals("Editor renamed", db.tagDao().findTagById(tagID)?.name)
+        db.sharedTagSyncDao().upsertMembers(listOf(owner.copy(role = SharedTagMemberRole.VIEWER)))
+        assertEquals(CreateTagResult.Failed, repository.renameSharedTagWithResult(tagID, "Forbidden"))
+        assertEquals("Editor renamed", db.tagDao().findTagById(tagID)?.name)
+        assertEquals(2, db.sharedTagSyncDao().getPendingOutbox(userID).count { it.operationType == SharedTagSyncOperationType.RENAME_TAG })
+    }
+
     private suspend fun insertEntry(
         url: String,
         userTitle: String? = null,
@@ -1440,6 +1576,42 @@ class TagRepositoryTest {
     }
 
     private class FakeAuthRemoteDataSource : SharedTagAuthRemoteDataSource {
+        val oauthRequests = mutableListOf<Pair<String, String>>()
+        var oauthFailure: Throwable? = null
+        var callbackFailure: Throwable? = null
+        var lastCallback: String? = null
+        var linkFailure: Throwable? = null
+        var linkExpectedUserId: String? = null
+        var callbackSession: SharedTagAuthSession? = null
+        val linkProviders = mutableListOf<String>()
+
+        override suspend fun linkIdentityOAuthUrl(provider: String, session: SharedTagAuthSession, redirectTo: String): String {
+            linkFailure?.let { throw it }
+            linkProviders += provider
+            linkExpectedUserId = session.authUserId
+            return "https://example.com/link/$provider"
+        }
+
+        override fun pendingIdentityLinkUserId(): String? = linkExpectedUserId
+        override fun cancelIdentityLink() { linkExpectedUserId = null }
+
+
+        override fun oauthUrl(provider: String, redirectTo: String): String {
+            oauthFailure?.let { throw it }
+            oauthRequests += provider to redirectTo
+            return "https://example.supabase.co/authorize/$provider"
+        }
+
+        override suspend fun signInWithOAuthCallback(callbackUrl: String): SharedTagAuthRemoteResult {
+            lastCallback = callbackUrl
+            linkExpectedUserId = null
+            callbackFailure?.let { throw it }
+            callbackSession?.let { return SharedTagAuthRemoteResult.SignedIn(it) }
+            return SharedTagAuthRemoteResult.SignedIn(
+                SharedTagAuthSession("auth-apple", "test-access", "test-refresh", "apple@example.com"),
+            )
+        }
+
         override suspend fun signUp(email: String, password: String): SharedTagAuthRemoteResult {
             return SharedTagAuthRemoteResult.SignedIn(
                 SharedTagAuthSession(

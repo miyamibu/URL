@@ -215,7 +215,7 @@ class MainActivityViewModel(
                 is SharedTagAuthResult.Success -> enqueueSnackbar(
                     SnackbarEvent(
                         kind = SnackbarEventKind.INFO,
-                        message = "Googleでサインインしました",
+                        message = "アカウントの認証が完了しました",
                     ),
                 )
                 SharedTagAuthResult.NeedsEmailConfirmation -> enqueueSnackbar(

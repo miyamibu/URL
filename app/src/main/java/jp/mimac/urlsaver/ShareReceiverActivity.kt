@@ -53,6 +53,8 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -247,6 +249,7 @@ private fun ShareReceiverContent(
     val context = LocalContext.current
     val allTags by container.tagRepository.observeAllTagsWithCount().collectAsState(initial = emptyList())
     val sharedTagSession by container.sharedTagAuthSessionProvider.session.collectAsState()
+    val cloudState by container.tagRepository.cloudState.collectAsState(initial = jp.mimac.urlsaver.domain.SharedTagCloudState(false, false, null))
     val localTags = remember(allTags) {
         allTags
             .filter { tag -> tag.scope == SharedTagScope.LOCAL_ONLY }
@@ -256,11 +259,7 @@ private fun ShareReceiverContent(
     val sharedTags = remember(allTags) {
         allTags
             .filter { tag ->
-                tag.scope == SharedTagScope.SYNCED &&
-                    tag.currentUserRole in setOf(
-                        jp.mimac.urlsaver.domain.SharedTagMemberRole.OWNER,
-                        jp.mimac.urlsaver.domain.SharedTagMemberRole.EDITOR,
-                    )
+                tag.scope == SharedTagScope.SYNCED
             }
             .sortedByDescending { tag -> tag.id }
             .distinctBy { tag -> normalizeSharedTagName(tag.name) }
@@ -333,6 +332,9 @@ private fun ShareReceiverContent(
                             localTags = localTags,
                             sharedTags = sharedTags,
                             isSharedTagSignedIn = sharedTagSession != null,
+                            isSharedTagConfigured = cloudState.isConfigured,
+                            isCheckingSharedTag = receiverState.isCheckingSharedTag,
+                            selectedSharedTagIds = receiverState.selectedSharedTagIds,
                             selectedLocalTagIds = receiverState.selectedLocalTagIds,
                             newTagName = receiverState.newTagName,
                             tagCreateError = receiverState.tagCreateError,
@@ -341,6 +343,7 @@ private fun ShareReceiverContent(
                             isCreatingTag = receiverState.isCreatingTag,
                             isSaving = receiverState.isSaving,
                             onToggleLocalTag = viewModel::toggleLocalTag,
+                            onToggleSharedTag = viewModel::toggleSharedTag,
                             onNewTagNameChange = viewModel::updateNewTagName,
                             onCreateTag = viewModel::createLocalTag,
                             onCancel = onFinish,
@@ -412,6 +415,9 @@ private fun ShareReceiverPendingContent(
     localTags: List<TagWithCount>,
     sharedTags: List<TagWithCount>,
     isSharedTagSignedIn: Boolean,
+    isSharedTagConfigured: Boolean,
+    isCheckingSharedTag: Boolean,
+    selectedSharedTagIds: Set<Long>,
     selectedLocalTagIds: Set<Long>,
     newTagName: String,
     tagCreateError: String?,
@@ -420,6 +426,7 @@ private fun ShareReceiverPendingContent(
     isCreatingTag: Boolean,
     isSaving: Boolean,
     onToggleLocalTag: (Long) -> Unit,
+    onToggleSharedTag: (Long) -> Unit,
     onNewTagNameChange: (String) -> Unit,
     onCreateTag: () -> Unit,
     onCancel: () -> Unit,
@@ -464,6 +471,8 @@ private fun ShareReceiverPendingContent(
         Spacer(Modifier.height(14.dp))
     }
 
+    Text("自作タグ", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+    Spacer(Modifier.height(10.dp))
     if (localTags.isEmpty()) {
         Surface(
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
@@ -492,47 +501,33 @@ private fun ShareReceiverPendingContent(
             }
         }
     }
-    if (sharedTags.isNotEmpty()) {
-        Spacer(Modifier.height(24.dp))
-        Text(
-            text = "共有タグ",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
-        )
-        Spacer(Modifier.height(10.dp))
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            sharedTags.forEach { tag ->
-                ShareReceiverTagRow(
-                    tag = tag,
-                    selected = tag.id in selectedLocalTagIds,
-                    enabled = isTagEditingEnabled,
-                    onClick = { onToggleLocalTag(tag.id) },
-                )
+    Spacer(Modifier.height(24.dp))
+    Text("共有タグ", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+    Spacer(Modifier.height(10.dp))
+    when {
+        !isSharedTagConfigured -> Text("共有タグのクラウド同期は現在利用できません")
+        !isSharedTagSignedIn -> {
+            Text("共有タグを保存先にするにはログインしてください。")
+            TextButton(onClick = onOpenSharedTagLogin, enabled = !isSaving) { Text("ログイン画面を開く") }
+        }
+        sharedTags.isEmpty() -> Text("共有タグがありません。共有タグに参加すると選択できます。")
+        else -> {
+            Text("オーナー・編集者のタグへ追加できます。閲覧のみのタグは選択できません。", style = MaterialTheme.typography.bodySmall)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                sharedTags.forEach { tag ->
+                    val canAdd = tag.currentUserRole == jp.mimac.urlsaver.domain.SharedTagMemberRole.OWNER ||
+                        tag.currentUserRole == jp.mimac.urlsaver.domain.SharedTagMemberRole.EDITOR
+                    ShareReceiverTagRow(
+                        tag = tag,
+                        selected = tag.id in selectedSharedTagIds,
+                        enabled = isTagEditingEnabled && !isCheckingSharedTag && canAdd,
+                        onClick = { onToggleSharedTag(tag.id) },
+                    )
+                }
             }
         }
-    } else if (!isSharedTagSignedIn) {
-        Spacer(Modifier.height(24.dp))
-        Text(
-            text = "共有タグ",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
-        )
-        Text(
-            text = "共有タグを保存先にするにはログインしてください。",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        TextButton(
-            onClick = onOpenSharedTagLogin,
-            enabled = !isSaving,
-            modifier = Modifier.heightIn(min = 48.dp),
-        ) {
-            Text("ログイン画面を開く")
-        }
     }
+    if (isCheckingSharedTag) Text("共有タグの追加権限を確認しています…", modifier = Modifier.testTag("share_receiver_permission_check"))
     Spacer(Modifier.height(54.dp))
     OutlinedTextField(
         value = newTagName,
@@ -576,7 +571,7 @@ private fun ShareReceiverPendingContent(
         }
         Button(
             onClick = onSave,
-            enabled = !isSaving && !isCreatingTag,
+            enabled = !isSaving && !isCreatingTag && !isCheckingSharedTag,
             contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
             modifier = Modifier
                 .weight(1f)
@@ -620,6 +615,8 @@ private fun ShareReceiverTagRow(
         ),
         modifier = Modifier
             .wrapContentWidth()
+            .testTag("share_receiver_${tag.scope.name.lowercase()}_tag_${tag.id}")
+            .semantics { this.selected = selected }
             .alpha(if (enabled) 1f else 0.58f)
             .clip(RoundedCornerShape(12.dp))
             .clickable(enabled = enabled, onClick = onClick),

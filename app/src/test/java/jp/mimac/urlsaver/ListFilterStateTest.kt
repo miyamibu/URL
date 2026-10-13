@@ -105,6 +105,21 @@ class ListFilterStateTest {
         assertEquals(listOf(2L), state.entries.map { it.id })
     }
 
+    @Test
+    fun listSort_dateAndTitleHaveStableTiesAndNeverMutateOriginalSnapshot() {
+        val old = entry(id = 1, userTitle = "Beta").copy(createdAt = 1)
+        val newestA = entry(id = 2, fetchedTitle = "alpha").copy(createdAt = 3)
+        val newestB = entry(id = 3, userTitle = "Alpha", fetchedTitle = "ignored").copy(createdAt = 3)
+        val original = listOf(old, newestB, newestA)
+        val date = jp.mimac.urlsaver.domain.EntryListSortOrder()
+        assertEquals(listOf(3L, 2L, 1L), jp.mimac.urlsaver.ui.sortListEntries(original, date).map { it.id })
+        assertEquals(listOf(1L, 2L, 3L), jp.mimac.urlsaver.ui.sortListEntries(original, date.copy(ascending = true)).map { it.id })
+        val title = jp.mimac.urlsaver.domain.EntryListSortOrder(jp.mimac.urlsaver.domain.EntryListSortKey.TITLE, true)
+        assertEquals(listOf(2L, 3L, 1L), jp.mimac.urlsaver.ui.sortListEntries(original, title).map { it.id })
+        assertEquals(listOf(1L, 3L, 2L), jp.mimac.urlsaver.ui.sortListEntries(original, title.copy(ascending = false)).map { it.id })
+        assertEquals(listOf(old, newestB, newestA), original)
+    }
+
     private fun entry(
         id: Long = 1,
         serviceType: ServiceType = ServiceType.WEB,

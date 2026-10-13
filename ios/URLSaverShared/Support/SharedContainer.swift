@@ -92,6 +92,7 @@ struct ShareExtensionPendingOperation: Codable, Equatable, Sendable {
     let degradationNotice: ShareDegradationNotice?
     var selectedTagIDs: [Int64]
     var selectedSharedTagRemoteIDs: [String]? = nil
+    var selectedSharedTagAuthUserID: String? = nil
     var tagSelectionLockedAt: Date?
     var pendingItems: [ShareExtensionPendingItem]
     var completedItems: [ShareExtensionCompletedItem]
@@ -129,6 +130,17 @@ struct ShareExtensionPendingOperation: Codable, Equatable, Sendable {
         tagSelectionLockedAt != nil
     }
 
+    mutating func updateTagSelection(
+        _ tagIDs: Set<Int64>,
+        sharedTagRemoteIDs: Set<String>,
+        at now: Date = Date()
+    ) {
+        guard !isTagSelectionLocked else { return }
+        selectedTagIDs = tagIDs.sorted()
+        selectedSharedTagRemoteIDs = sharedTagRemoteIDs.sorted()
+        updatedAt = now
+    }
+
     mutating func lockTagSelection(
         _ tagIDs: Set<Int64>,
         sharedTagRemoteIDs: Set<String> = [],
@@ -162,7 +174,7 @@ struct ShareExtensionPendingOperation: Codable, Equatable, Sendable {
 
     func isRecoverable(at now: Date = Date()) -> Bool {
         guard version == Self.currentVersion,
-              !pendingItems.isEmpty,
+              !pendingItems.isEmpty || !completedItems.isEmpty,
               now.timeIntervalSince(updatedAt) >= 0,
               now.timeIntervalSince(updatedAt) <= Self.recoveryWindow else {
             return false

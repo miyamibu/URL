@@ -18,6 +18,9 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.LocalIndication
@@ -98,7 +101,9 @@ private fun TagChip(
         labelFontSize = labelFontSize,
         tagColorChoice = tagColorChoice,
         modifier = Modifier
+            .testTag("shared_tag_chip_$label")
             .semantics {
+                if (onDoubleClick != null) customActions = listOf(CustomAccessibilityAction("タグの名前・色を編集") { onDoubleClick(); true })
                 if (contentDescription != null) {
                     this.contentDescription = contentDescription
                 }

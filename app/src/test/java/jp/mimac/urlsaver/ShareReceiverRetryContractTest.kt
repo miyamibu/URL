@@ -5,6 +5,7 @@ import jp.mimac.urlsaver.domain.AssignTagResult
 import jp.mimac.urlsaver.domain.CreateTagResult
 import jp.mimac.urlsaver.domain.SaveResult
 import jp.mimac.urlsaver.domain.ShareSaveResult
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -193,9 +194,156 @@ class ShareReceiverRetryContractTest {
         assertFalse(viewModel.uiState.value.hasPendingShare)
     }
 
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun sharedFailureSurvivesRecreationAndRetriesOnlySharedAssignment() = runTest {
+        val url = "https://example.com/shared-retry"
+        val handle = SavedStateHandle()
+        val operations = FakeShareReceiverOperations().apply {
+            eligibleSharedTags += 8L
+            enqueueSave(url, SaveResult(ShareSaveResult.CREATED, entryId = 601L))
+            enqueueAssign(601L, 7L, AssignTagResult.Success)
+            enqueueAssign(601L, 8L, AssignTagResult.Failed)
+        }
+        val payload = ShareReceiverPayload.Pending(listOf(url), isBatch = false, degradationNotice = null)
+        val first = ShareReceiverViewModel(operations, handle)
+        first.initialize(payload)
+        first.toggleLocalTag(7L)
+        first.toggleSharedTag(8L)
+        advanceUntilIdle()
+        first.savePendingShare()
+        advanceUntilIdle()
+        assertEquals(1, first.uiState.value.pendingCount)
+        assertEquals(setOf(8L), first.uiState.value.selectedSharedTagIds)
+        first.toggleSharedTag(8L)
+        advanceUntilIdle()
+        assertEquals(setOf(8L), first.uiState.value.selectedSharedTagIds)
+
+        val restored = ShareReceiverViewModel(operations, handle)
+        restored.initialize(payload)
+        assertEquals(setOf(8L), restored.uiState.value.selectedSharedTagIds)
+        operations.enqueueAssign(601L, 8L, AssignTagResult.AlreadyAssigned)
+        restored.savePendingShare()
+        advanceUntilIdle()
+        assertFalse(restored.uiState.value.hasPendingShare)
+        assertEquals(listOf(url), operations.saveCalls)
+        assertEquals(listOf(601L to 7L, 601L to 8L, 601L to 8L), operations.assignCalls)
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun sharedSelectionRejectsIneligibleTagsAndRechecksPermissionOnRetry() = runTest {
+        val url = "https://example.com/permission"
+        val operations = FakeShareReceiverOperations().apply {
+            enqueueSave(url, SaveResult(ShareSaveResult.CREATED, entryId = 602L))
+        }
+        val viewModel = ShareReceiverViewModel(operations, SavedStateHandle())
+        viewModel.initialize(ShareReceiverPayload.Pending(listOf(url), isBatch = false, degradationNotice = null))
+        viewModel.toggleSharedTag(9L)
+        advanceUntilIdle()
+        assertTrue(viewModel.uiState.value.selectedSharedTagIds.isEmpty())
+        assertNotNull(viewModel.uiState.value.tagCreateError)
+        operations.eligibleSharedTags += 9L
+        viewModel.toggleSharedTag(9L)
+        advanceUntilIdle()
+        operations.eligibleSharedTags.clear()
+        viewModel.savePendingShare()
+        advanceUntilIdle()
+        assertTrue(operations.assignCalls.isEmpty())
+        assertEquals(1, viewModel.uiState.value.pendingCount)
+        operations.eligibleSharedTags += 9L
+        operations.enqueueAssign(602L, 9L, AssignTagResult.Success)
+        viewModel.savePendingShare()
+        advanceUntilIdle()
+        assertEquals(listOf(url), operations.saveCalls)
+        assertEquals(listOf(602L to 9L), operations.assignCalls)
+        assertFalse(viewModel.uiState.value.hasPendingShare)
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun localFailureDoesNotRepeatSuccessfulSharedAssignment() = runTest {
+        val url = "https://example.com/local-retry"
+        val operations = FakeShareReceiverOperations().apply {
+            eligibleSharedTags += 9L
+            enqueueSave(url, SaveResult(ShareSaveResult.DUPLICATE_ACTIVE, entryId = 603L))
+            enqueueAssign(603L, 7L, AssignTagResult.Failed)
+            enqueueAssign(603L, 9L, AssignTagResult.Success)
+        }
+        val viewModel = ShareReceiverViewModel(operations, SavedStateHandle())
+        viewModel.initialize(ShareReceiverPayload.Pending(listOf(url), isBatch = false, degradationNotice = null))
+        viewModel.toggleLocalTag(7L)
+        viewModel.toggleSharedTag(9L)
+        advanceUntilIdle()
+        viewModel.savePendingShare()
+        advanceUntilIdle()
+        operations.enqueueAssign(603L, 7L, AssignTagResult.Success)
+        viewModel.savePendingShare()
+        advanceUntilIdle()
+        assertEquals(listOf(603L to 7L, 603L to 9L, 603L to 7L), operations.assignCalls)
+        assertEquals(listOf(url), operations.saveCalls)
+        assertFalse(viewModel.uiState.value.hasPendingShare)
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun cancellationAfterLocalAssignmentPreservesSavedURLAndOnlyPendingSharedTag() = runTest {
+        val url = "https://example.com/cancel-shared"
+        val handle = SavedStateHandle()
+        val operations = FakeShareReceiverOperations().apply {
+            eligibleSharedTags += 9L
+            enqueueSave(url, SaveResult(ShareSaveResult.CREATED, entryId = 604L))
+            enqueueAssign(604L, 7L, AssignTagResult.Success)
+            cancelledAssignments += 604L to 9L
+        }
+        val payload = ShareReceiverPayload.Pending(listOf(url), isBatch = false, degradationNotice = null)
+        val first = ShareReceiverViewModel(operations, handle)
+        first.initialize(payload)
+        first.toggleLocalTag(7L)
+        first.toggleSharedTag(9L)
+        advanceUntilIdle()
+        first.savePendingShare()
+        advanceUntilIdle()
+        assertEquals(1, first.uiState.value.pendingCount)
+        val restored = ShareReceiverViewModel(operations, handle)
+        restored.initialize(payload)
+        operations.cancelledAssignments.clear()
+        operations.enqueueAssign(604L, 9L, AssignTagResult.Success)
+        restored.savePendingShare()
+        advanceUntilIdle()
+        assertFalse(restored.uiState.value.hasPendingShare)
+        assertEquals(listOf(url), operations.saveCalls)
+        assertEquals(listOf(604L to 7L, 604L to 9L, 604L to 9L), operations.assignCalls)
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun saveWaitsForSelectionPermissionCheckAndDiscardDoesNotResurrectSelection() = runTest {
+        val operations = FakeShareReceiverOperations()
+        val permission = CompletableDeferred<Boolean>()
+        operations.permissionCheck = permission
+        val viewModel = ShareReceiverViewModel(operations, SavedStateHandle())
+        viewModel.initialize(ShareReceiverPayload.Pending(listOf("https://example.com/check"), isBatch = false, degradationNotice = null))
+        viewModel.toggleSharedTag(9L)
+        viewModel.savePendingShare()
+        advanceUntilIdle()
+        assertTrue(viewModel.uiState.value.isCheckingSharedTag)
+        assertTrue(operations.saveCalls.isEmpty())
+        viewModel.discard()
+        permission.complete(true)
+        advanceUntilIdle()
+        assertTrue(viewModel.uiState.value.selectedSharedTagIds.isEmpty())
+        assertFalse(viewModel.uiState.value.hasPendingShare)
+        assertFalse(viewModel.uiState.value.isCheckingSharedTag)
+    }
+
     private class FakeShareReceiverOperations : ShareReceiverOperations {
         private val saveResults = mutableMapOf<String, MutableList<SaveResult>>()
         private val assignResults = mutableMapOf<Pair<Long, Long>, MutableList<AssignTagResult>>()
+        val eligibleSharedTags = mutableSetOf<Long>()
+        val cancelledAssignments = mutableSetOf<Pair<Long, Long>>()
+        var permissionCheck: CompletableDeferred<Boolean>? = null
+        override suspend fun canAssignSharedTag(tagId: Long) = permissionCheck?.await() ?: (tagId in eligibleSharedTags)
         val saveCalls = mutableListOf<String>()
         val assignCalls = mutableListOf<Pair<Long, Long>>()
         val createTagCalls = mutableListOf<String>()
@@ -216,6 +364,7 @@ class ShareReceiverRetryContractTest {
 
         override suspend fun assignTag(entryId: Long, tagId: Long): AssignTagResult {
             assignCalls += entryId to tagId
+            if ((entryId to tagId) in cancelledAssignments) throw CancellationException("test interrupted assignment")
             return assignResults[entryId to tagId]?.removeFirstOrNull() ?: AssignTagResult.Failed
         }
 

@@ -48,6 +48,7 @@ interface TagRepository {
     suspend fun createSyncedTagWithResult(name: String): CreateTagResult
     suspend fun findLocalTagIdByName(name: String): Long? = null
     suspend fun renameLocalTagWithResult(tagId: Long, name: String): CreateTagResult = CreateTagResult.Failed
+    suspend fun renameSharedTagWithResult(tagId: Long, name: String): CreateTagResult = CreateTagResult.Failed
     suspend fun deleteTag(tagId: Long)
     suspend fun assignTag(tagId: Long, entryId: Long)
     suspend fun assignTagWithResult(tagId: Long, entryId: Long): AssignTagResult
@@ -58,8 +59,12 @@ interface TagRepository {
     suspend fun triggerSync(): Boolean
     suspend fun triggerSyncIfStale(minIntervalMillis: Long = 60_000L): Boolean
     fun googleOAuthUrl(): String? = null
+    fun appleOAuthUrl(): String? = null
+    suspend fun googleIdentityLinkUrl(): Result<String> = Result.failure(IllegalStateException("ログイン方法の追加は設定されていません"))
+    suspend fun appleIdentityLinkUrl(): Result<String> = Result.failure(IllegalStateException("ログイン方法の追加は設定されていません"))
+    suspend fun cancelIdentityLink() = Unit
     suspend fun handleOAuthCallback(callbackUrl: String): SharedTagAuthResult =
-        SharedTagAuthResult.Failure("Googleサインインを開始できませんでした")
+        SharedTagAuthResult.Failure("サインインを開始できませんでした")
     suspend fun signIn(email: String, password: String): SharedTagAuthResult
     suspend fun signUp(email: String, password: String): SharedTagAuthResult
     suspend fun resendEmailConfirmation(email: String): SharedTagAuthResult =

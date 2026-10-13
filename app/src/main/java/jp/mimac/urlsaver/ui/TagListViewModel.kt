@@ -31,6 +31,8 @@ class TagListViewModel(
         return tagRepository.createSyncedTagWithResult(name)
     }
 
+    suspend fun renameSharedTag(tagId: Long, name: String): CreateTagResult = tagRepository.renameSharedTagWithResult(tagId, name)
+
     suspend fun deleteTag(tagId: Long) {
         tagRepository.deleteTag(tagId)
     }

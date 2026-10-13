@@ -53,6 +53,11 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
+import jp.mimac.urlsaver.ui.components.EntryThumbnailTile
+import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -64,6 +69,8 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ViewList
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -88,6 +95,9 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Sell
 import androidx.compose.material.icons.outlined.ViewAgenda
 import androidx.compose.material.icons.outlined.WarningAmber
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -185,6 +195,10 @@ import jp.mimac.urlsaver.data.LocalTagEntryRef
 import jp.mimac.urlsaver.data.UrlEntryEntity
 import jp.mimac.urlsaver.data.VideoDownloadEntity
 import jp.mimac.urlsaver.domain.DetailEffect
+import jp.mimac.urlsaver.domain.HomeEntryDisplayPreferences
+import jp.mimac.urlsaver.domain.HomeEntryLayout
+import jp.mimac.urlsaver.domain.EntryListSortKey
+import jp.mimac.urlsaver.domain.EntryListSortOrder
 import jp.mimac.urlsaver.domain.EntryCardDisplayMode
 import jp.mimac.urlsaver.domain.HomeBackgroundStyle
 import jp.mimac.urlsaver.domain.MainNavigationEvent
@@ -750,6 +764,8 @@ private fun MainScreen(
     val serviceFilterOrder by viewModel.serviceFilterOrder.collectAsStateWithLifecycle()
     val topFilterOrderTokens by viewModel.topFilterOrderTokens.collectAsStateWithLifecycle()
     val entryCardDisplayMode by viewModel.entryCardDisplayMode.collectAsStateWithLifecycle()
+    val listSortOrder by viewModel.listSortOrder.collectAsStateWithLifecycle()
+    val homeDisplayPreferences by viewModel.homeDisplayPreferences.collectAsStateWithLifecycle()
     val manualInputState by viewModel.manualInputState.collectAsStateWithLifecycle()
     val tagColorStore = context.appContainer().tagColorStore
     val tagColorChoices by tagColorStore.observeChoices().collectAsStateWithLifecycle(emptyMap())
@@ -778,6 +794,7 @@ private fun MainScreen(
     val profileCloudState by profileVm.cloudState.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val mainListState = rememberLazyListState()
+    val mainGridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
     val visibleSharedTags = remember(sharedTags) {
         sharedTags.filter { tag ->
             tag.scope == SharedTagScope.SYNCED
@@ -1052,7 +1069,10 @@ private fun MainScreen(
     fun confirmRenameLocalTag() {
         val tagId = pendingRenameLocalTagId ?: return
         scope.launch {
-            when (val renamed = viewModel.renameLocalTag(tagId, renameLocalTagDialogState.name)) {
+            val target = sharedTags.firstOrNull { it.id == tagId }
+            val result = if (target?.scope == SharedTagScope.SYNCED) tagViewModel.renameSharedTag(tagId, renameLocalTagDialogState.name)
+                else viewModel.renameLocalTag(tagId, renameLocalTagDialogState.name)
+            when (val renamed = result) {
                 is CreateTagResult.Success -> closeRenameLocalTagDialog()
                 CreateTagResult.InvalidName -> {
                     renameLocalTagDialogState = renameLocalTagDialogState.copy(error = "タグ名を入力してください")
@@ -1445,7 +1465,7 @@ private fun MainScreen(
                 pendingTagColorTag = null
                 tagColorSaveError = null
             },
-            onRename = if (tag.scope == SharedTagScope.LOCAL_ONLY) {
+            onRename = if (tag.scope == SharedTagScope.LOCAL_ONLY || tag.currentUserRole in setOf(SharedTagMemberRole.OWNER, SharedTagMemberRole.EDITOR)) {
                 { openRenameLocalTag(tag) }
             } else {
                 null
@@ -1537,7 +1557,7 @@ private fun MainScreen(
         newSharedTagName = renameLocalTagDialogState.name,
         createSharedTagError = renameLocalTagDialogState.error,
         title = "タグ名を変更",
-        body = "自作タグの名前を変更します。",
+        body = if (sharedTags.firstOrNull { it.id == pendingRenameLocalTagId }?.scope == SharedTagScope.SYNCED) "名前の変更を保存し、同期後に共有相手へ反映します。" else "自作タグの名前を変更します。",
         nameLabel = "タグ名",
         placeholder = "新しいタグ名",
         confirmLabel = "変更",
@@ -1903,7 +1923,15 @@ private fun MainScreen(
                         selectionModeActive = selectionModeActive,
                         selectedEntryIds = selectedEntryIds,
                         entryCardDisplayMode = entryCardDisplayMode,
+                        listSortOrder = listSortOrder,
+                        homeDisplayPreferences = homeDisplayPreferences,
+                        onToggleHomeLayout = viewModel::toggleHomeLayout,
+                        onToggleGridInfo = viewModel::toggleHomeGridInfo,
+                        onSetListSortKey = viewModel::setListSortKey,
+                        onToggleListSortDirection = viewModel::toggleListSortDirection,
+                        onToggleImages = viewModel::toggleEntryCardDisplayMode,
                         mainListState = mainListState,
+                        mainGridState = mainGridState,
                         onSelectService = {
                             selectedMainLocalTagId = null
                             viewModel.selectService(it)
@@ -2959,6 +2987,8 @@ private fun MiniOutlinedPanel(modifier: Modifier = Modifier, content: @Composabl
 private fun MainEntryList(
     entries: List<UrlEntryEntity>,
     listState: androidx.compose.foundation.lazy.LazyListState,
+    gridState: androidx.compose.foundation.lazy.grid.LazyGridState,
+    homeDisplayPreferences: HomeEntryDisplayPreferences,
     selectionModeActive: Boolean,
     selectedEntryIds: Set<Long>,
     entryCardDisplayMode: EntryCardDisplayMode,
@@ -2970,6 +3000,60 @@ private fun MainEntryList(
     onArchiveActiveEntry: (Long) -> Unit,
     onPendingDeleteActiveEntry: (Long) -> Unit,
 ) {
+    if (homeDisplayPreferences.layout == HomeEntryLayout.THUMBNAILS) {
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(2),
+            state = gridState,
+            modifier = Modifier
+                .fillMaxSize()
+                .testTag("home_thumbnail_grid"),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                horizontal = 14.dp,
+                vertical = 6.dp,
+            ),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            gridItems(entries, key = { it.id }) { entry ->
+                val selectionMode = selectionModeActive || selectedEntryIds.isNotEmpty()
+                val click = {
+                    if (selectionMode) onToggleSelection(entry.id) else onOpenDetail(entry.id)
+                }
+                val longClick = { onStartSelection(entry.id) }
+                val tile: @Composable () -> Unit = {
+                    EntryThumbnailTile(
+                        entry = entry,
+                        showsInfo = homeDisplayPreferences.gridShowsInfo,
+                        isSelected = entry.id in selectedEntryIds,
+                        localTagNames = localTagNamesByEntryId[entry.id].orEmpty(),
+                        localTagColorChoices = localTagColorChoicesByName,
+                        onClick = click,
+                        onLongClick = longClick,
+                    )
+                }
+                if (entry.recordState == RecordState.ACTIVE && !selectionMode) {
+                    SwipeableMainEntry(
+                        entry = entry,
+                        displayMode = entryCardDisplayMode,
+                        localTagNames = localTagNamesByEntryId[entry.id].orEmpty(),
+                        localTagColorChoicesByName = localTagColorChoicesByName,
+                        onClick = click,
+                        onLongClick = longClick,
+                        onSwipeAction = { action ->
+                            when (action) {
+                                MainSwipeAction.ARCHIVE -> onArchiveActiveEntry(entry.id)
+                                MainSwipeAction.PENDING_DELETE -> onPendingDeleteActiveEntry(entry.id)
+                            }
+                        },
+                        content = tile,
+                    )
+                } else {
+                    tile()
+                }
+            }
+        }
+        return
+    }
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize(),
@@ -3017,6 +3101,121 @@ private fun MainEntryList(
 
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
+private fun HomeListControls(
+    order: EntryListSortOrder,
+    mode: EntryCardDisplayMode,
+    homeDisplayPreferences: HomeEntryDisplayPreferences,
+    onSort: (EntryListSortKey) -> Unit,
+    onDirection: () -> Unit,
+    onImages: () -> Unit,
+    onLayout: () -> Unit,
+    onGridInfo: () -> Unit,
+) {
+    var menuOpen by remember { mutableStateOf(false) }
+    val isGrid = homeDisplayPreferences.layout == HomeEntryLayout.THUMBNAILS
+    val eyeOpen = if (isGrid) homeDisplayPreferences.gridShowsInfo else mode == EntryCardDisplayMode.RICH
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp)
+            .testTag("home_list_controls"),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(modifier = Modifier.weight(1f)) {
+            TextButton(
+                onClick = { menuOpen = true },
+                modifier = Modifier.fillMaxWidth().testTag("home_sort_key"),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp),
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("並び替え", style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                    Text(
+                        text = if (order.key == EntryListSortKey.ADDED_DATE) "追加日" else "タイトル",
+                        maxLines = 1,
+                    )
+                }
+            }
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                EntryListSortKey.entries.forEach { key ->
+                    DropdownMenuItem(
+                        text = { Text(if (key == EntryListSortKey.ADDED_DATE) "追加日" else "タイトル") },
+                        modifier = Modifier.semantics { selected = key == order.key },
+                        leadingIcon = {
+                            if (key == order.key) Icon(Icons.Outlined.Check, contentDescription = "選択中")
+                        },
+                        onClick = {
+                            onSort(key)
+                            menuOpen = false
+                        },
+                    )
+                }
+                HorizontalDivider()
+                listOf(false, true).forEach { ascending ->
+                    val label = if (order.key == EntryListSortKey.ADDED_DATE) {
+                        if (ascending) "古い順" else "新しい順"
+                    } else if (ascending) "昇順" else "降順"
+                    DropdownMenuItem(
+                        text = { Text("表示順: $label") },
+                        modifier = Modifier
+                            .testTag("home_sort_direction_$ascending")
+                            .semantics { selected = ascending == order.ascending },
+                        leadingIcon = {
+                            if (ascending == order.ascending) Icon(Icons.Outlined.Check, contentDescription = "選択中")
+                        },
+                        onClick = {
+                            if (ascending != order.ascending) onDirection()
+                            menuOpen = false
+                        },
+                    )
+                }
+            }
+        }
+        TextButton(
+            onClick = onLayout,
+            modifier = Modifier
+                .weight(1.1f)
+                .testTag("home_display_method")
+                .semantics {
+                    contentDescription = if (isGrid) {
+                        "表示方法:サムネイル、一覧へ切り替える"
+                    } else {
+                        "表示方法:一覧、サムネイルへ切り替える"
+                    }
+                },
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp),
+        ) {
+            Icon(
+                imageVector = if (isGrid) Icons.Outlined.GridView else Icons.AutoMirrored.Outlined.ViewList,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(4.dp))
+            Text("表示方法", maxLines = 1)
+        }
+        TextButton(
+            onClick = if (isGrid) onGridInfo else onImages,
+            modifier = Modifier
+                .weight(0.8f)
+                .testTag("home_image_visibility")
+                .semantics {
+                    contentDescription = if (isGrid) {
+                        if (eyeOpen) "タイトルなどを非表示にする" else "タイトルなどを表示する"
+                    } else if (eyeOpen) "画像を非表示にする" else "画像を表示する"
+                },
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp),
+        ) {
+            Icon(
+                imageVector = if (eyeOpen) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(4.dp))
+            Text(if (eyeOpen) "表示" else "非表示", maxLines = 1)
+        }
+    }
+}
+
+@Composable
 private fun MainListContent(
     uiState: ListFilterUiState,
     localSaveTags: List<jp.mimac.urlsaver.domain.TagWithCount>,
@@ -3032,7 +3231,15 @@ private fun MainListContent(
     selectionModeActive: Boolean,
     selectedEntryIds: Set<Long>,
     entryCardDisplayMode: EntryCardDisplayMode,
+    listSortOrder: jp.mimac.urlsaver.domain.EntryListSortOrder,
+    homeDisplayPreferences: HomeEntryDisplayPreferences,
+    onToggleHomeLayout: () -> Unit,
+    onToggleGridInfo: () -> Unit,
+    onSetListSortKey: (jp.mimac.urlsaver.domain.EntryListSortKey) -> Unit,
+    onToggleListSortDirection: () -> Unit,
+    onToggleImages: () -> Unit,
     mainListState: androidx.compose.foundation.lazy.LazyListState,
+    mainGridState: androidx.compose.foundation.lazy.grid.LazyGridState,
     onSelectService: (ServiceType) -> Unit,
     onReorderServices: (List<ServiceType>) -> Unit,
     onReorderTopFilters: (List<String>) -> Unit,
@@ -3081,6 +3288,16 @@ private fun MainListContent(
             headingColor = MainBottomNavTextColor,
             tagColorChoices = tagColorChoices,
             onEditColor = onRequestEditSharedTagColor,
+        )
+        HomeListControls(
+            order = listSortOrder,
+            mode = entryCardDisplayMode,
+            homeDisplayPreferences = homeDisplayPreferences,
+            onSort = onSetListSortKey,
+            onDirection = onToggleListSortDirection,
+            onImages = onToggleImages,
+            onLayout = onToggleHomeLayout,
+            onGridInfo = onToggleGridInfo,
         )
         if (onOpenGroups != null) {
             Row(
@@ -3140,6 +3357,8 @@ private fun MainListContent(
                 MainListEntriesOrEmpty(
                     uiState = uiState,
                     mainListState = mainListState,
+                    mainGridState = mainGridState,
+                    homeDisplayPreferences = homeDisplayPreferences,
                     selectionModeActive = selectionModeActive,
                     selectedEntryIds = selectedEntryIds,
                     entryCardDisplayMode = entryCardDisplayMode,
@@ -3169,6 +3388,8 @@ private fun MainListContent(
                 MainListEntriesOrEmpty(
                     uiState = uiState,
                     mainListState = mainListState,
+                    mainGridState = mainGridState,
+                    homeDisplayPreferences = homeDisplayPreferences,
                     selectionModeActive = selectionModeActive,
                     selectedEntryIds = selectedEntryIds,
                     entryCardDisplayMode = entryCardDisplayMode,
@@ -3196,6 +3417,8 @@ private fun MainListContent(
             MainListEntriesOrEmpty(
                 uiState = uiState,
                 mainListState = mainListState,
+                mainGridState = mainGridState,
+                homeDisplayPreferences = homeDisplayPreferences,
                 selectionModeActive = selectionModeActive,
                 selectedEntryIds = selectedEntryIds,
                 entryCardDisplayMode = entryCardDisplayMode,
@@ -3215,6 +3438,8 @@ private fun MainListContent(
 private fun MainListEntriesOrEmpty(
     uiState: ListFilterUiState,
     mainListState: androidx.compose.foundation.lazy.LazyListState,
+    mainGridState: androidx.compose.foundation.lazy.grid.LazyGridState,
+    homeDisplayPreferences: HomeEntryDisplayPreferences,
     selectionModeActive: Boolean,
     selectedEntryIds: Set<Long>,
     entryCardDisplayMode: EntryCardDisplayMode,
@@ -3234,6 +3459,8 @@ private fun MainListEntriesOrEmpty(
         MainEntryList(
             entries = uiState.entries,
             listState = mainListState,
+            gridState = mainGridState,
+            homeDisplayPreferences = homeDisplayPreferences,
             selectionModeActive = selectionModeActive,
             selectedEntryIds = selectedEntryIds,
             entryCardDisplayMode = entryCardDisplayMode,
@@ -3956,7 +4183,8 @@ private fun GroupTagManagementContent(
                 )
             }
         }
-        Text("共有タグを追加", style = MaterialTheme.typography.titleSmall)
+        Text("本人所有の共有タグを追加", style = MaterialTheme.typography.titleSmall)
+        Text("グループの閲覧者も、自分がオーナーの共有タグを追加できます。グループの管理権限は変わりません。", style = MaterialTheme.typography.bodySmall)
         if (addableTags.isEmpty()) {
             Text(
                 text = "追加できるオーナー権限の共有タグはありません。",
@@ -4420,6 +4648,7 @@ private fun SwipeableMainEntry(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onSwipeAction: (MainSwipeAction) -> Unit,
+    content: (@Composable () -> Unit)? = null,
 ) {
     val dismissState = rememberSwipeToDismissBoxState(
         positionalThreshold = { totalDistance -> totalDistance * ENTRY_CARD_SWIPE_ACTION_THRESHOLD_FRACTION },
@@ -4452,7 +4681,7 @@ private fun SwipeableMainEntry(
             )
         },
     ) {
-        EntryCard(
+        if (content != null) content() else EntryCard(
             entry = entry,
             timestampMillis = entry.createdAt,
             displayMode = displayMode,
@@ -7465,15 +7694,7 @@ private fun MainMenuOverlay(
                     color = MainMenuTextColor,
                 )
                 Spacer(Modifier.weight(1f))
-                Text(
-                    text = if (entryCardDisplayMode == EntryCardDisplayMode.RICH) "画像つき" else "画像なし",
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MainMenuWarmColor,
-                    modifier = Modifier
-                        .background(MainMenuIconBackgroundColor, RoundedCornerShape(99.dp))
-                        .padding(horizontal = 9.dp, vertical = 6.dp),
-                )
+
             }
             Spacer(
                 Modifier
@@ -7486,25 +7707,6 @@ private fun MainMenuOverlay(
                 label = "プロフィール",
                 text = { Text("プロフィール") },
                 onClick = onOpenProfile,
-            )
-            Spacer(
-                Modifier
-                    .fillMaxWidth()
-                    .height(1.dp)
-                    .background(MainMenuTextColor.copy(alpha = 0.09f)),
-            )
-            MainMenuItem(
-                icon = if (entryCardDisplayMode == EntryCardDisplayMode.RICH) {
-                    Icons.AutoMirrored.Outlined.ViewList
-                } else {
-                    Icons.Outlined.ViewAgenda
-                },
-                label = if (entryCardDisplayMode == EntryCardDisplayMode.RICH) {
-                    "画像なし表示に切り替える"
-                } else {
-                    "画像つき表示に切り替える"
-                },
-                onClick = onToggleDisplayMode,
             )
             Spacer(
                 Modifier

@@ -41,7 +41,11 @@ struct RootView: View {
     @State private var selectedArchiveService: ServiceType = .all
     @State private var selectedMainLocalTagID: Int64?
     @State private var selectedArchiveLocalTagID: Int64?
-    @AppStorage("entryListDisplayMode") private var displayModeRaw = EntryListDisplayMode.compact.rawValue
+    @AppStorage("entryListDisplayMode") private var displayModeRaw = EntryListDisplayMode.rich.rawValue
+    @AppStorage("entryListSortOption") private var sortOptionRaw = EntryListSortOption.addedDate.rawValue
+    @AppStorage("entryListSortAscending") private var isSortAscending = false
+    @AppStorage("homeEntryLayout") private var homeEntryLayoutRaw = HomeEntryLayout.list.rawValue
+    @AppStorage("homeGridInfoVisible") private var homeGridInfoVisible = true
     @AppStorage("pendingOpenSharedTagCloudFromNotification") private var pendingOpenSharedTagCloudFromNotification = false
     @AppStorage("pendingSharedTagRemoteIDFromNotification") private var pendingSharedTagRemoteIDFromNotification = ""
     @State private var showFirstRunOnboarding = FirstRunOnboardingStore.shouldShow()
@@ -74,14 +78,28 @@ struct RootView: View {
     @State private var selectedMainEntryIDs: Set<Int64> = []
     @State private var isBatchMutationInFlight = false
 
-    private var displayMode: EntryListDisplayMode {
-        EntryListDisplayMode(rawValue: displayModeRaw) ?? .compact
-    }
-
     private var displayModeBinding: Binding<EntryListDisplayMode> {
         Binding(
-            get: { EntryListDisplayMode(rawValue: displayModeRaw) ?? .compact },
+            get: { EntryListDisplayMode(rawValue: displayModeRaw) ?? .rich },
             set: { displayModeRaw = $0.rawValue }
+        )
+    }
+
+    private var sortOption: EntryListSortOption {
+        EntryListSortOption(rawValue: sortOptionRaw) ?? .addedDate
+    }
+
+    private var sortOptionBinding: Binding<EntryListSortOption> {
+        Binding(
+            get: { EntryListSortOption(rawValue: sortOptionRaw) ?? .addedDate },
+            set: { sortOptionRaw = $0.rawValue }
+        )
+    }
+
+    private var homeEntryLayoutBinding: Binding<HomeEntryLayout> {
+        Binding(
+            get: { HomeEntryLayout(rawValue: homeEntryLayoutRaw) ?? .list },
+            set: { homeEntryLayoutRaw = $0.rawValue }
         )
     }
 
@@ -143,6 +161,10 @@ struct RootView: View {
                 selectedService: $selectedMainService,
                 selectedLocalTagID: $selectedMainLocalTagID,
                 displayMode: displayModeBinding,
+                sortOption: sortOptionBinding,
+                isSortAscending: $isSortAscending,
+                homeEntryLayout: homeEntryLayoutBinding,
+                homeGridInfoVisible: $homeGridInfoVisible,
                 isShowingUsageGuide: $isShowingUsageGuide,
                 isShowingSearchBar: $isShowingSearchBar,
                 isShowingMainMenu: $isShowingMainMenu,
@@ -224,6 +246,9 @@ struct RootView: View {
                 onOpenSharedTagCloud: { isShowingSharedTagCloudSheet = true },
                 onCreateSharedTag: { isShowingSharedTagCreateSheet = true },
                 onOpenSharedTag: { selectedSharedTagID = $0 },
+                onRenameSharedTag: { remoteTagID, name in
+                    await model.renameSharedTag(remoteTagID: remoteTagID, name: name)
+                },
                 onRetryLoad: { Task { await model.reload() } },
                 showsPendingInviteBanner: showsPendingInviteBanner
             )
@@ -290,14 +315,9 @@ struct RootView: View {
                             .onTapGesture { isShowingMainMenu = false }
 
                         MainTopMenu(
-                            displayMode: displayMode,
                             onOpenProfile: {
                                 isShowingMainMenu = false
                                 isShowingSharedTagCloudSheet = true
-                            },
-                            onToggleDisplayMode: {
-                                isShowingMainMenu = false
-                                displayModeBinding.wrappedValue = displayMode == .rich ? .compact : .rich
                             },
                             onEnterSelectionMode: {
                                 isShowingMainMenu = false
@@ -331,12 +351,17 @@ struct RootView: View {
                 localTagAssignments: model.localTagAssignments,
                 localTags: model.localTags
             )
-            let mainDisplayedEntries = searchFilteredEntries(
+            let mainFilteredEntries = searchFilteredEntries(
                 mainVisibleEntries,
                 query: searchQuery,
                 localTags: model.localTags,
                 localTagAssignments: model.localTagAssignments,
                 databaseMatchedEntryIDs: databaseSearchMatchIDs
+            )
+            let mainDisplayedEntries = sortedEntriesForDisplay(
+                mainFilteredEntries,
+                by: sortOption,
+                ascending: isSortAscending
             )
             let showsPendingInviteBanner = shouldShowPendingInviteBanner(
                 hasPendingInvite: model.pendingInviteRecord != nil
@@ -774,6 +799,10 @@ private struct MainScreen: View {
     @Binding var selectedService: ServiceType
     @Binding var selectedLocalTagID: Int64?
     @Binding var displayMode: EntryListDisplayMode
+    @Binding var sortOption: EntryListSortOption
+    @Binding var isSortAscending: Bool
+    @Binding var homeEntryLayout: HomeEntryLayout
+    @Binding var homeGridInfoVisible: Bool
     @Binding var isShowingUsageGuide: Bool
     @Binding var isShowingSearchBar: Bool
     @Binding var isShowingMainMenu: Bool
@@ -804,6 +833,7 @@ private struct MainScreen: View {
     let onOpenSharedTagCloud: () -> Void
     let onCreateSharedTag: () -> Void
     let onOpenSharedTag: (String) -> Void
+    let onRenameSharedTag: (String, String) async -> Bool
     let onRetryLoad: () -> Void
     let showsPendingInviteBanner: Bool
 
@@ -877,9 +907,19 @@ private struct MainScreen: View {
                 tags: sharedTags,
                 accountID: sharedTagAccountID,
                 onCreateTag: onCreateSharedTag,
-                onOpenTag: onOpenSharedTag
+                onOpenTag: onOpenSharedTag,
+                onRenameTag: onRenameSharedTag
             )
             .padding(.bottom, 6)
+
+            MainEntryListControlRow(
+                sortOption: $sortOption,
+                isAscending: $isSortAscending,
+                displayMode: $displayMode,
+                homeEntryLayout: $homeEntryLayout,
+                gridInfoVisible: $homeGridInfoVisible
+            )
+            .padding(.bottom, 8)
 
             if selectionModeActive || !selectedEntryIDs.isEmpty {
                 EntrySelectionBar(
@@ -898,10 +938,11 @@ private struct MainScreen: View {
 
             GeometryReader { proxy in
                 let cardWidth = max(proxy.size.width - 32, 0)
-                let selectionMode = selectionModeActive || !selectedEntryIDs.isEmpty
+                let gridColumnSpacing: CGFloat = 12
+                let gridCardWidth = max((proxy.size.width - 32 - gridColumnSpacing) / 2, 0)
 
                 ScrollView(showsIndicators: false) {
-                    LazyVStack(spacing: 14) {
+                    VStack(spacing: 14) {
                         if showsPendingInviteBanner, let pendingInviteRecord {
                             PendingInviteBanner(
                                 pendingInviteRecord: pendingInviteRecord,
@@ -930,39 +971,34 @@ private struct MainScreen: View {
                                     .frame(maxWidth: .infinity)
                             }
                             .frame(width: cardWidth)
-                        } else {
-                            ForEach(entries) { entry in
-                                if selectionMode {
-                                    Button {
-                                        onToggleSelection(entry.id)
-                                    } label: {
-                                        EntryCardView(
-                                            entry: entry,
-                                            timestampLabel: "保存",
-                                            displayMode: displayMode,
-                                            cardWidth: cardWidth,
-                                            selected: selectedEntryIDs.contains(entry.id),
-                                            localTagNames: localTagNames(for: entry, namesByID: localTagNamesByID),
-                                            localTagTints: localTagTints
-                                        )
-                                        .frame(width: cardWidth)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .accessibilityLabel("\(preferredDisplayTitle(for: entry))")
-                                    .accessibilityValue(selectedEntryIDs.contains(entry.id) ? "選択中" : "未選択")
-                                } else {
-                                    SwipeableEntryCard(
-                                        entry: entry,
-                                        displayMode: displayMode,
-                                        cardWidth: cardWidth,
-                                        localTagNames: localTagNames(for: entry, namesByID: localTagNamesByID),
+                        } else if homeEntryLayout == .thumbnailGrid {
+                            LazyVGrid(
+                                columns: [
+                                    GridItem(.flexible(), spacing: gridColumnSpacing),
+                                    GridItem(.flexible(), spacing: gridColumnSpacing),
+                                ],
+                                spacing: gridColumnSpacing
+                            ) {
+                                ForEach(entries) { entry in
+                                    entryCard(
+                                        entry,
+                                        cardWidth: gridCardWidth,
+                                        localTagNamesByID: localTagNamesByID,
                                         localTagTints: localTagTints,
-                                        onTap: { onOpenDetail(entry.id) },
-                                        onArchive: { onArchive(entry.id) },
-                                        onDelete: { onDelete(entry.id) },
-                                        onLongPress: { onStartSelection(entry.id) }
+                                        gridInfoVisible: homeGridInfoVisible
                                     )
-                                    .frame(width: cardWidth)
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                        } else {
+                            LazyVStack(spacing: 14) {
+                                ForEach(entries) { entry in
+                                    entryCard(
+                                        entry,
+                                        cardWidth: cardWidth,
+                                        localTagNamesByID: localTagNamesByID,
+                                        localTagTints: localTagTints
+                                    )
                                 }
                             }
                         }
@@ -1024,12 +1060,56 @@ private struct MainScreen: View {
             .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
 
+    @ViewBuilder
+    private func entryCard(
+        _ entry: URLRecord,
+        cardWidth: CGFloat,
+        localTagNamesByID: [Int64: String],
+        localTagTints: [String: TagTint],
+        gridInfoVisible: Bool? = nil
+    ) -> some View {
+        let entryLocalTagNames = localTagNames(for: entry, namesByID: localTagNamesByID)
+        if selectionModeActive || !selectedEntryIDs.isEmpty {
+            Button {
+                onToggleSelection(entry.id)
+            } label: {
+                EntryCardView(
+                    entry: entry,
+                    timestampLabel: "保存",
+                    displayMode: displayMode,
+                    cardWidth: cardWidth,
+                    selected: selectedEntryIDs.contains(entry.id),
+                    localTagNames: entryLocalTagNames,
+                    localTagTints: localTagTints,
+                    gridInfoVisible: gridInfoVisible
+                )
+                .frame(width: cardWidth)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(entryCardAccessibilityLabel(for: entry, localTagNames: entryLocalTagNames))
+            .accessibilityValue(selectedEntryIDs.contains(entry.id) ? "選択中" : "未選択")
+            .accessibilityAddTraits(selectedEntryIDs.contains(entry.id) ? .isSelected : [])
+        } else {
+            SwipeableEntryCard(
+                entry: entry,
+                displayMode: displayMode,
+                cardWidth: cardWidth,
+                localTagNames: entryLocalTagNames,
+                localTagTints: localTagTints,
+                gridInfoVisible: gridInfoVisible,
+                onTap: { onOpenDetail(entry.id) },
+                onArchive: { onArchive(entry.id) },
+                onDelete: { onDelete(entry.id) },
+                onLongPress: { onStartSelection(entry.id) }
+            )
+            .frame(width: cardWidth)
+        }
+    }
+
 }
 
 private struct MainTopMenu: View {
-    let displayMode: EntryListDisplayMode
     let onOpenProfile: () -> Void
-    let onToggleDisplayMode: () -> Void
     let onEnterSelectionMode: () -> Void
     let onOpenUsageGuide: () -> Void
 
@@ -1041,23 +1121,11 @@ private struct MainTopMenu: View {
                         .font(.system(.title3, design: .rounded).weight(.heavy))
                         .foregroundStyle(HomeMenuPalette.menuText)
                     Spacer(minLength: 4)
-                    Text(displayMode == .rich ? "画像つき" : "画像なし")
-                        .font(.system(.caption2, design: .rounded).weight(.heavy))
-                        .foregroundStyle(HomeMenuPalette.gold)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 6)
-                        .background(HomeMenuPalette.iconSurface, in: Capsule())
                 }
                 .padding(.bottom, 14)
 
                 menuSeparator
                 menuItem("プロフィール", systemImage: "person.crop.circle", action: onOpenProfile)
-                menuSeparator
-                menuItem(
-                    displayMode == .rich ? "画像なし表示に切り替える" : "画像つき表示に切り替える",
-                    systemImage: displayMode == .rich ? "list.bullet.rectangle" : "rectangle.grid.1x2",
-                    action: onToggleDisplayMode
-                )
                 menuSeparator
                 menuItem("選択", systemImage: "checkmark.square", action: onEnterSelectionMode)
                 menuSeparator
@@ -2743,7 +2811,12 @@ private struct SharedTagGroupScreen: View {
         let members = model.loadGroupMembers(remoteGroupID: group.remoteGroupID)
         let groupedTagIDs = Set(groupTags.map(\.remoteTagID))
         let addableTags = sharedTags
-            .filter { $0.currentUserRole == .owner && !groupedTagIDs.contains($0.remoteTagID) }
+            .filter {
+                canContributeSharedTagToGroup(
+                    groupRole: group.currentUserRole,
+                    tagRole: $0.currentUserRole
+                ) && !groupedTagIDs.contains($0.remoteTagID)
+            }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
         AppPanel {
@@ -2930,7 +3003,7 @@ private struct SharedTagGroupScreen: View {
                     .foregroundStyle(AppPalette.textPrimary)
                 roleGuideLine(label: "オーナー:", body: "グループ設定、招待、メンバー管理、配下共有タグの管理ができます。")
                 roleGuideLine(label: "編集者:", body: "配下共有タグにURLを追加・削除できます。")
-                roleGuideLine(label: "閲覧者:", body: "配下共有タグとURLを見られます。編集はできません。")
+                roleGuideLine(label: "閲覧者:", body: "配下共有タグとURLを見られます。自分がオーナーの共有タグを追加できます。")
                     .padding(.bottom, 2)
                 Text("同期エラーがある場合は、再同期後にこの画面へ反映されます。")
                     .font(.system(size: 14, weight: .medium))
@@ -3001,6 +3074,10 @@ private struct SharedTagGroupScreen: View {
         Text("共有タグを追加")
             .font(.system(size: 15, weight: .heavy))
             .foregroundStyle(AppPalette.textPrimary)
+        Text("自分がオーナーの共有タグは、閲覧者でもグループに追加できます。グループ設定やメンバー管理の権限は変わりません。")
+            .font(.system(size: 14, weight: .medium))
+            .foregroundStyle(AppPalette.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
         if addableTags.isEmpty {
             Text("追加できるオーナー権限の共有タグはありません。")
                 .font(.system(size: 15, weight: .medium))
@@ -3703,6 +3780,7 @@ private struct LocalTagManagementPill: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: 126, alignment: .leading)
+                    .accessibilityAction(named: Text("タグ名と色を編集")) { onRename(tag) }
 
                 Text("\(tag.activeURLCount)件")
                     .font(.system(size: 12, weight: .bold, design: .rounded))
