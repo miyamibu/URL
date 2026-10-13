@@ -1,0 +1,82 @@
+{
+  "status": "BOTH_STORES_SUBMITTED_REVIEW_PENDING",
+  "sourceCommit": "54a9ca0cde30c58176a6721ef44b042d217e991e",
+  "validatedTestAndDocumentationCommit": "6cf5f40a4eab9afdee7f4b8d5c083126eff91639",
+  "version": "1.0.26",
+  "build": 41,
+  "android": {
+    "applicationId": "jp.miyamibu.urlalbum",
+    "aab": "build/store/rinbam-1.0.26-41-play-signed.aab",
+    "sha256": "5b9bee28d81babdcae8bd804244aef4c49fdbc3f33b4649f58840b6d72aa7d41",
+    "upload": "ACCEPTED",
+    "track": "production",
+    "releaseId": 23,
+    "submissionId": 25,
+    "reviewSubmission": "ACCEPTED",
+    "reviewState": "審査中",
+    "submittedAtDisplayed": "2026-10-13 22:46 JST",
+    "timestampPrecision": "minute",
+    "managedPublishing": false,
+    "rolloutPercent": 100,
+    "signerMatchesPreviousAccepted": true,
+    "supportedDeviceChanges": 0,
+    "submissionUrl": "https://play.google.com/console/u/0/developers/6026364900028455951/app/4976058498782318560/publishing/submission-activity/25/details"
+  },
+  "ios": {
+    "appId": "6771251450",
+    "bundleId": "com.mibu.codebridge.ios",
+    "shareBundleId": "com.mibu.codebridge.ios.share",
+    "archive": "build/archives/rinbam-1.0.26-41.xcarchive",
+    "localExportedIpa": "build/app-store/1.0.26-41/りんばむ.ipa",
+    "localExportedIpaSha256": "49724805ac68abcae00da4d20d41a8af2c0d613c28eddf6cc6ad7262523703ff",
+    "uploadSource": "Same source archive exported with destination=upload using existing Xcode account session",
+    "uploadedPayloadSha256": "NOT_INDEPENDENTLY_CAPTURED",
+    "upload": "SUCCEEDED",
+    "buildId": "329103f2-1d61-4dcd-89dd-036e6026a166",
+    "processing": "COMPLETE",
+    "versionAssociation": "1.0.26_BUILD_41_SAVED",
+    "reviewSubmission": "ACCEPTED",
+    "reviewState": "審査待ち",
+    "submissionId": "909abe14-c066-49a7-879c-267e0832d96e",
+    "submittedAtDisplayed": "2026-10-13 22:46 JST",
+    "timestampPrecision": "minute",
+    "releaseMode": "AFTER_APPROVAL",
+    "phasedRelease": false,
+    "productionConfigurationMatchesPrevious": true,
+    "submissionUrl": "https://appstoreconnect.apple.com/apps/6771251450/distribution/reviewsubmissions/details/909abe14-c066-49a7-879c-267e0832d96e"
+  },
+  "approval": "NOT_VERIFIED",
+  "publicAvailability": "NOT_VERIFIED",
+  "checks": {
+    "androidLocal": "556 unit tests/assemble/lint PASS; final adjustment 21 related tests/assemble PASS",
+    "iosLocal": "65 auth/share +35 display/domain tests PASS; final UI generic builds PASS",
+    "releaseArtifacts": "PASS",
+    "releaseHygiene": "PASS",
+    "releaseManifest": "PASS",
+    "mobileUIContract": "PASS",
+    "launchReadiness": "PASS",
+    "fullLocalSupabase": "21 files/129 tests PASS",
+    "crossPlatformCI": "5 jobs PASS",
+    "productionFeatureContracts": "PASS",
+    "physicalDevice": "NOT_RUN"
+  },
+  "ci": {
+    "sourceCommit": "6cf5f40a4eab9afdee7f4b8d5c083126eff91639",
+    "crossPlatformRunId": 38404932189,
+    "crossPlatformUrl": "https://github.com/miyamibu/URL/actions/runs/38404932189",
+    "productionFeatureContractsRunId": 38404932073,
+    "productionFeatureContractsUrl": "https://github.com/miyamibu/URL/actions/runs/38404932073",
+    "note": "The initial source CI exposed two stale test expectations; the repair changed tests/docs only and did not alter the mobile artifact inputs."
+  },
+  "screenshots": {
+    "android": "2026-10-13-google-play-1.0.26-41-receipt.jpg",
+    "ios": "2026-10-13-app-store-1.0.26-41-receipt.jpg"
+  },
+  "boundaries": {
+    "productionSupabaseMigration": "NOT_APPLIED_APPROVAL_PENDING",
+    "liveProviderLoginAndLinking": "NOT_VERIFIED",
+    "ChatGPTSignIn": "DISABLED_PREPARING_PROVIDER_ELIGIBILITY_AND_CLIENT_REGISTRATION_REQUIRED",
+    "newCredentialsOrSecuritySettings": "NOT_CHANGED"
+  },
+  "retention": "Signed release artifacts, logs and screenshots retained. Task-owned test devices/verification copies were cleaned up; pre-existing artifacts were preserved."
+}
