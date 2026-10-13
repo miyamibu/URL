@@ -2753,7 +2753,8 @@ final class SharedTagCloudService: @unchecked Sendable {
         return SharedTagCloudState(
             isConfigured: config.isConfigured,
             isSignedIn: session != nil && config.isConfigured,
-            signedInEmail: session?.userEmail
+            signedInEmail: session?.userEmail,
+            authUserID: session?.authUserID
         )
     }
 

@@ -62,7 +62,7 @@ class Phase1aFlowTest {
 
         composeRule.onNodeWithTag(entryCardTag(entryId)).performClick()
         composeRule.onNodeWithText("詳細").assertIsDisplayed()
-        composeRule.onNodeWithText("開く").assertExists()
+        composeRule.onNodeWithText("リンク先を開く ↗").assertExists()
         composeRule.onNode(hasText("保存日時:", substring = true)).assertDoesNotExist()
         composeRule.onNodeWithText("Waybackで確認").assertDoesNotExist()
 
@@ -313,7 +313,9 @@ class Phase1aFlowTest {
 
         composeRule.onNodeWithTag(entryCardTag(entryId)).performClick()
         waitForText("一時的に情報を取得できませんでした")
-        composeRule.onNodeWithText("再取得").assertExists().performClick()
+        composeRule.onNodeWithTag("detail_metadata_retry")
+            .performScrollTo()
+            .performClick()
         composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MS) {
             composeRule.onAllNodesWithText("再取得中…").fetchSemanticsNodes().isNotEmpty() ||
                 composeRule.onAllNodesWithText("情報を更新中です").fetchSemanticsNodes().isNotEmpty()

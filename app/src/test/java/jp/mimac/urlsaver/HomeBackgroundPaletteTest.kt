@@ -4,6 +4,7 @@ import androidx.compose.ui.graphics.Color
 import jp.mimac.urlsaver.domain.HomeBackgroundStyle
 import jp.mimac.urlsaver.ui.theme.homeBackgroundGradientColors
 import jp.mimac.urlsaver.ui.theme.homeBackgroundLabel
+import jp.mimac.urlsaver.ui.theme.homeBackgroundSurfaceColor
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -34,5 +35,12 @@ class HomeBackgroundPaletteTest {
         assertEquals("さくら", homeBackgroundLabel(HomeBackgroundStyle.PASTEL_BLUSH))
         assertEquals("ラベンダー", homeBackgroundLabel(HomeBackgroundStyle.PASTEL_LAVENDER))
         assertEquals("ミント", homeBackgroundLabel(HomeBackgroundStyle.PASTEL_MINT))
+    }
+
+    @Test
+    fun sharedAppSurfaceColorTracksTheSelectedPalette() {
+        HomeBackgroundStyle.entries.forEach { style ->
+            assertEquals(homeBackgroundGradientColors(style).first(), homeBackgroundSurfaceColor(style))
+        }
     }
 }

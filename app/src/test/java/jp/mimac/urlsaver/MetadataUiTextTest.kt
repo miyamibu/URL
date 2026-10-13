@@ -59,6 +59,7 @@ class MetadataUiTextTest {
         val title = preferredDisplayTitle(
             userTitle = null,
             fetchedTitle = "author_name",
+            fetchedAuthorName = "author_name",
             serviceType = ServiceType.INSTAGRAM,
             contentContext = ContentContext.POST,
             normalizedHost = "instagram.com",
@@ -68,6 +69,81 @@ class MetadataUiTextTest {
         )
 
         assertEquals("これはInstagramの投稿内容です", title)
+    }
+
+    @Test
+    fun preferredDisplayTitle_prefersRealInstagramTitleOverCaption() {
+        val title = preferredDisplayTitle(
+            userTitle = null,
+            fetchedTitle = "Apollo launch",
+            serviceType = ServiceType.INSTAGRAM,
+            contentContext = ContentContext.POST,
+            normalizedHost = "instagram.com",
+            bodySummary = "打ち上げの投稿です。",
+            fetchedBody = "打ち上げの投稿です。詳しい説明です。",
+            description = null,
+        )
+
+        assertEquals("Apollo launch", title)
+    }
+
+    @Test
+    fun preferredDisplayTitle_usesCaptionWhenInstagramTitleIsNoisyOrAnAuthor() {
+        val engagementTitle = preferredDisplayTitle(
+            userTitle = null,
+            fetchedTitle = "October 12, 2026: 1,234 likes, 42 comments - nasa on Instagram",
+            serviceType = ServiceType.INSTAGRAM,
+            contentContext = ContentContext.POST,
+            normalizedHost = "instagram.com",
+            bodySummary = "短い本文要約。",
+            fetchedBody = "実際のキャプションです。追加の本文です。",
+            description = null,
+        )
+        val authorTitle = preferredDisplayTitle(
+            userTitle = null,
+            fetchedTitle = "NASA",
+            serviceType = ServiceType.INSTAGRAM,
+            contentContext = ContentContext.POST,
+            normalizedHost = "instagram.com",
+            bodySummary = "短い本文要約。",
+            fetchedBody = "実際のキャプションです。追加の本文です。",
+            description = null,
+            fetchedAuthorName = "nasa",
+        )
+
+        assertEquals("実際のキャプションです。", engagementTitle)
+        assertEquals("実際のキャプションです。", authorTitle)
+    }
+
+    @Test
+    fun preferredDisplayTitle_unwrapsPreviouslySavedInstagramCaptionEnvelope() {
+        val title = preferredDisplayTitle(
+            userTitle = null,
+            fetchedTitle = "Instagram",
+            serviceType = ServiceType.INSTAGRAM,
+            contentContext = ContentContext.POST,
+            normalizedHost = "instagram.com",
+            bodySummary = null,
+            fetchedBody = "いいね！123件、コメント4件 - example 2026年10月12日: 「秋の散歩。2026年の記録。」",
+            description = null,
+        )
+
+        assertEquals("秋の散歩。", title)
+    }
+
+    @Test
+    fun preferredDisplayTitle_usesShortBodyTitleForUnknownWebWhenTitleIsMissing() {
+        val title = preferredDisplayTitle(
+            userTitle = null,
+            fetchedTitle = null,
+            serviceType = ServiceType.WEB,
+            normalizedHost = "example.com",
+            bodySummary = null,
+            fetchedBody = "A useful first sentence. More long page content follows.",
+            description = null,
+        )
+
+        assertEquals("A useful first sentence.", title)
     }
 
     @Test

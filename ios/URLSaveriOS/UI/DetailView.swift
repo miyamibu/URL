@@ -3,6 +3,14 @@ import SwiftUI
 import UIKit
 
 struct DetailView: View {
+    @ObservedObject private var tagTints = TagTintPreferences.shared
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    private var tagPanelLayout: AnyLayout {
+        dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(spacing: 10))
+            : AnyLayout(HStackLayout(alignment: .top, spacing: 10))
+    }
     let entryID: Int64
     @ObservedObject var model: URLSaverAppModel
 
@@ -147,7 +155,7 @@ struct DetailView: View {
                                             }
 
                                             HStack(spacing: 10) {
-                                                ServiceBadgeView(serviceType: entry.serviceType, badgeImageURL: entry.badgeImageURL)
+                                                ServiceBadgeView(serviceType: entry.serviceType, badgeImageURL: entry.badgeImageURL, reloadKey: entry.metadataFetchedAt)
                                                 Text(detailServiceLabel(for: entry))
                                                     .font(.system(size: 18, weight: .medium))
                                                     .foregroundStyle(Color.white.opacity(0.84))
@@ -215,42 +223,6 @@ struct DetailView: View {
                                     }
                                 }
 
-                                if let metadataMessage = detailMetadataMessage(for: entry) {
-                                    AppPanel {
-                                        Label {
-                                            Text(metadataMessage.title)
-                                                .font(.system(size: 21, weight: .heavy, design: .rounded))
-                                        } icon: {
-                                            Image(systemName: detailMetadataIcon(for: entry))
-                                                .font(.system(size: 18, weight: .bold))
-                                        }
-                                        .foregroundStyle(detailMetadataColor(for: entry))
-
-                                        if let body = metadataMessage.body {
-                                            Text(body)
-                                                .font(.system(size: 16, weight: .medium))
-                                                .foregroundStyle(AppPalette.textSecondary)
-                                        }
-
-                                        if metadataMessage.showsRetry {
-                                            AppActionButton {
-                                                guard !isRetryingMetadata else { return }
-                                                isRetryingMetadata = true
-                                                Task {
-                                                    await model.retryMetadata(entryID: entryID)
-                                                    isRetryingMetadata = false
-                                                }
-                                            } label: {
-                                                if isRetryingMetadata {
-                                                    ProgressView().tint(Color.white)
-                                                } else {
-                                                    Text("再取得")
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
                                 if isSocialPostContentService(entry.serviceType) {
                                     if let body = socialDetailBodyText(for: entry) {
                                         AppPanel(padded: false) {
@@ -277,6 +249,58 @@ struct DetailView: View {
                                                 .foregroundStyle(AppPalette.textSecondary)
                                         }
                                     }
+                                }
+
+                                tagPanelLayout {
+                                    DetailTagSummaryPanel(
+                                        title: "共有タグ",
+                                        emptyText: model.sharedTagCloudState.isConfigured
+                                            ? "まだ共有タグは付いていません"
+                                            : "共有タグは現在利用できません",
+                                        tags: assignedSharedTags.map { tag in
+                                            DetailTagSummaryItem(
+                                                id: "shared-\(tag.remoteTagID)",
+                                                name: tag.name,
+                                                tint: tagTints.tint(for: TagTintPreferences.sharedKey(accountID: model.sharedTagCloudState.authUserID, remoteID: tag.remoteTagID)),
+                                                canRemove: !isRemovingTag && (tag.currentUserRole == .owner || tag.currentUserRole == .editor),
+                                                onRemove: {
+                                                    guard !isRemovingTag else { return }
+                                                    isRemovingTag = true
+                                                    Task {
+                                                        _ = await model.removeEntry(entryID, fromSharedTag: tag.remoteTagID)
+                                                        isRemovingTag = false
+                                                    }
+                                                }
+                                            )
+                                        },
+                                        isEditEnabled: model.sharedTagCloudState.isConfigured,
+                                        onEdit: {
+                                            guard model.sharedTagCloudState.isConfigured else { return }
+                                            isShowingSharedTagEditor = true
+                                        }
+                                    )
+                                    DetailTagSummaryPanel(
+                                        title: "自作タグ",
+                                        emptyText: "まだ自作タグは付いていません",
+                                        tags: assignedLocalTags.map { tag in
+                                            DetailTagSummaryItem(
+                                                id: "local-\(tag.id)",
+                                                name: tag.name,
+                                                tint: tagTints.tint(for: TagTintPreferences.localKey(tag.id)),
+                                                canRemove: !isRemovingTag,
+                                                onRemove: {
+                                                    guard !isRemovingTag else { return }
+                                                    isRemovingTag = true
+                                                    Task {
+                                                        _ = await model.removeEntry(entryID, fromLocalTag: tag.id)
+                                                        isRemovingTag = false
+                                                    }
+                                                }
+                                            )
+                                        },
+                                        onEdit: { isShowingLocalTagEditor = true }
+                                    )
+
                                 }
 
                                 VStack(spacing: 10) {
@@ -370,54 +394,40 @@ struct DetailView: View {
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                 }
 
-                                VStack(spacing: 10) {
-                                    DetailTagSummaryPanel(
-                                        title: "自作タグ",
-                                        emptyText: "まだ自作タグは付いていません",
-                                        tags: assignedLocalTags.map { tag in
-                                            DetailTagSummaryItem(
-                                                id: "local-\(tag.id)",
-                                                name: tag.name,
-                                                canRemove: !isRemovingTag,
-                                                onRemove: {
-                                                    guard !isRemovingTag else { return }
-                                                    isRemovingTag = true
-                                                    Task {
-                                                        _ = await model.removeEntry(entryID, fromLocalTag: tag.id)
-                                                        isRemovingTag = false
-                                                    }
-                                                }
-                                            )
-                                        },
-                                        onEdit: { isShowingLocalTagEditor = true }
-                                    )
-
-                                    DetailTagSummaryPanel(
-                                        title: "共有タグ",
-                                        emptyText: model.sharedTagCloudState.isConfigured
-                                            ? "まだ共有タグは付いていません"
-                                            : "共有タグは現在利用できません",
-                                        tags: assignedSharedTags.map { tag in
-                                            DetailTagSummaryItem(
-                                                id: "shared-\(tag.remoteTagID)",
-                                                name: tag.name,
-                                                canRemove: !isRemovingTag && (tag.currentUserRole == .owner || tag.currentUserRole == .editor),
-                                                onRemove: {
-                                                    guard !isRemovingTag else { return }
-                                                    isRemovingTag = true
-                                                    Task {
-                                                        _ = await model.removeEntry(entryID, fromSharedTag: tag.remoteTagID)
-                                                        isRemovingTag = false
-                                                    }
-                                                }
-                                            )
-                                        },
-                                        isEditEnabled: model.sharedTagCloudState.isConfigured,
-                                        onEdit: {
-                                            guard model.sharedTagCloudState.isConfigured else { return }
-                                            isShowingSharedTagEditor = true
+                                if let metadataMessage = detailMetadataMessage(for: entry) {
+                                    AppPanel {
+                                        Label {
+                                            Text(metadataMessage.title)
+                                                .font(.system(size: 15, weight: .semibold))
+                                        } icon: {
+                                            Image(systemName: detailMetadataIcon(for: entry))
+                                                .font(.system(size: 18, weight: .bold))
                                         }
-                                    )
+                                        .foregroundStyle(detailMetadataColor(for: entry))
+
+                                        if let body = metadataMessage.body {
+                                            Text(body)
+                                                .font(.system(size: 14, weight: .medium))
+                                                .foregroundStyle(AppPalette.textSecondary)
+                                        }
+
+                                        if metadataMessage.showsRetry {
+                                            AppActionButton {
+                                                guard !isRetryingMetadata else { return }
+                                                isRetryingMetadata = true
+                                                Task {
+                                                    await model.retryMetadata(entryID: entryID)
+                                                    isRetryingMetadata = false
+                                                }
+                                            } label: {
+                                                if isRetryingMetadata {
+                                                    ProgressView().tint(Color.white)
+                                                } else {
+                                                    Text("再取得")
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
 
                                 AppPanel {
@@ -612,7 +622,8 @@ struct DetailView: View {
     }
 
     private func socialDetailBodyText(for entry: URLRecord) -> String? {
-        firstNonBlank(entry.fetchedBody, entry.description, entry.bodySummary)
+        guard let text = firstNonBlank(entry.fetchedBody, entry.description, entry.bodySummary) else { return nil }
+        return entry.serviceType == .instagram ? MetadataFetcher.instagramCaptionText(text) : text
     }
 
     private func firstNonBlank(_ values: String?...) -> String? {
@@ -717,7 +728,7 @@ private struct ElegantDetailButton<Label: View>: View {
     private var foreground: Color {
         switch tone {
         case .primary: return .white
-        case .secondary: return Color(UIColor(hex: 0x38354A))
+        case .secondary: return AppPalette.textPrimary
         case .danger: return AppPalette.danger
         }
     }
@@ -1227,6 +1238,7 @@ private struct EntryLocalTagAssignmentSheet: View {
             .presentationDetents([.medium])
             .presentationDragIndicator(.visible)
             .presentationCornerRadius(28)
+            .presentationBackground { AppDisplayBackground() }
         }
         .sheet(isPresented: $isShowingShareSheet) {
             ActivityShareSheet(items: shareItems)
@@ -1414,6 +1426,7 @@ private struct DetailSectionLabel: View {
 private struct DetailTagSummaryItem: Identifiable {
     let id: String
     let name: String
+    let tint: TagTint
     let canRemove: Bool
     let onRemove: () -> Void
 }
@@ -1448,6 +1461,7 @@ private struct DetailTagSummaryPanel: View {
                             ForEach(tags) { tag in
                                 DetailTagValuePill(
                                     text: tag.name,
+                                    tint: tag.tint,
                                     isEmpty: false,
                                     canRemove: tag.canRemove,
                                     onRemove: tag.onRemove
@@ -1461,7 +1475,7 @@ private struct DetailTagSummaryPanel: View {
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .padding(16)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(
@@ -1491,6 +1505,7 @@ private struct DetailTagEditButton: View {
 
 private struct DetailTagValuePill: View {
     let text: String
+    var tint: TagTint = .standard
     let isEmpty: Bool
     let canRemove: Bool
     let onRemove: (() -> Void)?
@@ -1499,7 +1514,7 @@ private struct DetailTagValuePill: View {
         HStack(spacing: 5) {
             Text(text)
                 .font(.system(size: isEmpty ? 13 : 15, weight: isEmpty ? .medium : .bold))
-                .foregroundStyle(isEmpty ? AppPalette.textSecondary : AppPalette.textPrimary)
+                .foregroundStyle(isEmpty ? AppPalette.textSecondary : tint == .standard ? AppPalette.textPrimary : Color(UIColor(hex: 0x283144)))
                 .lineLimit(2)
                 .minimumScaleFactor(0.78)
                 .multilineTextAlignment(.center)
@@ -1520,7 +1535,7 @@ private struct DetailTagValuePill: View {
         }
         .padding(.leading, 8)
         .padding(.trailing, onRemove == nil ? 8 : 4)
-        .background(AppPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(tint.color ?? AppPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
 
@@ -1561,7 +1576,7 @@ private func detailServiceLabel(for entry: URLRecord) -> String {
         if let authorName = detailNonBlank(entry.fetchedAuthorName) {
             return authorName
         }
-        if entry.serviceType != .youtube,
+        if [.profile, .channel, .sound, .music, .highlight].contains(entry.contentContext),
            let authorName = detailNonBlank(entry.fetchedTitle) {
             return authorName
         }

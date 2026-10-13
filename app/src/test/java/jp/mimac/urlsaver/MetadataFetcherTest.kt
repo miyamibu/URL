@@ -1827,6 +1827,124 @@ class MetadataFetcherTest {
     }
 
     @Test
+    fun fetch_instagram_noisyEngagementTitle_usesCaptionAndKeepsAuthorSeparate() {
+        withServer { server ->
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "text/html; charset=utf-8")
+                    .setBody(
+                        """
+                        <html>
+                          <head>
+                            <meta property="og:title" content="October 12, 2026: 1,234 likes, 42 comments - nasa on Instagram" />
+                            <meta property="og:description" content="Actual caption sentence. More details follow." />
+                            <script type="application/ld+json">
+                              {"@type":"SocialMediaPosting","author":{"name":"NASA"}}
+                            </script>
+                          </head>
+                          <body>ok</body>
+                        </html>
+                        """.trimIndent(),
+                    ),
+            )
+
+            val result = createInstagramFetcher(
+                server = server,
+                htmlPath = "/instagram/p/NOISY001",
+                oEmbedPath = null,
+            ).fetch("https://www.instagram.com/p/NOISY001/")
+
+            assertTrue(result is FetchOutcome.Ready)
+            result as FetchOutcome.Ready
+            assertEquals("Actual caption sentence.", result.fetchedTitle)
+            assertEquals("NASA", result.fetchedAuthorName)
+            assertEquals("Actual caption sentence. More details follow.", result.fetchedBody)
+        }
+    }
+
+    @Test
+    fun fetch_instagram_descriptionUnwrapsRecognizedEnglishAndJapaneseEnvelopes() {
+        val cases = listOf(
+            Triple(
+                "english",
+                "1,234 likes, 56 comments - example on October 12, 2026: &quot;2026年10月の散歩。3匹の猫と出会った。&quot;",
+                "2026年10月の散歩。3匹の猫と出会った。",
+            ),
+            Triple(
+                "japanese",
+                "いいね！123件、コメント4件 - example 2026年10月12日: 「秋の散歩。2026年の記録。」",
+                "秋の散歩。2026年の記録。",
+            ),
+        )
+
+        for ((label, description, caption) in cases) {
+            withServer { server ->
+                server.enqueue(
+                    MockResponse()
+                        .setResponseCode(200)
+                        .addHeader("Content-Type", "text/html; charset=utf-8")
+                        .setBody(
+                            """
+                            <html>
+                              <head>
+                                <meta property="og:title" content="Instagram" />
+                                <meta property="og:description" content="$description" />
+                              </head>
+                              <body>ok</body>
+                            </html>
+                            """.trimIndent(),
+                        ),
+                )
+
+                val result = createInstagramFetcher(
+                    server = server,
+                    htmlPath = "/instagram/p/ENVELOPE-$label",
+                    oEmbedPath = null,
+                ).fetch("https://www.instagram.com/p/ENVELOPE-$label/")
+
+                assertTrue(label, result is FetchOutcome.Ready)
+                result as FetchOutcome.Ready
+                assertEquals(label, caption, result.fetchedBody)
+                assertEquals(label, caption.substringBefore('。') + "。", result.fetchedTitle)
+            }
+        }
+    }
+
+    @Test
+    fun fetch_instagram_realTitle_precedesCaption() {
+        withServer { server ->
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "text/html; charset=utf-8")
+                    .setBody(
+                        """
+                        <html>
+                          <head>
+                            <meta property="og:title" content="Apollo launch" />
+                            <meta property="og:description" content="A real post caption. Extra context follows." />
+                          </head>
+                          <body>ok</body>
+                        </html>
+                        """.trimIndent(),
+                    ),
+            )
+
+            val result = createInstagramFetcher(
+                server = server,
+                htmlPath = "/instagram/reel/TITLE001",
+                oEmbedPath = null,
+            ).fetch("https://www.instagram.com/reel/TITLE001/")
+
+            assertTrue(result is FetchOutcome.Ready)
+            result as FetchOutcome.Ready
+            assertEquals("Apollo launch", result.fetchedTitle)
+            assertEquals("A real post caption. Extra context follows.", result.fetchedBody)
+        }
+    }
+
+    @Test
     fun fetch_instagram_embeddedJsonFallback_extractsCaption() {
         withServer { server ->
             server.enqueue(
@@ -1952,8 +2070,8 @@ class MetadataFetcherTest {
 
             assertTrue(result is FetchOutcome.Ready)
             result as FetchOutcome.Ready
-            assertEquals("openai.creator", result.fetchedTitle)
-            assertTrue(result.fetchedTitle?.startsWith("@") == false)
+            assertEquals(null, result.fetchedTitle)
+            assertEquals("openai.creator", result.fetchedAuthorName)
             assertEquals(null, result.fetchedBody)
             assertEquals(null, result.bodySummary)
             assertEquals("https://instagram.example/oembed-thumb.jpg", result.thumbnailUrl)
@@ -2216,7 +2334,8 @@ class MetadataFetcherTest {
 
                 assertTrue(source, result is FetchOutcome.Ready)
                 result as FetchOutcome.Ready
-                assertEquals(source, "actual.author", result.fetchedTitle)
+                assertEquals(source, "Actual caption.", result.fetchedTitle)
+                assertEquals(source, "actual.author", result.fetchedAuthorName)
                 assertEquals(source, "Actual caption.", result.fetchedBody)
                 assertEquals(source, MetadataBodyKind.INSTAGRAM_CAPTION, result.fetchedBodyKind)
                 assertEquals(source, "https://instagram.example/actual.jpg", result.thumbnailUrl)
@@ -2340,7 +2459,7 @@ class MetadataFetcherTest {
 
             assertTrue(result is FetchOutcome.Ready)
             result as FetchOutcome.Ready
-            assertEquals("NASA (@nasa) • Instagram photos and videos", result.fetchedTitle)
+            assertEquals("NASA (@nasa)", result.fetchedTitle)
             assertEquals("https://scontent.example/nasa-profile.jpg", result.badgeImageUrl)
             assertEquals(null, result.thumbnailUrl)
         }
@@ -2540,7 +2659,8 @@ class MetadataFetcherTest {
 
             assertTrue(result is FetchOutcome.Ready)
             result as FetchOutcome.Ready
-            assertEquals("public.author", result.fetchedTitle)
+            assertEquals("Caption from public oEmbed.", result.fetchedTitle)
+            assertEquals("public.author", result.fetchedAuthorName)
             assertEquals("Caption from public oEmbed. Another sentence.", result.fetchedBody)
             assertEquals(MetadataBodyKind.INSTAGRAM_CAPTION, result.fetchedBodyKind)
             assertEquals("Caption from public oEmbed.", result.bodySummary)
@@ -2700,7 +2820,8 @@ class MetadataFetcherTest {
 
             assertTrue(result is FetchOutcome.Ready)
             result as FetchOutcome.Ready
-            assertEquals("public.author", result.fetchedTitle)
+            assertEquals("Caption rescued from captioned embed.", result.fetchedTitle)
+            assertEquals("public.author", result.fetchedAuthorName)
             assertEquals("Caption rescued from captioned embed. Another sentence.", result.fetchedBody)
             assertEquals(MetadataBodyKind.INSTAGRAM_CAPTION, result.fetchedBodyKind)
             assertEquals("Caption rescued from captioned embed.", result.bodySummary)
@@ -3549,6 +3670,67 @@ class MetadataFetcherTest {
             assertTrue(result is FetchOutcome.Ready)
             result as FetchOutcome.Ready
             assertEquals("http://localhost:${server.port}/favicon.ico", result.badgeImageUrl)
+        }
+    }
+
+    @Test
+    fun fetch_web_faviconMatchesRelTokensAndResolvesAgainstFinalPage() {
+        withServer { server ->
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "text/html; charset=utf-8")
+                    .setBody(
+                        """
+                        <html>
+                          <head>
+                            <base href="https://ignored.example/assets/" />
+                            <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+                            <link sizes="32x32" type="image/png" href="/shortcut.png" rel="shortcut icon" />
+                            <meta name="description" content="Icon test page." />
+                          </head>
+                          <body>ok</body>
+                        </html>
+                        """.trimIndent(),
+                    ),
+            )
+
+            val result = MetadataFetcher(allowLocalTestUrls = true)
+                .fetch(server.url("/redirected/page").toString())
+
+            assertTrue(result is FetchOutcome.Ready)
+            result as FetchOutcome.Ready
+            assertEquals("http://localhost:${server.port}/shortcut.png", result.badgeImageUrl)
+        }
+    }
+
+    @Test
+    fun fetch_web_faviconPrefersTouchRasterIconOverLargerGenericIcon() {
+        withServer { server ->
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "text/html; charset=utf-8")
+                    .setBody(
+                        """
+                        <html>
+                          <head>
+                            <link rel="icon" type="image/png" sizes="256x256" href="/large-icon.png" />
+                            <link rel="apple-touch-icon-precomposed" type="image/jpeg" sizes="180x180" href="/touch-icon.jpg" />
+                            <meta name="description" content="Icon rank test page." />
+                          </head>
+                          <body>ok</body>
+                        </html>
+                        """.trimIndent(),
+                    ),
+            )
+
+            val result = MetadataFetcher(allowLocalTestUrls = true)
+                .fetch(server.url("/web/icon-rank").toString())
+
+            assertTrue(result is FetchOutcome.Ready)
+            result as FetchOutcome.Ready
+            assertEquals("http://localhost:${server.port}/touch-icon.jpg", result.badgeImageUrl)
         }
     }
 

@@ -28,6 +28,9 @@ internal fun homeBackgroundGradientColors(style: HomeBackgroundStyle): List<Colo
     }
 }
 
+internal fun homeBackgroundSurfaceColor(style: HomeBackgroundStyle): Color =
+    homeBackgroundGradientColors(style).first()
+
 internal fun homeBackgroundLabel(style: HomeBackgroundStyle): String {
     return when (style) {
         HomeBackgroundStyle.WARM_BEIGE -> "今の背景"

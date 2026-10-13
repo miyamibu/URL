@@ -12,7 +12,6 @@ private enum ChatGptPersonalLinkSyncAction: Equatable {
 
 struct SharedTagCloudSheet: View {
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("appThemeMode") private var themeModeRaw = AppThemeMode.system.rawValue
     @AppStorage(HomeBackgroundPreferenceStore.key) private var homeBackgroundRaw = HomeBackgroundStyle.defaultStyle.rawValue
 
     @ObservedObject var model: URLSaverAppModel
@@ -27,6 +26,10 @@ struct SharedTagCloudSheet: View {
     @State private var isWorking = false
     @State private var isShowingDeleteConfirmation = false
     @State private var isShowingContactSheet = false
+    @State private var isShowingColorPicker = false
+    @State private var isShowingPlanDetails = false
+    @State private var isShowingUsageDetails = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var promoCode = ""
     @State private var promoMessage: String?
     @State private var isRedeemingPromoCode = false
@@ -74,31 +77,6 @@ struct SharedTagCloudSheet: View {
                     }
 
                     profileSection
-                    HomeBackgroundPicker(
-                        selectedStyle: HomeBackgroundPreferenceStore.resolve(rawValue: homeBackgroundRaw),
-                        onSelect: { homeBackgroundRaw = $0.rawValue }
-                    )
-                    chatGptPersonalLinkSyncSection
-                    #if DEBUG
-                    if AiTransparencyFeature.isEnabled {
-                        aiTransparencyEntry
-                    }
-                    #endif
-                    usageSummarySection
-                    if let cleanupState = model.sharedTagAccountLocalCleanupState {
-                        accountLocalCleanupSection(cleanupState)
-                    }
-                    accountActionsSection
-                    paidCourseSection
-
-                    if model.sharedTagAccountLocalCleanupState == nil &&
-                        model.sharedTagCloudState.isConfigured &&
-                        !model.sharedTagCloudState.isSignedIn {
-                        signedOutSection
-                    }
-
-                    promoCodeSection
-
                     if let pendingInvite = model.pendingInviteRecord {
                         AppPanel {
                             Text("保留中の招待")
@@ -138,6 +116,18 @@ struct SharedTagCloudSheet: View {
                             }
                         }
                     }
+                    if let cleanupState = model.sharedTagAccountLocalCleanupState {
+                        accountLocalCleanupSection(cleanupState)
+                    }
+                    usageSummarySection
+                    displaySettingsSection
+                    accountSharingSection
+                    supportSection
+                    #if DEBUG
+                    if AiTransparencyFeature.isEnabled {
+                        aiTransparencyEntry
+                    }
+                    #endif
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 10)
@@ -147,14 +137,16 @@ struct SharedTagCloudSheet: View {
         .task {
             displayNameDraft = model.profile.trimmedDisplayName
             applyPendingPromoCodeIfNeeded()
+            if model.pendingPromoCode != nil { isShowingPlanDetails = true }
             await model.refreshSharedTagCloudState()
             await model.refreshSharedTagNotificationAuthorizationStatus()
         }
         .onChange(of: model.profile.displayName) { _, newValue in
             displayNameDraft = newValue
         }
-        .onChange(of: model.pendingPromoCode) { _, _ in
+        .onChange(of: model.pendingPromoCode) { _, value in
             applyPendingPromoCodeIfNeeded()
+            if value != nil { isShowingPlanDetails = true }
         }
         .onChange(of: model.sharedTagCloudState.isSignedIn) { _, isSignedIn in
             if isSignedIn {
@@ -193,6 +185,25 @@ struct SharedTagCloudSheet: View {
             }
         } message: {
             Text("他のメンバーがいる共有タグのオーナーは、権限移譲が終わるまで削除できません。")
+        }
+        .sheet(isPresented: $isShowingColorPicker) {
+            NavigationStack {
+                ScreenContainer {
+                    ScrollView {
+                        HomeBackgroundPicker(
+                            selectedStyle: HomeBackgroundPreferenceStore.resolve(rawValue: homeBackgroundRaw),
+                            onSelect: { homeBackgroundRaw = $0.rawValue }
+                        )
+                        .padding(24)
+                    }
+                }
+                .navigationTitle("カラー")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) { Button("閉じる") { isShowingColorPicker = false } }
+                }
+            }
+            .presentationDetents([.medium, .large])
         }
         .sheet(isPresented: $isShowingContactSheet) {
             ContactSupportSheet(
@@ -240,80 +251,17 @@ struct SharedTagCloudSheet: View {
         let currentAvatarImageData = activeAvatarImageData
         let hasAvatarImage = currentAvatarImageData != nil
 
-        return AppPanel {
+        return ProfilePanel {
             HStack(alignment: .center, spacing: 16) {
-                ProfileAvatarView(imageData: currentAvatarImageData)
-
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(alignment: .top, spacing: 8) {
-                        if isEditingDisplayName {
-                            TextField("", text: $displayNameDraft, prompt: Text("表示名を入力").foregroundStyle(AppPalette.textMuted))
-                                .textInputAutocapitalization(.words)
-                                .autocorrectionDisabled()
-                                .font(.system(size: 21, weight: .heavy, design: .rounded))
-                                .foregroundStyle(AppPalette.textPrimary)
-                                .tint(AppPalette.primaryStrong)
-                                .textFieldStyle(.plain)
-                            Button {
-                                let saved = model.saveProfile(
-                                    displayName: displayNameDraft,
-                                    avatarImageData: activeAvatarImageData,
-                                    updatesAvatar: isAvatarDraftActive
-                                )
-                                if saved {
-                                    avatarDraftData = nil
-                                    isAvatarDraftActive = false
-                                    isEditingDisplayName = false
-                                }
-                            } label: {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 17, weight: .bold))
-                            }
-                            .accessibilityLabel("表示名を保存")
-                            .foregroundStyle(AppPalette.primaryStrong)
-                            .padding(.top, 5)
-                            Button {
-                                displayNameDraft = model.profile.trimmedDisplayName
-                                isEditingDisplayName = false
-                            } label: {
-                                Image(systemName: "xmark")
-                                    .font(.system(size: 17, weight: .bold))
-                            }
-                            .accessibilityLabel("表示名の編集をキャンセル")
-                            .foregroundStyle(AppPalette.primaryStrong)
-                            .padding(.top, 5)
-                        } else {
-                            Text(model.profileDisplayName)
-                                .font(.system(size: 21, weight: .heavy, design: .rounded))
-                                .foregroundStyle(AppPalette.textPrimary)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.72)
-                                .onTapGesture {
-                                    displayNameDraft = model.profile.trimmedDisplayName
-                                    isEditingDisplayName = true
-                                }
-                            Button {
-                                displayNameDraft = model.profile.trimmedDisplayName
-                                isEditingDisplayName = true
-                            } label: {
-                                Image(systemName: "pencil")
-                                    .font(.system(size: 17, weight: .bold))
-                            }
-                            .accessibilityLabel("表示名を編集")
-                            .foregroundStyle(AppPalette.primaryStrong)
-                            .padding(.top, 5)
-                        }
-                    }
-                    if let signedInEmail = model.sharedTagCloudState.signedInEmail, !signedInEmail.isEmpty {
-                        Text(signedInEmail)
-                            .font(.system(size: 15, weight: .medium))
-                            .foregroundStyle(AppPalette.textSecondary)
-                    }
-                    HStack(spacing: 8) {
+                VStack(spacing: 8) {
+                    ProfileAvatarView(imageData: currentAvatarImageData)
+                    VStack(spacing: 0) {
                         PhotosPicker(selection: $selectedAvatarItem, matching: .images) {
                             Text(hasAvatarImage ? "写真を変更" : "写真を追加")
                                 .font(.system(size: 15, weight: .bold))
                                 .foregroundStyle(AppPalette.primaryStrong)
+                                .multilineTextAlignment(.center)
+                                .frame(minHeight: 44)
                         }
                         if hasAvatarImage {
                             Button("削除") {
@@ -323,34 +271,215 @@ struct SharedTagCloudSheet: View {
                             }
                             .font(.system(size: 15, weight: .bold))
                             .foregroundStyle(AppPalette.textSecondary)
+                            .frame(minHeight: 44)
                         }
                     }
+                }
+                .frame(width: 108)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if isEditingDisplayName {
+                            TextField("", text: $displayNameDraft, prompt: Text("表示名を入力").foregroundStyle(AppPalette.textMuted))
+                                .textInputAutocapitalization(.words)
+                                .autocorrectionDisabled()
+                                .font(.system(size: 21, weight: .heavy, design: .rounded))
+                                .foregroundStyle(AppPalette.textPrimary)
+                                .tint(AppPalette.primaryStrong)
+                                .textFieldStyle(.plain)
+                            HStack(spacing: 8) {
+                                Button {
+                                    let saved = model.saveProfile(
+                                        displayName: displayNameDraft,
+                                        avatarImageData: activeAvatarImageData,
+                                        updatesAvatar: isAvatarDraftActive
+                                    )
+                                    if saved {
+                                        avatarDraftData = nil
+                                        isAvatarDraftActive = false
+                                        isEditingDisplayName = false
+                                    }
+                                } label: {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 17, weight: .bold))
+                                }
+                                .accessibilityLabel("表示名を保存")
+                                .frame(minWidth: 44, minHeight: 44)
+                                .foregroundStyle(AppPalette.primaryStrong)
+                                .padding(.top, 5)
+                                Button {
+                                    displayNameDraft = model.profile.trimmedDisplayName
+                                    isEditingDisplayName = false
+                                } label: {
+                                    Image(systemName: "xmark")
+                                        .font(.system(size: 17, weight: .bold))
+                                }
+                                .accessibilityLabel("表示名の編集をキャンセル")
+                                .frame(minWidth: 44, minHeight: 44)
+                                .foregroundStyle(AppPalette.primaryStrong)
+                                .padding(.top, 5)
+                            }
+                        } else {
+                            HStack(alignment: .top, spacing: 8) {
+                                Text(model.profileDisplayName)
+                                    .font(.system(size: 21, weight: .heavy, design: .rounded))
+                                    .foregroundStyle(AppPalette.textPrimary)
+                                    .lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .onTapGesture {
+                                        displayNameDraft = model.profile.trimmedDisplayName
+                                        isEditingDisplayName = true
+                                    }
+                                Button {
+                                    displayNameDraft = model.profile.trimmedDisplayName
+                                    isEditingDisplayName = true
+                                } label: {
+                                    Image(systemName: "pencil")
+                                        .font(.system(size: 17, weight: .bold))
+                                }
+                                .accessibilityLabel("表示名を編集")
+                                .frame(minWidth: 44, minHeight: 44)
+                                .foregroundStyle(AppPalette.primaryStrong)
+                                .padding(.top, 5)
+                            }
+                        }
+                    }
+                    if let signedInEmail = model.sharedTagCloudState.signedInEmail, !signedInEmail.isEmpty {
+                        Text(signedInEmail)
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(AppPalette.textSecondary)
+                    }
+
                 }
                 Spacer(minLength: 0)
             }
 
-            ThemeModePicker(
-                selectedMode: AppThemeMode(rawValue: themeModeRaw) ?? .system,
-                onSelect: { themeModeRaw = $0.rawValue }
-            )
-
-            AppActionButton(
-                tone: .primary,
-                enabled: hasProfileChanges && !isEditingDisplayName
-            ) {
-                let saved = model.saveProfile(
-                    displayName: displayNameDraft,
-                    avatarImageData: activeAvatarImageData,
-                    updatesAvatar: isAvatarDraftActive
-                )
-                if saved {
+            if hasProfileChanges && !isEditingDisplayName {
+                AppActionButton(
+                    tone: .primary,
+                    enabled: hasProfileChanges && !isEditingDisplayName
+                ) {
+                    let saved = model.saveProfile(
+                        displayName: displayNameDraft,
+                        avatarImageData: activeAvatarImageData,
+                        updatesAvatar: isAvatarDraftActive
+                    )
+                    if saved {
+                        avatarDraftData = nil
+                        isAvatarDraftActive = false
+                    }
+                } label: {
+                    Text("プロフィールを保存")
+                }
+                Button("変更をキャンセル") {
+                    displayNameDraft = model.profile.trimmedDisplayName
                     avatarDraftData = nil
                     isAvatarDraftActive = false
                 }
-            } label: {
-                Text("プロフィールを保存")
+                .frame(minHeight: 44)
             }
         }
+    }
+
+    private var displaySettingsSection: some View {
+        ProfilePanel {
+            Text("表示設定").font(.system(.headline, design: .rounded).weight(.heavy))
+            Button { isShowingColorPicker = true } label: {
+                profileSettingRow(title: "カラー", value: HomeBackgroundPreferenceStore.resolve(rawValue: homeBackgroundRaw).label, icon: "paintpalette")
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private var accountSharingSection: some View {
+        ProfilePanel {
+            Text("アカウント・共有").font(.system(.headline, design: .rounded).weight(.heavy))
+            if !model.sharedTagCloudState.isConfigured {
+                profileSettingRow(title: "共有アカウント", value: "現在利用できません", icon: "person.crop.circle", showsChevron: false)
+            } else if !model.sharedTagCloudState.isSignedIn && model.sharedTagAccountLocalCleanupState == nil {
+                DisclosureGroup {
+                    signedOutSection
+                } label: {
+                    profileSettingRow(title: "サインイン", value: "未ログイン", icon: "person.crop.circle", showsChevron: false)
+                }
+            }
+            if model.chatGptPersonalLinkSettings.operationEnabled {
+                DisclosureGroup {
+                    chatGptPersonalLinkSyncSection
+                } label: {
+                    profileSettingRow(title: "ChatGPT連携", value: chatGptSyncStateLabel, icon: "link", showsChevron: false)
+                }
+            } else {
+                profileSettingRow(title: "ChatGPT連携", value: "現在利用できません", icon: "link", showsChevron: false)
+            }
+            DisclosureGroup(isExpanded: $isShowingPlanDetails) {
+                paidCourseSection
+                promoCodeSection
+            } label: {
+                profileSettingRow(title: "プラン・優待", value: nil, icon: "checkmark.seal", showsChevron: false)
+            }
+            if model.sharedTagCloudState.isSignedIn {
+                notificationSettingsRow
+            }
+            if model.sharedTagCloudState.isSignedIn {
+                DisclosureGroup {
+                    accountActionsSection
+                } label: {
+                    profileSettingRow(title: "アカウント管理", value: nil, icon: "person.badge.shield.checkmark", showsChevron: false)
+                }
+            }
+        }
+        .tint(AppPalette.textSecondary)
+    }
+
+    private var supportSection: some View {
+        ProfilePanel {
+            Text("サポート").font(.system(.headline, design: .rounded).weight(.heavy))
+            Button { isShowingContactSheet = true } label: {
+                profileSettingRow(title: "問い合わせ", value: nil, icon: "envelope")
+            }
+            .buttonStyle(.plain)
+            .disabled(isWorking)
+        }
+    }
+
+    private var currentPlanLabel: String {
+        switch model.entitlements.planType {
+        case .free: return "Free"
+        case .launchStandard, .standard: return "Standard"
+        case .pro: return "Pro"
+        case .promoPro: return "Pro（優待）"
+        }
+    }
+
+    private var chatGptSyncStateLabel: String {
+        let settings = model.chatGptPersonalLinkSettings
+        if !settings.operationEnabled { return "現在利用できません" }
+        if !model.sharedTagCloudState.isSignedIn { return "サインインが必要です" }
+        if settings.isLoading { return "同期中" }
+        if case .failure = settings.status { return "再試行が必要です" }
+        return settings.enabled ? "オン" : "オフ"
+    }
+
+    private func profileSettingRow(title: String, value: String?, icon: String, showsChevron: Bool = true) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(Color(UIColor(hex: 0x855B76)))
+                .frame(width: 30)
+            Text(title).font(.system(.body, design: .rounded).weight(.semibold))
+            Spacer(minLength: 8)
+            if let value {
+                Text(value).font(.system(.subheadline)).foregroundStyle(AppPalette.textSecondary)
+                    .multilineTextAlignment(.trailing)
+            }
+            if showsChevron {
+                Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(AppPalette.textMuted)
+            }
+        }
+        .foregroundStyle(AppPalette.textPrimary)
+        .frame(minHeight: 48)
+        .contentShape(Rectangle())
     }
 
     private var signedOutSection: some View {
@@ -523,9 +652,6 @@ struct SharedTagCloudSheet: View {
                 Text("現在は利用できません")
                     .font(.system(size: 17, weight: .heavy, design: .rounded))
                     .foregroundStyle(AppPalette.textPrimary)
-                Text("外部接続の確認が完了するまでオフです")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(AppPalette.textSecondary)
                 Text("同期をオンにするまでリンクは送信されません")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(AppPalette.textSecondary)
@@ -684,53 +810,100 @@ struct SharedTagCloudSheet: View {
     }
     #endif
 
-    private var usageSummarySection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("使用状況")
-                .font(.system(size: 18, weight: .heavy, design: .rounded))
-                .foregroundStyle(AppPalette.textPrimary)
+    private var usageMetricLayout: AnyLayout {
+        dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: 12))
+    }
 
-            HStack(alignment: .top, spacing: 10) {
-                UsageMetricTile(
-                    title: "保存タグ",
-                    valueText: "\(personalSavedURLCount)"
-                )
-                UsageMetricTile(
-                    title: "共有タグ",
-                    valueText: "\(model.sharedTags.count)"
-                )
-                UsageMetricTile(
-                    title: "グループ",
-                    valueText: "\(model.sharedTagGroups.count)"
-                )
+    private func usageMetricRow(title: String, count: Int) -> some View {
+        usageMetricLayout {
+            Text(title)
+                .font(.system(.body, design: .rounded).weight(.semibold))
+                .foregroundStyle(AppPalette.textPrimary)
+            if !dynamicTypeSize.isAccessibilitySize {
+                Spacer(minLength: 8)
+            }
+            Text("\(count)件")
+                .font(.system(.body, design: .rounded).weight(.bold))
+                .foregroundStyle(AppPalette.textSecondary)
+        }
+        .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var usageSummarySection: some View {
+        ProfilePanel {
+            Button {
+                withAnimation { isShowingUsageDetails.toggle() }
+            } label: {
+                HStack {
+                    Text("利用状況")
+                        .font(.system(size: 18, weight: .heavy, design: .rounded))
+                    Spacer()
+                    Image(systemName: isShowingUsageDetails ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 14, weight: .semibold))
+                }
+                .foregroundStyle(AppPalette.textPrimary)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("利用状況")
+            .accessibilityValue(isShowingUsageDetails ? "展開中" : "閉じています")
+            .accessibilityHint(isShowingUsageDetails ? "タップして閉じます" : "タップして4項目を表示します")
+
+            if isShowingUsageDetails {
+                usageMetricRow(title: "保存リンク", count: personalSavedURLCount)
+                Divider().overlay(AppPalette.outlineSoft.opacity(0.5))
+                usageMetricRow(title: "共有タグ", count: model.sharedTags.count)
+                Divider().overlay(AppPalette.outlineSoft.opacity(0.5))
+                usageMetricRow(title: "グループ", count: model.sharedTagGroups.count)
+                Divider().overlay(AppPalette.outlineSoft.opacity(0.5))
+                usageMetricLayout {
+                    Text("現在のプラン").font(.system(.body, design: .rounded).weight(.semibold))
+                    if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 8) }
+                    Text(currentPlanLabel)
+                        .font(.system(.subheadline).weight(.bold))
+                        .foregroundStyle(Color(UIColor(hex: 0x855B76)))
+                }
+                .foregroundStyle(AppPalette.textPrimary)
+                .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                .accessibilityElement(children: .combine)
             }
         }
+        .padding(8)
+        .background(Color(UIColor(hex: 0xEFE5EC)), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var notificationSettingsRow: some View {
+        if model.sharedTagCloudState.isSignedIn &&
+            model.sharedTagNotificationAuthorizationStatus == .notDetermined {
+            AppActionButton(enabled: !isWorking) {
+                guard !isWorking else { return }
+                isWorking = true
+                Task {
+                    await model.requestSharedTagNotificationAuthorization()
+                    isWorking = false
+                }
+            } label: {
+                Text("共有タグの新着通知を有効にする")
+            }
+        } else if model.sharedTagCloudState.isSignedIn &&
+            model.sharedTagNotificationAuthorizationStatus == .denied {
+            AppActionButton(enabled: !isWorking) {
+                guard let settingsURL = URL(string: UIApplication.openSettingsURLString) else { return }
+                UIApplication.shared.open(settingsURL)
+            } label: {
+                Text("iPhoneの設定で通知を有効にする")
+            }
+        }
+
     }
 
     private var accountActionsSection: some View {
         VStack(spacing: 16) {
-            if model.sharedTagCloudState.isSignedIn &&
-                model.sharedTagNotificationAuthorizationStatus == .notDetermined {
-                AppActionButton(enabled: !isWorking) {
-                    guard !isWorking else { return }
-                    isWorking = true
-                    Task {
-                        await model.requestSharedTagNotificationAuthorization()
-                        isWorking = false
-                    }
-                } label: {
-                    Text("共有タグの新着通知を有効にする")
-                }
-            } else if model.sharedTagCloudState.isSignedIn &&
-                model.sharedTagNotificationAuthorizationStatus == .denied {
-                AppActionButton(enabled: !isWorking) {
-                    guard let settingsURL = URL(string: UIApplication.openSettingsURLString) else { return }
-                    UIApplication.shared.open(settingsURL)
-                } label: {
-                    Text("iPhoneの設定で通知を有効にする")
-                }
-            }
-
             if model.sharedTagCloudState.isSignedIn {
                 HStack(spacing: 10) {
                     AppActionButton(enabled: !isWorking) {
@@ -752,11 +925,7 @@ struct SharedTagCloudSheet: View {
                 }
             }
 
-            AppActionButton(tone: .primary, enabled: !isWorking) {
-                isShowingContactSheet = true
-            } label: {
-                Text("問い合わせ")
-            }
+
         }
     }
 
@@ -1072,6 +1241,27 @@ private final class AppleSignInCoordinator: NSObject, ObservableObject, ASAuthor
 
     func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
         presentationWindow ?? ASPresentationAnchor()
+    }
+}
+
+private struct ProfilePanel<Content: View>: View {
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            content
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(AppPalette.outlineSoft.opacity(0.7), lineWidth: 0.5)
+        )
     }
 }
 
@@ -1495,25 +1685,13 @@ private struct HomeBackgroundPicker: View {
     let onSelect: (HomeBackgroundStyle) -> Void
 
     private func colors(for style: HomeBackgroundStyle) -> [Color] {
-        switch style {
-        case .current:
-            return [Color(UIColor(hex: 0xF7F3EC)), Color(UIColor(hex: 0xEDE7DF)), Color(UIColor(hex: 0xE9E1D7))]
-        case .sakura:
-            return [Color(UIColor(hex: 0xFCF3F6)), Color(UIColor(hex: 0xF5E6EC)), Color(UIColor(hex: 0xEFDBE4))]
-        case .lavender:
-            return [Color(UIColor(hex: 0xF6F3FC)), Color(UIColor(hex: 0xECE7F5)), Color(UIColor(hex: 0xE3DDEC))]
-        case .mint:
-            return [Color(UIColor(hex: 0xF2F9F5)), Color(UIColor(hex: 0xE4F1E9)), Color(UIColor(hex: 0xD8E9DE))]
-        }
+        AppDisplayColorPalette.colors(for: style)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("ホームの背景")
+            Text("背景カラー")
                 .font(.system(size: 16, weight: .bold))
-                .foregroundStyle(AppPalette.textSecondary)
-            Text("この端末のホームだけに適用されます")
-                .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(AppPalette.textSecondary)
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                 ForEach(HomeBackgroundStyle.allCases) { style in

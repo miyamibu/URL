@@ -45,14 +45,17 @@ import coil.compose.AsyncImage
 import jp.mimac.urlsaver.data.UrlEntryEntity
 import jp.mimac.urlsaver.domain.ContentContext
 import jp.mimac.urlsaver.domain.EntryCardDisplayMode
+import jp.mimac.urlsaver.domain.MetadataTitleRules
 import jp.mimac.urlsaver.domain.MetadataState
 import jp.mimac.urlsaver.domain.ServiceType
+import jp.mimac.urlsaver.domain.TagColorChoice
 import jp.mimac.urlsaver.domain.UrlRules
 import jp.mimac.urlsaver.ui.metadataListStatusText
 import jp.mimac.urlsaver.ui.preferredDisplayTitle
 import jp.mimac.urlsaver.ui.serviceLabelForList
 import jp.mimac.urlsaver.ui.serviceTypeForUi
 import jp.mimac.urlsaver.ui.theme.OrbitTokens
+import jp.mimac.urlsaver.ui.theme.tagColorChipPalette
 
 internal val EntryCardContainerColorKey = SemanticsPropertyKey<Int>("EntryCardContainerColor")
 internal val EntryCardTitleColorKey = SemanticsPropertyKey<Int>("EntryCardTitleColor")
@@ -91,13 +94,21 @@ fun EntryCard(
     showDisplayUrl: Boolean = true,
     selected: Boolean = false,
     localTagNames: List<String> = emptyList(),
+    localTagColorChoices: Map<String, TagColorChoice> = emptyMap(),
     onLongClick: (() -> Unit)? = null,
     footerContent: (@Composable ColumnScope.() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     val showThumbnail = displayMode == EntryCardDisplayMode.RICH && !entry.thumbnailUrl.isNullOrBlank()
     val showDescription = displayMode == EntryCardDisplayMode.RICH
-    val descriptionText = entry.description ?: entry.bodySummary
+    val rawDescriptionText = entry.description ?: entry.bodySummary
+    val descriptionText = if (entry.serviceType == ServiceType.INSTAGRAM) {
+        MetadataTitleRules.unwrapInstagramCaption(entry.description)
+            ?: MetadataTitleRules.unwrapInstagramCaption(entry.bodySummary)
+            ?: rawDescriptionText
+    } else {
+        rawDescriptionText
+    }
     val serviceAccentBrush = serviceAccentBrush(entry.serviceType)
     val titleTextStyle = if (displayMode == EntryCardDisplayMode.RICH) {
         MaterialTheme.typography.titleMedium.copy(
@@ -192,6 +203,7 @@ fun EntryCard(
                             ServiceBadge(
                                 serviceType = serviceTypeForUi(entry.serviceType),
                                 badgeImageUrl = entry.badgeImageUrl,
+                                reloadKey = entry.metadataFetchedAt,
                                 modifier = Modifier.padding(top = 0.dp),
                             )
                             if (visibleLocalTagNames.isEmpty()) {
@@ -235,6 +247,7 @@ fun EntryCard(
                                 EntryCardLocalTagFlow(
                                     tagNames = visibleLocalTagNames,
                                     palette = cardPalette,
+                                    tagColorChoices = localTagColorChoices,
                                     modifier = Modifier.weight(1f),
                                 )
                             }
@@ -243,6 +256,7 @@ fun EntryCard(
                             text = preferredDisplayTitle(
                                 userTitle = entry.userTitle,
                                 fetchedTitle = entry.fetchedTitle,
+                                fetchedAuthorName = entry.fetchedAuthorName,
                                 serviceType = entry.serviceType,
                                 contentContext = entry.contentContext,
                                 normalizedHost = entry.normalizedHost,
@@ -319,6 +333,7 @@ fun EntryCard(
 private fun EntryCardLocalTagFlow(
     tagNames: List<String>,
     palette: EntryCardPalette,
+    tagColorChoices: Map<String, TagColorChoice>,
     modifier: Modifier = Modifier,
 ) {
     FlowRow(
@@ -327,11 +342,17 @@ private fun EntryCardLocalTagFlow(
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         tagNames.forEach { tagName ->
+            val tagColor = tagColorChoices[tagName.trim().lowercase()] ?: TagColorChoice.DEFAULT
+            val chipPalette = if (tagColor == TagColorChoice.DEFAULT) {
+                null
+            } else {
+                tagColorChipPalette(MaterialTheme.colorScheme, tagColor, selected = false)
+            }
             Surface(
                 shape = RoundedCornerShape(999.dp),
-                color = palette.chipContainer,
-                contentColor = palette.chipContent,
-                border = BorderStroke(1.dp, palette.chipOutline.copy(alpha = 0.9f)),
+                color = chipPalette?.container ?: palette.chipContainer,
+                contentColor = chipPalette?.content ?: palette.chipContent,
+                border = BorderStroke(1.dp, chipPalette?.outline ?: palette.chipOutline.copy(alpha = 0.9f)),
             ) {
                 Text(
                     text = tagName,
@@ -340,7 +361,7 @@ private fun EntryCardLocalTagFlow(
                         letterSpacing = 0.2.sp,
                         lineHeight = 13.sp,
                     ),
-                    color = palette.chipContent,
+                    color = chipPalette?.content ?: palette.chipContent,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier

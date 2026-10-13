@@ -13,20 +13,16 @@ import androidx.activity.viewModels
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import jp.mimac.urlsaver.domain.HomeBackgroundStyle
 import jp.mimac.urlsaver.ui.MainActivityViewModel
 import jp.mimac.urlsaver.ui.SimpleFactory
 import jp.mimac.urlsaver.ui.UrlSaverRoot
-import jp.mimac.urlsaver.ui.theme.AppThemeMode
 import jp.mimac.urlsaver.ui.theme.UrlSaverTheme
 import jp.mimac.urlsaver.util.SystemAppClock
 
@@ -47,43 +43,30 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(
-            statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
-            navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
+            statusBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
         )
         WindowCompat.setDecorFitsSystemWindows(window, false)
         consumeIncomingIntent(intent)
 
         setContent {
-            val themePreferences = remember {
-                getSharedPreferences("app_theme_preferences", MODE_PRIVATE)
+            val homeBackgroundStyleFlow = remember {
+                (application as UrlSaverApp).container.homeBackgroundStyleStore.observeStyle()
             }
-            var themeMode by remember {
-                mutableStateOf(
-                    AppThemeMode.fromStorageValue(themePreferences.getString("theme_mode", null)),
-                )
-            }
-            val systemDark = isSystemInDarkTheme()
-            val darkTheme = when (themeMode) {
-                AppThemeMode.SYSTEM -> systemDark
-                AppThemeMode.LIGHT -> false
-                AppThemeMode.DARK -> true
-            }
+            val homeBackgroundStyle by homeBackgroundStyleFlow.collectAsStateWithLifecycle(
+                initialValue = HomeBackgroundStyle.DEFAULT,
+            )
 
-            UrlSaverTheme(darkTheme = darkTheme) {
-                val navigationBarColor = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp).toArgb()
+            UrlSaverTheme(
+                darkTheme = false,
+                homeBackgroundStyle = homeBackgroundStyle,
+            ) {
+                val navigationBarColor = MaterialTheme.colorScheme.background.toArgb()
                 SideEffect {
                     val insetsController = WindowCompat.getInsetsController(window, window.decorView)
                     enableEdgeToEdge(
-                        statusBarStyle = if (darkTheme) {
-                            SystemBarStyle.dark(Color.TRANSPARENT)
-                        } else {
-                            SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
-                        },
-                        navigationBarStyle = if (darkTheme) {
-                            SystemBarStyle.dark(navigationBarColor)
-                        } else {
-                            SystemBarStyle.light(navigationBarColor, navigationBarColor)
-                        },
+                        statusBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
+                        navigationBarStyle = SystemBarStyle.light(navigationBarColor, navigationBarColor),
                     )
                     window.setBackgroundDrawable(ColorDrawable(navigationBarColor))
                     window.navigationBarColor = navigationBarColor
@@ -96,11 +79,6 @@ class MainActivity : ComponentActivity() {
                 }
                 UrlSaverRoot(
                     activityViewModel = activityViewModel,
-                    themeMode = themeMode,
-                    onThemeModeChange = { mode ->
-                        themeMode = mode
-                        themePreferences.edit().putString("theme_mode", mode.storageValue).apply()
-                    },
                     onRouteChanged = { route -> currentRoute = route },
                 )
             }

@@ -464,6 +464,41 @@ final class MetadataFetcherTests: XCTestCase {
         XCTAssertNotNil(update.badgeImageURL)
     }
 
+    func testInstagramDescriptionUnwrapsEngagementAndDateButPreservesCaptionNumbers() async {
+        let original = "https://www.instagram.com/p/captionTest/"
+        MockURLProtocol.responses[original] = .html(
+            #"<html><head><meta property="og:title" content="Instagram"><meta property="og:description" content="1,234 likes, 56 comments - example on October 12, 2026: &quot;2026年10月の散歩。3匹の猫と出会った。&quot;"></head></html>"#
+        )
+        let update = await makeFetcher().fetch(for: makeRecord(serviceType: .instagram, url: original))
+
+        XCTAssertEqual(update.fetchedBody, "2026年10月の散歩。3匹の猫と出会った。")
+        XCTAssertEqual(update.description, update.fetchedBody)
+        XCTAssertEqual(update.bodySummary, update.fetchedBody)
+    }
+
+    func testInstagramDescriptionPreservesOrdinaryCaptionWithLikesAndDate() async {
+        let original = "https://www.instagram.com/p/plainCaptionTest/"
+        let caption = "2026年10月12日、100 likesのお祝い。"
+        MockURLProtocol.responses[original] = .html(
+            "<html><head><meta property=\"og:title\" content=\"Instagram\"><meta property=\"og:description\" content=\"\(caption)\"></head></html>"
+        )
+        let update = await makeFetcher().fetch(for: makeRecord(serviceType: .instagram, url: original))
+
+        XCTAssertEqual(update.fetchedBody, caption)
+    }
+
+    func testInstagramCaptionUnwrapsJapaneseEnvelopeForPreviouslySavedRecords() {
+        XCTAssertEqual(
+            MetadataFetcher.instagramCaptionText("いいね！123件、コメント4件 - example 2026年10月12日: 「秋の散歩。2026年の記録。」"),
+            "秋の散歩。2026年の記録。"
+        )
+        XCTAssertEqual(MetadataFetcher.instagramCaptionText("   "), nil)
+        XCTAssertEqual(
+            MetadataFetcher.instagramCaptionText("1,234 likes, 56 comments - example on October 12, 2026: \"2026年の長い投稿の冒頭"),
+            "2026年の長い投稿の冒頭"
+        )
+    }
+
     func testInstagramUsesPublicOEmbedMetadataWhenHTMLIsUnavailable() async {
         let oEmbed = URL(string: "https://mock.local/instagram-oembed")!
         let original = URL(string: "https://www.instagram.com/p/fA9uwTtkSN")!
@@ -796,6 +831,24 @@ final class MetadataFetcherTests: XCTestCase {
 
         XCTAssertEqual(update.metadataState, .ready)
         XCTAssertEqual(update.badgeImageURL, "https://example.com/apple-touch-icon.png")
+    }
+
+    func testWebIconAttributesAndFormatsAreResolvedBeforeFallback() async {
+        let original = "https://icons.example/posts/article"
+        MockURLProtocol.responses[original] = .html(
+            #"<html><head><title>Icon example</title><link href="/wrong.png" rel="not-an-icon"><link href="/touch.svg?v=1" rel="apple-touch-icon"><link href = "../app.png?size=128&amp;v=2" rel = "shortcut icon" type = "image/png"></head></html>"#
+        )
+        let update = await makeFetcher().fetch(for: makeRecord(serviceType: .web, url: original))
+        XCTAssertEqual(update.badgeImageURL, "https://icons.example/app.png?size=128&v=2")
+    }
+
+    func testWebIconSkipsNonNetworkAndMimeDeclaredSvgImages() async {
+        let original = "https://icons.example/article"
+        MockURLProtocol.responses[original] = .html(
+            #"<html><head><title>Icon example</title><link rel="apple-touch-icon" href="data:image/png;base64,invalid"><link rel="icon" type="image/svg+xml" href="/dynamic-icon"><link rel="icon" href="/favicon.ico?v=1"></head></html>"#
+        )
+        let update = await makeFetcher().fetch(for: makeRecord(serviceType: .web, url: original))
+        XCTAssertEqual(update.badgeImageURL, "https://www.google.com/s2/favicons?domain=icons.example&sz=128")
     }
 
     func testWebUsesRenderableFaviconServiceFallback() async {

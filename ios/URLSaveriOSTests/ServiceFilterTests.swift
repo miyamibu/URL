@@ -2,6 +2,50 @@ import XCTest
 @testable import URLSaveriOS
 
 final class ServiceFilterTests: XCTestCase {
+    func testDisplayColorsKeepExistingPreferencesAndIgnoreLegacyDarkMode() throws {
+        let suite = "display-color-test-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set("dark", forKey: "appThemeMode")
+        HomeBackgroundPreferenceStore.save(.mint, to: defaults)
+        let selected = HomeBackgroundPreferenceStore.load(from: defaults)
+        let appSelected = try XCTUnwrap(URLSaveriOS.HomeBackgroundStyle(rawValue: selected.rawValue))
+        XCTAssertEqual(selected, .mint)
+        XCTAssertEqual(AppDisplayColorPalette.colorScheme, .light)
+        XCTAssertEqual(AppDisplayColorPalette.hexColors(for: appSelected), [0xF2F9F5, 0xE4F1E9, 0xD8E9DE])
+        XCTAssertEqual(defaults.string(forKey: "appThemeMode"), "dark")
+        XCTAssertEqual(AppDisplayColorPalette.hexColors(for: .current), [0xF7F3EC, 0xEDE7DF, 0xE9E1D7])
+        XCTAssertEqual(AppDisplayColorPalette.hexColors(for: .sakura), [0xFCF3F6, 0xF5E6EC, 0xEFDBE4])
+        XCTAssertEqual(AppDisplayColorPalette.hexColors(for: .lavender), [0xF6F3FC, 0xECE7F5, 0xE3DDEC])
+    }
+
+    @MainActor
+    func testTagTintPreferenceKeysRemainStableAndSeparateAccounts() {
+        XCTAssertEqual(TagTintPreferences.localKey(42), "local:42")
+        XCTAssertEqual(TagTintPreferences.sharedKey(accountID: "account-a", remoteID: "tag-1"), "shared:account-a:tag-1")
+        XCTAssertNotEqual(
+            TagTintPreferences.sharedKey(accountID: "account-a", remoteID: "tag-1"),
+            TagTintPreferences.sharedKey(accountID: "account-b", remoteID: "tag-1")
+        )
+        XCTAssertNil(TagTintPreferences.sharedKey(accountID: nil, remoteID: "tag-1"))
+    }
+
+    @MainActor
+    func testTagTintPreferencePersistsLocallyWithDefaultAndEightChoices() throws {
+        let suite = "tag-tint-test-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let preferences = TagTintPreferences(defaults: defaults)
+        let key = TagTintPreferences.localKey(42)
+        XCTAssertEqual(TagTint.allCases.count, 9)
+        XCTAssertEqual(preferences.tint(for: key), .standard)
+        preferences.save(.rose, for: key)
+        XCTAssertEqual(TagTintPreferences(defaults: defaults).tint(for: key), .rose)
+        XCTAssertEqual(preferences.tint(for: TagTintPreferences.localKey(43)), .standard)
+        preferences.save(.standard, for: key)
+        XCTAssertEqual(TagTintPreferences(defaults: defaults).tint(for: key), .standard)
+    }
+
     func testUserVisibleMobileLabelsUseRinbamBrand() throws {
         let sourceRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -350,7 +394,10 @@ final class ServiceFilterTests: XCTestCase {
         let chromeSource = try String(contentsOf: appChromeSourceURL(), encoding: .utf8)
         XCTAssertTrue(chromeSource.contains("selectedSurface"))
         XCTAssertTrue(chromeSource.contains("0x67B0FF"))
-        XCTAssertFalse(chromeSource.contains("Image(systemName: \"checkmark\")"))
+        let chipStart = try XCTUnwrap(chromeSource.range(of: "struct FilterChipButton: View {"))
+        let chipEnd = try XCTUnwrap(chromeSource.range(of: "struct SharedTagSection: View {", range: chipStart.upperBound..<chromeSource.endIndex))
+        // Home selection stays on the chip border; the color picker has its own checkmark.
+        XCTAssertFalse(chromeSource[chipStart.lowerBound..<chipEnd.lowerBound].contains("Image(systemName: \"checkmark\")"))
         XCTAssertTrue(chromeSource.contains(".accessibilityAddTraits(selected ? .isSelected : [])"))
         XCTAssertTrue(chromeSource.contains("minWidth: 44"))
         XCTAssertTrue(chromeSource.contains("entryCardDistinctHeaderText"))

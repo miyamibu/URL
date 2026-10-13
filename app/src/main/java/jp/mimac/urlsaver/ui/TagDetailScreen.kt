@@ -8,7 +8,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Row
@@ -17,6 +20,7 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
@@ -34,16 +38,23 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.ExitToApp
 import androidx.compose.material.icons.automirrored.outlined.ViewList
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.AddLink
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.IosShare
 import androidx.compose.material.icons.outlined.LinkOff
+import androidx.compose.material.icons.outlined.PersonAddAlt
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.ViewAgenda
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -75,11 +86,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.core.content.FileProvider
@@ -88,6 +104,7 @@ import jp.mimac.urlsaver.domain.AssignTagResult
 import jp.mimac.urlsaver.domain.SharedTagInviteCreationResult
 import jp.mimac.urlsaver.domain.SharedTagMemberRecord
 import jp.mimac.urlsaver.domain.SharedTagMemberRole
+import jp.mimac.urlsaver.domain.SharedTagSyncStatus
 import jp.mimac.urlsaver.domain.SharedTagOwnershipTransferResult
 import jp.mimac.urlsaver.domain.SharedTagScope
 import jp.mimac.urlsaver.ui.components.EntryCard
@@ -123,6 +140,7 @@ fun TagDetailScreen(
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showLeaveDialog by remember { mutableStateOf(false) }
     var showShareOptionsDialog by remember { mutableStateOf(false) }
+    var showManageMenu by remember { mutableStateOf(false) }
     var showLocalTagShareDialog by remember { mutableStateOf(false) }
     var pendingOwnershipTransferMember by remember { mutableStateOf<SharedTagMemberRecord?>(null) }
     var shareError by remember { mutableStateOf<String?>(null) }
@@ -279,7 +297,15 @@ fun TagDetailScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = {},
+                title = {
+                    if (!isLocalTag) {
+                        Text("共有タグ", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                    scrolledContainerColor = MaterialTheme.colorScheme.background,
+                ),
                 windowInsets = TopAppBarDefaults.windowInsets.only(WindowInsetsSides.Horizontal),
                 navigationIcon = {
                     IconButton(onClick = onBack) {
@@ -287,76 +313,65 @@ fun TagDetailScreen(
                     }
                 },
                 actions = {
-                    SharedTagHeaderIconButton(onClick = { viewModel.toggleEntryCardDisplayMode() }) {
-                        Icon(
-                            imageVector = if (entryCardDisplayMode == EntryCardDisplayMode.RICH) {
-                                Icons.AutoMirrored.Outlined.ViewList
-                            } else {
-                                Icons.Outlined.ViewAgenda
-                            },
-                            contentDescription = if (entryCardDisplayMode == EntryCardDisplayMode.RICH) {
-                                "画像なし表示へ切り替える"
-                            } else {
-                                "画像つき表示へ切り替える"
-                            },
-                            modifier = Modifier.size(SharedTagHeaderIconSize),
-                        )
-                    }
-                    if (currentTag.scope == SharedTagScope.SYNCED) {
-                        SharedTagHeaderIconButton(
-                            enabled = !isSyncing,
-                            onClick = { viewModel.syncSharedTagNow() },
-                        ) {
-                            if (isSyncing) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(24.dp),
-                                    strokeWidth = 2.dp,
-                                )
-                            } else {
+                    if (isLocalTag) {
+                        SharedTagHeaderIconButton(onClick = { viewModel.toggleEntryCardDisplayMode() }) {
+                            Icon(
+                                imageVector = if (entryCardDisplayMode == EntryCardDisplayMode.RICH) {
+                                    Icons.AutoMirrored.Outlined.ViewList
+                                } else {
+                                    Icons.Outlined.ViewAgenda
+                                },
+                                contentDescription = if (entryCardDisplayMode == EntryCardDisplayMode.RICH) {
+                                    "画像なし表示へ切り替える"
+                                } else {
+                                    "画像つき表示へ切り替える"
+                                },
+                                modifier = Modifier.size(SharedTagHeaderIconSize),
+                            )
+                        }
+                        if (canEditEntries) {
+                            SharedTagHeaderIconButton(onClick = { showAddEntrySheet = true }) {
                                 Icon(
-                                    Icons.Outlined.Refresh,
-                                    contentDescription = "共有タグを更新",
+                                    Icons.Outlined.Add,
+                                    contentDescription = "保存済みURLを追加",
                                     modifier = Modifier.size(SharedTagHeaderIconSize),
                                 )
                             }
                         }
-                    }
-                    if (canEditEntries) {
-                        SharedTagHeaderIconButton(onClick = { showAddEntrySheet = true }) {
-                            Icon(
-                                Icons.Outlined.Add,
-                                contentDescription = "保存済みURLを追加",
-                                modifier = Modifier.size(SharedTagHeaderIconSize),
-                            )
+                        if (canDeleteTag) {
+                            SharedTagHeaderIconButton(onClick = { showDeleteDialog = true }) {
+                                Icon(
+                                    Icons.Outlined.Delete,
+                                    contentDescription = "${tagKindLabel}を削除",
+                                    modifier = Modifier.size(SharedTagHeaderIconSize),
+                                )
+                            }
                         }
-                    }
-                    if (canLeaveSharedTag) {
-                        SharedTagHeaderIconButton(onClick = { showLeaveDialog = true }) {
-                            Icon(
-                                Icons.AutoMirrored.Outlined.ExitToApp,
-                                contentDescription = "この共有タグから抜ける",
-                                modifier = Modifier.size(SharedTagHeaderIconSize),
-                            )
-                        }
-                    }
-                    if (canShareTag) {
-                        SharedTagHeaderIconButton(
-                            onClick = { showShareOptionsDialog = true },
+                    } else {
+                        Row(
+                            modifier = Modifier.padding(end = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Icon(
-                                Icons.Outlined.IosShare,
-                                contentDescription = "タグを共有",
-                                modifier = Modifier.size(SharedTagHeaderIconSize),
+                            SharedTagStateBadge(
+                                syncStatus = currentTag.syncStatus,
+                                isSyncing = isSyncing,
+                                syncNotice = syncNotice,
+                                syncNoticeIsError = syncNoticeIsError,
                             )
-                        }
-                    }
-                    if (canDeleteTag) {
-                        SharedTagHeaderIconButton(onClick = { showDeleteDialog = true }) {
-                            Icon(
-                                Icons.Outlined.Delete,
-                                contentDescription = "${tagKindLabel}を削除",
-                                modifier = Modifier.size(SharedTagHeaderIconSize),
-                            )
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                            ) {
+                                Text(
+                                    text = currentTag.currentUserRole?.let(::sharedTagRoleLabel) ?: "権限確認中",
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
                         }
                     }
                 },
@@ -375,13 +390,56 @@ fun TagDetailScreen(
                     .fillMaxSize()
                     .widthIn(max = 680.dp),
             ) {
-                item {
-                    SharedTagInlineTitle(
-                        title = currentTag.name,
-                        isSyncing = isSyncing,
-                        syncNotice = syncNotice,
-                        syncNoticeIsError = syncNoticeIsError,
-                    )
+                if (isLocalTag) {
+                    item {
+                        SharedTagInlineTitle(
+                            title = currentTag.name,
+                            isSyncing = isSyncing,
+                            syncNotice = syncNotice,
+                            syncNoticeIsError = syncNoticeIsError,
+                        )
+                    }
+                }
+                sharedTagSyncErrorDetail(syncNotice)
+                    ?.takeIf { !isLocalTag && syncNoticeIsError }
+                    ?.let { detail ->
+                        item {
+                            Text(
+                                text = detail,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 1.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                if (!isLocalTag) {
+                    item {
+                        SharedTagActionStrip(
+                            displayMode = entryCardDisplayMode,
+                            isSyncing = isSyncing,
+                            canEditEntries = canEditEntries,
+                            canInvite = canShareTag,
+                            canDelete = canDeleteTag,
+                            canLeave = canLeaveSharedTag,
+                            manageMenuExpanded = showManageMenu,
+                            onDisplayMode = { viewModel.toggleEntryCardDisplayMode() },
+                            onRefresh = { viewModel.syncSharedTagNow() },
+                            onAddLink = { showAddEntrySheet = true },
+                            onInvite = { showShareOptionsDialog = true },
+                            onManage = { showManageMenu = true },
+                            onDismissManageMenu = { showManageMenu = false },
+                            onDelete = {
+                                showManageMenu = false
+                                showDeleteDialog = true
+                            },
+                            onLeave = {
+                                showManageMenu = false
+                                showLeaveDialog = true
+                            },
+                        )
+                    }
                 }
                 if (currentTag.scope == SharedTagScope.SYNCED && cloudState.isConfigured && !cloudState.isSignedIn) {
                     item {
@@ -392,6 +450,12 @@ fun TagDetailScreen(
                     item {
                         SyncedTagInfo(
                             shareError = shareError,
+                        )
+                    }
+                    item {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
                         )
                     }
                     item {
@@ -423,12 +487,16 @@ fun TagDetailScreen(
                 }
                 if (currentTag.scope == SharedTagScope.SYNCED) {
                     item {
-                        Spacer(Modifier.height(2.dp))
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
+                        )
                     }
                 }
                 item {
                     SharedTagEntryCountRow(
                         count = visibleEntries.size,
+                        showSavedLinksLabel = !isLocalTag,
                     )
                 }
                 if (isLocalTag) {
@@ -448,7 +516,10 @@ fun TagDetailScreen(
                 }
                 if (visibleEntries.isEmpty()) {
                     item {
-                        TagEmptyPlaceholder(isLocalTag = isLocalTag)
+                        TagEmptyPlaceholder(
+                            isLocalTag = isLocalTag,
+                            canAddLink = canEditEntries,
+                        )
                     }
                 } else {
                     items(visibleEntries, key = { it.id }) { entry ->
@@ -461,7 +532,7 @@ fun TagDetailScreen(
                         )
                     }
                 }
-                if (canDeleteTag) {
+                if (canDeleteTag && isLocalTag) {
                     item {
                         TextButton(
                             onClick = { showDeleteDialog = true },
@@ -760,7 +831,7 @@ fun TagDetailScreen(
                     )
                 }
                 Text(
-                    text = "保存済みURLを追加",
+                    text = if (isLocalTag) "保存済みURLを追加" else "保存リンクを選ぶ",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                 )
@@ -919,6 +990,243 @@ private fun CloudSignInBanner(
     }
 }
 
+private fun sharedTagSyncErrorDetail(syncNotice: String?): String? {
+    if (syncNotice.isNullOrBlank() || syncNotice == "更新できませんでした") return null
+    return syncNotice
+        .replace("前回同期した内容を表示しています。", "")
+        .trim()
+        .ifBlank { null }
+}
+
+@Composable
+private fun SharedTagStateBadge(
+    syncStatus: SharedTagSyncStatus,
+    isSyncing: Boolean,
+    syncNotice: String?,
+    syncNoticeIsError: Boolean,
+) {
+    val isError = !isSyncing && (syncNoticeIsError || syncStatus == SharedTagSyncStatus.SYNC_ERROR)
+    val label = when {
+        isSyncing -> "同期中"
+        syncNoticeIsError && syncNotice?.contains("未設定") == true -> "未設定"
+        syncNoticeIsError && syncNotice?.contains("サインイン") == true -> "要ログイン"
+        syncNoticeIsError -> "同期失敗"
+        syncNotice == "更新しました" -> "更新済み"
+        !syncNotice.isNullOrBlank() -> syncNotice
+        syncStatus == SharedTagSyncStatus.SYNC_ERROR -> "同期エラー"
+        syncStatus == SharedTagSyncStatus.PENDING_PUSH -> "更新待ち"
+        syncStatus == SharedTagSyncStatus.SYNCED -> "同期済み"
+        else -> "状態不明"
+    }
+    val isSynced = syncStatus == SharedTagSyncStatus.SYNCED && !isSyncing && !isError
+    val containerColor = when {
+        isError -> MaterialTheme.colorScheme.errorContainer
+        isSynced -> MaterialTheme.colorScheme.secondaryContainer
+        else -> MaterialTheme.colorScheme.surfaceVariant
+    }
+    val contentColor = when {
+        isError -> MaterialTheme.colorScheme.onErrorContainer
+        isSynced -> MaterialTheme.colorScheme.onSecondaryContainer
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
+    Surface(shape = RoundedCornerShape(50), color = containerColor) {
+        Row(
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            when {
+                isSyncing -> CircularProgressIndicator(modifier = Modifier.size(13.dp), strokeWidth = 2.dp)
+                isError -> Icon(Icons.Outlined.LinkOff, contentDescription = null, modifier = Modifier.size(14.dp))
+                isSynced -> Icon(Icons.Outlined.Check, contentDescription = null, modifier = Modifier.size(14.dp))
+                else -> Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
+            }
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = contentColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SharedTagActionStrip(
+    displayMode: EntryCardDisplayMode,
+    isSyncing: Boolean,
+    canEditEntries: Boolean,
+    canInvite: Boolean,
+    canDelete: Boolean,
+    canLeave: Boolean,
+    manageMenuExpanded: Boolean,
+    onDisplayMode: () -> Unit,
+    onRefresh: () -> Unit,
+    onAddLink: () -> Unit,
+    onInvite: () -> Unit,
+    onManage: () -> Unit,
+    onDismissManageMenu: () -> Unit,
+    onDelete: () -> Unit,
+    onLeave: () -> Unit,
+) {
+    val actionCount = 2 + (if (canEditEntries) 1 else 0) + (if (canInvite) 1 else 0) + (if (canDelete || canLeave) 1 else 0)
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp),
+    ) {
+        val narrowLayout = maxWidth < 360.dp || LocalDensity.current.fontScale >= 1.3f
+        val maxActionsPerRow = if (narrowLayout) {
+            if (actionCount == 4) 2 else minOf(3, actionCount)
+        } else {
+            actionCount
+        }
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            maxItemsInEachRow = maxActionsPerRow,
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            SharedTagActionButton(
+                modifier = Modifier.weight(1f),
+                icon = if (displayMode == EntryCardDisplayMode.RICH) {
+                    Icons.AutoMirrored.Outlined.ViewList
+                } else {
+                    Icons.Outlined.ViewAgenda
+                },
+                label = "表示",
+                accessibilityLabel = if (displayMode == EntryCardDisplayMode.RICH) {
+                    "画像なし表示へ切り替える"
+                } else {
+                    "画像つき表示へ切り替える"
+                },
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                iconTint = MaterialTheme.colorScheme.onPrimaryContainer,
+                onClick = onDisplayMode,
+            )
+            SharedTagActionButton(
+                modifier = Modifier.weight(1f),
+                icon = Icons.Outlined.Refresh,
+                label = "更新",
+                accessibilityLabel = "共有タグを更新",
+                enabled = !isSyncing,
+                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                iconTint = MaterialTheme.colorScheme.onSecondaryContainer,
+                showProgress = isSyncing,
+                onClick = onRefresh,
+            )
+            if (canEditEntries) {
+                SharedTagActionButton(
+                    modifier = Modifier.weight(1f),
+                    icon = Icons.Outlined.AddLink,
+                    label = "リンク追加",
+                    accessibilityLabel = "保存済みリンクをこの共有タグに追加",
+                    containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                    iconTint = MaterialTheme.colorScheme.onTertiaryContainer,
+                    onClick = onAddLink,
+                )
+            }
+            if (canInvite) {
+                SharedTagActionButton(
+                    modifier = Modifier.weight(1f),
+                    icon = Icons.Outlined.PersonAddAlt,
+                    label = "招待",
+                    accessibilityLabel = "招待リンクを共有",
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    iconTint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    onClick = onInvite,
+                )
+            }
+            if (canDelete || canLeave) {
+                Box(modifier = Modifier.weight(1f)) {
+                    SharedTagActionButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        icon = Icons.Outlined.Settings,
+                        label = "管理",
+                        accessibilityLabel = "共有タグの管理",
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        iconTint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        onClick = onManage,
+                    )
+                    DropdownMenu(
+                        expanded = manageMenuExpanded,
+                        onDismissRequest = onDismissManageMenu,
+                    ) {
+                        if (canLeave) {
+                            DropdownMenuItem(
+                                text = { Text("共有タグから抜ける") },
+                                leadingIcon = {
+                                    Icon(Icons.AutoMirrored.Outlined.ExitToApp, contentDescription = null)
+                                },
+                                onClick = onLeave,
+                            )
+                        }
+                        if (canDelete) {
+                            DropdownMenuItem(
+                                text = { Text("共有タグを削除") },
+                                leadingIcon = { Icon(Icons.Outlined.Delete, contentDescription = null) },
+                                onClick = onDelete,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedTagActionButton(
+    modifier: Modifier,
+    icon: ImageVector,
+    label: String,
+    accessibilityLabel: String,
+    containerColor: Color,
+    iconTint: Color,
+    enabled: Boolean = true,
+    showProgress: Boolean = false,
+    onClick: () -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .semantics(mergeDescendants = true) {
+                contentDescription = accessibilityLabel
+            }
+            .heightIn(min = 76.dp)
+            .padding(vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .clip(CircleShape)
+                .background(containerColor),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (showProgress) {
+                CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+            } else {
+                Icon(imageVector = icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(22.dp))
+            }
+        }
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
 @Composable
 private fun SharedTagInlineTitle(
     title: String,
@@ -990,6 +1298,7 @@ private fun SharedTagTitleSyncStatus(
 @Composable
 private fun SharedTagEntryCountRow(
     count: Int,
+    showSavedLinksLabel: Boolean = false,
 ) {
     Row(
         modifier = Modifier
@@ -998,18 +1307,33 @@ private fun SharedTagEntryCountRow(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = "${count}件",
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        if (showSavedLinksLabel) {
+            Text(
+                text = "保存リンク",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = "${count}件",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            Text(
+                text = "${count}件",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
 @Composable
 private fun TagEmptyPlaceholder(
     isLocalTag: Boolean,
+    canAddLink: Boolean,
 ) {
     Column(
         modifier = Modifier
@@ -1028,7 +1352,7 @@ private fun TagEmptyPlaceholder(
             text = if (isLocalTag) {
                 "この自作タグにはまだURLがありません"
             } else {
-                "この共有タグにはまだURLがありません"
+                "まだリンクがありません"
             },
             style = MaterialTheme.typography.titleMedium,
             textAlign = TextAlign.Center,
@@ -1040,8 +1364,10 @@ private fun TagEmptyPlaceholder(
         Text(
             text = if (isLocalTag) {
                 "詳細画面からURLに自作タグを追加すると、ここにまとまって表示されます"
+            } else if (canAddLink) {
+                "「リンク追加」から保存リンクを選べます"
             } else {
-                "詳細画面からURLに共有タグを追加すると、ここにまとまって表示されます"
+                "リンクが追加されるとここに表示されます"
             },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1222,8 +1548,8 @@ private fun SharedTagMembersPanel(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Text(
             text = "参加者 ${members.size}名",
@@ -1276,16 +1602,16 @@ private fun SharedTagMemberAvatarItem(
     val label = sharedTagMemberLabel(member)
     Column(
         modifier = Modifier
-            .width(76.dp)
+            .width(68.dp)
             .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
             .padding(vertical = 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(5.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         Box(
             modifier = Modifier
-                .size(54.dp)
+                .size(42.dp)
                 .clip(CircleShape)
                 .background(
                     if (member.isCurrentUser) {

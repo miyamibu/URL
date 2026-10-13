@@ -4,6 +4,7 @@ struct SharedTagCloudState: Equatable, Sendable {
     let isConfigured: Bool
     let isSignedIn: Bool
     let signedInEmail: String?
+    var authUserID: String? = nil
 }
 
 enum ChatGptPersonalLinkSyncStatus: Equatable, Sendable {

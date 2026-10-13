@@ -2,6 +2,7 @@ package jp.mimac.urlsaver.worker
 
 import jp.mimac.urlsaver.domain.MetadataError
 import jp.mimac.urlsaver.domain.MetadataBodyKind
+import jp.mimac.urlsaver.domain.MetadataTitleRules
 import jp.mimac.urlsaver.domain.UrlRules
 import jp.mimac.urlsaver.network.NetworkUrlPolicy
 import kotlinx.serialization.decodeFromString
@@ -379,12 +380,16 @@ class MetadataFetcher(
             } else {
                 oEmbedMetadata.thumbnailUrl ?: pageImage
             }
-            val badgeImage = firstNonBlank(
+            val contentBadgeImage = firstNonBlank(
                 channelBadgeImageUrl,
                 extractYouTubeChannelBadge(document),
                 pageImage.takeIf { isProfile },
             )
-            if (title == null && body == null && thumbnail == null && badgeImage == null) {
+            val badgeImage = firstNonBlank(
+                contentBadgeImage,
+                extractFavicon(document, finalUri, fallbackToOrigin = false),
+            )
+            if (title == null && body == null && thumbnail == null && contentBadgeImage == null) {
                 return@fetchHtmlMetadata FetchOutcome.Unavailable(MetadataError.PARSE_FAILED)
             }
 
@@ -459,6 +464,7 @@ class MetadataFetcher(
         val parsedInput = runCatching { URI(inputUrl) }.getOrNull()
         val inputIsProfileLike = isInstagramProfileLikeUri(parsedInput)
         val inputIsHighlight = isInstagramHighlightUri(parsedInput)
+        val inputIsPost = isInstagramPostUri(parsedInput)
         val publicOEmbedMetadata = normalizeInstagramSupplement(fetchInstagramPublicOEmbedMetadata(inputUrl))
         val graphOEmbedMetadata = normalizeInstagramSupplement(fetchInstagramOEmbedMetadata(inputUrl))
         val oEmbedMetadata = mergeInstagramOEmbedMetadata(
@@ -490,6 +496,7 @@ class MetadataFetcher(
             }
             val isProfileLike = inputIsProfileLike || isInstagramProfileLikeUri(finalUri)
             val isHighlight = inputIsHighlight || isInstagramHighlightUri(finalUri)
+            val isPost = inputIsPost || isInstagramPostUri(finalUri)
             val isSound = isInstagramSoundUri(parsedInput) || isInstagramSoundUri(finalUri)
             val isChannel = isInstagramChannelUri(parsedInput) || isInstagramChannelUri(finalUri)
             val normalizeBodyCandidate: (String?) -> String? = if (isSound) {
@@ -518,13 +525,28 @@ class MetadataFetcher(
                 normalizeBodyCandidate(supplementalBody),
             )
 
-            val title = firstNonBlank(
+            val pageTitle = firstNonBlank(
                 normalizeTitleCandidate(extractMetaContent(document, "meta[property=og:title]", "meta[name=og:title]")),
                 normalizeTitleCandidate(jsonLdMetadata.titleCandidate),
-                normalizeTitleCandidate(extractInstagramEmbeddedUsername(document)?.let { "@$it" }),
-                normalizeTitleCandidate(supplementalTitle),
                 normalizeTitleCandidate(extractTitleTag(document)),
             )
+            val authorName = firstNonBlank(
+                jsonLdMetadata.authorName,
+                extractInstagramEmbeddedUsername(document),
+                supplementalTitle,
+            )
+            val displayablePageTitle = pageTitle.takeUnless {
+                isPost && MetadataTitleRules.isInstagramAuthorTitle(it, authorName)
+            }
+            val title = if (isPost) {
+                firstNonBlank(displayablePageTitle, MetadataTitleRules.shortContentTitle(body))
+            } else {
+                firstNonBlank(
+                    displayablePageTitle,
+                    normalizeTitleCandidate(extractInstagramEmbeddedUsername(document)?.let { "@$it" }),
+                    normalizeTitleCandidate(supplementalTitle),
+                )
+            }
             val pageImage = normalizeInstagramThumbnailUrl(extractOgImage(document))
             val thumbnail = if (isProfileLike) {
                 null
@@ -535,13 +557,17 @@ class MetadataFetcher(
                     extractInstagramHighlightImage(document).takeIf { isHighlight },
                 )
             }
-            val badgeImage = firstNonBlank(
+            val contentBadgeImage = firstNonBlank(
                 profileBadgeImageUrl,
                 pageImage.takeIf { isProfileLike },
                 extractInstagramHighlightBadgeImage(document).takeIf { isHighlight },
             )
+            val badgeImage = firstNonBlank(
+                contentBadgeImage,
+                extractFavicon(document, finalUri, fallbackToOrigin = false),
+            )
 
-            if (title == null && body == null && thumbnail == null && badgeImage == null) {
+            if (title == null && body == null && thumbnail == null && contentBadgeImage == null) {
                 return@fetchHtmlMetadata FetchOutcome.Unavailable(
                     error = if (
                         isInstagramChannelUri(parsedInput) ||
@@ -558,6 +584,7 @@ class MetadataFetcher(
 
             FetchOutcome.Ready(
                 fetchedTitle = title,
+                fetchedAuthorName = authorName,
                 fetchedBody = body,
                 fetchedBodyKind = body?.let { MetadataBodyKind.INSTAGRAM_CAPTION },
                 bodySummary = body?.let(::buildRuleSummary),
@@ -571,13 +598,18 @@ class MetadataFetcher(
         }
 
         if (htmlOutcome is FetchOutcome.Ready) {
+            val fallbackTitle = if (inputIsPost) {
+                MetadataTitleRules.shortContentTitle(supplementalBody)
+            } else {
+                supplementalTitle
+            }
             if (!oEmbedMetadata.hasAnyMetadata && !embedMetadata.hasAnyMetadata) {
                 return htmlOutcome.copy(
                     badgeImageUrl = firstNonBlank(htmlOutcome.badgeImageUrl, profileBadgeImageUrl),
                 )
             }
             return htmlOutcome.copy(
-                fetchedTitle = htmlOutcome.fetchedTitle ?: supplementalTitle,
+                fetchedTitle = htmlOutcome.fetchedTitle ?: fallbackTitle,
                 fetchedAuthorName = htmlOutcome.fetchedAuthorName ?: supplementalTitle,
                 fetchedBody = htmlOutcome.fetchedBody ?: supplementalBody,
                 fetchedBodyKind = htmlOutcome.fetchedBodyKind
@@ -591,8 +623,13 @@ class MetadataFetcher(
 
         if (oEmbedMetadata.hasAnyMetadata || embedMetadata.hasAnyMetadata) {
             val parsed = runCatching { URI(inputUrl) }.getOrNull()
+            val fallbackTitle = if (isInstagramPostUri(parsed)) {
+                MetadataTitleRules.shortContentTitle(supplementalBody)
+            } else {
+                supplementalTitle
+            }
             return FetchOutcome.Ready(
-                fetchedTitle = supplementalTitle,
+                fetchedTitle = fallbackTitle,
                 fetchedAuthorName = supplementalTitle,
                 fetchedBody = supplementalBody,
                 fetchedBodyKind = supplementalBody?.let { MetadataBodyKind.INSTAGRAM_CAPTION },
@@ -1836,6 +1873,7 @@ class MetadataFetcher(
 
     private fun extractInstagramQuotedCaptionFromDescription(description: String?): String? {
         val source = description?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        MetadataTitleRules.unwrapInstagramCaption(source)?.let(::normalizeFetchedBodyText)?.let { return it }
         val quoted = INSTAGRAM_QUOTED_TEXT_PATTERN.find(source)?.groupValues?.getOrNull(1)
         return normalizeFetchedBodyText(quoted)
     }
@@ -2177,6 +2215,7 @@ class MetadataFetcher(
     private fun extractInstagramJsonLdMetadata(document: Document): InstagramJsonLdMetadata {
         var bodyCandidate: String? = null
         var titleCandidate: String? = null
+        var authorNameCandidate: String? = null
 
         for (script in document.select("script[type=application/ld+json]")) {
             val payload = script.data().trim().ifBlank { script.html().trim() }
@@ -2194,21 +2233,24 @@ class MetadataFetcher(
                 }
                 if (titleCandidate == null) {
                     titleCandidate = jsonObject.firstNonBlankString("headline", "name")
-                        ?: jsonObject.jsonObjectOrNull("author")
-                            ?.firstNonBlankString("name", "alternateName")
                 }
-                if (bodyCandidate != null && titleCandidate != null) {
+                if (authorNameCandidate == null) {
+                    authorNameCandidate = jsonObject.jsonObjectOrNull("author")
+                        ?.firstNonBlankString("name", "alternateName")
+                }
+                if (bodyCandidate != null && titleCandidate != null && authorNameCandidate != null) {
                     break
                 }
             }
-            if (bodyCandidate != null && titleCandidate != null) {
+            if (bodyCandidate != null && titleCandidate != null && authorNameCandidate != null) {
                 break
             }
         }
 
         return InstagramJsonLdMetadata(
             body = normalizeFetchedBodyText(bodyCandidate),
-            titleCandidate = normalizeTitleText(titleCandidate),
+            titleCandidate = normalizeInstagramTitleText(titleCandidate),
+            authorName = normalizeTitleText(authorNameCandidate),
         )
     }
 
@@ -2402,22 +2444,73 @@ class MetadataFetcher(
         return absolute ?: metaContent
     }
 
-    private fun extractFavicon(document: Document, finalUri: URI): String? {
-        val appleTouch = document.select("link[rel]").firstOrNull { element ->
-            val rel = element.attr("rel").lowercase(Locale.ROOT)
-            rel == "apple-touch-icon" || rel == "apple-touch-icon-precomposed"
-        }?.attr("href")
+    private fun extractFavicon(
+        document: Document,
+        finalUri: URI,
+        fallbackToOrigin: Boolean = true,
+    ): String? {
+        val candidate = document.select("link[rel][href]")
+            .mapIndexedNotNull { documentOrder, element ->
+                val relTokens = element.attr("rel")
+                    .lowercase(Locale.ROOT)
+                    .split(Regex("\\s+"))
+                    .filter { it.isNotBlank() }
+                val isTouchIcon = relTokens.any {
+                    it == "apple-touch-icon" || it == "apple-touch-icon-precomposed"
+                }
+                val isIcon = "icon" in relTokens
+                val isMaskIcon = "mask-icon" in relTokens
+                if (!isTouchIcon && !isIcon && !isMaskIcon) return@mapIndexedNotNull null
 
-        val genericIcon = document.select("link[rel]").firstOrNull { element ->
-            val rel = element.attr("rel").lowercase(Locale.ROOT)
-            rel.contains("icon")
-        }?.attr("href")
+                val href = resolveAbsoluteUrl(element.attr("href"), finalUri)
+                    ?: return@mapIndexedNotNull null
+                val uri = runCatching { URI(href) }.getOrNull()
+                    ?: return@mapIndexedNotNull null
+                if (
+                    uri.scheme?.lowercase(Locale.ROOT) !in setOf("http", "https") ||
+                    uri.host.isNullOrBlank() ||
+                    uri.userInfo != null
+                ) {
+                    return@mapIndexedNotNull null
+                }
 
-        val candidate = appleTouch ?: genericIcon
-        val resolved = resolveAbsoluteUrl(candidate, finalUri)
-        if (!resolved.isNullOrBlank()) {
-            return resolved
-        }
+                val contentType = element.attr("type")
+                    .substringBefore(';')
+                    .trim()
+                    .lowercase(Locale.ROOT)
+                val extension = uri.path.orEmpty().substringAfterLast('.', "").lowercase(Locale.ROOT)
+                val raster = contentType in RASTER_FAVICON_TYPES || extension in RASTER_FAVICON_EXTENSIONS
+                val rank = when {
+                    isTouchIcon && raster -> 0
+                    isIcon && raster -> 1
+                    isTouchIcon -> 2
+                    isIcon -> 3
+                    else -> 4
+                }
+                val resolution = Regex("(\\d+)x(\\d+)")
+                    .findAll(element.attr("sizes"))
+                    .maxOfOrNull { match ->
+                        maxOf(
+                            match.groupValues[1].toIntOrNull() ?: 0,
+                            match.groupValues[2].toIntOrNull() ?: 0,
+                        )
+                    } ?: 0
+
+                FaviconCandidate(
+                    url = href,
+                    rank = rank,
+                    resolution = resolution,
+                    documentOrder = documentOrder,
+                )
+            }
+            .minWithOrNull(
+                compareBy<FaviconCandidate> { it.rank }
+                    .thenByDescending { it.resolution }
+                    .thenBy { it.documentOrder },
+            )
+
+        if (candidate != null) return candidate.url
+        if (!fallbackToOrigin) return null
 
         val host = finalUri.host ?: return null
         val scheme = finalUri.scheme?.takeIf { it.isNotBlank() } ?: "https"
@@ -2622,12 +2715,7 @@ class MetadataFetcher(
     }
 
     private fun normalizeInstagramTitleText(raw: String?): String? {
-        val normalized = normalizeTitleText(raw) ?: return null
-        return normalized.takeUnless {
-            it.equals("Instagram", ignoreCase = true) ||
-                it.equals("Instagram photos and videos", ignoreCase = true) ||
-                it.equals("Join my group chat:", ignoreCase = true)
-        }
+        return MetadataTitleRules.normalizeInstagramTitle(raw)
     }
 
     private fun normalizeInstagramChannelTitleText(raw: String?): String? {
@@ -2640,7 +2728,9 @@ class MetadataFetcher(
     }
 
     private fun normalizeInstagramBodyText(raw: String?): String? {
-        val normalized = normalizeFetchedBodyText(raw) ?: return null
+        val normalized = normalizeFetchedBodyText(raw)
+            ?.let { MetadataTitleRules.unwrapInstagramCaption(it) ?: it }
+            ?: return null
         return normalized.takeUnless {
             it.startsWith("Create an account or log in to Instagram", ignoreCase = true) ||
                 it.startsWith("Log in to Instagram", ignoreCase = true) ||
@@ -2693,6 +2783,11 @@ class MetadataFetcher(
 
     private fun isInstagramSoundUri(uri: URI?): Boolean {
         return uri?.path.orEmpty().lowercase(Locale.ROOT).startsWith("/reels/audio/")
+    }
+
+    private fun isInstagramPostUri(uri: URI?): Boolean {
+        val path = uri?.path.orEmpty().lowercase(Locale.ROOT)
+        return path.startsWith("/p/") || path.startsWith("/reel/")
     }
 
     private fun isInstagramHighlightUri(uri: URI?): Boolean {
@@ -3289,6 +3384,14 @@ class MetadataFetcher(
     private data class InstagramJsonLdMetadata(
         val body: String?,
         val titleCandidate: String?,
+        val authorName: String?,
+    )
+
+    private data class FaviconCandidate(
+        val url: String,
+        val rank: Int,
+        val resolution: Int,
+        val documentOrder: Int,
     )
 
     private data class WebBodyCandidate(
@@ -3338,6 +3441,13 @@ class MetadataFetcher(
 
         private const val SUMMARY_MAX_LENGTH = 110
         private val SENTENCE_BOUNDARY_REGEX = Regex("[。.!?！？]")
+        private val RASTER_FAVICON_TYPES = setOf(
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/gif",
+        )
+        private val RASTER_FAVICON_EXTENSIONS = setOf("png", "jpg", "jpeg", "webp", "gif")
 
         private fun buildXArticleGraphQLEndpoint(statusId: String): String {
             val variables = """{"tweetId":"$statusId","withCommunity":false,"includePromotedContent":false,"withVoice":false}"""

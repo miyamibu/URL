@@ -1130,31 +1130,40 @@ struct MetadataFetcher: Sendable {
     }
 
     private func faviconURL(in html: String, pageURL: URL) -> String? {
-        let pattern = #"<link\b[^>]*rel=["'][^"']*(?:icon|apple-touch-icon)[^"']*["'][^>]*>"#
+        let pattern = #"<link\b[^>]*>"#
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
             return defaultFaviconURL(for: pageURL)
         }
         let range = NSRange(location: 0, length: (html as NSString).length)
-        var genericIcon: String?
+        var selectedIcon: String?
+        var selectedPriority = 0
         for match in regex.matches(in: html, options: [], range: range) {
-            guard let tagRange = Range(match.range, in: html),
-                  let href = attributeValue("href", in: String(html[tagRange])) else {
+            guard let tagRange = Range(match.range, in: html) else {
                 continue
             }
             let tag = String(html[tagRange])
-            let resolved = absoluteURLString(href, relativeTo: pageURL)
-            if tag.range(of: "apple-touch-icon", options: .caseInsensitive) != nil {
-                return resolved
-            }
-            if let resolved, isRenderableBadgeImageURL(resolved) {
-                genericIcon = genericIcon ?? resolved
+            let relations = (attributeValue("rel", in: tag) ?? "").lowercased()
+                .split(whereSeparator: { $0.isWhitespace })
+            let isTouchIcon = relations.contains("apple-touch-icon") || relations.contains("apple-touch-icon-precomposed")
+            guard isTouchIcon || relations.contains("icon"),
+                  let href = attributeValue("href", in: tag),
+                  let resolved = absoluteURLString(href, relativeTo: pageURL),
+                  let iconURL = URL(string: resolved),
+                  ["http", "https"].contains(iconURL.scheme?.lowercased() ?? ""),
+                  isRenderableBadgeImageURL(resolved) else { continue }
+            let imageType = (attributeValue("type", in: tag) ?? "").lowercased()
+            guard !imageType.contains("svg") && !imageType.contains("icon") else { continue }
+            let priority = isTouchIcon ? 3 : (["png", "jpg", "jpeg", "webp"].contains(iconURL.pathExtension.lowercased()) ? 2 : 1)
+            if priority > selectedPriority {
+                selectedIcon = resolved
+                selectedPriority = priority
             }
         }
-        return genericIcon ?? defaultFaviconURL(for: pageURL)
+        return selectedIcon ?? defaultFaviconURL(for: pageURL)
     }
 
     private func isRenderableBadgeImageURL(_ value: String) -> Bool {
-        let lowercased = value.lowercased()
+        let lowercased = URL(string: value)?.path.lowercased() ?? value.lowercased()
         return !lowercased.hasSuffix(".ico") && !lowercased.hasSuffix(".svg")
     }
 
@@ -1656,7 +1665,7 @@ struct MetadataFetcher: Sendable {
     }
 
     private func normalizeInstagramBodyText(_ raw: String?) -> String? {
-        let normalized = normalizeFetchedBodyText(raw) ?? ""
+        let normalized = Self.instagramCaptionText(normalizeFetchedBodyText(raw)) ?? ""
         guard !normalized.isEmpty,
               !normalized.localizedCaseInsensitiveContains("log in to Instagram"),
               !normalized.localizedCaseInsensitiveContains("create an account or log in to Instagram"),
@@ -1666,6 +1675,39 @@ struct MetadataFetcher: Sendable {
             return nil
         }
         return normalized
+    }
+
+    static func instagramCaptionText(_ raw: String?) -> String? {
+        var normalized = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        var unwrapped = false
+        // Public descriptions wrap the actual caption in engagement and publication metadata.
+        // Only unwrap a recognized envelope; numbers or dates inside the caption remain content.
+        let captionPatterns = [
+            #"(?is)^\s*[\d,.KM万]+\s+likes?,\s*[\d,.KM万]+\s+comments?\s*[-–—]\s*.+?\s+on\s+.+?:\s*[\"“](.+)[\"”]\s*\.?\s*$"#,
+            #"(?is)^\s*いいね[！!]?\s*[\d,.万]+件[、,]\s*コメント\s*[\d,.万]+件\s*[-–—]\s*.+?:\s*[\"“「](.+)[\"”」]\s*\.?\s*$"#
+        ]
+        for pattern in captionPatterns {
+            if let regex = try? NSRegularExpression(pattern: pattern),
+               let match = regex.firstMatch(in: normalized, range: NSRange(normalized.startIndex..., in: normalized)),
+               let range = Range(match.range(at: 1), in: normalized) {
+                normalized = String(normalized[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+                unwrapped = true
+                break
+            }
+        }
+        if !unwrapped {
+            let prefixes = [
+                #"(?is)^\s*[\d,.KM万]+\s+likes?,\s*[\d,.KM万]+\s+comments?\s*[-–—]\s*.+?\s+on\s+.+?:\s*[\"“]"#,
+                #"(?is)^\s*いいね[！!]?\s*[\d,.万]+件[、,]\s*コメント\s*[\d,.万]+件\s*[-–—]\s*.+?:\s*[\"“「]"#
+            ]
+            for pattern in prefixes {
+                if let range = normalized.range(of: pattern, options: .regularExpression) {
+                    normalized = String(normalized[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    break
+                }
+            }
+        }
+        return normalized.isEmpty ? nil : normalized
     }
 
     private func normalizeInstagramSoundBodyText(_ raw: String?) -> String? {
@@ -1893,7 +1935,7 @@ struct MetadataFetcher: Sendable {
     private func attributeValue(_ name: String, in tag: String) -> String? {
         let escapedName = NSRegularExpression.escapedPattern(for: name)
         return firstRawMatch(
-            pattern: #"\#(escapedName)=["']([^"']*)["']"#,
+            pattern: #"(?:^|\s)\#(escapedName)\s*=\s*["']([^"']*)["']"#,
             html: tag
         )
         .map(decodeHTMLEntities)

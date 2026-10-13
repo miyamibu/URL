@@ -18,6 +18,7 @@ import jp.mimac.urlsaver.data.ConfiguredContactSupportClient
 import jp.mimac.urlsaver.data.ContactSupportClient
 import jp.mimac.urlsaver.data.DataStoreEntryCardDisplayModeStore
 import jp.mimac.urlsaver.data.DataStoreHomeBackgroundStyleStore
+import jp.mimac.urlsaver.data.DataStoreTagColorStore
 import jp.mimac.urlsaver.data.DataStoreEntitlementGrantStore
 import jp.mimac.urlsaver.data.DefaultAccountLinkedLocalDataCleaner
 import jp.mimac.urlsaver.data.DefaultTagRepository
@@ -53,6 +54,7 @@ import jp.mimac.urlsaver.data.SupabaseSharedTagSyncRemoteDataSource
 import jp.mimac.urlsaver.data.SupabaseStorePurchaseRemoteDataSource
 import jp.mimac.urlsaver.data.WorkManagerSharedTagSyncScheduler
 import jp.mimac.urlsaver.data.TagRepository
+import jp.mimac.urlsaver.data.TagColorStore
 import jp.mimac.urlsaver.data.TopFilterOrderStore
 import jp.mimac.urlsaver.data.UserProfileStore
 import jp.mimac.urlsaver.data.UrlRepository
@@ -120,6 +122,9 @@ class AppContainer(context: Context) {
     }
     val homeBackgroundStyleStore: HomeBackgroundStyleStore by lazy {
         DataStoreHomeBackgroundStyleStore(appContext)
+    }
+    val tagColorStore: TagColorStore by lazy {
+        DataStoreTagColorStore(appContext)
     }
     val serviceFilterOrderStore: ServiceFilterOrderStore by lazy {
         DataStoreServiceFilterOrderStore(appContext)

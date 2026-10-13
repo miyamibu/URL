@@ -44,7 +44,7 @@ final class URLSaverNotificationDelegate: NSObject, UIApplicationDelegate, UNUse
 struct URLSaveriOSApp: App {
     @UIApplicationDelegateAdaptor(URLSaverNotificationDelegate.self) private var notificationDelegate
     @StateObject private var model: URLSaverAppModel
-    @AppStorage("appThemeMode") private var themeModeRaw = AppThemeMode.system.rawValue
+    @AppStorage(HomeBackgroundPreferenceStore.key) private var colorRaw = HomeBackgroundStyle.defaultStyle.rawValue
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -62,8 +62,12 @@ struct URLSaveriOSApp: App {
             GeometryReader { proxy in
                 RootView(model: model)
                     .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
-                    .background(AppPalette.background.ignoresSafeArea())
-                    .preferredColorScheme(AppThemeMode(rawValue: themeModeRaw)?.colorScheme)
+                    .background(LinearGradient(
+                        colors: AppDisplayColorPalette.colors(for: HomeBackgroundPreferenceStore.resolve(rawValue: colorRaw)),
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ).ignoresSafeArea())
+                    .preferredColorScheme(AppDisplayColorPalette.colorScheme)
                     .task {
                         await model.bootstrapIfNeeded()
                     }

@@ -116,7 +116,6 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.rememberSwipeToDismissBoxState
-import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -209,6 +208,10 @@ import jp.mimac.urlsaver.domain.ShareSaveResult
 import jp.mimac.urlsaver.domain.SnackbarEvent
 import jp.mimac.urlsaver.domain.SnackbarEventKind
 import jp.mimac.urlsaver.domain.TagWithCount
+import jp.mimac.urlsaver.domain.TagColorChoice
+import jp.mimac.urlsaver.domain.TagColorKey
+import jp.mimac.urlsaver.domain.choiceFor
+import jp.mimac.urlsaver.domain.MetadataTitleRules
 import jp.mimac.urlsaver.domain.UrlRules
 import jp.mimac.urlsaver.video.AppMediaStore
 import java.io.File
@@ -226,9 +229,10 @@ import jp.mimac.urlsaver.ui.components.EntryCard
 import jp.mimac.urlsaver.ui.components.ServiceBadge
 import jp.mimac.urlsaver.ui.components.ServiceFilterRow
 import jp.mimac.urlsaver.ui.components.TagFilterRow
+import jp.mimac.urlsaver.ui.components.TagColorEditorSheet
 import jp.mimac.urlsaver.ui.ads.BannerAdSlot
 import jp.mimac.urlsaver.ui.theme.OrbitTokens
-import jp.mimac.urlsaver.ui.theme.AppThemeMode
+import jp.mimac.urlsaver.ui.theme.tagColorChipPalette
 import jp.mimac.urlsaver.ui.theme.SwipeActionTone
 import jp.mimac.urlsaver.ui.theme.detailSupportingColor
 import jp.mimac.urlsaver.ui.theme.homeBackgroundGradientColors
@@ -254,20 +258,22 @@ private const val RINBAM_USAGE_GUIDE_URL = "https://rinbam-usage-guide.miyamibu.
 @Composable
 fun UrlSaverRoot(
     activityViewModel: MainActivityViewModel,
-    themeMode: AppThemeMode,
-    onThemeModeChange: (AppThemeMode) -> Unit,
     onRouteChanged: (String?) -> Unit,
 ) {
     val context = LocalContext.current
     val navController = rememberNavController()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
-    val homeBackgroundStyle by context.appContainer().homeBackgroundStyleStore.observeStyle()
+    val homeBackgroundStyleFlow = remember(context) {
+        context.appContainer().homeBackgroundStyleStore.observeStyle()
+    }
+    val homeBackgroundStyle by homeBackgroundStyleFlow
         .collectAsStateWithLifecycle(initialValue = HomeBackgroundStyle.DEFAULT)
-    val currentThemeMode = rememberUpdatedState(themeMode)
     val currentHomeBackgroundStyle = rememberUpdatedState(homeBackgroundStyle)
     var showWarmHomeBars by remember { mutableStateOf(false) }
-    var homeBarsColor by remember { mutableStateOf(MainHomeHeaderColor) }
+    var homeBarsColor by remember(homeBackgroundStyle) {
+        mutableStateOf(homeBackgroundGradientColors(homeBackgroundStyle).first())
+    }
 
     var currentSnackbarKind by remember { mutableStateOf<SnackbarEventKind?>(null) }
 
@@ -406,8 +412,6 @@ fun UrlSaverRoot(
                 navController = navController,
                 activityViewModel = activityViewModel,
                 snackbarHostState = snackbarHostState,
-                themeModeState = currentThemeMode,
-                onThemeModeChange = onThemeModeChange,
                 homeBackgroundStyleState = currentHomeBackgroundStyle,
                 onHomeBackgroundStyleChange = { style ->
                     scope.launch {
@@ -438,7 +442,6 @@ private val MainMenuWarmColor = Color(0xFFE9BF82)
 private val MainMenuTextColor = Color(0xFFFFF9EE)
 private val MainMenuScrimColor = Color(0xFF131622)
 private val MainCenterPlusColor = Color(0xFFB57C3C)
-private val MainHomeHeaderColor = Color(0xFFF7F3EC)
 private val MainHomeTextColor = Color(0xFF252635)
 private val MainBottomBarColor = Color(0xFFE9E1D7)
 private val MainBottomNavTextColor = Color(0xFF6C665E)
@@ -464,8 +467,6 @@ private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
     navController: androidx.navigation.NavHostController,
     activityViewModel: MainActivityViewModel,
     snackbarHostState: SnackbarHostState,
-    themeModeState: androidx.compose.runtime.State<AppThemeMode>,
-    onThemeModeChange: (AppThemeMode) -> Unit,
     homeBackgroundStyleState: androidx.compose.runtime.State<HomeBackgroundStyle>,
     onHomeBackgroundStyleChange: (HomeBackgroundStyle) -> Unit,
     onWarmHomeBarsChange: (Boolean, Color) -> Unit,
@@ -493,8 +494,6 @@ private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
             viewModel = vm,
             tagViewModel = tagVm,
             snackbarHostState = snackbarHostState,
-            themeMode = themeModeState.value,
-            onThemeModeChange = onThemeModeChange,
             homeBackgroundStyle = homeBackgroundStyleState.value,
             onHomeBackgroundStyleChange = onHomeBackgroundStyleChange,
             onWarmHomeBarsChange = onWarmHomeBarsChange,
@@ -654,8 +653,6 @@ private fun androidx.navigation.NavGraphBuilder.urlSaverNavGraph(
         )
         SharedTagCloudAuthScreen(
             viewModel = vm,
-            themeMode = themeModeState.value,
-            onThemeModeChange = onThemeModeChange,
             homeBackgroundStyle = homeBackgroundStyleState.value,
             onHomeBackgroundStyleChange = onHomeBackgroundStyleChange,
             onBack = { navController.popBackStack() },
@@ -730,8 +727,6 @@ private fun MainScreen(
     viewModel: MainListViewModel,
     tagViewModel: TagListViewModel,
     snackbarHostState: SnackbarHostState,
-    themeMode: AppThemeMode,
-    onThemeModeChange: (AppThemeMode) -> Unit,
     homeBackgroundStyle: HomeBackgroundStyle,
     onHomeBackgroundStyleChange: (HomeBackgroundStyle) -> Unit,
     onWarmHomeBarsChange: (Boolean, Color) -> Unit,
@@ -756,6 +751,8 @@ private fun MainScreen(
     val topFilterOrderTokens by viewModel.topFilterOrderTokens.collectAsStateWithLifecycle()
     val entryCardDisplayMode by viewModel.entryCardDisplayMode.collectAsStateWithLifecycle()
     val manualInputState by viewModel.manualInputState.collectAsStateWithLifecycle()
+    val tagColorStore = context.appContainer().tagColorStore
+    val tagColorChoices by tagColorStore.observeChoices().collectAsStateWithLifecycle(emptyMap())
     val exportVm: ExportViewModel = viewModel(
         key = "main_export_sheet",
         factory = SimpleFactory {
@@ -793,6 +790,11 @@ private fun MainScreen(
             }
             .sortedByDescending { tag -> tag.id }
             .distinctBy { normalizeSharedTagName(it.name) }
+    }
+    val localTagColorChoicesByName = remember(localSaveTags, tagColorChoices) {
+        localSaveTags.associate { tag ->
+            tag.name.trim().lowercase() to tagColorChoices.choiceFor(TagColorKey.forTag(tag))
+        }
     }
     val localTagNamesByEntryId = remember(localSaveTags, localTagEntryRefs) {
         val namesById = localSaveTags.associate { it.id to it.name }
@@ -885,6 +887,8 @@ private fun MainScreen(
     var createLocalTagForMainFilter by remember { mutableStateOf(false) }
     var renameLocalTagDialogState by remember { mutableStateOf(SharedTagDialogUiState()) }
     var pendingRenameLocalTagId by remember { mutableStateOf<Long?>(null) }
+    var pendingTagColorTag by remember { mutableStateOf<TagWithCount?>(null) }
+    var tagColorSaveError by remember { mutableStateOf<String?>(null) }
     var groupRenameDialogState by remember { mutableStateOf(SharedTagDialogUiState()) }
     var pendingGroupAction by remember { mutableStateOf<GroupActionConfirmation?>(null) }
     var mainPane by rememberSaveable { mutableStateOf(MainPane.URLS) }
@@ -1356,6 +1360,20 @@ private fun MainScreen(
         }
     }
 
+    fun openTagColorEditor(tag: TagWithCount) {
+        pendingTagColorTag = tag
+        tagColorSaveError = null
+    }
+
+    fun openRenameLocalTag(tag: TagWithCount) {
+        pendingTagColorTag = null
+        pendingRenameLocalTagId = tag.id
+        renameLocalTagDialogState = SharedTagDialogUiState(
+            visible = true,
+            name = tag.name,
+        )
+    }
+
     if (showPrivacyDialog) {
         AlertDialog(
             onDismissRequest = { showPrivacyDialog = false },
@@ -1406,17 +1424,47 @@ private fun MainScreen(
         onDismiss = { showLocalTagManagerSheet = false },
         onRequestRename = { tag ->
             showLocalTagManagerSheet = false
-            pendingRenameLocalTagId = tag.id
-            renameLocalTagDialogState = SharedTagDialogUiState(
-                visible = true,
-                name = tag.name,
-            )
+            openRenameLocalTag(tag)
         },
         onRequestDelete = { tag ->
             showLocalTagManagerSheet = false
             pendingDeleteLocalTag = tag
         },
     )
+
+    pendingTagColorTag?.let { tag ->
+        val colorKeys = TagColorKey.forTag(tag)
+        TagColorEditorSheet(
+            visible = true,
+            editorKey = colorKeys.first().storageValue,
+            tagName = tag.name,
+            selectedColor = tagColorChoices.choiceFor(colorKeys),
+            isSharedTag = tag.scope == SharedTagScope.SYNCED,
+            saveError = tagColorSaveError,
+            onDismiss = {
+                pendingTagColorTag = null
+                tagColorSaveError = null
+            },
+            onRename = if (tag.scope == SharedTagScope.LOCAL_ONLY) {
+                { openRenameLocalTag(tag) }
+            } else {
+                null
+            },
+            onSave = { choice ->
+                scope.launch {
+                    try {
+                        tagColorStore.setChoice(colorKeys, choice)
+                        pendingTagColorTag = null
+                        tagColorSaveError = null
+                    } catch (cancellation: CancellationException) {
+                        throw cancellation
+                    } catch (_: Exception) {
+                        tagColorSaveError = "タグの色を保存できませんでした"
+                    }
+                }
+            },
+        )
+    }
 
     BatchLocalTagAssignmentSheet(
         visible = batchLocalTagSheetVisible,
@@ -1610,8 +1658,6 @@ private fun MainScreen(
         ) {
             SharedTagCloudAuthScreen(
                 viewModel = profileVm,
-                themeMode = themeMode,
-                onThemeModeChange = onThemeModeChange,
                 homeBackgroundStyle = homeBackgroundStyle,
                 onHomeBackgroundStyleChange = onHomeBackgroundStyleChange,
                 onBack = { showProfileSheet = false },
@@ -1631,7 +1677,7 @@ private fun MainScreen(
     }
     val homeWindow = (context as? android.app.Activity)?.window
     val originalScreenBackground = MaterialTheme.colorScheme.background
-    val originalWindowBackgroundColor = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp).toArgb()
+    val originalWindowBackgroundColor = MaterialTheme.colorScheme.background.toArgb()
     SideEffect {
         onWarmHomeBarsChange(useWarmHomeBackground, selectedHomeBackgroundColors.first())
         homeWindow?.let { window ->
@@ -1846,7 +1892,9 @@ private fun MainScreen(
                         uiState = displayedUiState,
                         localSaveTags = localSaveTags,
                         localTagNamesByEntryId = localTagNamesByEntryId,
+                        localTagColorChoicesByName = localTagColorChoicesByName,
                         sharedTags = visibleSharedTags,
+                        tagColorChoices = tagColorChoices,
                         showSharedTagCloudUi = showSharedTagCloudUi,
                         selectedService = selectedService,
                         selectedLocalTagId = selectedMainLocalTagId,
@@ -1884,6 +1932,8 @@ private fun MainScreen(
                                 name = tag.name,
                             )
                         },
+                        onRequestEditLocalTagColor = ::openTagColorEditor,
+                        onRequestEditSharedTagColor = ::openTagColorEditor,
                         onOpenTagDetail = onOpenTagDetail,
                         onRequestCreateSharedTag = {
                             if (profileCloudState.isSignedIn) {
@@ -1937,7 +1987,7 @@ private fun MainScreen(
                 backgroundColor = if (useWarmHomeBackground) {
                     selectedHomeBackgroundColors.last()
                 } else {
-                    MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp)
+                    MaterialTheme.colorScheme.background
                 },
                 useWarmPalette = useWarmHomeBackground,
                 onOpenGroups = {
@@ -2913,6 +2963,7 @@ private fun MainEntryList(
     selectedEntryIds: Set<Long>,
     entryCardDisplayMode: EntryCardDisplayMode,
     localTagNamesByEntryId: Map<Long, List<String>>,
+    localTagColorChoicesByName: Map<String, TagColorChoice>,
     onStartSelection: (Long) -> Unit,
     onToggleSelection: (Long) -> Unit,
     onOpenDetail: (Long) -> Unit,
@@ -2931,6 +2982,7 @@ private fun MainEntryList(
                     entry = entry,
                     displayMode = entryCardDisplayMode,
                     localTagNames = localTagNamesByEntryId[entry.id].orEmpty(),
+                    localTagColorChoicesByName = localTagColorChoicesByName,
                     onClick = { onOpenDetail(entry.id) },
                     onLongClick = { onStartSelection(entry.id) },
                     onSwipeAction = { action ->
@@ -2948,6 +3000,7 @@ private fun MainEntryList(
                     showDisplayUrl = false,
                     selected = selected,
                     localTagNames = localTagNamesByEntryId[entry.id].orEmpty(),
+                    localTagColorChoices = localTagColorChoicesByName,
                     onLongClick = { onStartSelection(entry.id) },
                     onClick = {
                         if (selectionMode) {
@@ -2968,7 +3021,9 @@ private fun MainListContent(
     uiState: ListFilterUiState,
     localSaveTags: List<jp.mimac.urlsaver.domain.TagWithCount>,
     localTagNamesByEntryId: Map<Long, List<String>>,
+    localTagColorChoicesByName: Map<String, TagColorChoice>,
     sharedTags: List<jp.mimac.urlsaver.domain.TagWithCount>,
+    tagColorChoices: Map<String, TagColorChoice>,
     showSharedTagCloudUi: Boolean,
     selectedService: ServiceType,
     selectedLocalTagId: Long?,
@@ -2985,6 +3040,8 @@ private fun MainListContent(
     onRequestCreateLocalTag: () -> Unit,
     onOpenManualInput: () -> Unit,
     onRequestRenameLocalTag: (TagWithCount) -> Unit,
+    onRequestEditLocalTagColor: (TagWithCount) -> Unit,
+    onRequestEditSharedTagColor: (TagWithCount) -> Unit,
     onOpenTagDetail: (Long) -> Unit,
     onRequestCreateSharedTag: () -> Unit,
     onOpenGroups: (() -> Unit)?,
@@ -3011,6 +3068,8 @@ private fun MainListContent(
         onSelectLocalTag = onSelectLocalTag,
         onCreateLocalTag = onRequestCreateLocalTag,
         onRenameLocalTag = onRequestRenameLocalTag,
+        onEditLocalTagColor = onRequestEditLocalTagColor,
+        tagColorChoices = tagColorChoices,
         onReorderTopFilters = onReorderTopFilters,
     )
     Spacer(modifier = Modifier.height(8.dp))
@@ -3020,6 +3079,8 @@ private fun MainListContent(
             onOpenTag = onOpenTagDetail,
             onCreateTag = onRequestCreateSharedTag,
             headingColor = MainBottomNavTextColor,
+            tagColorChoices = tagColorChoices,
+            onEditColor = onRequestEditSharedTagColor,
         )
         if (onOpenGroups != null) {
             Row(
@@ -3083,6 +3144,7 @@ private fun MainListContent(
                     selectedEntryIds = selectedEntryIds,
                     entryCardDisplayMode = entryCardDisplayMode,
                     localTagNamesByEntryId = localTagNamesByEntryId,
+                    localTagColorChoicesByName = localTagColorChoicesByName,
                     onStartEntrySelection = onStartEntrySelection,
                     onToggleEntrySelection = onToggleEntrySelection,
                     onOpenDetail = onOpenDetail,
@@ -3111,6 +3173,7 @@ private fun MainListContent(
                     selectedEntryIds = selectedEntryIds,
                     entryCardDisplayMode = entryCardDisplayMode,
                     localTagNamesByEntryId = localTagNamesByEntryId,
+                    localTagColorChoicesByName = localTagColorChoicesByName,
                     onStartEntrySelection = onStartEntrySelection,
                     onToggleEntrySelection = onToggleEntrySelection,
                     onOpenDetail = onOpenDetail,
@@ -3137,6 +3200,7 @@ private fun MainListContent(
                 selectedEntryIds = selectedEntryIds,
                 entryCardDisplayMode = entryCardDisplayMode,
                 localTagNamesByEntryId = localTagNamesByEntryId,
+                localTagColorChoicesByName = localTagColorChoicesByName,
                 onStartEntrySelection = onStartEntrySelection,
                 onToggleEntrySelection = onToggleEntrySelection,
                 onOpenDetail = onOpenDetail,
@@ -3155,6 +3219,7 @@ private fun MainListEntriesOrEmpty(
     selectedEntryIds: Set<Long>,
     entryCardDisplayMode: EntryCardDisplayMode,
     localTagNamesByEntryId: Map<Long, List<String>>,
+    localTagColorChoicesByName: Map<String, TagColorChoice>,
     onStartEntrySelection: (Long) -> Unit,
     onToggleEntrySelection: (Long) -> Unit,
     onOpenDetail: (Long) -> Unit,
@@ -3173,6 +3238,7 @@ private fun MainListEntriesOrEmpty(
             selectedEntryIds = selectedEntryIds,
             entryCardDisplayMode = entryCardDisplayMode,
             localTagNamesByEntryId = localTagNamesByEntryId,
+            localTagColorChoicesByName = localTagColorChoicesByName,
             onStartSelection = onStartEntrySelection,
             onToggleSelection = onToggleEntrySelection,
             onOpenDetail = onOpenDetail,
@@ -4350,6 +4416,7 @@ private fun SwipeableMainEntry(
     entry: UrlEntryEntity,
     displayMode: EntryCardDisplayMode,
     localTagNames: List<String>,
+    localTagColorChoicesByName: Map<String, TagColorChoice>,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onSwipeAction: (MainSwipeAction) -> Unit,
@@ -4391,6 +4458,7 @@ private fun SwipeableMainEntry(
             displayMode = displayMode,
             showDisplayUrl = false,
             localTagNames = localTagNames,
+            localTagColorChoices = localTagColorChoicesByName,
             onLongClick = onLongClick,
             onClick = onClick,
         )
@@ -4465,6 +4533,7 @@ private fun MainSwipeBackground(
 private fun SwipeableArchiveEntry(
     entry: UrlEntryEntity,
     displayMode: EntryCardDisplayMode,
+    localTagColorChoicesByName: Map<String, TagColorChoice>,
     onClick: () -> Unit,
     onSwipeAction: (ArchiveSwipeAction) -> Unit,
 ) {
@@ -4505,6 +4574,7 @@ private fun SwipeableArchiveEntry(
             timestampLabel = "アーカイブ",
             displayMode = displayMode,
             showDisplayUrl = false,
+            localTagColorChoices = localTagColorChoicesByName,
             onClick = onClick,
         )
     }
@@ -4583,6 +4653,7 @@ private fun ArchiveScreen(
     onPendingDeleteEntry: (Long, Long) -> Unit,
     onDeleteFailed: () -> Unit,
 ) {
+    val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val allTagsWithCount by viewModel.allTagsWithCount.collectAsStateWithLifecycle()
     val selectedService by viewModel.selectedServiceFlow.collectAsStateWithLifecycle()
@@ -4590,6 +4661,8 @@ private fun ArchiveScreen(
     val serviceFilterOrder by viewModel.serviceFilterOrder.collectAsStateWithLifecycle()
     val topFilterOrderTokens by viewModel.topFilterOrderTokens.collectAsStateWithLifecycle()
     val entryCardDisplayMode by viewModel.entryCardDisplayMode.collectAsStateWithLifecycle()
+    val tagColorStore = context.appContainer().tagColorStore
+    val tagColorChoices by tagColorStore.observeChoices().collectAsStateWithLifecycle(emptyMap())
     val scope = rememberCoroutineScope()
     val localSaveTags = remember(allTagsWithCount) {
         allTagsWithCount
@@ -4597,6 +4670,11 @@ private fun ArchiveScreen(
                 tag.scope == SharedTagScope.LOCAL_ONLY
             }
             .distinctBy { normalizeSharedTagName(it.name) }
+    }
+    val localTagColorChoicesByName = remember(localSaveTags, tagColorChoices) {
+        localSaveTags.associate { tag ->
+            tag.name.trim().lowercase() to tagColorChoices.choiceFor(TagColorKey.forTag(tag))
+        }
     }
     LaunchedEffect(localSaveTags, selectedLocalTagId) {
         val selectedTagId = selectedLocalTagId ?: return@LaunchedEffect
@@ -4607,6 +4685,8 @@ private fun ArchiveScreen(
     var createLocalTagState by remember { mutableStateOf(SharedTagDialogUiState()) }
     var renameLocalTagState by remember { mutableStateOf(SharedTagDialogUiState()) }
     var pendingRenameLocalTagId by remember { mutableStateOf<Long?>(null) }
+    var pendingTagColorTag by remember { mutableStateOf<TagWithCount?>(null) }
+    var tagColorSaveError by remember { mutableStateOf<String?>(null) }
 
     fun closeCreateLocalTagDialog() {
         createLocalTagState = SharedTagDialogUiState()
@@ -4615,6 +4695,20 @@ private fun ArchiveScreen(
     fun closeRenameLocalTagDialog() {
         renameLocalTagState = SharedTagDialogUiState()
         pendingRenameLocalTagId = null
+    }
+
+    fun openTagColorEditor(tag: TagWithCount) {
+        pendingTagColorTag = tag
+        tagColorSaveError = null
+    }
+
+    fun openRenameLocalTagDialog(tag: TagWithCount) {
+        pendingTagColorTag = null
+        pendingRenameLocalTagId = tag.id
+        renameLocalTagState = SharedTagDialogUiState(
+            visible = true,
+            name = tag.name,
+        )
     }
 
     fun confirmCreateLocalTag() {
@@ -4729,6 +4823,36 @@ private fun ArchiveScreen(
         onConfirm = { confirmRenameLocalTag() },
     )
 
+    pendingTagColorTag?.let { tag ->
+        val colorKeys = TagColorKey.forTag(tag)
+        TagColorEditorSheet(
+            visible = true,
+            editorKey = colorKeys.first().storageValue,
+            tagName = tag.name,
+            selectedColor = tagColorChoices.choiceFor(colorKeys),
+            isSharedTag = false,
+            saveError = tagColorSaveError,
+            onDismiss = {
+                pendingTagColorTag = null
+                tagColorSaveError = null
+            },
+            onRename = { openRenameLocalTagDialog(tag) },
+            onSave = { choice ->
+                scope.launch {
+                    try {
+                        tagColorStore.setChoice(colorKeys, choice)
+                        pendingTagColorTag = null
+                        tagColorSaveError = null
+                    } catch (cancellation: CancellationException) {
+                        throw cancellation
+                    } catch (_: Exception) {
+                        tagColorSaveError = "タグの色を保存できませんでした"
+                    }
+                }
+            },
+        )
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -4783,13 +4907,9 @@ private fun ArchiveScreen(
                             error = null,
                         )
                     },
-                    onRenameLocalTag = { tag ->
-                        pendingRenameLocalTagId = tag.id
-                        renameLocalTagState = SharedTagDialogUiState(
-                            visible = true,
-                            name = tag.name,
-                        )
-                    },
+                    onRenameLocalTag = ::openRenameLocalTagDialog,
+                    onEditLocalTagColor = ::openTagColorEditor,
+                    tagColorChoices = tagColorChoices,
                 )
                 Spacer(modifier = Modifier.height(8.dp))
 
@@ -4818,6 +4938,7 @@ private fun ArchiveScreen(
                             ArchiveEntriesOrEmpty(
                                 uiState = uiState,
                                 entryCardDisplayMode = entryCardDisplayMode,
+                                localTagColorChoicesByName = localTagColorChoicesByName,
                                 onOpenDetail = onOpenDetail,
                                 onRestoreEntry = ::restoreArchivedEntry,
                                 onPendingDeleteEntry = ::pendingDeleteArchivedEntry,
@@ -4840,6 +4961,7 @@ private fun ArchiveScreen(
                             ArchiveEntriesOrEmpty(
                                 uiState = uiState,
                                 entryCardDisplayMode = entryCardDisplayMode,
+                                localTagColorChoicesByName = localTagColorChoicesByName,
                                 onOpenDetail = onOpenDetail,
                                 onRestoreEntry = ::restoreArchivedEntry,
                                 onPendingDeleteEntry = ::pendingDeleteArchivedEntry,
@@ -4853,6 +4975,7 @@ private fun ArchiveScreen(
                         ArchiveEntriesOrEmpty(
                             uiState = uiState,
                             entryCardDisplayMode = entryCardDisplayMode,
+                            localTagColorChoicesByName = localTagColorChoicesByName,
                             onOpenDetail = onOpenDetail,
                             onRestoreEntry = ::restoreArchivedEntry,
                             onPendingDeleteEntry = ::pendingDeleteArchivedEntry,
@@ -4868,6 +4991,7 @@ private fun ArchiveScreen(
 private fun ArchiveEntriesOrEmpty(
     uiState: ListFilterUiState,
     entryCardDisplayMode: EntryCardDisplayMode,
+    localTagColorChoicesByName: Map<String, TagColorChoice>,
     onOpenDetail: (Long) -> Unit,
     onRestoreEntry: (Long) -> Unit,
     onPendingDeleteEntry: (Long) -> Unit,
@@ -4893,6 +5017,7 @@ private fun ArchiveEntriesOrEmpty(
                     SwipeableArchiveEntry(
                         entry = entry,
                         displayMode = entryCardDisplayMode,
+                        localTagColorChoicesByName = localTagColorChoicesByName,
                         onClick = { onOpenDetail(entry.id) },
                         onSwipeAction = { action ->
                             when (action) {
@@ -4933,6 +5058,8 @@ private fun DetailScreen(
     val cloudState by viewModel.cloudState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val tagColorStore = context.appContainer().tagColorStore
+    val tagColorChoices by tagColorStore.observeChoices().collectAsStateWithLifecycle(emptyMap())
 
     var isEditingTitle by rememberSaveable { mutableStateOf(false) }
     var titleInput by rememberSaveable { mutableStateOf("") }
@@ -4956,6 +5083,8 @@ private fun DetailScreen(
     var newSharedTagName by rememberSaveable { mutableStateOf("") }
     var sharedTagError by rememberSaveable { mutableStateOf<String?>(null) }
     var showMediaViewer by rememberSaveable { mutableStateOf(false) }
+    var pendingDetailColorTag by remember { mutableStateOf<DetailTagItem?>(null) }
+    var tagColorSaveError by remember { mutableStateOf<String?>(null) }
     var locallyRemovedTagIds by remember { mutableStateOf(emptySet<Long>()) }
     var locallyAssignedTagIds by remember(entryId) { mutableStateOf(emptySet<Long>()) }
     val localTagSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -5075,6 +5204,11 @@ private fun DetailScreen(
         }
     }
 
+    fun openDetailTagColorEditor(item: DetailTagItem) {
+        pendingDetailColorTag = item
+        tagColorSaveError = null
+    }
+
     BackHandler(enabled = isEditingTitle && current != null) {
         isEditingTitle = false
         titleInput = current?.userTitle.orEmpty()
@@ -5118,6 +5252,7 @@ private fun DetailScreen(
     val effectiveTitle = preferredDisplayTitle(
         userTitle = current.userTitle,
         fetchedTitle = current.fetchedTitle,
+        fetchedAuthorName = current.fetchedAuthorName,
         serviceType = current.serviceType,
         contentContext = current.contentContext,
         normalizedHost = current.normalizedHost,
@@ -5144,11 +5279,16 @@ private fun DetailScreen(
         current.serviceType == ServiceType.TIKTOK ||
         current.serviceType == ServiceType.X ||
         current.serviceType == ServiceType.INSTAGRAM
-    val socialContentText = preferredMetadataContentText(
+    val rawSocialContentText = preferredMetadataContentText(
         fetchedBody = current.fetchedBody,
         bodySummary = current.bodySummary,
         description = current.description,
     )
+    val socialContentText = if (current.serviceType == ServiceType.INSTAGRAM) {
+        MetadataTitleRules.unwrapInstagramCaption(rawSocialContentText) ?: rawSocialContentText
+    } else {
+        rawSocialContentText
+    }
     val summarySectionLabel = if (isTextCard) {
         "タイトル"
     } else {
@@ -5654,6 +5794,35 @@ private fun DetailScreen(
         }
     }
 
+    pendingDetailColorTag?.let { item ->
+        val colorKeys = TagColorKey.forTag(item.record)
+        TagColorEditorSheet(
+            visible = true,
+            editorKey = colorKeys.first().storageValue,
+            tagName = item.name,
+            selectedColor = tagColorChoices.choiceFor(colorKeys),
+            isSharedTag = item.record.scope == SharedTagScope.SYNCED,
+            saveError = tagColorSaveError,
+            onDismiss = {
+                pendingDetailColorTag = null
+                tagColorSaveError = null
+            },
+            onSave = { choice ->
+                scope.launch {
+                    try {
+                        tagColorStore.setChoice(colorKeys, choice)
+                        pendingDetailColorTag = null
+                        tagColorSaveError = null
+                    } catch (cancellation: CancellationException) {
+                        throw cancellation
+                    } catch (_: Exception) {
+                        tagColorSaveError = "タグの色を保存できませんでした"
+                    }
+                }
+            },
+        )
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -5822,6 +5991,7 @@ private fun DetailScreen(
                         ServiceBadge(
                             serviceType = serviceTypeForUi(current.serviceType),
                             badgeImageUrl = current.badgeImageUrl,
+                            reloadKey = current.metadataFetchedAt,
                         )
                         Spacer(Modifier.width(10.dp))
                         Text(
@@ -5872,86 +6042,49 @@ private fun DetailScreen(
                     }
                 }
 
-                if (metadataMessage != null) {
-                    val showRetry = current.metadataState == MetadataState.FAILED ||
-                        current.metadataState == MetadataState.UNAVAILABLE ||
-                        readyWithoutFetchedContent ||
-                        missingXBadge ||
-                        delayedPending ||
-                        retryRequested
-                    val retrying = retryRequested && current.metadataState == MetadataState.PENDING
-                    val metadataStatusIcon = when (current.metadataState) {
-                        MetadataState.PENDING -> Icons.Outlined.Refresh
-                        MetadataState.FAILED -> Icons.Outlined.WarningAmber
-                        MetadataState.UNAVAILABLE -> Icons.Outlined.LinkOff
-                        MetadataState.READY -> Icons.Outlined.Check
+                if (showSharedTagCloudUi) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.Top,
+                    ) {
+                        DetailTagSummaryPanel(
+                            title = "共有タグ",
+                            emptyText = "まだ共有タグは付いていません",
+                            tags = visibleAssignedSyncedTags.map(DetailTagItem::SharedTag),
+                            tagColorChoices = tagColorChoices,
+                            onEdit = { showAddSharedTagSheet = true },
+                            onEditColor = ::openDetailTagColorEditor,
+                            onRemove = ::removeDetailTag,
+                            editButtonTestTag = "detail_shared_tags_edit",
+                            compactHeader = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                        DetailTagSummaryPanel(
+                            title = "自作タグ",
+                            emptyText = "まだ自作タグは付いていません",
+                            tags = assignedLocalTagItems,
+                            tagColorChoices = tagColorChoices,
+                            onEdit = { showAddLocalTagSheet = true },
+                            onEditColor = ::openDetailTagColorEditor,
+                            onRemove = ::removeDetailTag,
+                            editButtonTestTag = "detail_local_tags_edit",
+                            compactHeader = true,
+                            modifier = Modifier.weight(1f),
+                        )
                     }
-                    val metadataStatusColor = when (current.metadataState) {
-                        MetadataState.PENDING -> MaterialTheme.colorScheme.primary
-                        MetadataState.FAILED,
-                        MetadataState.UNAVAILABLE,
-                        -> MaterialTheme.colorScheme.error
-                        MetadataState.READY -> MaterialTheme.colorScheme.secondary
-                    }
-                    OrbitPanel(tone = OrbitPanelTone.SOFT) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            verticalAlignment = Alignment.Top,
-                        ) {
-                            Surface(
-                                modifier = Modifier.size(40.dp),
-                                shape = CircleShape,
-                                color = metadataStatusColor.copy(alpha = 0.16f),
-                                contentColor = metadataStatusColor,
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = metadataStatusIcon,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(20.dp),
-                                    )
-                                }
-                            }
-                            Column(
-                                modifier = Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(4.dp),
-                            ) {
-                                Text(
-                                    text = metadataMessage.title,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                )
-                                if (!metadataMessage.body.isNullOrBlank()) {
-                                    Text(
-                                        text = metadataMessage.body,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                            }
-                        }
-                        if (showRetry) {
-                            OrbitActionButton(
-                                onClick = {
-                                    if (!retrying) requestMetadataReload()
-                                },
-                                enabled = !retrying,
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                if (retrying) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(16.dp),
-                                        strokeWidth = 2.dp,
-                                    )
-                                    Spacer(Modifier.width(8.dp))
-                                    OrbitActionText("再取得中…")
-                                } else {
-                                    OrbitActionText("再取得")
-                                }
-                            }
-                        }
-                    }
+                } else {
+                    DetailTagSummaryPanel(
+                        title = "自作タグ",
+                        emptyText = "まだ自作タグは付いていません",
+                        tags = assignedLocalTagItems,
+                        tagColorChoices = tagColorChoices,
+                        onEdit = { showAddLocalTagSheet = true },
+                        onEditColor = ::openDetailTagColorEditor,
+                        onRemove = ::removeDetailTag,
+                        editButtonTestTag = "detail_local_tags_edit",
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
 
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -5978,7 +6111,21 @@ private fun DetailScreen(
                             },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Text("開く")
+                            Text(
+                                if (current.serviceType in setOf(
+                                        ServiceType.YOUTUBE,
+                                        ServiceType.X,
+                                        ServiceType.INSTAGRAM,
+                                        ServiceType.TIKTOK,
+                                    )
+                                ) {
+                                    "元の投稿を開く ↗"
+                                } else {
+                                    "リンク先を開く ↗"
+                                },
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                         }
                     }
 
@@ -6077,30 +6224,20 @@ private fun DetailScreen(
                     )
                 }
 
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    DetailTagSummaryPanel(
-                        title = "自作タグ",
-                        emptyText = "まだ自作タグは付いていません",
-                        tags = assignedLocalTagItems,
-                        onEdit = { showAddLocalTagSheet = true },
-                        editButtonTestTag = "detail_local_tags_edit",
-                        onRemove = ::removeDetailTag,
-                        modifier = Modifier.fillMaxWidth(),
+                if (metadataMessage != null) {
+                    val showRetry = current.metadataState == MetadataState.FAILED ||
+                        current.metadataState == MetadataState.UNAVAILABLE ||
+                        readyWithoutFetchedContent ||
+                        missingXBadge ||
+                        delayedPending ||
+                        retryRequested
+                    DetailMetadataAdvisory(
+                        message = metadataMessage,
+                        state = current.metadataState,
+                        showRetry = showRetry,
+                        retrying = retryRequested && current.metadataState == MetadataState.PENDING,
+                        onRetry = ::requestMetadataReload,
                     )
-                    if (showSharedTagCloudUi) {
-                        DetailTagSummaryPanel(
-                            title = "共有タグ",
-                            emptyText = "まだ共有タグは付いていません",
-                            tags = visibleAssignedSyncedTags.map(DetailTagItem::SharedTag),
-                            onEdit = { showAddSharedTagSheet = true },
-                            editButtonTestTag = "detail_shared_tags_edit",
-                            onRemove = ::removeDetailTag,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
                 }
 
                 OrbitPanel(
@@ -6167,6 +6304,90 @@ private fun DetailPrimaryActionButton(
         ),
         content = content,
     )
+}
+
+@Composable
+private fun DetailMetadataAdvisory(
+    message: MetadataDetailMessage,
+    state: MetadataState,
+    showRetry: Boolean,
+    retrying: Boolean,
+    onRetry: () -> Unit,
+) {
+    val statusIcon = when (state) {
+        MetadataState.PENDING -> Icons.Outlined.Refresh
+        MetadataState.FAILED -> Icons.Outlined.WarningAmber
+        MetadataState.UNAVAILABLE -> Icons.Outlined.LinkOff
+        MetadataState.READY -> Icons.Outlined.Check
+    }
+    val statusColor = when (state) {
+        MetadataState.PENDING -> MaterialTheme.colorScheme.primary
+        MetadataState.FAILED,
+        MetadataState.UNAVAILABLE,
+        -> MaterialTheme.colorScheme.error
+        MetadataState.READY -> MaterialTheme.colorScheme.secondary
+    }
+
+    OrbitPanel(
+        tone = OrbitPanelTone.SOFT,
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Surface(
+                modifier = Modifier.size(32.dp),
+                shape = CircleShape,
+                color = statusColor.copy(alpha = 0.16f),
+                contentColor = statusColor,
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(statusIcon, contentDescription = null, modifier = Modifier.size(18.dp))
+                }
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = message.title,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (!message.body.isNullOrBlank()) {
+                    Text(
+                        text = message.body,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (showRetry) {
+                TextButton(
+                    onClick = onRetry,
+                    enabled = !retrying,
+                    modifier = Modifier
+                        .heightIn(min = 40.dp)
+                        .testTag("detail_metadata_retry"),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
+                ) {
+                    if (retrying) {
+                        CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(5.dp))
+                        Text("再取得中…", maxLines = 1)
+                    } else {
+                        Text("再取得", maxLines = 1)
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -6743,10 +6964,16 @@ private fun DetailValue(label: String, value: String) {
 }
 
 private fun detailServiceLabelForEntry(entry: UrlEntryEntity): String {
+    if (entry.serviceType == ServiceType.INSTAGRAM) {
+        val authorName = entry.fetchedAuthorName
+            ?.replace(Regex("\\s+on\\s+Instagram(?:\\s*:.*)?$", RegexOption.IGNORE_CASE), "")
+            ?.trim()
+            ?.let(MetadataTitleRules::normalizeInstagramTitle)
+        return authorName ?: ServiceType.INSTAGRAM.displayName
+    }
     if (
         entry.serviceType == ServiceType.YOUTUBE ||
         entry.serviceType == ServiceType.X ||
-        entry.serviceType == ServiceType.INSTAGRAM ||
         entry.serviceType == ServiceType.TIKTOK
     ) {
         entry.fetchedAuthorName?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
@@ -6769,14 +6996,22 @@ private fun DetailTagSummaryPanel(
     title: String,
     emptyText: String,
     tags: List<DetailTagItem>,
+    tagColorChoices: Map<String, TagColorChoice>,
     onEdit: () -> Unit,
+    onEditColor: (DetailTagItem) -> Unit,
     onRemove: (DetailTagItem) -> Unit,
     editButtonTestTag: String? = null,
+    compactHeader: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val darkDetailSurface = MaterialTheme.colorScheme.background.luminance() < 0.3f
     OrbitPanel(
         modifier = modifier,
+        contentPadding = if (compactHeader) {
+            androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 12.dp)
+        } else {
+            androidx.compose.foundation.layout.PaddingValues(18.dp)
+        },
         containerColorOverride = if (darkDetailSurface) null else Color(0xFFFFFCF8),
         contentColorOverride = if (darkDetailSurface) null else Color(0xFF38354A),
         borderColorOverride = if (darkDetailSurface) null else Color(0xFFDCCFE5),
@@ -6808,6 +7043,8 @@ private fun DetailTagSummaryPanel(
                 DetailTagValuePill(
                     text = emptyText,
                     isEmpty = true,
+                    tagColorChoice = TagColorChoice.DEFAULT,
+                    onDoubleClick = null,
                     onRemove = null,
                 )
             } else {
@@ -6819,9 +7056,12 @@ private fun DetailTagSummaryPanel(
                     verticalArrangement = Arrangement.spacedBy(7.dp),
                 ) {
                     tags.forEach { tag ->
+                        val tagColor = tagColorChoices.choiceFor(TagColorKey.forTag(tag.record))
                         DetailTagValuePill(
                             text = tag.name,
                             isEmpty = false,
+                            tagColorChoice = tagColor,
+                            onDoubleClick = { onEditColor(tag) },
                             onRemove = if (tag.canRemove) {
                                 { onRemove(tag) }
                             } else {
@@ -6838,15 +7078,18 @@ private fun DetailTagSummaryPanel(
 private sealed interface DetailTagItem {
     val name: String
     val canRemove: Boolean
+    val record: SharedTagRecord
 
     data class LocalTag(val tag: SharedTagRecord) : DetailTagItem {
         override val name: String = tag.name
         override val canRemove: Boolean = true
+        override val record: SharedTagRecord = tag
     }
 
     data class SharedTag(val tag: SharedTagRecord) : DetailTagItem {
         override val name: String = tag.name
         override val canRemove: Boolean = true
+        override val record: SharedTagRecord = tag
     }
 }
 
@@ -7031,18 +7274,41 @@ private fun DetailTagEditButton(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun DetailTagValuePill(
     text: String,
     isEmpty: Boolean,
+    tagColorChoice: TagColorChoice,
+    onDoubleClick: (() -> Unit)?,
     onRemove: (() -> Unit)?,
 ) {
+    val chipPalette = tagColorChipPalette(
+        MaterialTheme.colorScheme,
+        tagColorChoice,
+        selected = false,
+    )
+    val shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp)
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 48.dp)
             .background(
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
+                color = if (isEmpty) MaterialTheme.colorScheme.surfaceVariant else chipPalette.container,
+                shape = shape,
+            )
+            .border(
+                BorderStroke(1.dp, if (isEmpty) MaterialTheme.colorScheme.outlineVariant else chipPalette.outline),
+                shape,
+            )
+            .then(
+                if (!isEmpty && onDoubleClick != null) {
+                    Modifier.combinedClickable(
+                        onClick = {},
+                        onDoubleClick = onDoubleClick,
+                    )
+                } else {
+                    Modifier
+                },
             )
             .padding(start = 8.dp, end = if (onRemove == null) 8.dp else 2.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -7052,7 +7318,7 @@ private fun DetailTagValuePill(
             text = text,
             modifier = Modifier.weight(1f),
             style = if (isEmpty) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
-            color = if (isEmpty) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+            color = if (isEmpty) MaterialTheme.colorScheme.onSurfaceVariant else chipPalette.content,
             textAlign = TextAlign.Center,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
@@ -7096,14 +7362,14 @@ private fun ExpandableMetadataSection(
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        if (expanded) {
-            Text(
-                text = text,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 20.dp),
-            )
-        }
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = if (expanded) Int.MAX_VALUE else 3,
+            overflow = if (expanded) TextOverflow.Clip else TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 20.dp),
+        )
     }
 }
 

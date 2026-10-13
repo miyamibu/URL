@@ -1,6 +1,7 @@
 package jp.mimac.urlsaver.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -11,7 +12,9 @@ import androidx.compose.material.icons.outlined.MusicVideo
 import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -83,32 +86,45 @@ fun ServiceIcon(
 fun ServiceBadge(
     serviceType: ServiceType,
     badgeImageUrl: String?,
+    reloadKey: Long? = null,
     modifier: Modifier = Modifier,
 ) {
     val size = 32.dp
     if (badgeImageUrl.isNullOrBlank()) {
-        ServiceIcon(serviceType, modifier = modifier.size(size))
+        ServiceBadgeFallback(serviceType, modifier = modifier.size(size))
         return
     }
 
-    SubcomposeAsyncImage(
-        model = badgeImageUrl,
-        contentDescription = null,
-        contentScale = ContentScale.Crop,
-        modifier = modifier
-            .size(size)
-            .clip(CircleShape)
-            .background(OrbitTokens.panelStrong, CircleShape),
-        loading = {
-            ServiceIcon(serviceType, modifier = Modifier.size(size))
-        },
-        error = {
-            ServiceIcon(serviceType, modifier = Modifier.size(size))
-        },
-        success = {
-            SubcomposeAsyncImageContent()
-        },
-    )
+    key(badgeImageUrl, reloadKey) {
+        SubcomposeAsyncImage(
+            model = badgeImageUrl,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = modifier
+                .size(size)
+                .clip(CircleShape)
+                .background(OrbitTokens.panelStrong, CircleShape),
+            loading = {
+                ServiceBadgeFallback(serviceType, modifier = Modifier.size(size))
+            },
+            error = {
+                ServiceBadgeFallback(serviceType, modifier = Modifier.size(size))
+            },
+            success = {
+                SubcomposeAsyncImageContent()
+            },
+        )
+    }
+}
+
+@Composable
+private fun ServiceBadgeFallback(serviceType: ServiceType, modifier: Modifier) {
+    Box(
+        modifier = modifier.background(Color(0xFFE7EDF5), CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        ServiceIcon(serviceType, modifier = Modifier.size(24.dp))
+    }
 }
 
 private data class IconSpec(

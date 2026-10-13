@@ -35,7 +35,9 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import jp.mimac.urlsaver.domain.TagColorChoice
 import jp.mimac.urlsaver.ui.theme.OrbitTokens
+import jp.mimac.urlsaver.ui.theme.tagColorChipPalette
 import jp.mimac.urlsaver.ui.theme.selectableChipPalette
 
 fun cappedOrbitFontScale(
@@ -133,9 +135,12 @@ fun OrbitFilterChip(
     modifier: Modifier = Modifier,
     compact: Boolean = false,
     labelFontSize: TextUnit = TextUnit.Unspecified,
+    tagColorChoice: TagColorChoice? = null,
 ) {
     val hasCustomLabelSize = labelFontSize != TextUnit.Unspecified
-    val palette = selectableChipPalette(MaterialTheme.colorScheme, selected)
+    val palette = tagColorChoice?.let { choice ->
+        tagColorChipPalette(MaterialTheme.colorScheme, choice, selected)
+    } ?: selectableChipPalette(MaterialTheme.colorScheme, selected)
     val shape = RoundedCornerShape(OrbitTokens.radiusChip)
     OrbitCappedFontScale(if (hasCustomLabelSize) 1.3f else 2.0f) {
         Box(
@@ -147,7 +152,7 @@ fun OrbitFilterChip(
                     shape = shape,
                 )
                 .border(
-                    width = 1.dp,
+                    width = if (selected && tagColorChoice != null && tagColorChoice != TagColorChoice.DEFAULT) 2.dp else 1.dp,
                     color = palette.outline.copy(alpha = if (selected) 1f else 0.95f),
                     shape = shape,
                 )

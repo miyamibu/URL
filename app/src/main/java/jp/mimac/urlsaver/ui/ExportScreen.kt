@@ -8,7 +8,6 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -1013,13 +1012,7 @@ private fun ExportDestinationRow(
 private fun exportSelectedBackground(alpha: Float): Color = Color(0xFF65B0FF).copy(alpha = alpha)
 
 @Composable
-private fun exportSelectedColor(): Color {
-    return if (isSystemInDarkTheme()) {
-        Color(0xFF8BC3FF)
-    } else {
-        Color(0xFF1F6FD1)
-    }
-}
+private fun exportSelectedColor(): Color = MaterialTheme.colorScheme.primary
 
 @Composable
 private fun ExportChipRow(

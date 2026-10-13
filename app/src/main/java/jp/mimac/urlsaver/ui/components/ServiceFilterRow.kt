@@ -37,7 +37,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import jp.mimac.urlsaver.domain.ServiceType
+import jp.mimac.urlsaver.domain.TagColorChoice
+import jp.mimac.urlsaver.domain.TagColorKey
 import jp.mimac.urlsaver.domain.TagWithCount
+import jp.mimac.urlsaver.domain.choiceFor
 import jp.mimac.urlsaver.ui.filterLabelForService
 import jp.mimac.urlsaver.ui.theme.OrbitTokens
 import kotlinx.coroutines.withTimeoutOrNull
@@ -125,6 +128,8 @@ fun ServiceFilterRow(
     onSelectLocalTag: ((Long?) -> Unit)? = null,
     onCreateLocalTag: (() -> Unit)? = null,
     onRenameLocalTag: ((TagWithCount) -> Unit)? = null,
+    onEditLocalTagColor: ((TagWithCount) -> Unit)? = null,
+    tagColorChoices: Map<String, TagColorChoice> = emptyMap(),
 ) {
     val listState = rememberLazyListState()
     val edgeThresholdPx = with(LocalDensity.current) { 32.dp.toPx() }
@@ -356,6 +361,9 @@ fun ServiceFilterRow(
                     is TopFilterItem.Service -> filterLabelForService(item.service)
                 },
                 selected = selectedState,
+                tagColorChoice = localTag?.let { tag ->
+                    tagColorChoices.choiceFor(TagColorKey.forTag(tag))
+                },
                 modifier = baseModifier
                     .testTag("top_filter_${item.token}")
                     .then(
@@ -368,7 +376,9 @@ fun ServiceFilterRow(
                                     )
                                 },
                                 onDoubleClick = {
-                                    localTag?.let { tag -> onRenameLocalTag?.invoke(tag) }
+                                    localTag?.let { tag ->
+                                        (onEditLocalTagColor ?: onRenameLocalTag)?.invoke(tag)
+                                    }
                                 },
                             )
                         } else {

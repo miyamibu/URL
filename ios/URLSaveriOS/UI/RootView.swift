@@ -25,16 +25,7 @@ private enum HomeMenuPalette {
     static let aiText = Color(hex: 0xF7D7A2)
 
     static func gradient(for style: HomeBackgroundStyle) -> [Color] {
-        switch style {
-        case .current:
-            return [backgroundTop, backgroundMiddle, backgroundBottom]
-        case .sakura:
-            return [Color(hex: 0xFCF3F6), Color(hex: 0xF5E6EC), Color(hex: 0xEFDBE4)]
-        case .lavender:
-            return [Color(hex: 0xF6F3FC), Color(hex: 0xECE7F5), Color(hex: 0xE3DDEC)]
-        case .mint:
-            return [Color(hex: 0xF2F9F5), Color(hex: 0xE4F1E9), Color(hex: 0xD8E9DE)]
-        }
+        AppDisplayColorPalette.colors(for: style)
     }
 }
 
@@ -147,6 +138,7 @@ struct RootView: View {
                 localTags: model.localTags,
                 localTagAssignments: model.localTagAssignments,
                 sharedTags: model.sharedTags,
+                sharedTagAccountID: model.sharedTagCloudState.authUserID,
                 loadState: model.activeEntriesLoadState,
                 selectedService: $selectedMainService,
                 selectedLocalTagID: $selectedMainLocalTagID,
@@ -581,13 +573,17 @@ struct RootView: View {
             } message: {
                 Text(localTagDeleteMessage(localTagPendingDeletion))
             }
-            .modifier(
-                LocalTagRenameAlertModifier(
-                    pendingTag: $localTagPendingRename,
-                    nameDraft: $localTagRenameDraft,
-                    onRename: renameLocalTagFromAlert(tagID:name:)
+            .sheet(item: $localTagPendingRename) { tag in
+                TagAppearanceSheet(
+                    name: tag.name,
+                    key: TagTintPreferences.localKey(tag.id),
+                    allowsRename: true,
+                    onSaveName: { name in
+                        if name == tag.name { return true }
+                        return await model.renameLocalTag(tagID: tag.id, name: name)
+                    }
                 )
-            )
+            }
         }
         .background(AppPalette.background.ignoresSafeArea())
     }
@@ -769,9 +765,11 @@ private struct MainScreen: View {
     let entries: [URLRecord]
     let totalEntries: [URLRecord]
     let pendingInviteRecord: PendingInviteRecord?
+    @ObservedObject private var cardTints = TagTintPreferences.shared
     let localTags: [LocalTagSummary]
     let localTagAssignments: [Int64: Set<Int64>]
     let sharedTags: [SharedTagSummary]
+    let sharedTagAccountID: String?
     let loadState: EntryListLoadState
     @Binding var selectedService: ServiceType
     @Binding var selectedLocalTagID: Int64?
@@ -814,6 +812,7 @@ private struct MainScreen: View {
 
     var body: some View {
         let localTagNamesByID = Dictionary(uniqueKeysWithValues: localTags.map { ($0.id, $0.name) })
+        let localTagTints = Dictionary(uniqueKeysWithValues: localTags.map { ($0.name, cardTints.tint(for: TagTintPreferences.localKey($0.id))) })
         let homeBackgroundStyle = HomeBackgroundPreferenceStore.resolve(rawValue: homeBackgroundRaw)
         let homeGradient = HomeMenuPalette.gradient(for: homeBackgroundStyle)
 
@@ -876,6 +875,7 @@ private struct MainScreen: View {
 
             SharedTagSection(
                 tags: sharedTags,
+                accountID: sharedTagAccountID,
                 onCreateTag: onCreateSharedTag,
                 onOpenTag: onOpenSharedTag
             )
@@ -942,7 +942,8 @@ private struct MainScreen: View {
                                             displayMode: displayMode,
                                             cardWidth: cardWidth,
                                             selected: selectedEntryIDs.contains(entry.id),
-                                            localTagNames: localTagNames(for: entry, namesByID: localTagNamesByID)
+                                            localTagNames: localTagNames(for: entry, namesByID: localTagNamesByID),
+                                            localTagTints: localTagTints
                                         )
                                         .frame(width: cardWidth)
                                     }
@@ -955,6 +956,7 @@ private struct MainScreen: View {
                                         displayMode: displayMode,
                                         cardWidth: cardWidth,
                                         localTagNames: localTagNames(for: entry, namesByID: localTagNamesByID),
+                                        localTagTints: localTagTints,
                                         onTap: { onOpenDetail(entry.id) },
                                         onArchive: { onArchive(entry.id) },
                                         onDelete: { onDelete(entry.id) },
@@ -2506,6 +2508,7 @@ private struct ArchiveScreen: View {
     let entries: [URLRecord]
     let totalEntries: [URLRecord]
     let loadState: EntryListLoadState
+    @ObservedObject private var cardTints = TagTintPreferences.shared
     let localTags: [LocalTagSummary]
     let localTagAssignments: [Int64: Set<Int64>]
     @Binding var selectedService: ServiceType
@@ -2523,6 +2526,7 @@ private struct ArchiveScreen: View {
 
     var body: some View {
         let localTagNamesByID = Dictionary(uniqueKeysWithValues: localTags.map { ($0.id, $0.name) })
+        let localTagTints = Dictionary(uniqueKeysWithValues: localTags.map { ($0.name, cardTints.tint(for: TagTintPreferences.localKey($0.id))) })
 
         VStack(spacing: 0) {
             ScreenHeader(
@@ -2591,6 +2595,7 @@ private struct ArchiveScreen: View {
                                     displayMode: displayMode,
                                     cardWidth: cardWidth,
                                     localTagNames: localTagNames(for: entry, namesByID: localTagNamesByID),
+                                    localTagTints: localTagTints,
                                     onTap: { onOpenDetail(entry.id) },
                                     onRestore: { onRestore(entry.id) },
                                     onDelete: { onDelete(entry.id) }
@@ -3684,6 +3689,7 @@ private struct LocalTagManagementFlowLayout: Layout {
 }
 
 private struct LocalTagManagementPill: View {
+    @ObservedObject private var tints = TagTintPreferences.shared
     let tag: LocalTagSummary
     let onRename: (LocalTagSummary) -> Void
     let onDelete: (LocalTagSummary) -> Void
@@ -3693,7 +3699,7 @@ private struct LocalTagManagementPill: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(tag.name)
                     .font(.system(size: 21, weight: .heavy, design: .rounded))
-                    .foregroundStyle(AppPalette.textPrimary)
+                    .foregroundStyle(tints.tint(for: TagTintPreferences.localKey(tag.id)) == .standard ? AppPalette.textPrimary : Color(UIColor(hex: 0x283144)))
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: 126, alignment: .leading)
@@ -3718,7 +3724,7 @@ private struct LocalTagManagementPill: View {
         .padding(.leading, 16)
         .padding(.trailing, 12)
         .padding(.vertical, 13)
-        .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .background(tints.tint(for: TagTintPreferences.localKey(tag.id)).color ?? AppPalette.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .stroke(AppPalette.outline, lineWidth: 1.5)

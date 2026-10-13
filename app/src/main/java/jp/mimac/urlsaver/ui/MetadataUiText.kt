@@ -2,6 +2,7 @@ package jp.mimac.urlsaver.ui
 
 import jp.mimac.urlsaver.domain.MetadataError
 import jp.mimac.urlsaver.domain.MetadataBodyKind
+import jp.mimac.urlsaver.domain.MetadataTitleRules
 import jp.mimac.urlsaver.domain.MetadataState
 import jp.mimac.urlsaver.domain.ContentContext
 import jp.mimac.urlsaver.domain.ServiceType
@@ -180,6 +181,7 @@ fun preferredDisplayTitle(
     bodySummary: String?,
     fetchedBody: String?,
     description: String?,
+    fetchedAuthorName: String? = null,
 ): String {
     if (!userTitle.isNullOrBlank()) return userTitle
     if (UrlRules.isTextCardHost(normalizedHost)) {
@@ -192,22 +194,39 @@ fun preferredDisplayTitle(
             ?: "テキスト"
     }
 
+    val instagramPost = serviceType == ServiceType.INSTAGRAM && contentContext in setOf(
+        ContentContext.POST,
+        ContentContext.REEL,
+        ContentContext.SHORT_URL,
+    )
+    if (instagramPost) {
+        val displayableTitle = MetadataTitleRules.normalizeInstagramTitle(fetchedTitle)
+            ?.takeUnless { MetadataTitleRules.isInstagramAuthorTitle(it, fetchedAuthorName) }
+        if (!displayableTitle.isNullOrBlank()) return displayableTitle
+
+        MetadataTitleRules.shortContentTitle(fetchedBody, bodySummary, description)?.let { return it }
+        return UrlRules.effectiveTitle(
+            userTitle = null,
+            fetchedTitle = null,
+            serviceType = serviceType,
+            normalizedHost = normalizedHost,
+        )
+    }
+
     val contentFirst = contentContext in setOf(
         ContentContext.VIDEO,
         ContentContext.SHORTS,
         ContentContext.LIVE,
         ContentContext.POST,
-        ContentContext.REEL,
-        ContentContext.HIGHLIGHT,
         ContentContext.SHORT_URL,
     )
-    if (contentFirst && serviceType in setOf(ServiceType.X, ServiceType.INSTAGRAM, ServiceType.TIKTOK)) {
-        preferredMetadataContentText(
-            fetchedBody = fetchedBody,
-            bodySummary = bodySummary,
-            description = description,
-        )?.let { return it }
+    if (contentFirst && serviceType in setOf(ServiceType.X, ServiceType.TIKTOK)) {
+        MetadataTitleRules.shortContentTitle(fetchedBody, bodySummary, description)
+            ?.let { return it }
     }
+
+    fetchedTitle?.takeIf { it.isNotBlank() }?.let { return it }
+    MetadataTitleRules.shortContentTitle(fetchedBody, bodySummary, description)?.let { return it }
 
     return UrlRules.effectiveTitle(
         userTitle = userTitle,

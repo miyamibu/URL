@@ -1,13 +1,14 @@
 package jp.mimac.urlsaver.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import jp.mimac.urlsaver.domain.HomeBackgroundStyle
 
 private val lightColorPalette = lightColorScheme(
     primary = androidx.compose.ui.graphics.Color(0xFF1F6FD1),
@@ -66,11 +67,19 @@ private val appTypography = Typography().run {
 
 @Composable
 fun UrlSaverTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    darkTheme: Boolean = false,
+    homeBackgroundStyle: HomeBackgroundStyle = HomeBackgroundStyle.DEFAULT,
     content: @Composable () -> Unit,
 ) {
+    val colorScheme = remember(darkTheme, homeBackgroundStyle) {
+        if (darkTheme) {
+            darkColorPalette
+        } else {
+            lightColorPalette.copy(background = homeBackgroundSurfaceColor(homeBackgroundStyle))
+        }
+    }
     MaterialTheme(
-        colorScheme = if (darkTheme) darkColorPalette else lightColorPalette,
+        colorScheme = colorScheme,
         typography = appTypography,
         content = content,
     )

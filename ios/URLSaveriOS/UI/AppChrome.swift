@@ -9,7 +9,10 @@ enum LaunchAdVisibility {
 }
 
 enum AppPalette {
-    static let background = dynamic(light: 0xF4F7FB, dark: 0x07111F)
+    static var background: Color {
+        let style = HomeBackgroundPreferenceStore.load()
+        return Color(UIColor(hex: AppDisplayColorPalette.hexColors(for: style)[1]))
+    }
     static let surface = dynamic(light: 0xFFFFFF, dark: 0x101B2B)
     static let surfaceSoft = dynamic(light: 0xE7EDF5, dark: 0x17263A)
     static let panelStrong = dynamic(light: 0x1B2532, dark: 0x1B2532)
@@ -110,6 +113,33 @@ struct ScreenHeaderButton: Identifiable {
     }
 }
 
+enum AppDisplayColorPalette {
+    static func hexColors(for style: HomeBackgroundStyle) -> [Int] {
+        switch style {
+        case .current: return [0xF7F3EC, 0xEDE7DF, 0xE9E1D7]
+        case .sakura: return [0xFCF3F6, 0xF5E6EC, 0xEFDBE4]
+        case .lavender: return [0xF6F3FC, 0xECE7F5, 0xE3DDEC]
+        case .mint: return [0xF2F9F5, 0xE4F1E9, 0xD8E9DE]
+        }
+    }
+    static func colors(for style: HomeBackgroundStyle) -> [Color] {
+        hexColors(for: style).map { Color(UIColor(hex: $0)) }
+    }
+    static var colorScheme: ColorScheme { .light }
+}
+
+struct AppDisplayBackground: View {
+    @AppStorage(HomeBackgroundPreferenceStore.key) private var colorRaw = HomeBackgroundStyle.defaultStyle.rawValue
+    var body: some View {
+        LinearGradient(
+            colors: AppDisplayColorPalette.colors(for: HomeBackgroundPreferenceStore.resolve(rawValue: colorRaw)),
+            startPoint: .top,
+            endPoint: .bottom
+        )
+        .ignoresSafeArea()
+    }
+}
+
 struct ScreenContainer<Content: View>: View {
     let content: Content
 
@@ -119,7 +149,7 @@ struct ScreenContainer<Content: View>: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            AppPalette.background.ignoresSafeArea()
+            AppDisplayBackground()
             content
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -131,17 +161,20 @@ struct ScreenHeader: View {
     let leadingButton: ScreenHeaderButton?
     let trailingButtons: [ScreenHeaderButton]
     let onTitleTap: (() -> Void)?
+    let trailingAccessory: AnyView?
 
     init(
         title: String,
         leadingButton: ScreenHeaderButton?,
         trailingButtons: [ScreenHeaderButton],
-        onTitleTap: (() -> Void)? = nil
+        onTitleTap: (() -> Void)? = nil,
+        trailingAccessory: AnyView? = nil
     ) {
         self.title = title
         self.leadingButton = leadingButton
         self.trailingButtons = trailingButtons
         self.onTitleTap = onTitleTap
+        self.trailingAccessory = trailingAccessory
     }
 
     var body: some View {
@@ -164,6 +197,9 @@ struct ScreenHeader: View {
 
             ForEach(trailingButtons) { button in
                 IconChromeButton(button: button)
+            }
+            if let trailingAccessory {
+                trailingAccessory
             }
         }
         .padding(.leading, 12)
@@ -315,6 +351,7 @@ struct EntryCardView: View {
     let cardWidth: CGFloat?
     let selected: Bool
     let localTagNames: [String]
+    let localTagTints: [String: TagTint]
     let footerContent: (() -> AnyView)?
 
     init(
@@ -324,6 +361,7 @@ struct EntryCardView: View {
         cardWidth: CGFloat? = nil,
         selected: Bool = false,
         localTagNames: [String] = [],
+        localTagTints: [String: TagTint] = [:],
         footerContent: (() -> AnyView)? = nil
     ) {
         self.entry = entry
@@ -332,6 +370,7 @@ struct EntryCardView: View {
         self.cardWidth = cardWidth
         self.selected = selected
         self.localTagNames = localTagNames
+        self.localTagTints = localTagTints
         self.footerContent = footerContent
     }
 
@@ -367,7 +406,7 @@ struct EntryCardView: View {
 
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(alignment: .top, spacing: 8) {
-                            ServiceBadgeView(serviceType: entry.serviceType, badgeImageURL: entry.badgeImageURL)
+                            ServiceBadgeView(serviceType: entry.serviceType, badgeImageURL: entry.badgeImageURL, reloadKey: entry.metadataFetchedAt)
                                 .padding(.top, 0)
 
                             if visibleLocalTagNames.isEmpty {
@@ -386,7 +425,7 @@ struct EntryCardView: View {
                                             .foregroundStyle(AppPalette.textSecondary)
                                             .padding(.horizontal, 12)
                                             .padding(.vertical, 6)
-                                            .background(AppPalette.panelStrong, in: Capsule())
+                                            .background(AppPalette.surfaceSoft, in: Capsule())
                                             .overlay(
                                                 Capsule()
                                                     .stroke(AppPalette.outline, lineWidth: 1.5)
@@ -395,7 +434,7 @@ struct EntryCardView: View {
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             } else {
-                                EntryLocalTagFlow(tagNames: visibleLocalTagNames)
+                                EntryLocalTagFlow(tagNames: visibleLocalTagNames, tints: localTagTints)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
                         }
@@ -466,22 +505,24 @@ struct EntryCardView: View {
 
 private struct EntryLocalTagFlow: View {
     let tagNames: [String]
+    let tints: [String: TagTint]
 
     var body: some View {
         EntryLocalTagFlowLayout(horizontalSpacing: 6, verticalSpacing: 6) {
             ForEach(tagNames, id: \.self) { tagName in
+                let tint = tints[tagName] ?? .standard
                 Text(tagName)
                     .font(.system(.caption, design: .rounded).weight(.bold))
-                    .foregroundStyle(AppPalette.primaryStrong)
+                    .foregroundStyle(tint == .standard ? AppPalette.primaryStrong : Color(UIColor(hex: 0x283144)))
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
                     .frame(maxWidth: 150)
-                    .background(AppPalette.selectedSurface, in: Capsule())
+                    .background(tint.color ?? AppPalette.selectedSurface, in: Capsule())
                     .overlay(
                         Capsule()
-                            .stroke(AppPalette.primaryStrong.opacity(0.45), lineWidth: 1)
+                            .stroke(tint == .standard ? AppPalette.primaryStrong.opacity(0.45) : Color(UIColor(hex: 0x283144)).opacity(0.2), lineWidth: 1)
                     )
             }
         }
@@ -616,6 +657,7 @@ struct SwipeableEntryCard: View {
     let displayMode: EntryListDisplayMode
     let cardWidth: CGFloat
     let localTagNames: [String]
+    var localTagTints: [String: TagTint] = [:]
     let onTap: () -> Void
     let onArchive: () -> Void
     let onDelete: () -> Void
@@ -650,7 +692,8 @@ struct SwipeableEntryCard: View {
                 timestampLabel: "保存",
                 displayMode: displayMode,
                 cardWidth: cardWidth,
-                localTagNames: localTagNames
+                localTagNames: localTagNames,
+                localTagTints: localTagTints
             )
             .offset(x: dragOffset)
             .contentShape(Rectangle())
@@ -698,6 +741,7 @@ struct SwipeableArchivedEntryCard: View {
     let displayMode: EntryListDisplayMode
     let cardWidth: CGFloat
     let localTagNames: [String]
+    var localTagTints: [String: TagTint] = [:]
     let onTap: () -> Void
     let onRestore: () -> Void
     let onDelete: () -> Void
@@ -731,7 +775,8 @@ struct SwipeableArchivedEntryCard: View {
                 timestampLabel: "アーカイブ",
                 displayMode: displayMode,
                 cardWidth: cardWidth,
-                localTagNames: localTagNames
+                localTagNames: localTagNames,
+                localTagTints: localTagTints
             )
             .offset(x: dragOffset)
             .contentShape(Rectangle())
@@ -1073,10 +1118,12 @@ func swipeVisualOffsetLimit(containerWidth: CGFloat) -> CGFloat {
 struct ServiceBadgeView: View {
     let serviceType: ServiceType
     let badgeImageURL: String?
+    let reloadKey: Date?
 
-    init(serviceType: ServiceType, badgeImageURL: String? = nil) {
+    init(serviceType: ServiceType, badgeImageURL: String? = nil, reloadKey: Date? = nil) {
         self.serviceType = serviceType
         self.badgeImageURL = badgeImageURL
+        self.reloadKey = reloadKey
     }
 
     var body: some View {
@@ -1088,6 +1135,7 @@ struct ServiceBadgeView: View {
             } placeholder: {
                 fallbackBadge
             }
+            .id(reloadKey)
             .frame(width: 36, height: 36)
             .clipShape(Circle())
             .background(AppPalette.surfaceSoft, in: Circle())
@@ -1140,7 +1188,6 @@ private struct RemoteURLImage<Content: View, Placeholder: View>: View {
 
     @State private var image: UIImage?
     @State private var loadedURL: URL?
-    @State private var failedURL: URL?
 
     var body: some View {
         Group {
@@ -1161,29 +1208,32 @@ private struct RemoteURLImage<Content: View, Placeholder: View>: View {
                 image = nil
             }
         }
-        guard failedURL != url else { return }
+        guard image == nil || loadedURL != url else { return }
 
         var request = URLRequest(url: url)
         request.timeoutInterval = 20
         request.setValue(Self.browserLikeUserAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("image/avif,image/webp,image/apng,image/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
-        request.setValue("https://www.tiktok.com/", forHTTPHeaderField: "Referer")
+        let imageHost = url.host?.lowercased() ?? ""
+        if imageHost.contains("tiktok") || imageHost.contains("tiktokcdn") || imageHost.contains("byteoversea") {
+            request.setValue("https://www.tiktok.com/", forHTTPHeaderField: "Referer")
+        } else if imageHost.contains("instagram") || imageHost.hasSuffix("cdninstagram.com") || imageHost.hasSuffix("fbcdn.net") {
+            request.setValue("https://www.instagram.com/", forHTTPHeaderField: "Referer")
+        }
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse,
                   (200...299).contains(httpResponse.statusCode),
                   let loadedImage = UIImage(data: data) else {
-                await MainActor.run { failedURL = url }
                 return
             }
             await MainActor.run {
                 image = loadedImage
                 loadedURL = url
-                failedURL = nil
             }
         } catch {
-            await MainActor.run { failedURL = url }
+            return
         }
     }
 
@@ -1237,7 +1287,160 @@ private func mergeTopFilterItems(
     return orderedItems
 }
 
+enum TagTint: String, CaseIterable, Identifiable {
+    case standard, rose, peach, butter, mint, aqua, sky, lavender, lilac
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .standard: return "標準"
+        case .rose: return "さくら"
+        case .peach: return "もも"
+        case .butter: return "クリーム"
+        case .mint: return "ミント"
+        case .aqua: return "アクア"
+        case .sky: return "そら"
+        case .lavender: return "ラベンダー"
+        case .lilac: return "ライラック"
+        }
+    }
+    var color: Color? {
+        let hex: Int
+        switch self {
+        case .standard: return nil
+        case .rose: hex = 0xF4D9E4
+        case .peach: hex = 0xF6DEC9
+        case .butter: hex = 0xF2E8BA
+        case .mint: hex = 0xD9EADA
+        case .aqua: hex = 0xD3ECE8
+        case .sky: hex = 0xD7E6F7
+        case .lavender: hex = 0xE2DCF4
+        case .lilac: hex = 0xEDD8EE
+        }
+        return Color(UIColor(hex: hex))
+    }
+}
+
+@MainActor
+final class TagTintPreferences: ObservableObject {
+    static let shared = TagTintPreferences()
+    static let storageKey = "tag_tints_local_v1"
+    @Published private(set) var values: [String: String]
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        values = defaults.dictionary(forKey: Self.storageKey) as? [String: String] ?? [:]
+    }
+    static func localKey(_ id: Int64) -> String { "local:\(id)" }
+    static func sharedKey(accountID: String?, remoteID: String) -> String? {
+        guard let accountID, !accountID.isEmpty, !remoteID.isEmpty else { return nil }
+        return "shared:\(accountID):\(remoteID)"
+    }
+    func tint(for key: String?) -> TagTint {
+        guard let key, let raw = values[key] else { return .standard }
+        return TagTint(rawValue: raw) ?? .standard
+    }
+    func save(_ tint: TagTint, for key: String) {
+        values[key] = tint.rawValue
+        defaults.set(values, forKey: Self.storageKey)
+    }
+}
+
+struct TagAppearanceSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let title: String
+    let key: String
+    let allowsRename: Bool
+    let onSaveName: ((String) async -> Bool)?
+    @State private var name: String
+    @State private var tint: TagTint
+    @State private var isSaving = false
+    @State private var error: String?
+
+    init(name: String, key: String, allowsRename: Bool = false, onSaveName: ((String) async -> Bool)? = nil) {
+        title = allowsRename ? "自作タグを編集" : "共有タグの色"
+        self.key = key
+        self.allowsRename = allowsRename
+        self.onSaveName = onSaveName
+        _name = State(initialValue: name)
+        _tint = State(initialValue: TagTintPreferences.shared.tint(for: key))
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    if allowsRename {
+                        TextField("タグ名", text: $name)
+                            .textFieldStyle(.roundedBorder)
+                            .onChange(of: name) { _, _ in error = nil }
+                    }
+                    Text("プレビュー")
+                        .font(.headline)
+                    FilterChipButton(label: name.isEmpty ? "タグ" : name, selected: false, tint: tint)
+                    Text("色")
+                        .font(.headline)
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 76))], spacing: 14) {
+                        ForEach(TagTint.allCases) { choice in
+                            Button { tint = choice } label: {
+                                VStack(spacing: 7) {
+                                    Circle()
+                                        .fill(choice.color ?? AppPalette.panelStrong)
+                                        .frame(width: 44, height: 44)
+                                        .overlay {
+                                            if tint == choice {
+                                                Image(systemName: "checkmark")
+                                                    .font(.system(size: 18, weight: .bold))
+                                                    .foregroundStyle(choice == .standard ? Color.white : Color(UIColor(hex: 0x283144)))
+                                            }
+                                        }
+                                    Text(choice.label).font(.caption)
+                                }
+                                .frame(minWidth: 70, minHeight: 72)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(choice.label)
+                            .accessibilityValue(tint == choice ? "選択中" : "未選択")
+                            .accessibilityAddTraits(tint == choice ? .isSelected : [])
+                        }
+                    }
+                    Text(allowsRename ? "色はこの端末だけに保存されます。" : "この端末での表示だけを変えます。共有タグの名前や他の人の表示は変わりません。")
+                        .font(.callout).foregroundStyle(AppPalette.textSecondary)
+                    if let error { Text(error).foregroundStyle(AppPalette.danger) }
+                }
+                .padding(24)
+            }
+            .background(AppDisplayBackground())
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("キャンセル") { dismiss() }.disabled(isSaving)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") {
+                        Task { @MainActor in
+                            isSaving = true
+                            if allowsRename, let onSaveName, !(await onSaveName(name)) {
+                                error = "タグ名を保存できませんでした。40文字以内で、ほかのタグと異なる名前にしてください。"
+                                isSaving = false
+                                return
+                            }
+                            TagTintPreferences.shared.save(tint, for: key)
+                            isSaving = false
+                            dismiss()
+                        }
+                    }
+                    .disabled(isSaving || (allowsRename && name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+                }
+            }
+        }
+    }
+}
+
 struct ServiceFilterRow: View {
+    @ObservedObject private var tints = TagTintPreferences.shared
     @AppStorage("top_filter_order_v1") private var topFilterOrderRaw = ""
     @State private var draggingFilterToken: String?
 
@@ -1287,17 +1490,21 @@ struct ServiceFilterRow: View {
                     }
                     FilterChipButton(
                         label: label(for: item, localTag: localTag),
-                        selected: isSelected(item)
-                    ) {
-                        select(item)
-                    }
-                    .simultaneousGesture(
-                        TapGesture(count: 2).onEnded {
-                            if let localTag {
-                                onRenameLocalTag(localTag)
+                        selected: isSelected(item),
+                        tint: tints.tint(for: localTag.map { TagTintPreferences.localKey($0.id) })
+                    )
+                    .highPriorityGesture(
+                        TapGesture(count: 2).exclusively(before: TapGesture(count: 1)).onEnded { gesture in
+                            switch gesture {
+                            case .first:
+                                if let localTag { onRenameLocalTag(localTag) }
+                                else { select(item) }
+                            case .second:
+                                select(item)
                             }
                         }
                     )
+                    .accessibilityAction { select(item) }
                     .accessibilityHint("長押ししてドラッグすると並び替えできます")
                     .onDrag {
                         draggingFilterToken = item.token
@@ -1423,17 +1630,20 @@ let serviceFilterOrder: [ServiceType] = [
 struct FilterChipButton: View {
     let label: String
     let selected: Bool
+    let tint: TagTint
     let accessibilityLabel: String?
     let action: (() -> Void)?
 
     init(
         label: String,
         selected: Bool,
+        tint: TagTint = .standard,
         accessibilityLabel: String? = nil,
         action: (() -> Void)? = nil
     ) {
         self.label = label
         self.selected = selected
+        self.tint = tint
         self.accessibilityLabel = accessibilityLabel
         self.action = action
     }
@@ -1461,7 +1671,7 @@ struct FilterChipButton: View {
                     .truncationMode(.tail)
                     .font(.system(size: 14, weight: .heavy, design: .rounded))
                     .foregroundStyle(
-                        selected
+                        selected || tint != .standard
                             ? Color(UIColor(hex: 0x08111D))
                             : Color.white.opacity(0.78)
                     )
@@ -1470,10 +1680,11 @@ struct FilterChipButton: View {
                     .frame(maxWidth: 190, minHeight: 44)
                     .background(
                         selected
-                            ? Color(UIColor(hex: 0x67B0FF))
-                            : AppPalette.panelStrong,
+                            ? tint.color ?? Color(UIColor(hex: 0x67B0FF))
+                            : tint.color ?? AppPalette.panelStrong,
                         in: Capsule()
                     )
+                    .overlay(Capsule().stroke(selected ? AppPalette.primaryStrong : .clear, lineWidth: 2))
             }
         }
         .buttonStyle(.plain)
@@ -1485,7 +1696,10 @@ struct FilterChipButton: View {
 }
 
 struct SharedTagSection: View {
+    @ObservedObject private var tints = TagTintPreferences.shared
+    @State private var editingTag: SharedTagSummary?
     let tags: [SharedTagSummary]
+    var accountID: String? = nil
     let onCreateTag: (() -> Void)?
     let onOpenTag: ((String) -> Void)?
 
@@ -1509,13 +1723,25 @@ struct SharedTagSection: View {
                     ForEach(tags) { tag in
                         FilterChipButton(
                             label: tag.name,
-                            selected: false
-                        ) {
-                            onOpenTag?(tag.remoteTagID)
-                        }
+                            selected: false,
+                            tint: tints.tint(for: TagTintPreferences.sharedKey(accountID: accountID, remoteID: tag.remoteTagID))
+                        )
+                        .highPriorityGesture(TapGesture(count: 2).exclusively(before: TapGesture(count: 1)).onEnded { gesture in
+                            switch gesture {
+                            case .first: editingTag = tag
+                            case .second: onOpenTag?(tag.remoteTagID)
+                            }
+                        })
+                        .accessibilityAction { onOpenTag?(tag.remoteTagID) }
+                        .accessibilityAction(named: "色を変更") { editingTag = tag }
                     }
                 }
                 .padding(.horizontal, 14)
+            }
+        }
+        .sheet(item: $editingTag) { tag in
+            if let key = TagTintPreferences.sharedKey(accountID: accountID, remoteID: tag.remoteTagID) {
+                TagAppearanceSheet(name: tag.name, key: key)
             }
         }
     }
@@ -1646,6 +1872,7 @@ func serviceLabel(for entry: URLRecord) -> String {
     if URLRules.isTextCardHost(entry.normalizedHost) {
         return "テキスト"
     }
+
     switch entry.serviceType {
     case .youtube:
         return "YouTube"
@@ -1675,11 +1902,48 @@ func preferredDisplayTitle(for entry: URLRecord) -> String {
         return "テキスト"
     }
 
-    if isSocialPostTitleContentFirstService(entry.serviceType),
-       let contentText = firstNonBlank(entry.fetchedBody, entry.bodyPreview, entry.bodySummary, entry.description) {
-        return contentText
+    if entry.serviceType == .x,
+       URL(string: entry.normalizedURL)?.path.hasPrefix("/i/article/") == true,
+       let fetchedTitle = nonBlank(entry.fetchedTitle) {
+        return fetchedTitle
     }
 
+    let usesContentTitle = isSocialPostTitleContentFirstService(entry.serviceType) &&
+        ![.profile, .channel, .sound, .music, .playlist, .list, .space, .hashtag, .highlight].contains(entry.contentContext)
+    let fetchedTitle = nonBlank(entry.fetchedTitle)
+    if let fetchedTitle, !usesContentTitle {
+        return fetchedTitle
+    }
+    if usesContentTitle, entry.serviceType == .instagram, let fetchedTitle {
+        let cleaned = fetchedTitle.replacingOccurrences(
+            of: #"\s*[|•·]\s*Instagram(?:\s+photos\s+and\s+videos)?\s*$"#,
+            with: "", options: [.regularExpression, .caseInsensitive]
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = cleaned.lowercased()
+        let isAuthor = nonBlank(entry.fetchedAuthorName)?.caseInsensitiveCompare(cleaned) == .orderedSame
+        let isEngagement = cleaned.range(
+            of: #"(?:^[\d,.KM万]+\s+(?:likes?|comments?)\s*[,，]|^いいね[!！]?\s*[\d,.万]+件[、,]\s*コメント\s*[\d,.万]+件|[\d,.万]+件(?:の)?(?:いいね|コメント).*(?:Instagram|インスタグラム))"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+        let isWrapper = lower.hasPrefix("@") || lower.contains(" on instagram") || lower.contains("instagram photos and videos") ||
+            lower == "instagram" || cleaned.range(of: #"\(@[^)]+\)\s*$"#, options: .regularExpression) != nil ||
+            isEngagement || cleaned.isEmpty
+        if !isAuthor && !isWrapper {
+            return cleaned
+        }
+    }
+
+    if let contentText = firstNonBlank(entry.fetchedBody, entry.bodyPreview, entry.bodySummary, entry.description) {
+        let caption = entry.serviceType == .instagram
+            ? MetadataFetcher.instagramCaptionText(contentText) ?? contentText
+            : contentText
+        let compact = caption.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        return compact.count > 100 ? String(compact.prefix(100)) + "…" : compact
+    }
+
+    if usesContentTitle && entry.serviceType == .instagram {
+        return URLRules.effectiveTitle(userTitle: nil, fetchedTitle: nil, serviceType: entry.serviceType, normalizedHost: entry.normalizedHost)
+    }
     return entry.effectiveTitle
 }
 

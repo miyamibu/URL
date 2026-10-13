@@ -14,6 +14,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -23,6 +24,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsetsSides
@@ -30,6 +32,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -40,12 +43,20 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.AccountCircle
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.LinkOff
+import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Sell
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -66,15 +77,20 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -90,7 +106,6 @@ import jp.mimac.urlsaver.R
 import jp.mimac.urlsaver.data.ChatGptPersonalLinkSyncSettings
 import jp.mimac.urlsaver.data.ChatGptSyncEligibilitySnapshot
 import jp.mimac.urlsaver.data.ChatGptSyncResult
-import jp.mimac.urlsaver.data.PendingInviteRecord
 import jp.mimac.urlsaver.domain.SharedTagAccountDeletionResult
 import jp.mimac.urlsaver.domain.SharedTagAuthResult
 import jp.mimac.urlsaver.domain.BillingPeriod
@@ -100,10 +115,10 @@ import jp.mimac.urlsaver.domain.SharedTagInviteAcceptanceResult
 import jp.mimac.urlsaver.domain.SharedTagInvitePreviewResult
 import jp.mimac.urlsaver.domain.UsageSummary
 import jp.mimac.urlsaver.domain.isPaidCourse
-import jp.mimac.urlsaver.ui.theme.AppThemeMode
 import jp.mimac.urlsaver.domain.HomeBackgroundStyle
 import jp.mimac.urlsaver.ui.theme.homeBackgroundGradientColors
 import jp.mimac.urlsaver.ui.theme.homeBackgroundLabel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -146,8 +161,6 @@ internal fun chatGptSyncConfirmationBody(
 @Composable
 fun SharedTagCloudAuthScreen(
     viewModel: SharedTagAuthViewModel,
-    themeMode: AppThemeMode,
-    onThemeModeChange: (AppThemeMode) -> Unit,
     homeBackgroundStyle: HomeBackgroundStyle,
     onHomeBackgroundStyleChange: (HomeBackgroundStyle) -> Unit,
     onBack: () -> Unit,
@@ -177,8 +190,13 @@ fun SharedTagCloudAuthScreen(
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var displayName by remember { mutableStateOf("") }
-    var message by remember { mutableStateOf<String?>(null) }
+    var profileMessage by remember { mutableStateOf<String?>(null) }
+    var accountMessage by remember { mutableStateOf<String?>(null) }
+    var planMessage by remember { mutableStateOf<String?>(null) }
+    var supportMessage by remember { mutableStateOf<String?>(null) }
     var isSubmitting by remember { mutableStateOf(false) }
+    var isSavingProfile by remember { mutableStateOf(false) }
+    var profileMessageIsError by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var isRetryingLocalCleanup by remember { mutableStateOf(false) }
     var showContactPage by remember { mutableStateOf(false) }
@@ -194,6 +212,11 @@ fun SharedTagCloudAuthScreen(
     var isRedeemingPromoCode by remember { mutableStateOf(false) }
     var isPurchasing by remember { mutableStateOf(false) }
     var showAiTransparencySheet by remember { mutableStateOf(false) }
+    var showDisplayColorPicker by rememberSaveable { mutableStateOf(false) }
+    var showUsageDetails by remember { mutableStateOf(false) }
+    var showPlanDetails by rememberSaveable { mutableStateOf(false) }
+    var showAccountDetails by rememberSaveable { mutableStateOf(false) }
+    var showChatGptSyncDetails by rememberSaveable { mutableStateOf(false) }
     var draftAvatarBase64 by remember { mutableStateOf<String?>(null) }
     val avatarBitmap = remember(draftAvatarBase64) { draftAvatarBase64.toImageBitmapOrNull() }
     val isAvatarChanged = draftAvatarBase64 != profile.avatarBase64
@@ -203,39 +226,36 @@ fun SharedTagCloudAuthScreen(
         scope.launch {
             val bytes = readAvatarBytes(context, uri)
             if (bytes == null) {
-                message = "プロフィール写真を読み込めませんでした"
+                profileMessage = "プロフィール写真を読み込めませんでした"
+                profileMessageIsError = true
             } else {
                 draftAvatarBase64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
-                message = "プロフィール写真を選択しました"
+                profileMessage = "プロフィール写真を選択しました"
+                profileMessageIsError = false
             }
         }
     }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        message = if (granted) {
+        accountMessage = if (granted) {
             "共有タグの新着通知を有効にしました"
         } else {
             "通知は端末の設定からいつでも有効にできます"
         }
     }
 
-    LaunchedEffect(profile.displayName) {
-        if (displayName != profile.displayName) {
-            displayName = profile.displayName
-        }
-    }
-
-    LaunchedEffect(profile.avatarBase64) {
-        if (draftAvatarBase64 != profile.avatarBase64) {
-            draftAvatarBase64 = profile.avatarBase64
-        }
+    LaunchedEffect(profile.displayName, profile.avatarBase64) {
+        if (isSavingProfile || profileMessageIsError) return@LaunchedEffect
+        if (displayName != profile.displayName) displayName = profile.displayName
+        if (draftAvatarBase64 != profile.avatarBase64) draftAvatarBase64 = profile.avatarBase64
     }
 
     LaunchedEffect(initialPromoCode) {
         if (!initialPromoCode.isNullOrBlank()) {
             promoCode = initialPromoCode
             promoMessage = "メールの優待コードを読み込みました"
+            showPlanDetails = true
         }
     }
 
@@ -250,6 +270,7 @@ fun SharedTagCloudAuthScreen(
         contactIdempotencyKey = UUID.randomUUID().toString()
         contactAttemptFingerprint = null
         contactError = null
+        supportMessage = null
         showContactPage = true
     }
 
@@ -281,7 +302,7 @@ fun SharedTagCloudAuthScreen(
                     ContactSupportUiResult.Success -> {
                         contactBody = ""
                         showContactPage = false
-                        message = CONTACT_SUPPORT_SUCCESS_MESSAGE
+                        supportMessage = CONTACT_SUPPORT_SUCCESS_MESSAGE
                     }
                     is ContactSupportUiResult.Failure -> {
                         contactError = result.message
@@ -310,14 +331,15 @@ fun SharedTagCloudAuthScreen(
     }
 
     fun purchasePaidCourse(planType: PlanType, billingPeriod: BillingPeriod) {
+        showPlanDetails = true
         val activity = context.findActivity()
         if (activity == null) {
-            message = "購入画面を開けませんでした"
+            planMessage = "購入画面を開けませんでした"
             return
         }
         scope.launch {
             isPurchasing = true
-            message = when (val result = viewModel.purchasePaidCourse(activity, planType, billingPeriod)) {
+            planMessage = when (val result = viewModel.purchasePaidCourse(activity, planType, billingPeriod)) {
                 PaidCoursePurchaseUiResult.Started -> "購入画面を開きました"
                 PaidCoursePurchaseUiResult.AuthRequired -> "購入にはサインインが必要です"
                 PaidCoursePurchaseUiResult.ProductUnavailable -> "このコースは現在購入できません"
@@ -331,7 +353,7 @@ fun SharedTagCloudAuthScreen(
     fun acceptPendingInvite() {
         scope.launch {
             isSubmitting = true
-            message = when (val result = viewModel.acceptPendingInvite()) {
+            accountMessage = when (val result = viewModel.acceptPendingInvite()) {
                 is SharedTagInviteAcceptanceResult.Success -> {
                     if (result.inviteType == jp.mimac.urlsaver.domain.SharedInviteType.GROUP) {
                         "保留中のグループ招待に参加しました。同期後にグループ一覧へ表示されます。"
@@ -343,6 +365,7 @@ fun SharedTagCloudAuthScreen(
                 SharedTagInviteAcceptanceResult.InvalidInvite -> "保留中の招待リンクが無効か期限切れです"
                 is SharedTagInviteAcceptanceResult.Failure -> result.message
             }
+            showAccountDetails = true
             isSubmitting = false
         }
     }
@@ -351,6 +374,10 @@ fun SharedTagCloudAuthScreen(
         topBar = {
             TopAppBar(
                 title = { Text(if (showContactPage) "問い合わせ" else "プロフィール") },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                    scrolledContainerColor = MaterialTheme.colorScheme.background,
+                ),
                 windowInsets = TopAppBarDefaults.windowInsets.only(WindowInsetsSides.Horizontal),
                 navigationIcon = {
                     IconButton(onClick = { if (showContactPage) showContactPage = false else onBack() }) {
@@ -364,7 +391,7 @@ fun SharedTagCloudAuthScreen(
             modifier = Modifier
                 .padding(paddingValues)
                 .fillMaxSize()
-                .padding(start = 24.dp, top = 8.dp, end = 24.dp, bottom = 24.dp),
+                .padding(start = 20.dp, top = 8.dp, end = 20.dp, bottom = 24.dp),
             contentAlignment = Alignment.TopCenter,
         ) {
             Column(
@@ -399,301 +426,282 @@ fun SharedTagCloudAuthScreen(
                 }
 
                 ProfileCard(
-                    displayName = profile.trimmedDisplayName.ifBlank {
-                        "プロフィール名"
-                    },
+                    displayName = profile.trimmedDisplayName,
                     signedInEmail = cloudState.signedInEmail,
                     draftDisplayName = displayName,
                     avatarBitmap = avatarBitmap,
                     canSaveProfile = displayName.trim() != profile.trimmedDisplayName || isAvatarChanged,
+                    isAvatarChanged = isAvatarChanged,
+                    isSaving = isSavingProfile,
+                    profileMessage = profileMessage,
+                    profileMessageIsError = profileMessageIsError,
                     onDisplayNameChange = {
                         displayName = it
-                        message = null
+                        profileMessage = null
+                        profileMessageIsError = false
                     },
-                    onSaveProfile = {
-                        scope.launch {
-                            viewModel.saveProfile(displayName, draftAvatarBase64)
-                            message = "プロフィールを保存しました"
+                    onSaveProfile = { onSaved ->
+                        if (!isSavingProfile) {
+                            isSavingProfile = true
+                            scope.launch {
+                                try {
+                                    viewModel.saveProfile(displayName, draftAvatarBase64)
+                                    profileMessage = "プロフィールを保存しました"
+                                    profileMessageIsError = false
+                                    onSaved()
+                                } catch (cancellation: CancellationException) {
+                                    throw cancellation
+                                } catch (_: Exception) {
+                                    profileMessage = "プロフィールを保存できませんでした"
+                                    profileMessageIsError = true
+                                } finally {
+                                    isSavingProfile = false
+                                }
+                            }
                         }
                     },
                     onPickAvatar = { imagePicker.launch("image/*") },
                     onRemoveAvatar = {
                         draftAvatarBase64 = null
-                        message = "プロフィール写真を削除対象にしました"
+                        profileMessage = "プロフィール写真を削除対象にしました"
+                        profileMessageIsError = false
                     },
-                    themeMode = themeMode,
-                    onThemeModeChange = onThemeModeChange,
-                    homeBackgroundStyle = homeBackgroundStyle,
-                    onHomeBackgroundStyleChange = onHomeBackgroundStyleChange,
+                    onCancelAvatarChange = {
+                        draftAvatarBase64 = profile.avatarBase64
+                        profileMessage = null
+                        profileMessageIsError = false
+                    },
                 )
-                ChatGptPersonalLinkSyncCard(
-                    viewModel = viewModel,
-                    cloudState = cloudState,
-                    settings = chatGptSyncSettings,
-                    eligibility = chatGptSyncEligibility,
-                )
-                if (aiTransparencyViewModel != null) {
-                    OutlinedButton(
-                        onClick = { showAiTransparencySheet = true },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp),
-                    ) {
-                        Text("AI動作の確認（デバッグ）")
-                    }
+
+                localCleanupPending?.let { pending ->
+                    LocalAccountCleanupCard(
+                        pending = pending,
+                        isRetrying = isRetryingLocalCleanup,
+                        onRetry = {
+                            scope.launch {
+                                isRetryingLocalCleanup = true
+                                try {
+                                    accountMessage = when (val result = viewModel.retryLocalAccountCleanup()) {
+                                        SharedTagAccountDeletionResult.Success -> "アカウント削除と端末内データの消去が完了しました"
+                                        is SharedTagAccountDeletionResult.LocalCleanupRequired -> localCleanupStatusMessage(result)
+                                        else -> "アカウントは削除済みです。端末内データの消去を再試行できませんでした"
+                                    }
+                                } finally {
+                                    isRetryingLocalCleanup = false
+                                }
+                            }
+                        },
+                    )
                 }
-                pendingInvite?.let { record ->
+
+                pendingInvite?.let {
                     PendingInviteResumeCard(
-                        record = record,
                         isSignedIn = cloudState.isSignedIn,
                         isSubmitting = isSubmitting,
                         onAccept = ::acceptPendingInvite,
                         onClear = {
                             viewModel.clearPendingInvite()
-                            message = "保留中の招待を削除しました"
+                            accountMessage = "保留中の招待を解除しました"
                         },
                     )
                 }
+
                 UsageSummaryCard(
                     usageSummary = usageSummary,
+                    backgroundStyle = homeBackgroundStyle,
+                    planLabel = profilePlanLabel(entitlements.planType),
+                    expanded = showUsageDetails,
+                    onToggleExpanded = { showUsageDetails = !showUsageDetails },
                 )
-                if (entitlements.subscriptionEnabled) {
-                    OutlinedButton(
-                        onClick = {},
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("Plus プラン")
-                    }
-                }
 
-                Button(
-                    onClick = ::openContactPage,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp),
-                ) {
-                    Text("問い合わせ")
-                }
-                message?.let {
-                    ProfileStatusMessage(message = it)
-                }
-                localCleanupPending?.let { pending ->
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        color = MaterialTheme.colorScheme.errorContainer,
-                        shape = MaterialTheme.shapes.medium,
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
+                DisplaySettingsCard(
+                    selectedStyle = homeBackgroundStyle,
+                    onOpenColorPicker = { showDisplayColorPicker = true },
+                )
+
+                ProfileAccountAndShareCard(
+                    cloudState = cloudState,
+                    expanded = showAccountDetails,
+                    accountMessage = accountMessage,
+                    onToggleAccountDetails = { showAccountDetails = !showAccountDetails },
+                    planDetailsExpanded = showPlanDetails,
+                    onTogglePlanDetails = { showPlanDetails = !showPlanDetails },
+                    accountDetails = {
+                        if (!cloudState.isConfigured) {
                             Text(
-                                text = "アカウントは削除済みです",
-                                style = MaterialTheme.typography.titleMedium,
+                                text = "このビルドでは共有タグのクラウド同期が設定されていません。",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-                            Text(localCleanupStatusMessage(pending))
-                            OutlinedButton(
-                                onClick = {
-                                    scope.launch {
-                                        isRetryingLocalCleanup = true
-                                        try {
-                                            when (val result = viewModel.retryLocalAccountCleanup()) {
-                                                SharedTagAccountDeletionResult.Success -> {
-                                                    message = "アカウント削除と端末内データの消去が完了しました"
-                                                }
-                                                is SharedTagAccountDeletionResult.LocalCleanupRequired -> {
-                                                    message = localCleanupStatusMessage(result)
-                                                }
-                                                else -> {
-                                                    message = "アカウントは削除済みです。端末内データの消去を再試行できませんでした"
-                                                }
-                                            }
-                                        } finally {
-                                            isRetryingLocalCleanup = false
-                                        }
-                                    }
-                                },
-                                enabled = !isRetryingLocalCleanup,
-                                modifier = Modifier.fillMaxWidth(),
+                        } else if (cloudState.isSignedIn) {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+                                PackageManager.PERMISSION_GRANTED
                             ) {
-                                Text(
-                                    if (isRetryingLocalCleanup) {
-                                        "端末内データを消去中…"
-                                    } else {
-                                        "端末内データの消去を再試行"
+                                OutlinedButton(
+                                    onClick = {
+                                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                                     },
-                                )
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 48.dp),
+                                ) {
+                                    Text("共有タグの新着通知を有効にする")
+                                }
                             }
-                        }
-                    }
-                }
-
-                if (!cloudState.isConfigured) {
-                    Text("このビルドでは共有タグのクラウド同期が設定されていません。")
-                    PromoCodeSection(
-                        promoCode = promoCode,
-                        promoMessage = promoMessage,
-                        isRedeemingPromoCode = isRedeemingPromoCode,
-                        canRedeemPromoCode = viewModel.canApplyPromoCode(promoCode),
-                        onPromoCodeChange = {
-                            promoCode = it
-                            promoMessage = null
-                        },
-                        onRedeemPromoCode = ::redeemPromoCode,
-                    )
-                    return@Column
-                }
-
-                if (cloudState.isSignedIn) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
-                        PackageManager.PERMISSION_GRANTED
-                    ) {
-                        OutlinedButton(
-                            onClick = {
-                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(56.dp),
-                        ) {
-                            Text("共有タグの新着通知を有効にする")
-                        }
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                            Button(
-                                onClick = {
-                                    scope.launch {
-                                        viewModel.signOut()
-                                        message = "サインアウトしました"
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                TextButton(
+                                    onClick = {
+                                        scope.launch {
+                                            viewModel.signOut()
+                                            accountMessage = "サインアウトしました"
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                ) {
+                                    Text("サインアウト")
+                                }
+                                TextButton(
+                                    onClick = { showDeleteDialog = true },
+                                    modifier = Modifier.weight(1f),
+                                ) {
+                                    Text(
+                                        "アカウント削除",
+                                        color = MaterialTheme.colorScheme.error,
+                                    )
+                                }
+                            }
+                        } else {
+                            Text(
+                                text = "共有タグに参加するにはサインインが必要です",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            SharedTagAuthForm(
+                                email = email,
+                                password = password,
+                                isSubmitting = isSubmitting,
+                                message = null,
+                                onEmailChange = {
+                                    email = it
+                                    accountMessage = null
+                                },
+                                onPasswordChange = {
+                                    password = it
+                                    accountMessage = null
+                                },
+                                onGoogleSignIn = {
+                                    val url = viewModel.googleOAuthUrl()
+                                    if (url == null) {
+                                        accountMessage = "Googleサインインを開始できませんでした。クラウド設定を確認してください。"
+                                        return@SharedTagAuthForm
+                                    }
+                                    runCatching {
+                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                    }.onFailure {
+                                        accountMessage = "Googleサインイン画面を開けませんでした"
                                     }
                                 },
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(56.dp),
-                        ) {
-                            Text("サインアウト")
+                                onSignIn = {
+                                    scope.launch {
+                                        isSubmitting = true
+                                        accountMessage = viewModel.signIn(email, password).toUiMessage(
+                                            success = "サインインしました。プロフィールと共有タグを使えます。",
+                                            emailConfirmation = "確認メールの手続きが必要です。メール確認後にサインインしてください。",
+                                        )
+                                        showAccountDetails = true
+                                        isSubmitting = false
+                                    }
+                                },
+                                onSignUp = {
+                                    scope.launch {
+                                        isSubmitting = true
+                                        accountMessage = viewModel.signUp(email, password).toUiMessage(
+                                            success = "新規登録が完了しました。プロフィールと共有タグを使えます。",
+                                            emailConfirmation = "確認メールを送信しました。確認後にサインインしてください。",
+                                        )
+                                        showAccountDetails = true
+                                        isSubmitting = false
+                                    }
+                                },
+                                onResendConfirmation = {
+                                    scope.launch {
+                                        isSubmitting = true
+                                        accountMessage = viewModel.resendEmailConfirmation(email).toUiMessage(
+                                            success = "確認メールを再送しました。メール確認後にサインインしてください。",
+                                            emailConfirmation = "確認メールを再送しました。メール確認後にサインインしてください。",
+                                        )
+                                        isSubmitting = false
+                                    }
+                                },
+                                onPasswordRecovery = {
+                                    scope.launch {
+                                        isSubmitting = true
+                                        accountMessage = viewModel.sendPasswordRecovery(email).toUiMessage(
+                                            success = "パスワード再設定メールを送信しました。",
+                                            emailConfirmation = "パスワード再設定メールを送信しました。メールの案内に従ってください。",
+                                        )
+                                        isSubmitting = false
+                                    }
+                                },
+                            )
                         }
-                        OutlinedButton(
-                            onClick = { showDeleteDialog = true },
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(56.dp),
-                        ) {
-                            Text("アカウント削除")
+                    },
+                    planDetails = {
+                        if (cloudState.isConfigured) {
+                            PaidCourseSection(
+                                isEnabled = !isSubmitting && !isPurchasing,
+                                isPurchasing = isPurchasing,
+                                showMonthlyOptions = !entitlements.planType.isPaidCourse,
+                                onPurchase = ::purchasePaidCourse,
+                            )
+                        } else {
+                            Text(
+                                text = "このビルドでは共有タグのクラウド同期が設定されていません。",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
+                        PromoCodeSection(
+                            promoCode = promoCode,
+                            promoMessage = promoMessage,
+                            isRedeemingPromoCode = isRedeemingPromoCode,
+                            canRedeemPromoCode = viewModel.canApplyPromoCode(promoCode),
+                            onPromoCodeChange = {
+                                promoCode = it
+                                promoMessage = null
+                            },
+                            onRedeemPromoCode = ::redeemPromoCode,
+                        )
+                        planMessage?.let { ProfileStatusMessage(message = it) }
+                    },
+                    chatGptContent = {
+                        ChatGptPersonalLinkSyncCard(
+                            viewModel = viewModel,
+                            cloudState = cloudState,
+                            settings = chatGptSyncSettings,
+                            eligibility = chatGptSyncEligibility,
+                            expanded = showChatGptSyncDetails,
+                            onToggleExpanded = { showChatGptSyncDetails = !showChatGptSyncDetails },
+                        )
+                    },
+                )
+
+                if (aiTransparencyViewModel != null) {
+                    OutlinedButton(
+                        onClick = { showAiTransparencySheet = true },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp),
+                    ) {
+                        Text("AI動作の確認（デバッグ）")
                     }
-                    PaidCourseSection(
-                        isEnabled = !isSubmitting && !isPurchasing,
-                        isPurchasing = isPurchasing,
-                        showMonthlyOptions = !entitlements.planType.isPaidCourse,
-                        onPurchase = ::purchasePaidCourse,
-                    )
-                    PromoCodeSection(
-                        promoCode = promoCode,
-                        promoMessage = promoMessage,
-                        isRedeemingPromoCode = isRedeemingPromoCode,
-                        canRedeemPromoCode = viewModel.canApplyPromoCode(promoCode),
-                        onPromoCodeChange = {
-                            promoCode = it
-                            promoMessage = null
-                        },
-                        onRedeemPromoCode = ::redeemPromoCode,
-                    )
-                    return@Column
                 }
 
-                Text(
-                    text = "共有タグに参加するにはサインインが必要です",
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 1,
-                    softWrap = false,
-                )
-                SharedTagAuthForm(
-                    email = email,
-                    password = password,
-                    isSubmitting = isSubmitting,
-                    message = null,
-                    onEmailChange = {
-                        email = it
-                        message = null
-                    },
-                    onPasswordChange = {
-                        password = it
-                        message = null
-                    },
-                    onGoogleSignIn = {
-                        val url = viewModel.googleOAuthUrl()
-                        if (url == null) {
-                            message = "Googleサインインを開始できませんでした。クラウド設定を確認してください。"
-                            return@SharedTagAuthForm
-                        }
-                        runCatching {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                        }.onFailure {
-                            message = "Googleサインイン画面を開けませんでした"
-                        }
-                    },
-                    onSignIn = {
-                        scope.launch {
-                            isSubmitting = true
-                            message = viewModel.signIn(email, password).toUiMessage(
-                                success = "サインインしました。プロフィールと共有タグを使えます。",
-                                emailConfirmation = "確認メールの手続きが必要です。メール確認後にサインインしてください。",
-                            )
-                            isSubmitting = false
-                        }
-                    },
-                    onSignUp = {
-                        scope.launch {
-                            isSubmitting = true
-                            message = viewModel.signUp(email, password).toUiMessage(
-                                success = "新規登録が完了しました。プロフィールと共有タグを使えます。",
-                                emailConfirmation = "確認メールを送信しました。確認後にサインインしてください。",
-                            )
-                            isSubmitting = false
-                        }
-                    },
-                    onResendConfirmation = {
-                        scope.launch {
-                            isSubmitting = true
-                            message = viewModel.resendEmailConfirmation(email).toUiMessage(
-                                success = "確認メールを再送しました。メール確認後にサインインしてください。",
-                                emailConfirmation = "確認メールを再送しました。メール確認後にサインインしてください。",
-                            )
-                            isSubmitting = false
-                        }
-                    },
-                    onPasswordRecovery = {
-                        scope.launch {
-                            isSubmitting = true
-                            message = viewModel.sendPasswordRecovery(email).toUiMessage(
-                                success = "パスワード再設定メールを送信しました。",
-                                emailConfirmation = "パスワード再設定メールを送信しました。メールの案内に従ってください。",
-                            )
-                            isSubmitting = false
-                        }
-                    },
-                )
-                PaidCourseSection(
-                    isEnabled = !isSubmitting && !isPurchasing,
-                    isPurchasing = isPurchasing,
-                    showMonthlyOptions = !entitlements.planType.isPaidCourse,
-                    onPurchase = ::purchasePaidCourse,
-                )
-                PromoCodeSection(
-                    promoCode = promoCode,
-                    promoMessage = promoMessage,
-                    isRedeemingPromoCode = isRedeemingPromoCode,
-                    canRedeemPromoCode = viewModel.canApplyPromoCode(promoCode),
-                    onPromoCodeChange = {
-                        promoCode = it
-                        promoMessage = null
-                    },
-                    onRedeemPromoCode = ::redeemPromoCode,
+                SupportCard(
+                    message = supportMessage,
+                    onOpenContact = ::openContactPage,
                 )
             }
         }
@@ -710,6 +718,16 @@ fun SharedTagCloudAuthScreen(
         }
     }
 
+    HomeBackgroundColorSheet(
+        visible = showDisplayColorPicker,
+        selectedStyle = homeBackgroundStyle,
+        onDismiss = { showDisplayColorPicker = false },
+        onSelect = { style ->
+            onHomeBackgroundStyleChange(style)
+            showDisplayColorPicker = false
+        },
+    )
+
     if (showDeleteDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
@@ -719,7 +737,7 @@ fun SharedTagCloudAuthScreen(
                         scope.launch {
                             isSubmitting = true
                             showDeleteDialog = false
-                            message = when (val result = viewModel.deleteAccount()) {
+                            accountMessage = when (val result = viewModel.deleteAccount()) {
                                 SharedTagAccountDeletionResult.Success -> "アカウントを削除しました"
                                 SharedTagAccountDeletionResult.AuthRequired -> "アカウント削除にはサインインが必要です"
                                 SharedTagAccountDeletionResult.OwnerTransferRequired ->
@@ -729,6 +747,7 @@ fun SharedTagCloudAuthScreen(
                                 }
                                 is SharedTagAccountDeletionResult.Failure -> result.message
                             }
+                            showAccountDetails = true
                             isSubmitting = false
                         }
                     },
@@ -808,7 +827,6 @@ private fun PromoCodeSection(
 
 @Composable
 private fun PendingInviteResumeCard(
-    record: PendingInviteRecord,
     isSignedIn: Boolean,
     isSubmitting: Boolean,
     onAccept: () -> Unit,
@@ -830,19 +848,12 @@ private fun PendingInviteResumeCard(
             )
             Text(
                 text = if (isSignedIn) {
-                    "前回開いた共有タグ招待を再開できます。"
+                    "保留中の共有招待に参加できます。"
                 } else {
-                    "前回開いた共有タグ招待を保存しています。サインイン後に参加できます。"
+                    "招待を保留しています。サインイン後に参加できます。"
                 },
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            if (record.inviteToken.isNotBlank()) {
-                Text(
-                    text = "招待情報を保存済みです",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -859,7 +870,7 @@ private fun PendingInviteResumeCard(
                     enabled = !isSubmitting,
                     modifier = Modifier.weight(1f),
                 ) {
-                    Text("削除")
+                    Text("保留を解除")
                 }
             }
         }
@@ -1150,12 +1161,14 @@ private fun SharedTagInviteConfirmContent(
 }
 
 @Composable
-private fun ProfileStatusMessage(message: String) {
+private fun ProfileStatusMessage(message: String, isError: Boolean = false) {
     val isContactSupportSuccess = message == CONTACT_SUPPORT_SUCCESS_MESSAGE
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.medium,
-        color = if (isContactSupportSuccess) {
+        color = if (isError) {
+            MaterialTheme.colorScheme.errorContainer
+        } else if (isContactSupportSuccess) {
             MaterialTheme.colorScheme.primaryContainer
         } else {
             MaterialTheme.colorScheme.surfaceVariant
@@ -1182,12 +1195,351 @@ private fun ProfileStatusMessage(message: String) {
                     MaterialTheme.typography.bodyMedium
                 },
                 fontWeight = if (isContactSupportSuccess) FontWeight.Bold else FontWeight.Normal,
-                color = if (isContactSupportSuccess) {
+                color = if (isError) {
+                    MaterialTheme.colorScheme.onErrorContainer
+                } else if (isContactSupportSuccess) {
                     MaterialTheme.colorScheme.onPrimaryContainer
                 } else {
                     MaterialTheme.colorScheme.onSurfaceVariant
                 },
             )
+        }
+    }
+}
+
+@Composable
+private fun LocalAccountCleanupCard(
+    pending: SharedTagAccountDeletionResult.LocalCleanupRequired,
+    isRetrying: Boolean,
+    onRetry: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.errorContainer,
+        shape = MaterialTheme.shapes.large,
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("アカウントは削除済みです", style = MaterialTheme.typography.titleMedium)
+            Text(localCleanupStatusMessage(pending))
+            OutlinedButton(
+                onClick = onRetry,
+                enabled = !isRetrying,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp),
+            ) {
+                Text(if (isRetrying) "端末内データを消去中…" else "端末内データの消去を再試行")
+            }
+        }
+    }
+}
+
+@Composable
+private fun DisplaySettingsCard(
+    selectedStyle: HomeBackgroundStyle,
+    onOpenColorPicker: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("表示設定", style = MaterialTheme.typography.titleMedium)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(MaterialTheme.shapes.medium)
+                    .clickable(onClick = onOpenColorPicker)
+                    .heightIn(min = 56.dp)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Surface(
+                    modifier = Modifier.size(40.dp),
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Outlined.Palette,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                    }
+                }
+                Text("カラー", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                Box(
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(CircleShape)
+                        .background(Brush.verticalGradient(homeBackgroundGradientColors(selectedStyle)))
+                        .border(
+                            1.dp,
+                            MaterialTheme.colorScheme.outlineVariant,
+                            CircleShape,
+                        ),
+                )
+                Text(
+                    text = homeBackgroundLabel(selectedStyle),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Icon(
+                    imageVector = Icons.Outlined.ExpandMore,
+                    contentDescription = "カラーを選ぶ",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun HomeBackgroundColorSheet(
+    visible: Boolean,
+    selectedStyle: HomeBackgroundStyle,
+    onDismiss: () -> Unit,
+    onSelect: (HomeBackgroundStyle) -> Unit,
+) {
+    if (!visible) return
+
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("表示カラー", style = MaterialTheme.typography.titleLarge)
+            HomeBackgroundStyle.entries.forEach { style ->
+                val selected = style == selectedStyle
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(MaterialTheme.shapes.medium)
+                        .selectable(
+                            selected = selected,
+                            role = Role.RadioButton,
+                            onClick = { onSelect(style) },
+                        )
+                        .heightIn(min = 56.dp)
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(MaterialTheme.shapes.small)
+                            .background(Brush.verticalGradient(homeBackgroundGradientColors(style)))
+                            .border(
+                                width = if (selected) 2.dp else 1.dp,
+                                color = if (selected) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.outlineVariant,
+                                shape = MaterialTheme.shapes.small,
+                            ),
+                    )
+                    Text(
+                        text = homeBackgroundLabel(style),
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    if (selected) {
+                        Icon(
+                            imageVector = Icons.Outlined.Check,
+                            contentDescription = "選択中",
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfileAccountAndShareCard(
+    cloudState: jp.mimac.urlsaver.domain.SharedTagCloudState,
+    expanded: Boolean,
+    accountMessage: String?,
+    onToggleAccountDetails: () -> Unit,
+    planDetailsExpanded: Boolean,
+    onTogglePlanDetails: () -> Unit,
+    accountDetails: @Composable ColumnScope.() -> Unit,
+    planDetails: @Composable ColumnScope.() -> Unit,
+    chatGptContent: @Composable ColumnScope.() -> Unit,
+) {
+    val accountStatus = when {
+        !cloudState.isConfigured -> "このビルドでは共有タグのクラウド同期が設定されていません。"
+        cloudState.isSignedIn -> cloudState.signedInEmail?.takeIf { it.isNotBlank() } ?: "サインイン済み"
+        else -> "未サインイン · 共有タグにはサインインが必要です"
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text("アカウント・共有", style = MaterialTheme.typography.titleMedium)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(MaterialTheme.shapes.medium)
+                    .clickable(enabled = cloudState.isConfigured, onClick = onToggleAccountDetails)
+                    .heightIn(min = 60.dp)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Surface(
+                    modifier = Modifier.size(40.dp),
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Outlined.AccountCircle,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                    }
+                }
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("共有タグのアカウント", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        text = accountStatus,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (cloudState.isConfigured) MaterialTheme.colorScheme.onSurfaceVariant
+                        else MaterialTheme.colorScheme.error,
+                        maxLines = 2,
+                    )
+                }
+                if (cloudState.isConfigured) {
+                    Icon(
+                        imageVector = if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                        contentDescription = if (expanded) "アカウント設定を閉じる" else "アカウント設定を開く",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (expanded && cloudState.isConfigured) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp), content = accountDetails)
+            }
+            accountMessage?.let { ProfileStatusMessage(message = it) }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 60.dp)
+                    .semantics(mergeDescendants = true) {
+                        role = Role.Button
+                        stateDescription = if (planDetailsExpanded) "展開済み" else "折りたたみ"
+                    }
+                    .clickable(onClick = onTogglePlanDetails)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Surface(
+                    modifier = Modifier.size(40.dp),
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.tertiaryContainer,
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Outlined.Sell,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                        )
+                    }
+                }
+                Text(
+                    text = "プラン・優待",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                Icon(
+                    imageVector = if (planDetailsExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                    contentDescription = if (planDetailsExpanded) "プラン・優待を閉じる" else "プラン・優待を開く",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (planDetailsExpanded) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    content = planDetails,
+                )
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+            chatGptContent()
+        }
+    }
+}
+
+@Composable
+private fun SupportCard(
+    message: String?,
+    onOpenContact: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("サポート", style = MaterialTheme.typography.titleMedium)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(MaterialTheme.shapes.medium)
+                    .clickable(onClick = onOpenContact)
+                    .heightIn(min = 56.dp)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Surface(
+                    modifier = Modifier.size(40.dp),
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.tertiaryContainer,
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Outlined.HelpOutline,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                        )
+                    }
+                }
+                Text("問い合わせ", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                Icon(
+                    imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                    contentDescription = "問い合わせを開く",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.graphicsLayer(rotationZ = 180f),
+                )
+            }
+            message?.let { ProfileStatusMessage(message = it) }
         }
     }
 }
@@ -1199,111 +1551,135 @@ private fun ProfileCard(
     draftDisplayName: String,
     avatarBitmap: ImageBitmap?,
     canSaveProfile: Boolean,
+    isAvatarChanged: Boolean,
+    isSaving: Boolean,
+    profileMessage: String?,
+    profileMessageIsError: Boolean,
     onDisplayNameChange: (String) -> Unit,
-    onSaveProfile: () -> Unit,
+    onSaveProfile: (onSaved: () -> Unit) -> Unit,
     onPickAvatar: () -> Unit,
     onRemoveAvatar: () -> Unit,
-    themeMode: AppThemeMode,
-    onThemeModeChange: (AppThemeMode) -> Unit,
-    homeBackgroundStyle: HomeBackgroundStyle,
-    onHomeBackgroundStyleChange: (HomeBackgroundStyle) -> Unit,
+    onCancelAvatarChange: () -> Unit,
 ) {
-    var isEditingDisplayName by remember { mutableStateOf(false) }
+    var isEditingDisplayName by rememberSaveable { mutableStateOf(false) }
     Column(
         modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            ProfileAvatar(
-                avatarBitmap = avatarBitmap,
-                modifier = Modifier.size(88.dp),
-            )
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                ProfileAvatar(
+                    avatarBitmap = avatarBitmap,
+                    modifier = Modifier.size(72.dp),
+                )
+                TextButton(
+                    onClick = onPickAvatar,
+                    enabled = !isSaving,
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) {
+                    Text(if (avatarBitmap == null) "写真を追加" else "写真を変更")
+                }
+            }
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    if (isEditingDisplayName) {
-                        OutlinedTextField(
-                            value = draftDisplayName,
-                            onValueChange = onDisplayNameChange,
-                            modifier = Modifier.weight(1f),
-                            singleLine = true,
-                            label = { Text("表示名") },
-                        )
-                        IconButton(
-                            onClick = {
-                                onSaveProfile()
-                                isEditingDisplayName = false
-                            },
-                            enabled = canSaveProfile,
-                        ) {
-                            Icon(Icons.Outlined.Check, contentDescription = "表示名を保存")
-                        }
-                        IconButton(
+                if (isEditingDisplayName) {
+                    OutlinedTextField(
+                        value = draftDisplayName,
+                        onValueChange = onDisplayNameChange,
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("表示名") },
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(
                             onClick = {
                                 onDisplayNameChange(displayName)
                                 isEditingDisplayName = false
                             },
+                            modifier = Modifier.heightIn(min = 48.dp),
                         ) {
-                            Icon(Icons.Outlined.Close, contentDescription = "表示名の編集を取り消す")
+                            Text("キャンセル")
                         }
-                    } else {
+                        TextButton(
+                            onClick = {
+                                onSaveProfile { isEditingDisplayName = false }
+                            },
+                            enabled = canSaveProfile && !isSaving,
+                            modifier = Modifier.heightIn(min = 48.dp),
+                        ) {
+                            Icon(Icons.Outlined.Check, contentDescription = null)
+                            Spacer(Modifier.size(4.dp))
+                            Text(if (isSaving) "保存中…" else "保存")
+                        }
+                    }
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = displayName,
-                            style = MaterialTheme.typography.titleMedium,
+                            text = displayName.ifBlank { "プロフィール名" },
                             modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.titleLarge,
+                            maxLines = 2,
                         )
-                        IconButton(onClick = { isEditingDisplayName = true }) {
+                        IconButton(
+                            onClick = { isEditingDisplayName = true },
+                            modifier = Modifier.size(48.dp),
+                        ) {
                             Icon(Icons.Outlined.Edit, contentDescription = "表示名を編集")
                         }
                     }
-                }
-                if (!signedInEmail.isNullOrBlank()) {
-                    Text(
-                        text = signedInEmail,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = onPickAvatar) {
-                        Text(if (avatarBitmap == null) "写真を追加" else "写真を変更")
-                    }
-                    if (avatarBitmap != null) {
-                        TextButton(onClick = onRemoveAvatar) {
-                            Text("削除")
-                        }
+                    signedInEmail?.takeIf { it.isNotBlank() }?.let { email ->
+                        Text(
+                            text = email,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                        )
                     }
                 }
             }
         }
-
-        ThemeModeSelector(
-            selectedMode = themeMode,
-            onModeChange = onThemeModeChange,
-        )
-
-        HomeBackgroundSelector(
-            selectedStyle = homeBackgroundStyle,
-            onStyleChange = onHomeBackgroundStyleChange,
-        )
-
-        if (!isEditingDisplayName) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (avatarBitmap != null) {
+                TextButton(
+                    onClick = onRemoveAvatar,
+                    enabled = !isSaving,
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) {
+                    Text("写真を削除")
+                }
+            }
+            if (isAvatarChanged) {
+                TextButton(
+                    onClick = onCancelAvatarChange,
+                    enabled = !isSaving,
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) {
+                    Text("写真変更を取り消す")
+                }
+            }
+        }
+        if (!isEditingDisplayName && canSaveProfile) {
             Button(
-                onClick = onSaveProfile,
-                enabled = canSaveProfile,
+                onClick = { onSaveProfile {} },
+                enabled = !isSaving,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(56.dp),
+                    .heightIn(min = 48.dp),
             ) {
-                Text("プロフィールを保存")
+                Text(if (isSaving) "保存中…" else "プロフィールを保存")
             }
+        }
+        profileMessage?.let {
+            ProfileStatusMessage(message = it, isError = profileMessageIsError)
         }
     }
 }
@@ -1314,6 +1690,8 @@ private fun ChatGptPersonalLinkSyncCard(
     cloudState: jp.mimac.urlsaver.domain.SharedTagCloudState,
     settings: ChatGptPersonalLinkSyncSettings,
     eligibility: ChatGptSyncEligibilitySnapshot,
+    expanded: Boolean,
+    onToggleExpanded: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     var isLoading by remember { mutableStateOf(false) }
@@ -1321,6 +1699,13 @@ private fun ChatGptPersonalLinkSyncCard(
     var pendingAction by remember { mutableStateOf<ChatGptSyncPendingAction?>(null) }
     val gateOpen = viewModel.isChatGptSyncOperationEnabled
     val canOperate = gateOpen && cloudState.isSignedIn && !isLoading
+    val statusSummary = when {
+        !gateOpen -> "現在は利用できません"
+        !cloudState.isSignedIn -> "サインインが必要です"
+        isLoading -> "同期中…"
+        settings.enabled -> "同期オン · 対象 ${eligibility.eligibleEntries.size}件 / 除外 ${eligibility.excludedCount}件"
+        else -> "同期オフ · 対象 ${eligibility.eligibleEntries.size}件 / 除外 ${eligibility.excludedCount}件"
+    }
 
     fun resultMessage(result: ChatGptSyncResult): String {
         return when (result) {
@@ -1337,97 +1722,143 @@ private fun ChatGptPersonalLinkSyncCard(
         scope.launch {
             isLoading = true
             message = null
-            message = resultMessage(action())
-            isLoading = false
-            viewModel.refreshChatGptSyncEligibility()
+            try {
+                message = resultMessage(action())
+                viewModel.refreshChatGptSyncEligibility()
+            } finally {
+                isLoading = false
+            }
         }
     }
 
-    Surface(
+    Column(
         modifier = Modifier.fillMaxWidth(),
-        tonalElevation = 1.dp,
-        shape = MaterialTheme.shapes.medium,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = gateOpen && !isLoading, onClick = onToggleExpanded)
+                .heightIn(min = 60.dp)
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(
-                text = "ChatGPTに保存リンクを同期",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
-            if (!gateOpen) {
-                Text("現在は利用できません", color = MaterialTheme.colorScheme.error)
-                Text(
-                    text = "外部接続の確認が完了するまでオフです",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else if (!cloudState.isSignedIn) {
-                Text("りんばむのアカウントでサインインしてください")
+            Surface(
+                modifier = Modifier.size(40.dp),
+                shape = CircleShape,
+                color = if (gateOpen) MaterialTheme.colorScheme.secondaryContainer
+                else MaterialTheme.colorScheme.errorContainer,
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = if (gateOpen) Icons.Outlined.Refresh else Icons.Outlined.LinkOff,
+                        contentDescription = null,
+                        tint = if (gateOpen) MaterialTheme.colorScheme.onSecondaryContainer
+                        else MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
             }
-            Text("同期対象 ${eligibility.eligibleEntries.size}件")
-            Text("除外 ${eligibility.excludedCount}件")
-            eligibility.exclusionsByReason.forEach { (reason, count) ->
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    text = "除外理由: ${chatGptExclusionReasonLabel(reason)} ${count}件",
+                    text = "ChatGPTに保存リンクを同期",
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    text = statusSummary,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (gateOpen) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.error
+                    },
+                    maxLines = 2,
                 )
             }
-            Text(
-                text = "同期をオンにするまでリンクは送信されません",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            settings.lastSyncedAt?.let { syncedAt ->
-                Text(
-                    text = "最終同期: ${android.text.format.DateFormat.format("yyyy/MM/dd HH:mm", syncedAt)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+            if (gateOpen) {
+                Icon(
+                    imageVector = if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                    contentDescription = if (expanded) "詳細を閉じる" else "詳細を開く",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+        }
+
+        if (gateOpen) {
             message?.let { currentMessage ->
-                Text(
-                    text = currentMessage,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                ProfileStatusMessage(message = currentMessage)
             }
-            Button(
-                onClick = { pendingAction = ChatGptSyncPendingAction.ENABLE },
-                enabled = canOperate && !settings.enabled,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
-            ) {
-                Text("同期をオンにする")
-            }
-            OutlinedButton(
-                onClick = { pendingAction = ChatGptSyncPendingAction.DISABLE },
-                enabled = canOperate && settings.enabled,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
-            ) {
-                Text("同期をオフにする")
-            }
-            Button(
-                onClick = { pendingAction = ChatGptSyncPendingAction.SYNC_NOW },
-                enabled = canOperate && settings.enabled,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
-            ) {
-                Text(if (isLoading) "同期中…" else "今すぐ同期")
-            }
-            OutlinedButton(
-                onClick = { pendingAction = ChatGptSyncPendingAction.SYNC_NOW },
-                enabled = canOperate && settings.enabled,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
-            ) {
-                Text("再試行")
+        }
+
+        if (expanded && gateOpen) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (!cloudState.isSignedIn) {
+                    Text(
+                        text = "りんばむのアカウントでサインインしてください",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text("同期対象 ${eligibility.eligibleEntries.size}件")
+                Text("除外 ${eligibility.excludedCount}件")
+                eligibility.exclusionsByReason.forEach { (reason, count) ->
+                    Text(
+                        text = "除外理由: ${chatGptExclusionReasonLabel(reason)} ${count}件",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (!settings.enabled) {
+                    Text(
+                        text = "同期をオンにするまでリンクは送信されません",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                settings.lastSyncedAt?.let { syncedAt ->
+                    Text(
+                        text = "最終同期: ${android.text.format.DateFormat.format("yyyy/MM/dd HH:mm", syncedAt)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Button(
+                    onClick = { pendingAction = ChatGptSyncPendingAction.ENABLE },
+                    enabled = canOperate && !settings.enabled,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp),
+                ) {
+                    Text("同期をオンにする")
+                }
+                OutlinedButton(
+                    onClick = { pendingAction = ChatGptSyncPendingAction.DISABLE },
+                    enabled = canOperate && settings.enabled,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp),
+                ) {
+                    Text("同期をオフにする")
+                }
+                Button(
+                    onClick = { pendingAction = ChatGptSyncPendingAction.SYNC_NOW },
+                    enabled = canOperate && settings.enabled,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp),
+                ) {
+                    Text(if (isLoading) "同期中…" else "今すぐ同期")
+                }
+                OutlinedButton(
+                    onClick = { pendingAction = ChatGptSyncPendingAction.SYNC_NOW },
+                    enabled = canOperate && settings.enabled,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp),
+                ) {
+                    Text("再試行")
+                }
             }
         }
     }
@@ -1492,191 +1923,94 @@ private fun chatGptExclusionReasonLabel(reason: String): String {
 @Composable
 private fun UsageSummaryCard(
     usageSummary: UsageSummary,
-) {
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text(
-            text = "使用状況",
-            style = MaterialTheme.typography.titleMedium,
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            UsageMetricTile(
-                title = "保存タグ",
-                body = usageSummary.personalUrlCount.toString(),
-                modifier = Modifier.weight(1f),
-            )
-            UsageMetricTile(
-                title = "共有タグ",
-                body = usageSummary.sharedTagCount.toString(),
-                modifier = Modifier.weight(1f),
-            )
-            UsageMetricTile(
-                title = "グループ",
-                body = usageSummary.sharedTagGroupCount.toString(),
-                modifier = Modifier.weight(1f),
-            )
-        }
-    }
-}
-
-@Composable
-private fun UsageMetricTile(
-    title: String,
-    body: String,
-    modifier: Modifier = Modifier,
+    backgroundStyle: HomeBackgroundStyle,
+    planLabel: String,
+    expanded: Boolean,
+    onToggleExpanded: () -> Unit,
 ) {
     Surface(
-        modifier = modifier,
+        modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
-        color = MaterialTheme.colorScheme.surfaceVariant,
+        color = homeBackgroundGradientColors(backgroundStyle)[1],
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-            )
-            Text(
-                text = body,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-            )
-        }
-    }
-}
-
-@Composable
-private fun ThemeModeSelector(
-    selectedMode: AppThemeMode,
-    onModeChange: (AppThemeMode) -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            text = "画面モード",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            AppThemeMode.entries.forEach { mode ->
-                val selected = selectedMode == mode
-                if (selected) {
-                    Button(
-                        onClick = { onModeChange(mode) },
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(56.dp),
-                    ) {
-                        Text(mode.label)
-                    }
-                } else {
-                    OutlinedButton(
-                        onClick = { onModeChange(mode) },
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(56.dp),
-                    ) {
-                        Text(mode.label)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun HomeBackgroundSelector(
-    selectedStyle: HomeBackgroundStyle,
-    onStyleChange: (HomeBackgroundStyle) -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(
-            text = "ホームの背景",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            text = "この端末のホームだけに適用されます",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        HomeBackgroundStyle.entries.chunked(2).forEach { styles ->
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 56.dp)
+                    .semantics(mergeDescendants = true) {
+                        role = Role.Button
+                        stateDescription = if (expanded) "展開済み" else "折りたたみ"
+                    }
+                    .clickable(onClick = onToggleExpanded)
+                    .padding(horizontal = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                styles.forEach { style ->
-                    val selected = style == selectedStyle
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(18.dp))
-                            .border(
-                                width = if (selected) 2.dp else 1.dp,
-                                color = if (selected) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.outlineVariant
-                                },
-                                shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp),
-                            )
-                            .selectable(
-                                selected = selected,
-                                role = Role.RadioButton,
-                                onClick = { onStyleChange(style) },
-                            )
-                            .padding(5.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(76.dp)
-                                .clip(androidx.compose.foundation.shape.RoundedCornerShape(14.dp))
-                                .background(Brush.verticalGradient(homeBackgroundGradientColors(style))),
-                            contentAlignment = Alignment.TopEnd,
-                        ) {
-                            if (selected) {
-                                Surface(
-                                    modifier = Modifier.padding(8.dp),
-                                    shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    contentColor = MaterialTheme.colorScheme.onPrimary,
-                                ) {
-                                    Icon(
-                                        Icons.Outlined.Check,
-                                        contentDescription = "選択中",
-                                        modifier = Modifier.padding(4.dp).size(18.dp),
-                                    )
-                                }
-                            }
-                        }
-                        Text(
-                            text = homeBackgroundLabel(style),
-                            modifier = Modifier.fillMaxWidth(),
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
+                Text(
+                    text = "利用状況",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Icon(
+                    imageVector = if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                    contentDescription = if (expanded) "利用状況を閉じる" else "利用状況を開く",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (expanded) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 14.dp)) {
+                        UsageMetricRow("保存リンク", usageSummary.personalUrlCount.toString())
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                        UsageMetricRow("共有タグ", usageSummary.sharedTagCount.toString())
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                        UsageMetricRow("グループ", usageSummary.sharedTagGroupCount.toString())
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                        UsageMetricRow("現在のプラン", planLabel)
                     }
                 }
-                if (styles.size == 1) Spacer(Modifier.weight(1f))
             }
         }
     }
+}
+
+@Composable
+private fun UsageMetricRow(label: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(
+            text = label,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+    }
+}
+
+private fun profilePlanLabel(planType: PlanType): String = when (planType) {
+    PlanType.FREE -> "無料プラン"
+    PlanType.LAUNCH_STANDARD -> "Standard"
+    PlanType.STANDARD -> "Standard"
+    PlanType.PRO -> "Pro"
+    PlanType.PROMO_PRO -> "優待Pro"
 }
 
 @Composable
