@@ -2,11 +2,11 @@
 
 ## 2026-10-13 release record: 1.0.26 (41)
 
-Status: SOURCE_PREPARATION. The owner authorized committing/pushing the accumulated sharing/account/display changes and then submitting both mobile Stores. Both live Store consoles were authenticated and their newest existing build 40 was confirmed before choosing version 1.0.26/build 41. Existing production track and automatic-after-approval modes are preserved.
+Status: UPLOADED_REVIEW_PENDING_CI. The owner authorized committing/pushing the accumulated sharing/account/display changes and then submitting both mobile Stores. Both live Store consoles were authenticated and their newest existing build 40 was confirmed before choosing version 1.0.26/build 41. Existing production track and automatic-after-approval modes are preserved.
 
 Scope and local verification: [mobile change record](../ui-review/2026-10-13-sharing-account-display-status.md). Android/iOS runtime/signing settings remain unchanged except for the version/build. The Supabase migration is included in source, not applied to production; ChatGPT login remains visibly preparing. This submission must not advertise those external gates as completed functionality.
 
-Next: reviewed source commit/push, signed Release AAB/IPA validation, upload, processing/association, then actual review submission. Per-store receipts will be saved locally under `artifacts/store-submission-logs/2026-10-13-1.0.26-41-receipt.json`. Approval and public availability remain separate later states.
+Source commit `54a9ca0cde30c58176a6721ef44b042d217e991e` was pushed and both signed artifacts passed validation. Google Play accepted build 41 in production release 23; Apple Xcode upload succeeded with delivery UUID `329103f2-1d61-4dcd-89dd-036e6026a166`. Test-only CI repairs are validated locally; pushed CI, Apple processing/association and both actual review submissions are still pending. Per-store receipts will be saved locally under `artifacts/store-submission-logs/2026-10-13-1.0.26-41-receipt.json`. Approval and public availability remain separate later states.
 
 
 ## 2026-10-08 release record: 1.0.25 (40)

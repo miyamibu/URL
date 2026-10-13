@@ -147,6 +147,7 @@ declare
     group_tag_uuid uuid := '10000000-0000-0000-0000-000000000101';
     group_url_uuid uuid := '20000000-0000-0000-0000-000000000101';
     group_uuid uuid;
+    auto_group_uuid uuid;
     first_pull jsonb;
     second_apply jsonb;
     invite_payload jsonb;
@@ -264,6 +265,10 @@ begin
     if (accepted_invite ->> 'tag_id')::uuid <> tag_uuid then
         raise exception 'accepted invite returned unexpected tag';
     end if;
+    auto_group_uuid := (accepted_invite ->> 'group_id')::uuid;
+    if auto_group_uuid is null then
+        raise exception 'accepted tag invite did not return its automatic group';
+    end if;
 
     if (
         select status
@@ -338,16 +343,47 @@ begin
 
     perform set_config('request.jwt.claim.sub', viewer_id::text, true);
     group_invite_accept := public.accept_shared_invite(group_invite_payload ->> 'invite_token');
-    if group_invite_accept ->> 'group_name' <> 'Group Pack' then
-        raise exception 'group invite accept returned unexpected group name';
+    if group_invite_accept ->> 'group_name' is distinct from 'Group Pack'
+       or group_invite_accept ->> 'group_id' is distinct from group_uuid::text
+       or group_invite_accept ->> 'role' is distinct from 'viewer' then
+        raise exception 'group invite accept returned unexpected group details';
     end if;
 
     group_pull := public.pull_shared_tag_snapshot();
-    if jsonb_array_length(group_pull -> 'groups') <> 1 then
+    if not exists (
+        select 1
+        from jsonb_array_elements(group_pull -> 'groups') group_row
+        where group_row ->> 'id' = group_uuid::text
+    ) then
         raise exception 'group member snapshot did not include group';
     end if;
-    if jsonb_array_length(group_pull -> 'tags') = 0 then
+
+    if not exists (
+        select 1
+        from jsonb_array_elements(group_pull -> 'group_tags') group_tag
+        where group_tag ->> 'group_id' = group_uuid::text
+          and group_tag ->> 'tag_id' = group_tag_uuid::text
+    ) then
         raise exception 'group member snapshot did not include grouped tag';
+    end if;
+
+    if not exists (
+        select 1
+        from jsonb_array_elements(group_pull -> 'tags') tag_row
+        where tag_row ->> 'id' = group_tag_uuid::text
+    ) then
+        raise exception 'group member snapshot did not include visible grouped tag';
+    end if;
+
+    if not exists (
+        select 1
+        from jsonb_array_elements(group_pull -> 'group_members') member
+        where member ->> 'group_id' = group_uuid::text
+          and member ->> 'user_id' = viewer_id::text
+          and member ->> 'role' = 'viewer'
+          and member ->> 'status' = 'active'
+    ) then
+        raise exception 'group member snapshot did not include the accepted viewer';
     end if;
 
     perform set_config('request.jwt.claim.sub', owner_id::text, true);
@@ -395,6 +431,27 @@ begin
           and member.user_id = owner_id
     ) <> 'editor' then
         raise exception 'ownership transfer did not demote previous owner';
+    end if;
+
+    perform public.transfer_shared_tag_group_ownership(auto_group_uuid, viewer_id);
+    if (
+        select role
+        from public.shared_tag_group_members member
+        where member.group_id = auto_group_uuid
+          and member.user_id = viewer_id
+          and member.status = 'active'
+    ) is distinct from 'owner' then
+        raise exception 'automatic group ownership transfer did not promote the new owner';
+    end if;
+
+    if (
+        select role
+        from public.shared_tag_group_members member
+        where member.group_id = auto_group_uuid
+          and member.user_id = owner_id
+          and member.status = 'active'
+    ) is distinct from 'editor' then
+        raise exception 'automatic group ownership transfer did not demote the previous owner';
     end if;
 
     perform public.delete_my_account();

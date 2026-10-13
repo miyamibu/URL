@@ -22,7 +22,7 @@ class ReleaseManifestTests(unittest.TestCase):
     def test_migration_head_is_latest_timestamp(self) -> None:
         self.assertEqual(
             verify_release_manifest.parse_migration_head(ROOT / "supabase/migrations"),
-            "20260824090000_fix_apply_personal_link_ops_conflict.sql",
+            "20261013090000_auto_group_for_shared_tag_invite_accept.sql",
         )
 
     def test_stale_manifest_version_is_reported(self) -> None:
