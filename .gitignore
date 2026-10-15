@@ -71,3 +71,7 @@ ios/Config/URLSaverSecrets.xcconfig
 /artifacts/ui-review/2026-10-13/
 /artifacts/device-install/2026-10-13/
 /output/playwright/
+
+# Private account, device, and session evidence retained locally
+/artifacts/production-auth/
+/artifacts/ui-review/2026-10-15/

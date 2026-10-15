@@ -72,3 +72,7 @@ Gitから新しくcloneした環境には存在しないファイルのため、
 - Android/iOSの変更ソース・テスト・仕様をGitに保存し、分類と検証結果は `docs/ui-review/2026-10-13-change-reconciliation.md` に記録する。今回の棚卸しのSHA-256一覧とAndroid検証ログは `artifacts/git-review/commit-push-2026-10-13-*` に保持する。
 - 資料は削除・移動していない。ignore設定は削除許可でも外部バックアップでもない。Gitのクリーン状態と、ローカル資料がGitHubへ保存された状態は区別する。
 - 終了時のSHA-256照合では、開始時の未追跡artifact 7,249件のうち7,233件が原位置・同一内容で残り、16件は不在だった。不在は `artifacts/device-install/2026-10-13/android-current-changes/existing-test-build/` のDEX・package中間物・ビルド出力APK・output metadataに限定される。直接の削除・移動コマンドは実行しておらず、原因は未特定。生のDB、画像、設計・検証記録、別保存のインストール記録APKは保持されているが、その別APKを不在APKの同一バイトのバックアップとは扱わない。再生成可能なビルド出力と保存すべき生資料を区別し、不在一覧はローカル完了receiptに記録する。
+
+`artifacts/production-auth/` は、Google・Apple連携のアカウント画面、実機・セッション情報、認証検証の生資料を原位置に保持するローカル保管先として除外する。公開リポジトリへ生資料や秘密値を含むファイルを追加せず、必要な結果は機密情報を除いた文書へ記録する。ignoreは削除・移動の許可や外部バックアップを意味しない。
+
+`artifacts/ui-review/2026-10-15/` も、実アカウントのプロフィール画面と端末・セッション情報を含むためローカルで保持する。承認済みの配置、実装と検証の概要は `docs/release/production-sharing-auth-2026-10-15.md` に記録する。
