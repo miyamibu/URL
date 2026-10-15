@@ -244,6 +244,8 @@ final class URLSaverAppModel: ObservableObject {
     @Published private(set) var isUpdatingChatGptPersonalLinkSync = false
     @Published private(set) var mediaSaveRevision = 0
     @Published private(set) var profileStatusMessage: String?
+    @Published private(set) var googleOAuthSuccessID: UUID?
+    @Published private(set) var linkedProviderRefreshStatus: SharedTagProviderRefreshStatus = .unknown
     @Published private(set) var sharedTagAccountLocalCleanupState: SharedTagAccountLocalCleanupState?
     @Published private(set) var sharedTagNotificationAuthorizationStatus: UNAuthorizationStatus = .notDetermined
     @Published var selectedTab: RootTab = .main
@@ -1046,6 +1048,7 @@ final class URLSaverAppModel: ObservableObject {
     private func handleSharedTagAuthCallback(_ url: URL) async {
         switch await services.sharedTagCloud.handleOAuthCallback(url: url) {
         case .signIn(.success(let email)):
+            googleOAuthSuccessID = UUID()
             await refreshSharedTagCloudState()
             await refreshEntitlements()
             profileStatusMessage = "Googleでサインインしました。プロフィールと共有タグを使えます。"
@@ -1068,6 +1071,7 @@ final class URLSaverAppModel: ObservableObject {
             profileStatusMessage = message
             enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 4))
         case .identityLink(.success(let provider)):
+            if provider == "google" { googleOAuthSuccessID = UUID() }
             await refreshSharedTagCloudState()
             let providerName = provider == "apple" ? "Apple" : "Google"
             profileStatusMessage = "\(providerName)アカウントを現在の共有タグアカウントに連携しました。"
@@ -1099,6 +1103,23 @@ final class URLSaverAppModel: ObservableObject {
         sharedTags = (try? services.sharedTagCloud.loadVisibleTags()) ?? []
         sharedTagGroups = (try? services.sharedTagCloud.loadVisibleGroups()) ?? []
         refreshChatGptPersonalLinkSettings()
+    }
+
+    func refreshLinkedProvidersForAccountDisplay() async {
+        guard linkedProviderRefreshStatus != .loading else { return }
+        let expectedUserID = services.sharedTagCloud.state.authUserID
+        linkedProviderRefreshStatus = .loading
+        let result = await services.sharedTagCloud.refreshLinkedProviders()
+        let current = services.sharedTagCloud.state
+        sharedTagCloudState = current
+        guard current.authUserID == expectedUserID else {
+            linkedProviderRefreshStatus = .unknown
+            return
+        }
+        switch result {
+        case .success: linkedProviderRefreshStatus = .confirmed
+        case .failure: linkedProviderRefreshStatus = .failed
+        }
     }
 
     func clearProfileStatusMessage() {

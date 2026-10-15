@@ -5,6 +5,7 @@ struct SharedTagCloudState: Equatable, Sendable {
     let isSignedIn: Bool
     let signedInEmail: String?
     var authUserID: String? = nil
+    var verifiedLinkedProviders: [String]? = nil
 }
 
 enum ChatGptPersonalLinkSyncStatus: Equatable, Sendable {
@@ -141,11 +142,16 @@ let maxSharedTagNameLength = 50
 let sharedTagNormalizationVersion = URLRules.normalizationContractVersion
 let sharedTagInviteRole = "editor"
 
+enum SharedTagProviderRefreshStatus: Equatable, Sendable {
+    case unknown, loading, confirmed, failed
+}
+
 struct SharedTagAuthSession: Codable, Equatable, Sendable {
     let authUserID: String
     let accessToken: String
     let refreshToken: String?
     let userEmail: String?
+    var verifiedLinkedProviders: [String]? = nil
 }
 
 struct SharedTagAccountLocalCleanupState: Codable, Equatable, Sendable {

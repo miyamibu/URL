@@ -152,6 +152,9 @@ struct SharedTagCloudSheet: View {
             applyPendingPromoCodeIfNeeded()
             if model.pendingPromoCode != nil { isShowingPlanDetails = true }
             await model.refreshSharedTagCloudState()
+            if model.sharedTagCloudState.isSignedIn {
+                await model.refreshLinkedProvidersForAccountDisplay()
+            }
             await model.refreshSharedTagNotificationAuthorizationStatus()
         }
         .onChange(of: model.profile.displayName) { _, newValue in
@@ -167,6 +170,9 @@ struct SharedTagCloudSheet: View {
                 password = ""
                 isShowingEmailPassword = false
             }
+        }
+        .onChange(of: model.sharedTagCloudState.authUserID) { _, userID in
+            if userID != nil { Task { await model.refreshLinkedProvidersForAccountDisplay() } }
         }
         .onChange(of: selectedAvatarItem) { _, newItem in
             guard let newItem else { return }
@@ -243,6 +249,13 @@ struct SharedTagCloudSheet: View {
                 .presentationDragIndicator(.visible)
                 .presentationCornerRadius(32)
             #endif
+        }
+        .onChange(of: model.googleOAuthSuccessID) { _, _ in
+            guard googleOAuthURL != nil else { return }
+            // A completed link must not run the sheet dismissal cancellation path.
+            googleOAuthPurpose = .signIn
+            googleOAuthURL = nil
+            Task { await model.refreshLinkedProvidersForAccountDisplay() }
         }
         .sheet(
             isPresented: Binding(
@@ -561,24 +574,15 @@ struct SharedTagCloudSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             VStack(spacing: 10) {
-                authProviderButton(
-                    title: "Googleをこのアカウントに連携",
-                    systemImage: "globe",
-                    identifier: "auth_link_google",
-                    background: AppPalette.surfaceSoft,
-                    foreground: AppPalette.textPrimary,
-                    enabled: !isWorking && model.sharedTagCloudState.authUserID != nil,
-                    action: startGoogleIdentityLink
-                )
-                authProviderButton(
-                    title: "Appleをこのアカウントに連携",
-                    systemImage: "apple.logo",
-                    identifier: "auth_link_apple",
-                    background: Color.black,
-                    foreground: Color.white,
-                    enabled: !isWorking && model.sharedTagCloudState.authUserID != nil,
-                    action: startAppleIdentityLink
-                )
+                linkedProviderRow(provider: "google", name: "Google", systemImage: "globe", action: startGoogleIdentityLink)
+                linkedProviderRow(provider: "apple", name: "Apple", systemImage: "apple.logo", action: startAppleIdentityLink)
+                if model.linkedProviderRefreshStatus == .failed {
+                    Text("ログイン方法を確認できませんでした。")
+                        .font(.footnote)
+                        .foregroundStyle(AppPalette.textSecondary)
+                    Button("再確認") { Task { await model.refreshLinkedProvidersForAccountDisplay() } }
+                        .accessibilityIdentifier("auth_providers_retry")
+                }
                 authProviderButton(
                     title: "ChatGPT　準備中",
                     systemImage: "message",
@@ -589,6 +593,75 @@ struct SharedTagCloudSheet: View {
                     action: {}
                 )
             }
+        }
+    }
+
+    @ViewBuilder
+    private func linkedProviderRow(provider: String, name: String, systemImage: String, action: @escaping () -> Void) -> some View {
+        if model.linkedProviderRefreshStatus == .confirmed,
+           let providers = model.sharedTagCloudState.verifiedLinkedProviders {
+            if providers.contains(provider) {
+                HStack(spacing: 12) {
+                    authProviderIcon(systemImage: systemImage, identifier: "auth_link_" + provider)
+                    Text(name).font(.system(.body, design: .rounded).weight(.semibold))
+                    Spacer(minLength: 4)
+                    Text("連携済み").font(.system(.body, design: .rounded).weight(.semibold))
+                    Image(systemName: "checkmark.circle.fill").accessibilityHidden(true)
+                }
+                .foregroundStyle(AppPalette.textPrimary)
+                .padding(.horizontal, 16)
+                .frame(maxWidth: .infinity, minHeight: 52)
+                .background(AppPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(name + "、連携済み")
+                .accessibilityIdentifier("auth_linked_" + provider)
+            } else {
+                authProviderButton(title: name + "をこのアカウントに連携", systemImage: systemImage,
+                    identifier: "auth_link_" + provider,
+                    background: provider == "apple" ? Color.black : AppPalette.surfaceSoft,
+                    foreground: provider == "apple" ? Color.white : AppPalette.textPrimary,
+                    enabled: !isWorking && model.sharedTagCloudState.authUserID != nil, action: action)
+            }
+        } else {
+            HStack(spacing: 12) {
+                authProviderIcon(systemImage: systemImage, identifier: "auth_link_" + provider)
+                Text(name).font(.system(.body, design: .rounded).weight(.semibold))
+                Spacer(minLength: 4)
+                if model.linkedProviderRefreshStatus == .loading { ProgressView() }
+                Text(model.linkedProviderRefreshStatus == .failed ? "確認できません" : "確認中")
+                    .font(.footnote)
+            }
+            .foregroundStyle(AppPalette.textSecondary)
+            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, minHeight: 52)
+            .background(AppPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    @ViewBuilder
+    private func authProviderIcon(systemImage: String, identifier: String) -> some View {
+        if identifier.contains("chatgpt") {
+            Image("AiChatGPT")
+                .renderingMode(.original)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 20, height: 20)
+                .frame(width: 24, height: 24)
+                .background(Color.black, in: RoundedRectangle(cornerRadius: 5))
+                .accessibilityHidden(true)
+        } else if identifier.contains("google") {
+            Image("AiGoogle")
+                .renderingMode(.original)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 24, height: 24)
+                .accessibilityHidden(true)
+        } else {
+            Image(systemName: systemImage)
+                .font(.system(.body, design: .rounded).weight(.semibold))
+                .frame(width: 24, height: 24)
+                .accessibilityHidden(true)
         }
     }
 
@@ -693,6 +766,7 @@ struct SharedTagCloudSheet: View {
         .disabled(!model.sharedTagCloudState.isConfigured)
     }
 
+    @ViewBuilder
     private func authProviderButton(
         title: String,
         systemImage: String,
@@ -702,30 +776,48 @@ struct SharedTagCloudSheet: View {
         enabled: Bool,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
+        if identifier == "auth_chatgpt" {
             HStack(spacing: 12) {
-                Image(systemName: systemImage)
-                    .font(.system(.body, design: .rounded).weight(.semibold))
-                    .frame(width: 24)
+                authProviderIcon(systemImage: systemImage, identifier: identifier)
                 Text(title)
                     .font(.system(.body, design: .rounded).weight(.semibold))
+                    .foregroundStyle(AppPalette.textSecondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.78)
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 16)
             .frame(maxWidth: .infinity, minHeight: 52)
-            .foregroundStyle(foreground)
             .background(background, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(AppPalette.outlineSoft, lineWidth: 1))
-            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .accessibilityElement(children: .ignore)
+            .accessibilityIdentifier(identifier)
+            .accessibilityLabel(title)
+            .accessibilityHint("現在準備中です")
+        } else {
+            Button(action: action) {
+                HStack(spacing: 12) {
+                    authProviderIcon(systemImage: systemImage, identifier: identifier)
+                    Text(title)
+                        .font(.system(.body, design: .rounded).weight(.semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 16)
+                .frame(maxWidth: .infinity, minHeight: 52)
+                .foregroundStyle(foreground)
+                .background(background, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(AppPalette.outlineSoft, lineWidth: 1))
+                .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(!enabled)
+            .opacity(enabled ? 1 : 0.62)
+            .accessibilityIdentifier(identifier)
+            .accessibilityLabel(title)
+            .accessibilityHint(enabled ? "" : (!model.sharedTagCloudState.isConfigured || title.contains("ChatGPT") ? "現在準備中です" : "サインイン状態を確認してください"))
         }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
-        .opacity(enabled ? 1 : 0.62)
-        .accessibilityIdentifier(identifier)
-        .accessibilityLabel(title)
-        .accessibilityHint(enabled ? "" : (!model.sharedTagCloudState.isConfigured || title.contains("ChatGPT") ? "現在準備中です" : "サインイン状態を確認してください"))
     }
 
     private var chatGptPersonalLinkSyncSection: some View {
@@ -1338,6 +1430,9 @@ struct SharedTagCloudSheet: View {
                     )
                 } else {
                     await model.signInWithAppleForSharedTagCloud(idToken: token, nonce: nonce)
+                }
+                if model.sharedTagCloudState.isSignedIn {
+                    await model.refreshLinkedProvidersForAccountDisplay()
                 }
                 isWorking = false
             }

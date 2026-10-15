@@ -697,6 +697,66 @@ final class SharedTagStoreTests: XCTestCase {
         XCTAssertTrue(try repository.loadChatGptPersonalLinkSnapshot().allSatisfy { $0.normalizedURL != "https://example.com/old-state" })
     }
 
+    func testLegacySessionDoesNotInventProviderKnowledge() throws {
+        let data = Data(#"{"authUserID":"legacy-test","accessToken":"test-token"}"#.utf8)
+        let session = try JSONDecoder().decode(SharedTagAuthSession.self, from: data)
+        XCTAssertNil(session.verifiedLinkedProviders)
+    }
+
+    func testProviderRefreshReadsOnlyAuthAndPersistsVerifiedIdentities() async throws {
+        let (service, sessionStore, _) = try makeIdentityLinkService()
+        AuthLinkMockURLProtocol.install { _ in
+            .json(#"{"id":"link-owner-a","identities":[{"provider":"google"},{"provider":"apple"},{"provider":"google"},{"provider":"email"}]}"#)
+        }
+        defer { AuthLinkMockURLProtocol.reset() }
+        let result = await service.refreshLinkedProviders()
+        guard case .success(let providers) = result else { return XCTFail("Expected verified providers") }
+        XCTAssertEqual(providers, ["apple", "google"])
+        XCTAssertEqual(try sessionStore.load()?.verifiedLinkedProviders, providers)
+        let requests = AuthLinkMockURLProtocol.takeRequests()
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(requests.first?.httpMethod, "GET")
+        XCTAssertEqual(requests.first?.url?.path, "/auth/v1/user")
+        XCTAssertNil(requests.first?.httpBody)
+        XCTAssertEqual(try sessionStore.load()?.accessToken, "old-access-token")
+    }
+
+    func testAppleLinkTokenResponsePersistsActualProviderIdentities() async throws {
+        let (service, sessionStore, _) = try makeIdentityLinkService()
+        AuthLinkMockURLProtocol.install { _ in
+            .json(#"{"access_token":"rotated-test-token","refresh_token":"rotated-test-refresh","user":{"id":"link-owner-a","identities":[{"provider":"apple"},{"provider":"google"}]}}"#)
+        }
+        defer { AuthLinkMockURLProtocol.reset() }
+        let result = await service.linkAppleIdentity(idToken: "synthetic-token", nonce: "synthetic-nonce")
+        XCTAssertEqual(result, .success(provider: "apple"))
+        XCTAssertEqual(try sessionStore.load()?.verifiedLinkedProviders, ["apple", "google"])
+    }
+
+    func testProviderRefreshRejectsAnotherUserAndMissingIdentityKnowledge() async throws {
+        let (service, sessionStore, _) = try makeIdentityLinkService()
+        for response in [#"{"id":"other-test-user","identities":[{"provider":"apple"}]}"#, #"{"id":"link-owner-a"}"#] {
+            AuthLinkMockURLProtocol.install { _ in .json(response) }
+            let result = await service.refreshLinkedProviders()
+            if case .success = result { XCTFail("Unexpected verified provider result") }
+            XCTAssertNil(try sessionStore.load()?.verifiedLinkedProviders)
+            XCTAssertEqual(try sessionStore.load()?.authUserID, "link-owner-a")
+            AuthLinkMockURLProtocol.reset()
+        }
+    }
+
+    func testProviderRefreshCannotOverwriteAnAccountChangedDuringRequest() async throws {
+        let (service, sessionStore, _) = try makeIdentityLinkService()
+        AuthLinkMockURLProtocol.install { _ in
+            try? sessionStore.save(SharedTagAuthSession(authUserID: "other-test-user", accessToken: "new-test-token", refreshToken: nil, userEmail: nil))
+            return .json(#"{"id":"link-owner-a","identities":[{"provider":"apple"}]}"#)
+        }
+        defer { AuthLinkMockURLProtocol.reset() }
+        let result = await service.refreshLinkedProviders()
+        if case .success = result { XCTFail("Unexpected stale refresh success") }
+        XCTAssertEqual(try sessionStore.load()?.authUserID, "other-test-user")
+        XCTAssertNil(try sessionStore.load()?.verifiedLinkedProviders)
+    }
+
     private func makeIdentityLinkService() throws -> (
         SharedTagCloudService,
         SharedTagAuthSessionStore,

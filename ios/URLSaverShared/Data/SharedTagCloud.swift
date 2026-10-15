@@ -848,8 +848,19 @@ private struct SharedTagAuthRemoteDataSource {
             authUserID: user.id,
             accessToken: accessToken,
             refreshToken: response.refreshToken,
-            userEmail: user.email
+            userEmail: user.email,
+            verifiedLinkedProviders: user.verifiedLinkedProviders
         )
+    }
+
+    func fetchLinkedProviders(session: SharedTagAuthSession) async throws -> (userID: String, providers: [String]) {
+        let data = try await SharedTagRemoteRequestExecutor(config: config, urlSession: urlSession)
+            .executeGET(path: "/auth/v1/user", queryItems: [], bearerToken: session.accessToken)
+        let user = try makeSharedTagCloudDecoder().decode(SupabaseAuthUser.self, from: data)
+        guard let providers = user.verifiedLinkedProviders else {
+            throw SharedTagCloudError.message("ログイン方法の確認情報がありません")
+        }
+        return (user.id, providers)
     }
 
     private func executeAuthRequest<T: Encodable>(
@@ -3023,7 +3034,8 @@ final class SharedTagCloudService: @unchecked Sendable {
             isConfigured: config.isConfigured,
             isSignedIn: session != nil && config.isConfigured,
             signedInEmail: session?.userEmail,
-            authUserID: session?.authUserID
+            authUserID: session?.authUserID,
+            verifiedLinkedProviders: session?.verifiedLinkedProviders
         )
     }
 
@@ -3033,6 +3045,31 @@ final class SharedTagCloudService: @unchecked Sendable {
 
     func currentSession() -> SharedTagAuthSession? {
         try? sessionStore.load()
+    }
+
+    /// Reads only Auth user identities; never invokes sync or sends local application data.
+    func refreshLinkedProviders() async -> Result<[String], SharedTagCloudError> {
+        await accountOperationGate.withExclusiveOperation { [self] in
+            guard config.isConfigured, localAccountCleanupState == nil,
+                  let session = try? sessionStore.load() else {
+                return .failure(.message("サインインしてください"))
+            }
+            do {
+                let result = try await authRemoteDataSource.fetchLinkedProviders(session: session)
+                try Task.checkCancellation()
+                guard result.userID == session.authUserID,
+                      var current = try sessionStore.load(),
+                      current.authUserID == session.authUserID,
+                      current.accessToken == session.accessToken else {
+                    return .failure(.message("アカウントが変わったためログイン方法を更新しませんでした"))
+                }
+                current.verifiedLinkedProviders = result.providers
+                try sessionStore.save(current)
+                return .success(result.providers)
+            } catch {
+                return .failure(.message("ログイン方法を確認できませんでした"))
+            }
+        }
     }
 
     func googleOAuthURL() -> URL? {
@@ -4903,6 +4940,15 @@ private struct SupabaseAuthSessionResponse: Decodable {
 private struct SupabaseAuthUser: Decodable {
     let id: String
     let email: String?
+    let identities: [SupabaseAuthIdentity]?
+
+    var verifiedLinkedProviders: [String]? {
+        identities.map { Array(Set($0.map(\.provider).filter { $0 == "google" || $0 == "apple" })).sorted() }
+    }
+}
+
+private struct SupabaseAuthIdentity: Decodable {
+    let provider: String
 }
 
 private struct SupabaseAuthErrorResponse: Decodable {
