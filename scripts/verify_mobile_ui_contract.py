@@ -200,12 +200,12 @@ def main() -> int:
         lambda: require(
             "app/src/main/java/jp/mimac/urlsaver/ui/SharedTagCloudScreens.kt",
             "ChatGPTに保存リンクを同期",
-            "Android profile must expose the fail-closed sync status card",
+            "Android must retain the gated sync implementation",
         ),
         lambda: require(
             "ios/URLSaveriOS/UI/SharedTagCloudSheet.swift",
             "ChatGPTに保存リンクを同期",
-            "iPhone profile must expose the fail-closed sync status card",
+            "iPhone must retain the gated sync implementation",
         ),
         lambda: require(
             "app/src/main/java/jp/mimac/urlsaver/ui/TagDetailScreen.kt",
