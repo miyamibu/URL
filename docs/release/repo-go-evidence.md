@@ -1,5 +1,16 @@
 # REPO_GO Evidence
 
+## 2026-10-15 final glyph source freeze: Android1.0.27 (43) / iOS1.0.27 (42)
+
+Final status: REPO_GO for the authorized final source candidate. This is the source-freeze snapshot before Android43 review submission. The actual final Git/CI/Store/device states are retained in `artifacts/store-submission-logs/2026-10-15-1.0.27-final-receipt.json`. iOS42 is already submitted under `05e14fb3-8425-443f-8627-ed400505bcf8`; Android42 submission26 is a historical first candidate and the final target is43.
+
+- The user explicitly requested a standalone transparent Apple mark on Android. The official foreground SVG path, fill and56×56 viewBox are preserved in new VectorDrawables; the background UI rectangle is not drawn. The previous PNG tile and intermediate whole-row white treatment are superseded. Existing row colors, layout, provider semantics and all authentication logic are retained.
+- The pre-existing confirmation app `jp.miyamibu.urlalbum.menuui20260930` was updated in place to1.0.27(43) using its matching Debug signer, with only a temporary application-ID/generated-directory override. Actual Pixel review and six identical background pixel samples verified no opaque box, the visible Apple leaf, readable Google/ChatGPT marks and retained profile data. It is signed out; this does not prove canonical authenticated provider rows.
+- Final Android Debug assemble and `bundleRelease lintDebug` passed. Canonical43 AAB `build/store/rinbam-1.0.27-43-play-signed-v3.aab` has SHA-256 `a2a55073aaff79832454fb6248c7752c5178b02a50bfff117b34d151f4cab5ea`. Signature, package/version, R8 mapping,1,032 payload entries, runtime equality and257 frozen inputs were checked. Lint reports Fatal0/Error0/Warning67: the63 previous warnings plus2 faithful-vector path warnings and2 intentionally retained unused PNG resources. No warning suppression or artwork optimization was used.
+- The72 Android provider tests and5 iOS domain tests remain valid because the follow-up changes only Apple rendering and Android version metadata. The preceding source `dcd3722403719935fe6a16dbc9ba2fbe56974ea0` passed all5 Cross-platform CI jobs ([run38696389079](https://github.com/miyamibu/URL/actions/runs/38696389079)) and all3 Production feature-contract jobs ([run38696389012](https://github.com/miyamibu/URL/actions/runs/38696389012)). Final pushed-commit CI is a separate result recorded in the final receipt.
+- iOS source, distribution archive, upload, canonical physical Appium proof and the production SQL/provider settings below are unchanged. ChatGPT's official inquiry is received; provider approval/client issuance remains external. Canonical Android was blocked by the Play installer-origin check after direct protected-APK installation; no app data was removed and no protection/installer identity was bypassed. Normal Play delivery/recovery is recorded separately from the confirmation-app proof.
+- Mobile UI contract, manifest and whitespace checks pass. Source and sanitized documents are committed; private account/device evidence and all intermediate artifacts remain local.
+
 ## 2026-10-15 verified provider-status source candidate: 1.0.27 (42)
 
 Final status: REPO_GO for the authorized mobile source update. Store processing, final Play-signed Android UI proof and review submission are subsequent gates; this entry does not claim approval or publication of build42. iOS auth source is committed as `1df6e634`; Android auth source is committed as `ffeff98e`. Release metadata is advanced to `1.0.27 (42)` because the prior iOS build41 is ready for distribution and Google Play submission25 is published.
@@ -150,7 +161,7 @@ Still open at the time of the 2026-08-22 freeze (external, owner-gated): product
 
 ## Current source snapshot (manifest-backed)
 
-- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.27`, `versionCode=42`
+- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.27`, `versionCode=43`
 - iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.27`, `build=42`; share extension `com.mibu.codebridge.ios.share`
 - Supabase migration head: `20261013090000_auto_group_for_shared_tag_invite_accept.sql`
 - Machine-readable source: `docs/release/release-manifest.json`

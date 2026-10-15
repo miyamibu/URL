@@ -1,5 +1,16 @@
 # Final Store Submission Checklist
 
+## 2026-10-15 final source freeze: Android1.0.27 (43) / iOS1.0.27 (42)
+
+Status at freeze: ANDROID43_PREPARED_FOR_SUBMISSION / IOS42_SUBMITTED_WAITING_REVIEW. The Android-only follow-up uses a transparent Apple glyph and retains the existing row colors; its physical confirmation-app review precedes selection of the final AAB. The user authorized completing this correction, committing/pushing and submitting the final Store update. The signed iOS42 candidate is unchanged.
+
+Final Git/CI, artifact hashes, Android replacement submission ID/state and any later canonical-device recovery are recorded in the local `artifacts/store-submission-logs/2026-10-15-1.0.27-final-receipt.json`. Raw account/device evidence remains excluded from Git as documented in [local artifacts](../local-artifacts.md). The sections below are dated snapshots and are not live Store state.
+
+- Final Android43 artifact: `build/store/rinbam-1.0.27-43-play-signed-v3.aab`, SHA-256 `a2a55073aaff79832454fb6248c7752c5178b02a50bfff117b34d151f4cab5ea`. Canonical package/version, upload signer, bundletool, R8 mapping, all1,032 unsigned/signed payload entries and production runtime configuration equality were verified. The original257 build inputs include both new glyph XML files. Final bundle/lint and the actual Pixel confirmation-app icon review passed. Android canonical Play-delivery proof remains separate.
+- iOS42: [submission05e14fb3-8425-443f-8627-ed400505bcf8](https://appstoreconnect.apple.com/apps/6771251450/distribution/reviewsubmissions/details/05e14fb3-8425-443f-8627-ed400505bcf8), submitted16:14 JST; waiting for review when verified. IPA SHA-256 `d0ccef90c22bcd89fd1296e93a7c707c0d12f780cecb4f05fb3fdce75a8e0b7f`.
+- Android42 was initially submitted as [submission26](https://play.google.com/console/u/0/developers/6026364900028455951/app/4976058498782318560/publishing/submission-activity/26/details) at16:21 JST. Its opaque Apple PNG treatment is superseded by the build43 target. Do not select a retained v1/v2 intermediate43 artifact; select only the verified transparent-glyph final artifact identified in the final receipt.
+- Account/prod SQL evidence and the explicit canonical/confirmation-app boundary are recorded in [the auth follow-up](production-sharing-auth-2026-10-15.md). ChatGPT login remains preparing pending approval/client issuance; the official inquiry is received.
+
 ## 2026-10-15 release candidate: 1.0.27 (42)
 
 Status: VALIDATING. The user authorized completing the remaining provider-status/icon fixes, committing/pushing and submitting both mobile Stores. The prior Android `1.0.26 (41)` release is published; the prior iOS detail is ready for distribution. Both current candidates therefore use `1.0.27 (42)`. Existing release modes and audiences are retained.
@@ -37,7 +48,7 @@ Status: BOTH_STORES_SUBMITTED_REVIEW_PENDING. Source commit `befc926df95b84537b2
 この文書の下部に残る `1.0.11` の表は、2026-06-27/28 の Google Play / App Store 提出時点の履歴ログとして扱う。現在の repo source はmanifestと実ソースで照合し、この履歴ログだけでは次回提出可否を判断しない。
 
 ## Current source snapshot (manifest-backed)
-- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.27`, `versionCode=42`
+- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.27`, `versionCode=43`
 - iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.27`, `build=42`; share extension `com.mibu.codebridge.ios.share`
 - Supabase migration head: `20261013090000_auto_group_for_shared_tag_invite_accept.sql`
 - Machine-readable source: `docs/release/release-manifest.json`.

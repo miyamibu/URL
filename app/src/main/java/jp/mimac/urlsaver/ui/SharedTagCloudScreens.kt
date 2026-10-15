@@ -2482,7 +2482,7 @@ private fun AuthProviderIcon(
     iconRes: Int,
     darkBacking: Boolean = false,
 ) {
-    val isAppleLogo = iconRes == R.drawable.ic_auth_apple_black || iconRes == R.drawable.ic_auth_apple_white
+    val isAppleLogo = iconRes == R.drawable.ic_auth_apple_glyph_black || iconRes == R.drawable.ic_auth_apple_glyph_white
     Box(modifier = Modifier.size(32.dp), contentAlignment = Alignment.Center) {
         if (darkBacking) {
             Surface(
@@ -2501,7 +2501,7 @@ private fun AuthProviderIcon(
             Image(
                 painter = painterResource(iconRes),
                 contentDescription = null,
-                modifier = if (isAppleLogo) Modifier.requiredSize(44.dp) else Modifier.size(24.dp),
+                modifier = if (isAppleLogo) Modifier.requiredSize(64.dp) else Modifier.size(24.dp),
                 contentScale = ContentScale.Fit,
             )
         }
@@ -2516,10 +2516,10 @@ private val LinkedIdentityProvider.displayName: String
 
 private fun LinkedIdentityProvider.iconResForSurface(surfaceColor: Color): Int = when (this) {
     LinkedIdentityProvider.GOOGLE -> R.drawable.ic_auth_google
-    LinkedIdentityProvider.APPLE -> if (surfaceColor.luminance() > 0.5f) {
-        R.drawable.ic_auth_apple_black
+    LinkedIdentityProvider.APPLE -> if (surfaceColor.luminance() >= 0.5f) {
+        R.drawable.ic_auth_apple_glyph_black
     } else {
-        R.drawable.ic_auth_apple_white
+        R.drawable.ic_auth_apple_glyph_white
     }
 }
 

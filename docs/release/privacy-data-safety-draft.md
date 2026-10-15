@@ -5,7 +5,7 @@
 
 ## Current source snapshot (manifest-backed)
 
-- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.27`, `versionCode=42`
+- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.27`, `versionCode=43`
 - iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.27`, `build=42`; share extension `com.mibu.codebridge.ios.share`
 - Supabase migration head: `20261013090000_auto_group_for_shared_tag_invite_accept.sql`
 
