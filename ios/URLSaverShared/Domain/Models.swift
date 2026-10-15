@@ -33,7 +33,7 @@ enum HomeBackgroundStyle: String, CaseIterable, Hashable, Identifiable, Sendable
 
     var label: String {
         switch self {
-        case .current: return "今の背景"
+        case .current: return "ベージュ"
         case .sakura: return "さくら"
         case .lavender: return "ラベンダー"
         case .mint: return "ミント"

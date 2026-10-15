@@ -15,7 +15,7 @@ class HomeBackgroundPaletteTest {
             listOf(Color(0xFFF7F3EC), Color(0xFFEDE7DF), Color(0xFFE9E1D7)),
             homeBackgroundGradientColors(HomeBackgroundStyle.WARM_BEIGE),
         )
-        assertEquals("今の背景", homeBackgroundLabel(HomeBackgroundStyle.WARM_BEIGE))
+        assertEquals("ベージュ", homeBackgroundLabel(HomeBackgroundStyle.WARM_BEIGE))
     }
 
     @Test

@@ -1249,6 +1249,7 @@ final class URLSaverAppModel: ObservableObject {
             await refreshEntitlements()
             await acceptPendingInviteIfPossible()
         case .needsEmailConfirmation:
+            profileStatusMessage = "メール確認後に共有タグクラウドへサインインしてください"
             enqueueNotification(
                 AppNotification(
                     message: "メール確認後に共有タグクラウドへサインインしてください",
@@ -1258,6 +1259,7 @@ final class URLSaverAppModel: ObservableObject {
                 )
             )
         case .failure(let message):
+            profileStatusMessage = message
             enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 4))
         }
     }
@@ -1287,6 +1289,7 @@ final class URLSaverAppModel: ObservableObject {
             await refreshEntitlements()
             await acceptPendingInviteIfPossible()
         case .needsEmailConfirmation:
+            profileStatusMessage = "確認メールを送信しました。確認後に再度サインインしてください"
             enqueueNotification(
                 AppNotification(
                     message: "確認メールを送信しました。確認後に再度サインインしてください",
@@ -1296,6 +1299,7 @@ final class URLSaverAppModel: ObservableObject {
                 )
             )
         case .failure(let message):
+            profileStatusMessage = message
             enqueueNotification(AppNotification(message: message, actionLabel: nil, action: nil, autoDismissAfter: 4))
         }
     }

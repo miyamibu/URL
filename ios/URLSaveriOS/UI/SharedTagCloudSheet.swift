@@ -29,6 +29,8 @@ struct SharedTagCloudSheet: View {
     @State private var password = ""
     @State private var isPasswordVisible = false
     @State private var isShowingEmailPassword = false
+    @State private var isShowingLoginMethods = false
+    @State private var isShowingAccountActions = false
     @State private var displayNameDraft = ""
     @State private var isEditingDisplayName = false
     @State private var selectedAvatarItem: PhotosPickerItem?
@@ -52,6 +54,46 @@ struct SharedTagCloudSheet: View {
     @State private var pendingChatGptPersonalLinkSyncAction: ChatGptPersonalLinkSyncAction?
     @State private var isShowingAiTransparency = false
     @StateObject private var appleSignInCoordinator = AppleSignInCoordinator()
+
+    #if DEBUG
+    // Explicit visual-only launch route: production renderers, no account or purchase actions.
+    static var isVisualFixtureEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains("--profile-visual-fixture")
+    }
+
+    var visualFixture: some View {
+        ScreenContainer {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("UI検証・端末内サンプル")
+                        .font(.headline)
+                    ProfilePanel {
+                        Text("ログイン方法を追加").font(.title3.bold())
+                        VStack(spacing: 8) {
+                            if ProcessInfo.processInfo.arguments.contains("--profile-visual-unlinked") {
+                                unlinkedProviderRow(provider: "google", name: "Google", systemImage: "globe", enabled: true) {}
+                                unlinkedProviderRow(provider: "apple", name: "Apple", systemImage: "apple.logo", enabled: true) {}
+                            } else {
+                                confirmedLinkedProviderRow(provider: "google", name: "Google", systemImage: "globe")
+                                confirmedLinkedProviderRow(provider: "apple", name: "Apple", systemImage: "apple.logo")
+                            }
+                            authProviderButton(title: "ChatGPT", systemImage: "message", identifier: "auth_chatgpt", background: AppPalette.surfaceSoft, foreground: AppPalette.textSecondary, enabled: false) {}
+                        }
+                        .allowsHitTesting(false)
+                    }
+                    ProfilePanel {
+                        paidCourseContent(options: availablePaidCoursePurchaseOptions(currentPlan: .free), visualOnly: true)
+                    }
+                    Text("表示だけの検証です。連携・購入は行いません。")
+                        .font(.footnote)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+                .padding(.bottom, 22)
+            }
+        }
+    }
+    #endif
 
     var body: some View {
         ScreenContainer {
@@ -435,26 +477,24 @@ struct SharedTagCloudSheet: View {
                 } label: {
                     profileSettingRow(title: "ChatGPT連携", value: chatGptSyncStateLabel, icon: "link", showsChevron: false)
                 }
-            } else {
-                profileSettingRow(title: "ChatGPT連携", value: "現在利用できません", icon: "link", showsChevron: false)
             }
-            DisclosureGroup(isExpanded: $isShowingPlanDetails) {
+            profileDivider
+            profileDisclosureButton(title: "プラン・優待", icon: "checkmark.seal", isExpanded: $isShowingPlanDetails, identifier: "profile_plans")
+            if isShowingPlanDetails {
+                HStack {
+                    Text("現在のプラン").font(.system(.body, design: .rounded).weight(.semibold))
+                    Spacer(minLength: 8)
+                    Text(currentPlanLabel).font(.system(.subheadline).weight(.bold)).foregroundStyle(AppPalette.textSecondary)
+                }
+                .frame(minHeight: 44)
+                profileDivider
                 if !model.entitlements.planType.isPaidCourse {
                     paidCourseSection
                 }
                 promoCodeSection
-            } label: {
-                profileSettingRow(title: "プラン・優待", value: nil, icon: "checkmark.seal", showsChevron: false)
             }
             if model.sharedTagCloudState.isSignedIn {
                 notificationSettingsRow
-            }
-            if model.sharedTagCloudState.isSignedIn {
-                DisclosureGroup {
-                    accountActionsSection
-                } label: {
-                    profileSettingRow(title: "アカウント管理", value: nil, icon: "person.badge.shield.checkmark", showsChevron: false)
-                }
             }
         }
         .tint(AppPalette.textSecondary)
@@ -511,7 +551,7 @@ struct SharedTagCloudSheet: View {
     }
 
     private var signedOutSection: some View {
-        AppPanel {
+        VStack(alignment: .leading, spacing: 10) {
             profileSettingRow(title: "サインイン", value: "未ログイン", icon: "person.crop.circle", showsChevron: false)
             Text("共有タグに参加するにはサインインが必要です")
                 .font(.system(size: 18, weight: .heavy, design: .rounded))
@@ -544,7 +584,7 @@ struct SharedTagCloudSheet: View {
                     action: { startAppleSignIn() }
                 )
                 authProviderButton(
-                    title: "ChatGPTで続ける（準備中）",
+                    title: "ChatGPT",
                     systemImage: "message",
                     identifier: "auth_chatgpt",
                     background: AppPalette.surfaceSoft,
@@ -554,46 +594,116 @@ struct SharedTagCloudSheet: View {
                 )
             }
 
-            DisclosureGroup(isExpanded: $isShowingEmailPassword) {
+            profileDisclosureButton(title: "メールでログイン・登録", icon: "envelope", isExpanded: $isShowingEmailPassword, identifier: "auth_email")
+            if isShowingEmailPassword {
                 emailPasswordForm
-            } label: {
-                profileSettingRow(title: "メールアドレス・パスワード", value: model.sharedTagCloudState.isConfigured ? nil : "準備中", icon: "envelope", showsChevron: false)
             }
-            .accessibilityIdentifier("auth_email")
         }
     }
 
     private var identityLinkSection: some View {
-        AppPanel {
-            Text("ログイン方法を追加")
-                .font(.system(size: 18, weight: .heavy, design: .rounded))
-                .foregroundStyle(AppPalette.textPrimary)
-            Text("GoogleまたはAppleを連携すると、AndroidとiPhoneで同じ共有タグアカウントを使えます。")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(AppPalette.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            VStack(spacing: 10) {
-                linkedProviderRow(provider: "google", name: "Google", systemImage: "globe", action: startGoogleIdentityLink)
-                linkedProviderRow(provider: "apple", name: "Apple", systemImage: "apple.logo", action: startAppleIdentityLink)
-                if model.linkedProviderRefreshStatus == .failed {
-                    Text("ログイン方法を確認できませんでした。")
-                        .font(.footnote)
-                        .foregroundStyle(AppPalette.textSecondary)
-                    Button("再確認") { Task { await model.refreshLinkedProvidersForAccountDisplay() } }
-                        .accessibilityIdentifier("auth_providers_retry")
+        VStack(alignment: .leading, spacing: 8) {
+            profileDisclosureButton(title: "ログイン方法を追加", icon: "person.badge.plus", isExpanded: $isShowingLoginMethods, identifier: "auth_login_methods")
+            if isShowingLoginMethods {
+                VStack(spacing: 8) {
+                    linkedProviderRow(provider: "google", name: "Google", systemImage: "globe", action: startGoogleIdentityLink)
+                    linkedProviderRow(provider: "apple", name: "Apple", systemImage: "apple.logo", action: startAppleIdentityLink)
+                    if model.linkedProviderRefreshStatus == .failed {
+                        Text("ログイン方法を確認できませんでした。")
+                            .font(.footnote)
+                            .foregroundStyle(AppPalette.textSecondary)
+                        Button("再確認") { Task { await model.refreshLinkedProvidersForAccountDisplay() } }
+                            .accessibilityIdentifier("auth_providers_retry")
+                    }
+                    authProviderButton(
+                        title: "ChatGPT",
+                        systemImage: "message",
+                        identifier: "auth_chatgpt",
+                        background: AppPalette.surfaceSoft,
+                        foreground: AppPalette.textMuted,
+                        enabled: false,
+                        action: {}
+                    )
                 }
-                authProviderButton(
-                    title: "ChatGPT　準備中",
-                    systemImage: "message",
-                    identifier: "auth_chatgpt",
-                    background: AppPalette.surfaceSoft,
-                    foreground: AppPalette.textMuted,
-                    enabled: false,
-                    action: {}
-                )
+                profileDivider
+                profileDisclosureButton(title: "アカウント管理", icon: "person.badge.shield.checkmark", isExpanded: $isShowingAccountActions, identifier: "auth_account_actions")
+                if isShowingAccountActions {
+                    accountActionsSection
+                }
             }
         }
+    }
+
+    private var profileDivider: some View {
+        Rectangle()
+            .fill(Color(UIColor.separator).opacity(0.45))
+            .frame(height: 0.5)
+            .accessibilityHidden(true)
+    }
+
+    private func profileDisclosureButton(title: String, icon: String, isExpanded: Binding<Bool>, identifier: String) -> some View {
+        Button {
+            isExpanded.wrappedValue.toggle()
+        } label: {
+            HStack(spacing: 0) {
+                profileSettingRow(title: title, value: nil, icon: icon, showsChevron: false)
+                Image(systemName: isExpanded.wrappedValue ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(AppPalette.textPrimary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(identifier)
+        .accessibilityLabel(title)
+        .accessibilityValue(isExpanded.wrappedValue ? "展開中" : "閉じています")
+    }
+
+    private func confirmedLinkedProviderRow(provider: String, name: String, systemImage: String) -> some View {
+        HStack(spacing: 12) {
+            authProviderIcon(systemImage: systemImage, identifier: "auth_link_" + provider)
+            Text(name).font(.system(.body, design: .rounded).weight(.semibold))
+            Spacer(minLength: 4)
+            Text("連携済み").font(.system(.body, design: .rounded).weight(.semibold))
+            Image(systemName: "checkmark.circle.fill")
+                .frame(width: 20)
+                .accessibilityHidden(true)
+        }
+        .foregroundStyle(AppPalette.textPrimary)
+        .padding(.horizontal, 16)
+        .frame(maxWidth: .infinity, minHeight: 52)
+        .background(AppPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(name + "、連携済み")
+        .accessibilityIdentifier("auth_linked_" + provider)
+    }
+
+    private func unlinkedProviderRow(provider: String, name: String, systemImage: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                authProviderIcon(systemImage: systemImage, identifier: "auth_link_" + provider)
+                Text(name).font(.system(.body, design: .rounded).weight(.semibold))
+                Spacer(minLength: 4)
+                Text("連携する").font(.system(.body, design: .rounded).weight(.semibold))
+                Image(systemName: "checkmark.circle.fill")
+                    .frame(width: 20)
+                    .hidden()
+                    .accessibilityHidden(true)
+            }
+            .foregroundStyle(provider == "apple" ? Color.white : AppPalette.textPrimary)
+            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, minHeight: 52)
+            .background(provider == "apple" ? Color.black : AppPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(AppPalette.outlineSoft, lineWidth: 1))
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.62)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(name + "をこのアカウントに連携")
+        .accessibilityIdentifier("auth_link_" + provider)
+        .accessibilityHint(enabled ? "" : (!model.sharedTagCloudState.isConfigured ? "現在準備中です" : "サインイン状態を確認してください"))
     }
 
     @ViewBuilder
@@ -601,25 +711,9 @@ struct SharedTagCloudSheet: View {
         if model.linkedProviderRefreshStatus == .confirmed,
            let providers = model.sharedTagCloudState.verifiedLinkedProviders {
             if providers.contains(provider) {
-                HStack(spacing: 12) {
-                    authProviderIcon(systemImage: systemImage, identifier: "auth_link_" + provider)
-                    Text(name).font(.system(.body, design: .rounded).weight(.semibold))
-                    Spacer(minLength: 4)
-                    Text("連携済み").font(.system(.body, design: .rounded).weight(.semibold))
-                    Image(systemName: "checkmark.circle.fill").accessibilityHidden(true)
-                }
-                .foregroundStyle(AppPalette.textPrimary)
-                .padding(.horizontal, 16)
-                .frame(maxWidth: .infinity, minHeight: 52)
-                .background(AppPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(name + "、連携済み")
-                .accessibilityIdentifier("auth_linked_" + provider)
+                confirmedLinkedProviderRow(provider: provider, name: name, systemImage: systemImage)
             } else {
-                authProviderButton(title: name + "をこのアカウントに連携", systemImage: systemImage,
-                    identifier: "auth_link_" + provider,
-                    background: provider == "apple" ? Color.black : AppPalette.surfaceSoft,
-                    foreground: provider == "apple" ? Color.white : AppPalette.textPrimary,
+                unlinkedProviderRow(provider: provider, name: name, systemImage: systemImage,
                     enabled: !isWorking && model.sharedTagCloudState.authUserID != nil, action: action)
             }
         } else {
@@ -717,7 +811,7 @@ struct SharedTagCloudSheet: View {
             }
 
             HStack(spacing: 10) {
-                AppActionButton(tone: .primary, enabled: canSubmitAuth && !isWorking) {
+                AppActionButton(tone: .primary, enabled: canSubmitAuth && !isWorking, readableDisabled: true) {
                     guard !isWorking else { return }
                     isWorking = true
                     Task {
@@ -725,9 +819,9 @@ struct SharedTagCloudSheet: View {
                         isWorking = false
                     }
                 } label: {
-                    if isWorking { ProgressView().tint(AppPalette.textPrimary) } else { Text("サインイン") }
+                    if isWorking { ProgressView().tint(AppPalette.textPrimary) } else { Text("ログイン") }
                 }
-                AppActionButton(enabled: canSubmitAuth && !isWorking) {
+                AppActionButton(enabled: canSubmitAuth && !isWorking, readableDisabled: true) {
                     guard !isWorking else { return }
                     isWorking = true
                     Task {
@@ -740,7 +834,7 @@ struct SharedTagCloudSheet: View {
             }
 
             HStack(spacing: 10) {
-                AppActionButton(enabled: canSubmitEmailOnly && !isWorking) {
+                AppActionButton(enabled: canSubmitEmailOnly && !isWorking, readableDisabled: true) {
                     guard !isWorking else { return }
                     isWorking = true
                     Task {
@@ -750,7 +844,7 @@ struct SharedTagCloudSheet: View {
                 } label: {
                     Text("確認メール再送")
                 }
-                AppActionButton(enabled: canSubmitEmailOnly && !isWorking) {
+                AppActionButton(enabled: canSubmitEmailOnly && !isWorking, readableDisabled: true) {
                     guard !isWorking else { return }
                     isWorking = true
                     Task {
@@ -784,7 +878,14 @@ struct SharedTagCloudSheet: View {
                     .foregroundStyle(AppPalette.textSecondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.78)
-                Spacer(minLength: 0)
+                Spacer(minLength: 4)
+                Text("準備中")
+                    .font(.system(.body, design: .rounded).weight(.semibold))
+                    .foregroundStyle(AppPalette.textSecondary)
+                Image(systemName: "checkmark.circle.fill")
+                    .frame(width: 20)
+                    .hidden()
+                    .accessibilityHidden(true)
             }
             .padding(.horizontal, 16)
             .frame(maxWidth: .infinity, minHeight: 52)
@@ -1051,8 +1152,6 @@ struct SharedTagCloudSheet: View {
                 .accessibilityElement(children: .combine)
             }
         }
-        .padding(8)
-        .background(Color(UIColor(hex: 0xEFE5EC)), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
     }
 
     @ViewBuilder
@@ -1191,7 +1290,8 @@ struct SharedTagCloudSheet: View {
 
             AppActionButton(
                 tone: .primary,
-                enabled: canRedeemPromoCode && !isRedeemingPromoCode
+                enabled: canRedeemPromoCode && !isRedeemingPromoCode,
+                readableDisabled: true
             ) {
                 redeemPromoCode()
             } label: {
@@ -1211,15 +1311,18 @@ struct SharedTagCloudSheet: View {
     }
 
     private var paidCourseSection: some View {
-        let options = availablePaidCoursePurchaseOptions(currentPlan: model.entitlements.planType)
-        return AppPanel {
+        paidCourseContent(options: availablePaidCoursePurchaseOptions(currentPlan: model.entitlements.planType))
+    }
+
+    private func paidCourseContent(options: [PaidCoursePurchaseOption], visualOnly: Bool = false) -> some View {
+        let orderedOptions = options.sorted { lhs, rhs in
+            if lhs.billingPeriod != rhs.billingPeriod { return lhs.billingPeriod == .monthly }
+            return lhs.planType == .standard && rhs.planType == .pro
+        }
+        return VStack(alignment: .leading, spacing: 12) {
             Text("有料コース")
                 .font(.system(size: 20, weight: .heavy, design: .rounded))
                 .foregroundStyle(AppPalette.textPrimary)
-
-            Text("購入後はサーバー検証が完了したコースだけ反映されます。")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(AppPalette.textSecondary)
 
             if options.isEmpty {
                 Label("Proが有効です。追加購入は必要ありません。", systemImage: "checkmark.seal.fill")
@@ -1227,16 +1330,9 @@ struct SharedTagCloudSheet: View {
                     .foregroundStyle(AppPalette.primaryStrong)
                     .accessibilityLabel("Proが有効です。追加購入は必要ありません")
             } else {
-                let columns = dynamicTypeSize.isAccessibilitySize
-                    ? [GridItem(.flexible())]
-                    : [GridItem(.flexible()), GridItem(.flexible())]
-                LazyVGrid(columns: columns, spacing: 10) {
-                    ForEach(options, id: \.self) { option in
-                        paidCourseButton(
-                            title: paidCourseOptionTitle(option),
-                            plan: option.planType,
-                            period: option.billingPeriod
-                        )
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                    ForEach(orderedOptions, id: \.self) { option in
+                        paidCourseButton(title: paidCourseOptionTitle(option), plan: option.planType, period: option.billingPeriod, visualOnly: visualOnly)
                     }
                 }
             }
@@ -1249,12 +1345,11 @@ struct SharedTagCloudSheet: View {
         return "\(plan) \(period)"
     }
 
-    private func paidCourseButton(title: String, plan: PlanType, period: BillingPeriod) -> some View {
-        AppActionButton(
-            tone: plan == .pro ? .primary : .secondary,
-            enabled: model.sharedTagCloudState.isSignedIn && !isWorking
-        ) {
-            guard !isWorking else { return }
+    private func paidCourseButton(title: String, plan: PlanType, period: BillingPeriod, visualOnly: Bool = false) -> some View {
+        let enabled = visualOnly || (model.sharedTagCloudState.isSignedIn && !isWorking)
+        return Button {
+            // Visual samples share the production renderer without invoking StoreKit.
+            guard !visualOnly, model.sharedTagCloudState.isSignedIn, !isWorking else { return }
             isWorking = true
             Task {
                 await model.purchasePaidCourse(planType: plan, billingPeriod: period)
@@ -1262,11 +1357,20 @@ struct SharedTagCloudSheet: View {
             }
         } label: {
             Text(title)
-                .font(.system(.subheadline, design: .rounded).weight(.heavy))
-                .lineLimit(1)
-                .minimumScaleFactor(0.74)
-                .allowsTightening(true)
+                .font(.system(.subheadline, design: .rounded).weight(.bold))
+                .foregroundStyle(plan == .pro ? AppPalette.primaryStrong : AppPalette.textPrimary)
+                .lineLimit(dynamicTypeSize > .large ? nil : 1)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, minHeight: 50)
+                .padding(.horizontal, 8)
+                .background(plan == .pro ? AppPalette.selectedSurface : AppPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(plan == .pro ? AppPalette.primary.opacity(0.45) : AppPalette.outlineSoft.opacity(0.7), lineWidth: 0.75))
         }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.65)
         .accessibilityIdentifier("paid_course_\(plan.rawValue)_\(period.rawValue)")
     }
 

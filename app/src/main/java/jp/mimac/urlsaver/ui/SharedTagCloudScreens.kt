@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -44,18 +45,17 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.LinkOff
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.outlined.Sell
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -97,6 +97,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -226,6 +227,8 @@ fun SharedTagCloudAuthScreen(
     var showUsageDetails by remember { mutableStateOf(false) }
     var showPlanDetails by rememberSaveable { mutableStateOf(false) }
     var showAccountDetails by rememberSaveable { mutableStateOf(false) }
+    var showEmailLogin by rememberSaveable { mutableStateOf(false) }
+    var showAccountManagement by rememberSaveable { mutableStateOf(false) }
     var showChatGptSyncDetails by rememberSaveable { mutableStateOf(false) }
     var draftAvatarBase64 by remember { mutableStateOf<String?>(null) }
     val avatarBitmap = remember(draftAvatarBase64) { draftAvatarBase64.toImageBitmapOrNull() }
@@ -386,6 +389,52 @@ fun SharedTagCloudAuthScreen(
         }
     }
 
+    fun signInWithEmail() {
+        scope.launch {
+            isSubmitting = true
+            accountMessage = viewModel.signIn(email, password).toUiMessage(
+                success = "サインインしました。プロフィールと共有タグを使えます。",
+                emailConfirmation = "確認メールの手続きが必要です。メール確認後にサインインしてください。",
+            )
+            showAccountDetails = true
+            isSubmitting = false
+        }
+    }
+
+    fun signUpWithEmail() {
+        scope.launch {
+            isSubmitting = true
+            accountMessage = viewModel.signUp(email, password).toUiMessage(
+                success = "新規登録が完了しました。プロフィールと共有タグを使えます。",
+                emailConfirmation = "確認メールを送信しました。確認後にサインインしてください。",
+            )
+            showAccountDetails = true
+            isSubmitting = false
+        }
+    }
+
+    fun resendEmailConfirmation() {
+        scope.launch {
+            isSubmitting = true
+            accountMessage = viewModel.resendEmailConfirmation(email).toUiMessage(
+                success = "確認メールを再送しました。メール確認後にサインインしてください。",
+                emailConfirmation = "確認メールを再送しました。メール確認後にサインインしてください。",
+            )
+            isSubmitting = false
+        }
+    }
+
+    fun recoverEmailPassword() {
+        scope.launch {
+            isSubmitting = true
+            accountMessage = viewModel.sendPasswordRecovery(email).toUiMessage(
+                success = "パスワード再設定メールを送信しました。",
+                emailConfirmation = "パスワード再設定メールを送信しました。メールの案内に従ってください。",
+            )
+            isSubmitting = false
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -540,17 +589,71 @@ fun SharedTagCloudAuthScreen(
                     expanded = showAccountDetails,
                     accountMessage = accountMessage,
                     onToggleAccountDetails = { showAccountDetails = !showAccountDetails },
+                    emailExpanded = showEmailLogin,
+                    onToggleEmail = { showEmailLogin = !showEmailLogin },
+                    emailDetails = {
+                        SharedTagEmailPasswordFields(
+                            email = email,
+                            password = password,
+                            isSubmitting = isSubmitting,
+                            onEmailChange = {
+                                email = it
+                                accountMessage = null
+                            },
+                            onPasswordChange = {
+                                password = it
+                                accountMessage = null
+                            },
+                            onSignIn = ::signInWithEmail,
+                            onSignUp = ::signUpWithEmail,
+                            onResendConfirmation = ::resendEmailConfirmation,
+                            onPasswordRecovery = ::recoverEmailPassword,
+                        )
+                        if (isSubmitting) CircularProgressIndicator()
+                    },
+                    accountManagementExpanded = showAccountManagement,
+                    onToggleAccountManagement = { showAccountManagement = !showAccountManagement },
+                    accountManagementDetails = {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+                            PackageManager.PERMISSION_GRANTED
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                },
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                            ) {
+                                Text("共有タグの新着通知を有効にする")
+                            }
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    scope.launch {
+                                        viewModel.signOut()
+                                        accountMessage = "サインアウトしました"
+                                    }
+                                },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("サインアウト")
+                            }
+                            TextButton(
+                                onClick = { showDeleteDialog = true },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("アカウント削除", color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    },
                     planDetailsExpanded = showPlanDetails,
                     onTogglePlanDetails = { showPlanDetails = !showPlanDetails },
                     accountDetails = {
-                        if (!cloudState.isConfigured) {
-                            Text(
-                                text = "このビルドでは共有タグのクラウド同期が設定されていません。",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        } else if (cloudState.isSignedIn) {
-                            Text("ログイン方法を追加", style = MaterialTheme.typography.titleSmall)
-                            Text("現在のアカウントに連携し、Android・iPhoneで同じ保存内容を使えます。", style = MaterialTheme.typography.bodySmall)
+                        if (cloudState.isSignedIn) {
                             listOf(LinkedIdentityProvider.GOOGLE, LinkedIdentityProvider.APPLE).forEach { provider ->
                                 LinkedIdentityProviderAccountRow(
                                     provider = provider,
@@ -583,69 +686,15 @@ fun SharedTagCloudAuthScreen(
                                 state = linkedIdentityProviders,
                                 onRetry = { scope.launch { viewModel.refreshLinkedIdentityProviders() } },
                             )
-                            OutlinedButton(
-                                onClick = {},
-                                enabled = false,
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("auth_link_chatgpt"),
-                            ) {
-                                AuthProviderButtonContent(
-                                    iconRes = R.drawable.ai_chatgpt,
-                                    label = "ChatGPTで続ける（準備中）",
-                                    darkIconBacking = true,
-                                )
-                            }
+                            ChatGptAuthProviderButton(testTag = "auth_link_chatgpt")
                             TextButton(onClick = { scope.launch { viewModel.cancelIdentityLink(); accountMessage = "ログイン方法の追加をキャンセルしました。元のアカウントは保持しています。" } }, enabled = !isSubmitting) { Text("ログイン方法の追加をキャンセル") }
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
-                                PackageManager.PERMISSION_GRANTED
-                            ) {
-                                OutlinedButton(
-                                    onClick = {
-                                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                                    },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .heightIn(min = 48.dp),
-                                ) {
-                                    Text("共有タグの新着通知を有効にする")
-                                }
-                            }
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                TextButton(
-                                    onClick = {
-                                        scope.launch {
-                                            viewModel.signOut()
-                                            accountMessage = "サインアウトしました"
-                                        }
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                ) {
-                                    Text("サインアウト")
-                                }
-                                TextButton(
-                                    onClick = { showDeleteDialog = true },
-                                    modifier = Modifier.weight(1f),
-                                ) {
-                                    Text(
-                                        "アカウント削除",
-                                        color = MaterialTheme.colorScheme.error,
-                                    )
-                                }
-                            }
                         } else {
-                            Text(
-                                text = "共有タグに参加するにはサインインが必要です",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
                             SharedTagAuthForm(
                                 email = email,
                                 password = password,
                                 isSubmitting = isSubmitting,
                                 message = null,
+                                showEmailControls = false,
                                 onEmailChange = {
                                     email = it
                                     accountMessage = null
@@ -658,19 +707,19 @@ fun SharedTagCloudAuthScreen(
                                     val url = viewModel.googleOAuthUrl()
                                     if (url == null) {
                                         accountMessage = "Googleサインインを開始できませんでした。クラウド設定を確認してください。"
-                                        return@SharedTagAuthForm
-                                    }
-                                    runCatching {
-                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                                    }.onFailure {
-                                        accountMessage = "Googleサインイン画面を開けませんでした"
+                                    } else {
+                                        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                                            .onFailure { accountMessage = "Googleサインイン画面を開けませんでした" }
                                     }
                                 },
                                 onAppleSignIn = {
                                     val url = viewModel.appleOAuthUrl()
-                                    if (url == null) accountMessage = "Appleサインインを開始できませんでした"
-                                    else runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
-                                        .onFailure { accountMessage = "Appleサインイン画面を開けませんでした" }
+                                    if (url == null) {
+                                        accountMessage = "Appleサインインを開始できませんでした"
+                                    } else {
+                                        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                                            .onFailure { accountMessage = "Appleサインイン画面を開けませんでした" }
+                                    }
                                 },
                                 onSignIn = {
                                     scope.launch {
@@ -718,11 +767,12 @@ fun SharedTagCloudAuthScreen(
                         }
                     },
                     planDetails = {
+                        UsageMetricRow("現在のプラン", profilePlanLabel(entitlements.planType))
                         if (cloudState.isConfigured && !entitlements.planType.isPaidCourse) {
                             PaidCourseSection(
                                 isEnabled = !isSubmitting && !isPurchasing,
                                 isPurchasing = isPurchasing,
-                                showMonthlyOptions = !entitlements.planType.isPaidCourse,
+                                showMonthlyOptions = true,
                                 onPurchase = ::purchasePaidCourse,
                             )
                         } else if (!cloudState.isConfigured) {
@@ -739,7 +789,9 @@ fun SharedTagCloudAuthScreen(
                             isSubmitting = true
                             planMessage = viewModel.restorePaidCourses().fold({ "購入状況を確認しました" }, { it.message ?: "購入を復元できませんでした" })
                             isSubmitting = false
-                        } }, enabled = !isSubmitting && cloudState.isSignedIn, modifier = Modifier.fillMaxWidth()) { Text("購入を復元") }
+                        } }, enabled = !isSubmitting && cloudState.isSignedIn, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.outlinedButtonColors(
+                            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )) { Text("購入を復元") }
                         PromoCodeSection(
                             promoCode = promoCode,
                             promoMessage = promoMessage,
@@ -753,6 +805,7 @@ fun SharedTagCloudAuthScreen(
                         )
                         planMessage?.let { ProfileStatusMessage(message = it) }
                     },
+                    showChatGptContent = viewModel.isChatGptSyncOperationEnabled,
                     chatGptContent = {
                         ChatGptPersonalLinkSyncCard(
                             viewModel = viewModel,
@@ -890,6 +943,9 @@ private fun PromoCodeSection(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(56.dp),
+            colors = ButtonDefaults.buttonColors(
+                disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            ),
         ) {
             Text(if (isRedeemingPromoCode) "受け取り中…" else "優待Proを受け取る")
         }
@@ -1452,22 +1508,24 @@ private fun HomeBackgroundColorSheet(
 }
 
 @Composable
-private fun ProfileAccountAndShareCard(
+internal fun ProfileAccountAndShareCard(
     cloudState: jp.mimac.urlsaver.domain.SharedTagCloudState,
     expanded: Boolean,
     accountMessage: String?,
     onToggleAccountDetails: () -> Unit,
+    emailExpanded: Boolean,
+    onToggleEmail: () -> Unit,
+    emailDetails: @Composable ColumnScope.() -> Unit,
+    accountManagementExpanded: Boolean,
+    onToggleAccountManagement: () -> Unit,
+    accountManagementDetails: @Composable ColumnScope.() -> Unit,
     planDetailsExpanded: Boolean,
     onTogglePlanDetails: () -> Unit,
     accountDetails: @Composable ColumnScope.() -> Unit,
     planDetails: @Composable ColumnScope.() -> Unit,
+    showChatGptContent: Boolean,
     chatGptContent: @Composable ColumnScope.() -> Unit,
 ) {
-    val accountStatus = when {
-        !cloudState.isConfigured -> "このビルドでは共有タグのクラウド同期が設定されていません。"
-        cloudState.isSignedIn -> cloudState.signedInEmail?.takeIf { it.isNotBlank() } ?: "サインイン済み"
-        else -> "未サインイン · 共有タグにはサインインが必要です"
-    }
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
@@ -1476,101 +1534,112 @@ private fun ProfileAccountAndShareCard(
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text("アカウント・共有", style = MaterialTheme.typography.titleMedium)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(MaterialTheme.shapes.medium)
-                    .clickable(enabled = cloudState.isConfigured, onClick = onToggleAccountDetails)
-                    .heightIn(min = 60.dp)
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Surface(
-                    modifier = Modifier.size(40.dp),
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Outlined.AccountCircle,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+            ProfileSectionDisclosureRow(
+                title = "ログイン方法を追加",
+                expanded = expanded,
+                enabled = cloudState.isConfigured,
+                onClick = onToggleAccountDetails,
+                testTag = "profile_login_methods",
+            )
+            if (expanded && cloudState.isConfigured) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    accountDetails()
+                    if (cloudState.isSignedIn) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
+                        ProfileSectionDisclosureRow(
+                            title = "アカウント管理",
+                            expanded = accountManagementExpanded,
+                            onClick = onToggleAccountManagement,
+                            testTag = "profile_account_management",
                         )
+                        if (accountManagementExpanded) {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp), content = accountManagementDetails)
+                        }
                     }
                 }
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("共有タグのアカウント", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        text = accountStatus,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (cloudState.isConfigured) MaterialTheme.colorScheme.onSurfaceVariant
-                        else MaterialTheme.colorScheme.error,
-                        maxLines = 2,
-                    )
-                }
-                if (cloudState.isConfigured) {
-                    Icon(
-                        imageVector = if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
-                        contentDescription = if (expanded) "アカウント設定を閉じる" else "アカウント設定を開く",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
             }
-            if (expanded && cloudState.isConfigured) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp), content = accountDetails)
+            if (cloudState.isConfigured && !cloudState.isSignedIn) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
+                ProfileSectionDisclosureRow(
+                    title = "メールアドレスでログイン・登録",
+                    expanded = emailExpanded,
+                    onClick = onToggleEmail,
+                    testTag = "profile_email_auth",
+                )
+                if (emailExpanded) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp), content = emailDetails)
+                }
             }
             accountMessage?.let { ProfileStatusMessage(message = it) }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 60.dp)
-                    .semantics(mergeDescendants = true) {
-                        role = Role.Button
-                        stateDescription = if (planDetailsExpanded) "展開済み" else "折りたたみ"
-                    }
-                    .clickable(onClick = onTogglePlanDetails)
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Surface(
-                    modifier = Modifier.size(40.dp),
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.tertiaryContainer,
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Outlined.Sell,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onTertiaryContainer,
-                        )
-                    }
+            ProfileSectionDisclosureRow(
+                title = "プラン・優待",
+                expanded = planDetailsExpanded,
+                onClick = onTogglePlanDetails,
+                testTag = "profile_plan_details",
+            )
+            if (planDetailsExpanded) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp), content = planDetails)
+            }
+            if (showChatGptContent) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                chatGptContent()
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfileSectionDisclosureRow(
+    title: String,
+    expanded: Boolean,
+    onClick: () -> Unit,
+    testTag: String,
+    summary: String? = null,
+    enabled: Boolean = true,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.medium)
+            .clickable(enabled = enabled, onClick = onClick)
+            .testTag(testTag)
+            .semantics(mergeDescendants = true) {
+                role = Role.Button
+                stateDescription = if (expanded) "展開済み" else "折りたたみ"
+            },
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surface,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, style = MaterialTheme.typography.bodyLarge)
+                summary?.takeIf(String::isNotBlank)?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
-                Text(
-                    text = "プラン・優待",
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodyLarge,
-                )
+            }
+            if (enabled) {
                 Icon(
-                    imageVector = if (planDetailsExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
-                    contentDescription = if (planDetailsExpanded) "プラン・優待を閉じる" else "プラン・優待を開く",
+                    imageVector = if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                    contentDescription = if (expanded) "${title}を閉じる" else "${title}を開く",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            } else {
+                ProviderStatusBadge(text = "準備中", completed = false)
             }
-            if (planDetailsExpanded) {
-                Column(
-                    modifier = Modifier.padding(horizontal = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    content = planDetails,
-                )
-            }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
-            chatGptContent()
         }
     }
 }
@@ -2015,7 +2084,6 @@ private fun UsageSummaryCard(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
         color = homeBackgroundGradientColors(backgroundStyle)[1],
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
     ) {
         Column(
             modifier = Modifier.padding(14.dp),
@@ -2049,7 +2117,6 @@ private fun UsageSummaryCard(
                     modifier = Modifier.fillMaxWidth(),
                     shape = MaterialTheme.shapes.medium,
                     color = MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
                 ) {
                     Column(modifier = Modifier.padding(horizontal = 14.dp)) {
                         UsageMetricRow("保存リンク", usageSummary.personalUrlCount.toString())
@@ -2206,10 +2273,9 @@ private fun SharedTagAuthForm(
     onSignUp: () -> Unit,
     onResendConfirmation: () -> Unit,
     onPasswordRecovery: () -> Unit,
+    showEmailControls: Boolean = true,
 ) {
-    var passwordVisible by remember { mutableStateOf(false) }
     var emailExpanded by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
-
     OutlinedButton(
         onClick = onGoogleSignIn,
         modifier = Modifier
@@ -2230,21 +2296,49 @@ private fun SharedTagAuthForm(
             label = "Appleで続ける",
         )
     }
-    OutlinedButton(
-        onClick = {},
-        modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("auth_chatgpt"),
-        enabled = false,
-    ) {
-        AuthProviderButtonContent(
-            iconRes = R.drawable.ai_chatgpt,
-            label = "ChatGPTで続ける（準備中）",
-            darkIconBacking = true,
+    ChatGptAuthProviderButton(testTag = "auth_chatgpt")
+    if (showEmailControls) {
+        TextButton(onClick = { emailExpanded = !emailExpanded }, modifier = Modifier.fillMaxWidth().testTag("auth_email")) {
+            Text(if (emailExpanded) "メールアドレスでログイン・登録 ▲" else "メールアドレスでログイン・登録 ▼")
+        }
+        if (emailExpanded) {
+            SharedTagEmailPasswordFields(
+                email = email,
+                password = password,
+                isSubmitting = isSubmitting,
+                onEmailChange = onEmailChange,
+                onPasswordChange = onPasswordChange,
+                onSignIn = onSignIn,
+                onSignUp = onSignUp,
+                onResendConfirmation = onResendConfirmation,
+                onPasswordRecovery = onPasswordRecovery,
+            )
+        }
+    }
+    if (isSubmitting) {
+        CircularProgressIndicator()
+    }
+    message?.let {
+        Text(
+            text = it,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
-    TextButton(onClick = { emailExpanded = !emailExpanded }, modifier = Modifier.fillMaxWidth().testTag("auth_email")) {
-        Text(if (emailExpanded) "メールで続ける ▲" else "メールで続ける ▼")
-    }
-    if (emailExpanded) {
+}
+
+@Composable
+private fun SharedTagEmailPasswordFields(
+    email: String,
+    password: String,
+    isSubmitting: Boolean,
+    onEmailChange: (String) -> Unit,
+    onPasswordChange: (String) -> Unit,
+    onSignIn: () -> Unit,
+    onSignUp: () -> Unit,
+    onResendConfirmation: () -> Unit,
+    onPasswordRecovery: () -> Unit,
+) {
+    var passwordVisible by remember { mutableStateOf(false) }
     OutlinedTextField(
         value = email,
         onValueChange = onEmailChange,
@@ -2266,57 +2360,48 @@ private fun SharedTagAuthForm(
             keyboardType = KeyboardType.Password,
             imeAction = ImeAction.Done,
         ),
-        visualTransformation = if (passwordVisible) {
-            VisualTransformation.None
-        } else {
-            PasswordVisualTransformation()
-        },
+        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
         trailingIcon = {
             IconButton(onClick = { passwordVisible = !passwordVisible }) {
                 Icon(
-                    imageVector = if (passwordVisible) {
-                        Icons.Outlined.VisibilityOff
-                    } else {
-                        Icons.Outlined.Visibility
-                    },
-                    contentDescription = if (passwordVisible) {
-                        "パスワードを隠す"
-                    } else {
-                        "パスワードを表示"
-                    },
+                    imageVector = if (passwordVisible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                    contentDescription = if (passwordVisible) "パスワードを隠す" else "パスワードを表示",
                 )
             }
         },
         singleLine = true,
         enabled = !isSubmitting,
     )
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Button(
             onClick = onSignIn,
             modifier = Modifier.weight(1f),
             enabled = !isSubmitting && email.isNotBlank() && password.length >= 6,
+            colors = ButtonDefaults.buttonColors(
+                disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            ),
         ) {
-            Text("サインイン")
+            Text("ログイン")
         }
         OutlinedButton(
             onClick = onSignUp,
             modifier = Modifier.weight(1f),
             enabled = !isSubmitting && email.isNotBlank() && password.length >= 6,
+            colors = ButtonDefaults.outlinedButtonColors(
+                disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            ),
         ) {
             Text("新規登録")
         }
     }
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         TextButton(
             onClick = onResendConfirmation,
             modifier = Modifier.weight(1f),
             enabled = !isSubmitting && email.isNotBlank(),
+            colors = ButtonDefaults.textButtonColors(
+                disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            ),
         ) {
             Text("確認メール再送")
         }
@@ -2324,24 +2409,48 @@ private fun SharedTagAuthForm(
             onClick = onPasswordRecovery,
             modifier = Modifier.weight(1f),
             enabled = !isSubmitting && email.isNotBlank(),
+            colors = ButtonDefaults.textButtonColors(
+                disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            ),
         ) {
             Text("パスワード再設定")
         }
     }
-    }
-    if (isSubmitting) {
-        CircularProgressIndicator()
-    }
-    message?.let {
-        Text(
-            text = it,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+}
+
+@Composable
+internal fun ChatGptAuthProviderButton(testTag: String) {
+    TextButton(
+        onClick = {},
+        modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag(testTag),
+        shape = MaterialTheme.shapes.medium,
+        colors = ButtonDefaults.textButtonColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        ),
+        enabled = false,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            AuthProviderIcon(iconRes = R.drawable.ai_chatgpt, darkBacking = true)
+            Text(
+                "ChatGPT",
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                maxLines = 1,
+            )
+            ProviderStatusBadge(text = "準備中", completed = false)
+        }
     }
 }
 
 @Composable
-private fun LinkedIdentityProviderAccountRow(
+internal fun LinkedIdentityProviderAccountRow(
     provider: LinkedIdentityProvider,
     state: LinkedIdentityProviderState,
     isSubmitting: Boolean,
@@ -2368,6 +2477,14 @@ private fun LinkedIdentityProviderAccountRow(
             onClick = onLink,
             modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("auth_link_${provider.supabaseValue}"),
             enabled = !isSubmitting,
+            shape = MaterialTheme.shapes.medium,
+            colors = ButtonDefaults.outlinedButtonColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            ),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
         ) {
             val iconRes = provider.iconResForSurface(MaterialTheme.colorScheme.surface)
             AuthProviderButtonContent(
@@ -2387,9 +2504,8 @@ private fun LinkedIdentityProviderAccountRow(
                 .fillMaxWidth()
                 .heightIn(min = 56.dp)
                 .testTag("auth_link_${provider.supabaseValue}_status"),
-            shape = MaterialTheme.shapes.small,
-            color = MaterialTheme.colorScheme.surface,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+            shape = MaterialTheme.shapes.medium,
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
         ) {
             Row(
                 modifier = Modifier
@@ -2405,10 +2521,51 @@ private fun LinkedIdentityProviderAccountRow(
                 AuthProviderIcon(
                     iconRes = iconRes,
                 )
-                Text(provider.displayName, modifier = Modifier.weight(1f), maxLines = 1)
-                Text(status, maxLines = 2, style = MaterialTheme.typography.bodySmall)
-                if (isFresh && isLinked) {
-                    Icon(Icons.Outlined.Check, contentDescription = null)
+                Text(
+                    provider.displayName,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                    maxLines = 1,
+                )
+                ProviderStatusBadge(text = status, completed = isFresh && isLinked)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProviderStatusBadge(text: String, completed: Boolean) {
+    val container = if (completed) {
+        MaterialTheme.colorScheme.secondaryContainer
+    } else {
+        MaterialTheme.colorScheme.surfaceVariant
+    }
+    val content = if (completed) {
+        MaterialTheme.colorScheme.onSecondaryContainer
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Box(
+        modifier = Modifier.widthIn(min = 104.dp, max = 104.dp),
+        contentAlignment = Alignment.CenterEnd,
+    ) {
+        Surface(shape = MaterialTheme.shapes.medium, color = container) {
+            Row(
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = text,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = content,
+                    maxLines = 1,
+                    softWrap = false,
+                )
+                if (completed) {
+                    Icon(Icons.Outlined.Check, contentDescription = null, modifier = Modifier.size(14.dp), tint = content)
+                } else {
+                    Spacer(modifier = Modifier.size(14.dp))
                 }
             }
         }
@@ -2524,7 +2681,7 @@ private fun LinkedIdentityProvider.iconResForSurface(surfaceColor: Color): Int =
 }
 
 @Composable
-private fun PaidCourseSection(
+internal fun PaidCourseSection(
     isEnabled: Boolean,
     isPurchasing: Boolean,
     showMonthlyOptions: Boolean,
@@ -2539,61 +2696,52 @@ private fun PaidCourseSection(
             style = MaterialTheme.typography.titleMedium,
         )
         if (showMonthlyOptions) {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 PaidCourseButton(
                     label = "Standard 月額",
                     enabled = isEnabled,
                     isPurchasing = isPurchasing,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.weight(1f),
                     onClick = { onPurchase(PlanType.STANDARD, BillingPeriod.MONTHLY) },
                 )
-                PaidCourseButton(
-                    label = "Standard 年払い",
-                    enabled = isEnabled,
-                    isPurchasing = isPurchasing,
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = { onPurchase(PlanType.STANDARD, BillingPeriod.YEARLY) },
-                )
-            }
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
                 PaidCourseButton(
                     label = "Pro 月額",
                     enabled = isEnabled,
                     isPurchasing = isPurchasing,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.weight(1f),
                     onClick = { onPurchase(PlanType.PRO, BillingPeriod.MONTHLY) },
                 )
-                PaidCourseButton(
-                    label = "Pro 年払い",
-                    enabled = isEnabled,
-                    isPurchasing = isPurchasing,
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = { onPurchase(PlanType.PRO, BillingPeriod.YEARLY) },
-                )
             }
-        } else {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 PaidCourseButton(
                     label = "Standard 年払い",
                     enabled = isEnabled,
                     isPurchasing = isPurchasing,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.weight(1f),
                     onClick = { onPurchase(PlanType.STANDARD, BillingPeriod.YEARLY) },
                 )
                 PaidCourseButton(
                     label = "Pro 年払い",
                     enabled = isEnabled,
                     isPurchasing = isPurchasing,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.weight(1f),
+                    onClick = { onPurchase(PlanType.PRO, BillingPeriod.YEARLY) },
+                )
+            }
+        } else {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PaidCourseButton(
+                    label = "Standard 年払い",
+                    enabled = isEnabled,
+                    isPurchasing = isPurchasing,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onPurchase(PlanType.STANDARD, BillingPeriod.YEARLY) },
+                )
+                PaidCourseButton(
+                    label = "Pro 年払い",
+                    enabled = isEnabled,
+                    isPurchasing = isPurchasing,
+                    modifier = Modifier.weight(1f),
                     onClick = { onPurchase(PlanType.PRO, BillingPeriod.YEARLY) },
                 )
             }
@@ -2609,12 +2757,43 @@ private fun PaidCourseButton(
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
+    val isPro = label.startsWith("Pro ")
+    val containerColor = if (isPro) {
+        MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+    } else {
+        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f)
+    }
+    val contentColor = if (isPro) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+    val borderColor = if (isPro) {
+        MaterialTheme.colorScheme.primary.copy(alpha = 0.38f)
+    } else {
+        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f)
+    }
     OutlinedButton(
         onClick = onClick,
         enabled = enabled,
-        modifier = modifier.heightIn(min = 56.dp).testTag("paid_course_${label.replace(" ", "_")}"),
+        modifier = modifier.heightIn(min = 48.dp).testTag("paid_course_${label.replace(" ", "_")}"),
+        shape = CircleShape,
+        border = BorderStroke(1.dp, borderColor),
+        colors = ButtonDefaults.outlinedButtonColors(
+            containerColor = containerColor,
+            contentColor = contentColor,
+            disabledContainerColor = containerColor,
+            disabledContentColor = contentColor,
+        ),
+        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
     ) {
-        Text(if (isPurchasing) "処理中" else label, maxLines = 1, softWrap = false)
+        Text(
+            text = if (isPurchasing) "処理中" else label,
+            style = MaterialTheme.typography.labelLarge,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

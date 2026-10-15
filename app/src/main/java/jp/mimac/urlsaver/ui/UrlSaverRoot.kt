@@ -93,6 +93,7 @@ import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Sell
+import androidx.compose.material.icons.outlined.SwapVert
 import androidx.compose.material.icons.outlined.ViewAgenda
 import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material3.HorizontalDivider
@@ -3120,19 +3121,35 @@ private fun HomeListControls(
             .padding(horizontal = 12.dp)
             .testTag("home_list_controls"),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Box(modifier = Modifier.weight(1f)) {
+        Box(modifier = Modifier.weight(1f).height(48.dp)) {
             TextButton(
                 onClick = { menuOpen = true },
-                modifier = Modifier.fillMaxWidth().testTag("home_sort_key"),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp),
+                modifier = Modifier.fillMaxSize().testTag("home_sort_key"),
+                shape = CircleShape,
+                colors = ButtonDefaults.textButtonColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                ),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 4.dp),
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("並び替え", style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    Icon(Icons.Outlined.SwapVert, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(3.dp))
                     Text(
                         text = if (order.key == EntryListSortKey.ADDED_DATE) "追加日" else "タイトル",
+                        style = MaterialTheme.typography.labelSmall,
                         maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Clip,
                     )
+                    Spacer(Modifier.width(2.dp))
+                    Icon(Icons.Outlined.ExpandMore, contentDescription = null, modifier = Modifier.size(14.dp))
                 }
             }
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
@@ -3173,7 +3190,8 @@ private fun HomeListControls(
         TextButton(
             onClick = onLayout,
             modifier = Modifier
-                .weight(1.1f)
+                .weight(1f)
+                .height(48.dp)
                 .testTag("home_display_method")
                 .semantics {
                     contentDescription = if (isGrid) {
@@ -3182,35 +3200,58 @@ private fun HomeListControls(
                         "表示方法:一覧、サムネイルへ切り替える"
                     }
                 },
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp),
+            shape = CircleShape,
+            colors = ButtonDefaults.textButtonColors(
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+            ),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 4.dp),
         ) {
-            Icon(
-                imageVector = if (isGrid) Icons.Outlined.GridView else Icons.AutoMirrored.Outlined.ViewList,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp),
-            )
-            Spacer(Modifier.width(4.dp))
-            Text("表示方法", maxLines = 1)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                Icon(
+                    imageVector = if (isGrid) Icons.Outlined.GridView else Icons.AutoMirrored.Outlined.ViewList,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.width(4.dp))
+                Text("表示方法", style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
+            }
         }
         TextButton(
             onClick = if (isGrid) onGridInfo else onImages,
             modifier = Modifier
-                .weight(0.8f)
+                .weight(1f)
+                .height(48.dp)
                 .testTag("home_image_visibility")
                 .semantics {
                     contentDescription = if (isGrid) {
                         if (eyeOpen) "タイトルなどを非表示にする" else "タイトルなどを表示する"
                     } else if (eyeOpen) "画像を非表示にする" else "画像を表示する"
                 },
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp),
+            shape = CircleShape,
+            colors = ButtonDefaults.textButtonColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            ),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 4.dp),
         ) {
-            Icon(
-                imageVector = if (eyeOpen) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp),
-            )
-            Spacer(Modifier.width(4.dp))
-            Text(if (eyeOpen) "表示" else "非表示", maxLines = 1)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                Icon(
+                    imageVector = if (eyeOpen) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.width(4.dp))
+                Text(if (eyeOpen) "表示" else "非表示", style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
+            }
         }
     }
 }
@@ -3281,14 +3322,16 @@ private fun MainListContent(
     )
     Spacer(modifier = Modifier.height(8.dp))
     if (showSharedTagCloudUi) {
-        TagFilterRow(
-            tags = sharedTags,
-            onOpenTag = onOpenTagDetail,
-            onCreateTag = onRequestCreateSharedTag,
-            headingColor = MainBottomNavTextColor,
-            tagColorChoices = tagColorChoices,
-            onEditColor = onRequestEditSharedTagColor,
-        )
+        Box(modifier = Modifier.fillMaxWidth().offset(y = (-8).dp)) {
+            TagFilterRow(
+                tags = sharedTags,
+                onOpenTag = onOpenTagDetail,
+                onCreateTag = onRequestCreateSharedTag,
+                headingColor = MainBottomNavTextColor,
+                tagColorChoices = tagColorChoices,
+                onEditColor = onRequestEditSharedTagColor,
+            )
+        }
         HomeListControls(
             order = listSortOrder,
             mode = entryCardDisplayMode,

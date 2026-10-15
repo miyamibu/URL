@@ -153,7 +153,7 @@ final class ServiceFilterTests: XCTestCase {
 
     func testHomeBackgroundPreferenceDefaultsToExistingCurrentGradientAndRejectsLegacyValues() {
         XCTAssertEqual(HomeBackgroundStyle.allCases, [.current, .sakura, .lavender, .mint])
-        XCTAssertEqual(HomeBackgroundStyle.current.label, "今の背景")
+        XCTAssertEqual(HomeBackgroundStyle.current.label, "ベージュ")
         XCTAssertEqual(HomeBackgroundPreferenceStore.resolve(rawValue: nil), .current)
         XCTAssertEqual(HomeBackgroundPreferenceStore.resolve(rawValue: "beige"), .current)
         XCTAssertEqual(HomeBackgroundPreferenceStore.resolve(rawValue: "system"), .current)

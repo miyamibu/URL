@@ -33,7 +33,7 @@ internal fun homeBackgroundSurfaceColor(style: HomeBackgroundStyle): Color =
 
 internal fun homeBackgroundLabel(style: HomeBackgroundStyle): String {
     return when (style) {
-        HomeBackgroundStyle.WARM_BEIGE -> "今の背景"
+        HomeBackgroundStyle.WARM_BEIGE -> "ベージュ"
         HomeBackgroundStyle.PASTEL_BLUSH -> "さくら"
         HomeBackgroundStyle.PASTEL_LAVENDER -> "ラベンダー"
         HomeBackgroundStyle.PASTEL_MINT -> "ミント"

@@ -2,6 +2,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <application
-        android:usesCleartextTraffic="true" />
+        android:usesCleartextTraffic="true">
+        <activity
+            android:name=".RemainingStatesVisualReviewActivity"
+            android:exported="true"
+            android:label="UI検証"
+            android:theme="@style/Theme.UrlSaver" />
+    </application>
 
 </manifest>

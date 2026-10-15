@@ -60,7 +60,17 @@ struct URLSaveriOSApp: App {
     var body: some Scene {
         WindowGroup {
             GeometryReader { proxy in
-                RootView(model: model)
+                Group {
+                    #if DEBUG
+                    if SharedTagCloudSheet.isVisualFixtureEnabled {
+                        SharedTagCloudSheet(model: model).visualFixture
+                    } else {
+                        RootView(model: model)
+                    }
+                    #else
+                    RootView(model: model)
+                    #endif
+                }
                     .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
                     .background(LinearGradient(
                         colors: AppDisplayColorPalette.colors(for: HomeBackgroundPreferenceStore.resolve(rawValue: colorRaw)),
@@ -69,15 +79,24 @@ struct URLSaveriOSApp: App {
                     ).ignoresSafeArea())
                     .preferredColorScheme(AppDisplayColorPalette.colorScheme)
                     .task {
+                        #if DEBUG
+                        guard !SharedTagCloudSheet.isVisualFixtureEnabled else { return }
+                        #endif
                         await model.bootstrapIfNeeded()
                     }
                     .onOpenURL { url in
+                        #if DEBUG
+                        guard !SharedTagCloudSheet.isVisualFixtureEnabled else { return }
+                        #endif
                         Task {
                             await model.handleIncomingURL(url)
                         }
                     }
                     .onChange(of: scenePhase) { _, newPhase in
                         guard newPhase == .active else { return }
+                        #if DEBUG
+                        guard !SharedTagCloudSheet.isVisualFixtureEnabled else { return }
+                        #endif
                         Task {
                             await model.refreshAfterReturningToForeground()
                         }

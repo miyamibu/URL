@@ -338,22 +338,34 @@ struct AppPanel<Content: View>: View {
 struct AppActionButton<Label: View>: View {
     let tone: AppButtonTone
     let enabled: Bool
+    let readableDisabled: Bool
     let action: () -> Void
     let label: Label
 
     init(
         tone: AppButtonTone = .secondary,
         enabled: Bool = true,
+        readableDisabled: Bool = false,
         action: @escaping () -> Void,
         @ViewBuilder label: () -> Label
     ) {
         self.tone = tone
         self.enabled = enabled
+        self.readableDisabled = readableDisabled
         self.action = action
         self.label = label()
     }
 
+    @ViewBuilder
     var body: some View {
+        if readableDisabled {
+            actionButton.buttonStyle(ReadableActionButtonStyle())
+        } else {
+            actionButton.buttonStyle(.plain)
+        }
+    }
+
+    private var actionButton: some View {
         Button(action: action) {
             label
                 .font(.system(.body, design: .rounded).weight(.bold))
@@ -366,12 +378,12 @@ struct AppActionButton<Label: View>: View {
                         .stroke(borderColor, lineWidth: borderWidth)
                 )
         }
-        .buttonStyle(.plain)
         .disabled(!enabled)
-        .opacity(enabled ? 1 : 0.5)
+        .opacity(enabled || readableDisabled ? 1 : 0.5)
     }
 
     private var backgroundColor: Color {
+        if !enabled && readableDisabled { return AppPalette.surfaceSoft }
         switch tone {
         case .primary:
             return AppPalette.primary
@@ -383,6 +395,7 @@ struct AppActionButton<Label: View>: View {
     }
 
     private var foregroundColor: Color {
+        if !enabled && readableDisabled { return AppPalette.textSecondary }
         switch tone {
         case .primary:
             return AppPalette.textPrimary
@@ -394,6 +407,7 @@ struct AppActionButton<Label: View>: View {
     }
 
     private var borderColor: Color {
+        if !enabled && readableDisabled { return AppPalette.outlineSoft }
         switch tone {
         case .primary:
             return AppPalette.primary
@@ -405,7 +419,13 @@ struct AppActionButton<Label: View>: View {
     }
 
     private var borderWidth: CGFloat {
-        tone == .primary ? 0 : 1.5
+        !enabled && readableDisabled ? 0.5 : (tone == .primary ? 0 : 1.5)
+    }
+}
+
+private struct ReadableActionButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.opacity(configuration.isPressed ? 0.85 : 1)
     }
 }
 
@@ -1873,11 +1893,11 @@ struct SharedTagSection: View {
     let onRenameTag: ((String, String) async -> Bool)?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 4.5) {
             Text("共有タグ")
                 .font(.system(size: 15, weight: .heavy, design: .rounded))
                 .foregroundStyle(AppPalette.textSecondary)
-                .padding(.top, 1)
+                .padding(.top, 4.5)
                 .padding(.horizontal, 14)
 
             ScrollView(.horizontal, showsIndicators: false) {
@@ -1936,26 +1956,13 @@ struct MainEntryListControlRow: View {
 
     @ViewBuilder
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 8) {
-                sortMenu(expanded: false)
-                displayMethodControl(expanded: false)
-                imageVisibilityControl(expanded: false)
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    sortMenu(expanded: false)
-                    displayMethodControl(expanded: false)
-                }
-                imageVisibilityControl(expanded: false)
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                sortMenu(expanded: true)
-                displayMethodControl(expanded: true)
-                imageVisibilityControl(expanded: true)
-            }
+        HStack(alignment: .center, spacing: 8) {
+            sortMenu(expanded: true)
+                .frame(maxWidth: .infinity)
+            displayMethodControl(expanded: true)
+                .frame(maxWidth: .infinity)
+            imageVisibilityControl(expanded: true)
+                .frame(maxWidth: .infinity)
         }
         .padding(.horizontal, 14)
     }
@@ -2059,7 +2066,8 @@ struct MainEntryListControlRow: View {
                 .font(.system(.caption, design: .rounded).weight(.semibold))
             Text(title)
                 .font(.system(.caption, design: .rounded).weight(.semibold))
-                .lineLimit(expanded ? nil : 1)
+                .lineLimit(1)
+                .minimumScaleFactor(0.65)
             if let trailingIcon {
                 Image(systemName: trailingIcon)
                     .font(.system(size: 10, weight: .semibold))
@@ -2067,7 +2075,7 @@ struct MainEntryListControlRow: View {
         }
         .foregroundStyle(emphasized ? Color.white : AppPalette.textSecondary)
         .padding(.horizontal, 10)
-        .frame(maxWidth: expanded ? .infinity : nil, minHeight: 44, alignment: .leading)
+        .frame(maxWidth: expanded ? .infinity : nil, minHeight: 44, alignment: .center)
         .background(emphasized ? AppPalette.primaryStrong : AppPalette.surfaceSoft, in: Capsule())
         .contentShape(Capsule())
         .fixedSize(horizontal: !expanded, vertical: false)
