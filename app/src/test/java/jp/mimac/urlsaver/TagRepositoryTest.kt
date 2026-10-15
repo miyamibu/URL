@@ -66,6 +66,10 @@ import jp.mimac.urlsaver.domain.TransferSharedTagOwnershipResponse
 import jp.mimac.urlsaver.domain.AssignTagResult
 import jp.mimac.urlsaver.domain.SharedTagAuthResult
 import jp.mimac.urlsaver.domain.SharedTagAccountDeletionResult
+import jp.mimac.urlsaver.domain.LinkedIdentityProvider
+import jp.mimac.urlsaver.domain.LinkedIdentityProviderRefreshFailure
+import jp.mimac.urlsaver.domain.LinkedIdentityProviderRefreshResult
+import jp.mimac.urlsaver.domain.LinkedIdentityProvidersSnapshot
 import jp.mimac.urlsaver.domain.SaveResult
 import jp.mimac.urlsaver.domain.ShareSaveResult
 import jp.mimac.urlsaver.ui.CreateAndAssignTagResult
@@ -92,14 +96,17 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35])
 class TagRepositoryTest {
 
     private lateinit var db: AppDatabase
     private lateinit var repository: DefaultTagRepository
     private lateinit var authProvider: FakeAuthSessionProvider
     private lateinit var syncScheduler: FakeSyncScheduler
+    private lateinit var syncRemote: FakeRemoteDataSource
     private lateinit var authRemote: FakeAuthRemoteDataSource
     private lateinit var remote: FakeRemoteDataSource
     private lateinit var aiTransparencyRepository: AiTransparencyRepository
@@ -120,6 +127,7 @@ class TagRepositoryTest {
         authProvider = FakeAuthSessionProvider()
         syncScheduler = FakeSyncScheduler()
         remote = FakeRemoteDataSource()
+        syncRemote = FakeRemoteDataSource()
         authRemote = FakeAuthRemoteDataSource()
         localAccountCleanupStore = InMemoryLocalAccountCleanupStore()
         notificationCleaner = CountingNotificationCleaner()
@@ -148,7 +156,7 @@ class TagRepositoryTest {
                 syncDao = db.sharedTagSyncDao(),
                 urlEntryDao = db.urlEntryDao(),
                 authSessionProvider = authProvider,
-                remoteDataSource = FakeRemoteDataSource(),
+                remoteDataSource = syncRemote,
                 clock = clock,
                 metadataScheduler = scheduler,
             ),
@@ -1139,6 +1147,96 @@ class TagRepositoryTest {
     }
 
     @Test
+    fun linkedIdentityRefresh_usesReadOnlyAuthRequestAndPersistsVerifiedProviders() = runBlocking {
+        val session = SharedTagAuthSession("identity-user", "access")
+        val expected = LinkedIdentityProvidersSnapshot(
+            authUserId = session.authUserId,
+            providers = setOf(LinkedIdentityProvider.GOOGLE, LinkedIdentityProvider.APPLE),
+            verifiedAtEpochMillis = 42L,
+        )
+        authProvider.updateSession(session)
+        authRemote.identitySnapshot = expected
+
+        val result = repository.refreshLinkedIdentityProviders()
+
+        assertEquals(LinkedIdentityProviderRefreshResult.Verified(expected), result)
+        assertEquals(session, authProvider.session.value)
+        assertEquals(expected, authProvider.linkedIdentityProvidersSnapshotFor(session.authUserId))
+        assertEquals(1, authRemote.identityProviderFetchCount)
+        assertEquals(0, syncRemote.pullSnapshotCallCount)
+        assertEquals(0, syncRemote.applyOpsCallCount)
+        assertTrue(syncScheduler.enqueued.isEmpty())
+    }
+
+    @Test
+    fun linkedIdentityRefresh_rejectsStaleAccountResponseWithoutOverwritingNewSession() = runBlocking {
+        val originalSession = SharedTagAuthSession("identity-user-a", "access-a")
+        val otherSession = SharedTagAuthSession("identity-user-b", "access-b")
+        authProvider.updateSession(originalSession)
+        authRemote.identitySnapshot = LinkedIdentityProvidersSnapshot(
+            authUserId = originalSession.authUserId,
+            providers = setOf(LinkedIdentityProvider.GOOGLE),
+            verifiedAtEpochMillis = 42L,
+        )
+        authRemote.identityFetchOnCall = { authProvider.updateSession(otherSession) }
+
+        val result = repository.refreshLinkedIdentityProviders()
+
+        assertEquals(
+            LinkedIdentityProviderRefreshResult.Failed(LinkedIdentityProviderRefreshFailure.SESSION_CHANGED),
+            result,
+        )
+        assertEquals(otherSession, authProvider.session.value)
+    }
+
+    @Test
+    fun linkedIdentityRefresh_rejectsSameAccountResponseWhenSessionTokenChanges() = runBlocking {
+        val originalSession = SharedTagAuthSession("identity-user", "access-before")
+        val refreshedSession = originalSession.copy(accessToken = "access-after")
+        authProvider.updateSession(originalSession)
+        authRemote.identitySnapshot = LinkedIdentityProvidersSnapshot(
+            authUserId = originalSession.authUserId,
+            providers = setOf(LinkedIdentityProvider.APPLE),
+            verifiedAtEpochMillis = 42L,
+        )
+        authRemote.identityFetchOnCall = { authProvider.updateSession(refreshedSession) }
+
+        val result = repository.refreshLinkedIdentityProviders()
+
+        assertEquals(
+            LinkedIdentityProviderRefreshResult.Failed(LinkedIdentityProviderRefreshFailure.SESSION_CHANGED),
+            result,
+        )
+        assertEquals(refreshedSession, authProvider.session.value)
+        assertNull(authProvider.linkedIdentityProvidersSnapshotFor(originalSession.authUserId))
+    }
+
+    @Test
+    fun linkedIdentityRefresh_failureKeepsLastConfirmedSnapshot() = runBlocking {
+        val cached = LinkedIdentityProvidersSnapshot(
+            authUserId = "identity-user",
+            providers = setOf(LinkedIdentityProvider.APPLE),
+            verifiedAtEpochMillis = 42L,
+        )
+        val session = SharedTagAuthSession(
+            authUserId = cached.authUserId,
+            accessToken = "access",
+            linkedIdentityProvidersSnapshot = cached,
+        )
+        authProvider.updateSession(session)
+        authRemote.identityFailure = java.io.IOException("offline")
+
+        val result = repository.refreshLinkedIdentityProviders()
+
+        assertEquals(
+            LinkedIdentityProviderRefreshResult.Failed(LinkedIdentityProviderRefreshFailure.REQUEST_FAILED),
+            result,
+        )
+        assertEquals(session, authProvider.session.value)
+        assertEquals(cached, authProvider.session.value?.linkedIdentityProvidersSnapshot)
+    }
+
+    @Test
     fun identityLink_pendingOwnerSurvivesPreferencesAndBlocksNormalSignIn() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val stateStore = jp.mimac.urlsaver.data.SharedPreferencesSharedTagOAuthStateStore(context)
@@ -1563,6 +1661,7 @@ class TagRepositoryTest {
     private class FakeAuthSessionProvider : SharedTagAuthSessionProvider {
         private val state = MutableStateFlow<SharedTagAuthSession?>(null)
         override val session: StateFlow<SharedTagAuthSession?> = state
+        private var identityProvidersSnapshot: LinkedIdentityProvidersSnapshot? = null
         var clearSessionCallCount: Int = 0
         var sessionClearFailure: Throwable? = null
 
@@ -1570,8 +1669,27 @@ class TagRepositoryTest {
             if (newSession == null) {
                 clearSessionCallCount += 1
                 sessionClearFailure?.let { throw it }
+                identityProvidersSnapshot = null
+            } else {
+                identityProvidersSnapshot = newSession.linkedIdentityProvidersSnapshot
+                    ?.takeIf { it.authUserId == newSession.authUserId }
+                    ?: identityProvidersSnapshot?.takeIf { it.authUserId == newSession.authUserId }
             }
-            state.value = newSession
+            state.value = newSession?.copy(linkedIdentityProvidersSnapshot = identityProvidersSnapshot)
+        }
+
+        override fun linkedIdentityProvidersSnapshotFor(authUserId: String): LinkedIdentityProvidersSnapshot? =
+            identityProvidersSnapshot?.takeIf { it.authUserId == authUserId && state.value?.authUserId == authUserId }
+
+        override fun updateLinkedIdentityProvidersSnapshot(
+            snapshot: LinkedIdentityProvidersSnapshot,
+            expectedAccessToken: String,
+        ): Boolean {
+            if (state.value?.authUserId != snapshot.authUserId ||
+                state.value?.accessToken != expectedAccessToken
+            ) return false
+            identityProvidersSnapshot = snapshot
+            return true
         }
     }
 
@@ -1583,6 +1701,10 @@ class TagRepositoryTest {
         var linkFailure: Throwable? = null
         var linkExpectedUserId: String? = null
         var callbackSession: SharedTagAuthSession? = null
+        var identitySnapshot: LinkedIdentityProvidersSnapshot? = null
+        var identityFailure: Throwable? = null
+        var identityFetchOnCall: (suspend () -> Unit)? = null
+        var identityProviderFetchCount: Int = 0
         val linkProviders = mutableListOf<String>()
 
         override suspend fun linkIdentityOAuthUrl(provider: String, session: SharedTagAuthSession, redirectTo: String): String {
@@ -1594,6 +1716,15 @@ class TagRepositoryTest {
 
         override fun pendingIdentityLinkUserId(): String? = linkExpectedUserId
         override fun cancelIdentityLink() { linkExpectedUserId = null }
+
+        override suspend fun fetchLinkedIdentityProviders(
+            session: SharedTagAuthSession,
+        ): LinkedIdentityProvidersSnapshot {
+            identityProviderFetchCount += 1
+            identityFetchOnCall?.invoke()
+            identityFailure?.let { throw it }
+            return requireNotNull(identitySnapshot)
+        }
 
 
         override fun oauthUrl(provider: String, redirectTo: String): String {
@@ -1652,11 +1783,15 @@ class TagRepositoryTest {
         var pullSnapshotStarted: CompletableDeferred<Unit>? = null
         var allowPullSnapshot: CompletableDeferred<Unit>? = null
         var pullSnapshotCallCount: Int = 0
+        var applyOpsCallCount: Int = 0
 
         override suspend fun applyOps(
             session: SharedTagAuthSession,
             operations: List<SharedTagSyncOperation>,
-        ): ApplySharedTagOpsResponse = ApplySharedTagOpsResponse(emptyList())
+        ): ApplySharedTagOpsResponse {
+            applyOpsCallCount += 1
+            return ApplySharedTagOpsResponse(emptyList())
+        }
 
         override suspend fun pullSnapshot(session: SharedTagAuthSession): PullSharedTagSnapshotResponse {
             pullSnapshotCallCount += 1

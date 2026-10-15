@@ -2,6 +2,8 @@ package jp.mimac.urlsaver.data
 
 import jp.mimac.urlsaver.domain.SharedTagAuthResult
 import jp.mimac.urlsaver.domain.SharedTagAccountDeletionResult
+import jp.mimac.urlsaver.domain.LinkedIdentityProviderRefreshFailure
+import jp.mimac.urlsaver.domain.LinkedIdentityProviderRefreshResult
 import jp.mimac.urlsaver.domain.SharedTagCloudState
 import jp.mimac.urlsaver.domain.SharedTagInviteAcceptanceResult
 import jp.mimac.urlsaver.domain.SharedTagInviteCreationResult
@@ -63,6 +65,8 @@ interface TagRepository {
     suspend fun googleIdentityLinkUrl(): Result<String> = Result.failure(IllegalStateException("ログイン方法の追加は設定されていません"))
     suspend fun appleIdentityLinkUrl(): Result<String> = Result.failure(IllegalStateException("ログイン方法の追加は設定されていません"))
     suspend fun cancelIdentityLink() = Unit
+    suspend fun refreshLinkedIdentityProviders(): LinkedIdentityProviderRefreshResult =
+        LinkedIdentityProviderRefreshResult.Failed(LinkedIdentityProviderRefreshFailure.NOT_CONFIGURED)
     suspend fun handleOAuthCallback(callbackUrl: String): SharedTagAuthResult =
         SharedTagAuthResult.Failure("サインインを開始できませんでした")
     suspend fun signIn(email: String, password: String): SharedTagAuthResult

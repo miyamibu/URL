@@ -527,6 +527,7 @@ class SupabaseSharedTagSyncRemoteDataSource(
             !session?.refreshToken.isNullOrBlank()
         ) {
             val refreshedSession = authRemoteDataSource.refreshSession(requireNotNull(session?.refreshToken))
+                .withPreservedIdentityProviderSnapshotFrom(requireNotNull(session))
             authSessionProvider.updateSession(refreshedSession)
             return executeRpc(
                 path = path,

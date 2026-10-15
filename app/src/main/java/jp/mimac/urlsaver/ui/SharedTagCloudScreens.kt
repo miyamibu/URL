@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
@@ -85,7 +86,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
@@ -94,6 +97,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -114,6 +118,9 @@ import jp.mimac.urlsaver.domain.FeatureEntitlements
 import jp.mimac.urlsaver.domain.PlanType
 import jp.mimac.urlsaver.domain.SharedTagInviteAcceptanceResult
 import jp.mimac.urlsaver.domain.SharedTagInvitePreviewResult
+import jp.mimac.urlsaver.domain.LinkedIdentityProvider
+import jp.mimac.urlsaver.domain.LinkedIdentityProviderRefreshFailure
+import jp.mimac.urlsaver.domain.LinkedIdentityProviderState
 import jp.mimac.urlsaver.domain.UsageSummary
 import jp.mimac.urlsaver.domain.isPaidCourse
 import jp.mimac.urlsaver.domain.HomeBackgroundStyle
@@ -169,6 +176,8 @@ fun SharedTagCloudAuthScreen(
 ) {
     val context = LocalContext.current
     val cloudState by viewModel.cloudState.collectAsStateWithLifecycle()
+    val linkedIdentityProviders by viewModel.linkedIdentityProviders.collectAsStateWithLifecycle()
+    val authSessionRevision by viewModel.authSessionRevision.collectAsStateWithLifecycle()
     val profile by viewModel.profile.collectAsStateWithLifecycle()
     val usageSummary by viewModel.usageSummary.collectAsStateWithLifecycle()
     val pendingInvite by viewModel.pendingInvite.collectAsStateWithLifecycle()
@@ -250,6 +259,12 @@ fun SharedTagCloudAuthScreen(
         if (isSavingProfile || profileMessageIsError) return@LaunchedEffect
         if (displayName != profile.displayName) displayName = profile.displayName
         if (draftAvatarBase64 != profile.avatarBase64) draftAvatarBase64 = profile.avatarBase64
+    }
+
+    LaunchedEffect(cloudState.isSignedIn, showAccountDetails, authSessionRevision) {
+        if (cloudState.isSignedIn && showAccountDetails) {
+            viewModel.refreshLinkedIdentityProviders()
+        }
     }
 
     LaunchedEffect(initialPromoCode) {
@@ -536,28 +551,49 @@ fun SharedTagCloudAuthScreen(
                         } else if (cloudState.isSignedIn) {
                             Text("ログイン方法を追加", style = MaterialTheme.typography.titleSmall)
                             Text("現在のアカウントに連携し、Android・iPhoneで同じ保存内容を使えます。", style = MaterialTheme.typography.bodySmall)
-                            listOf("Google", "Apple").forEach { provider ->
-                                OutlinedButton(
-                                    modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("auth_link_${provider.lowercase()}"),
-                                    enabled = !isSubmitting,
-                                    onClick = {
+                            listOf(LinkedIdentityProvider.GOOGLE, LinkedIdentityProvider.APPLE).forEach { provider ->
+                                LinkedIdentityProviderAccountRow(
+                                    provider = provider,
+                                    state = linkedIdentityProviders,
+                                    isSubmitting = isSubmitting,
+                                    onLink = {
                                         scope.launch {
                                             isSubmitting = true
-                                            val result = if (provider == "Google") viewModel.googleIdentityLinkUrl() else viewModel.appleIdentityLinkUrl()
+                                            val result = if (provider == LinkedIdentityProvider.GOOGLE) {
+                                                viewModel.googleIdentityLinkUrl()
+                                            } else {
+                                                viewModel.appleIdentityLinkUrl()
+                                            }
                                             result.fold(
                                                 onSuccess = { url ->
                                                     runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
-                                                        .onSuccess { accountMessage = "$provider の連携を完了してください。元のアカウントは保持しています。" }
-                                                        .onFailure { accountMessage = "$provider の連携画面を開けませんでした" }
+                                                        .onSuccess {
+                                                            accountMessage = "${provider.displayName} の連携を完了してください。元のアカウントは保持しています。"
+                                                        }
+                                                        .onFailure { accountMessage = "${provider.displayName} の連携画面を開けませんでした" }
                                                 },
                                                 onFailure = { accountMessage = it.message ?: "ログイン方法を追加できませんでした" },
                                             )
                                             isSubmitting = false
                                         }
                                     },
-                                ) { Text("$provider を連携する") }
+                                )
                             }
-                            OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text("ChatGPTで続ける（準備中）") }
+                            LinkedIdentityProviderStatusMessage(
+                                state = linkedIdentityProviders,
+                                onRetry = { scope.launch { viewModel.refreshLinkedIdentityProviders() } },
+                            )
+                            OutlinedButton(
+                                onClick = {},
+                                enabled = false,
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("auth_link_chatgpt"),
+                            ) {
+                                AuthProviderButtonContent(
+                                    iconRes = R.drawable.ai_chatgpt,
+                                    label = "ChatGPTで続ける（準備中）",
+                                    darkIconBacking = true,
+                                )
+                            }
                             TextButton(onClick = { scope.launch { viewModel.cancelIdentityLink(); accountMessage = "ログイン方法の追加をキャンセルしました。元のアカウントは保持しています。" } }, enabled = !isSubmitting) { Text("ログイン方法の追加をキャンセル") }
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                                 ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
@@ -2182,10 +2218,29 @@ private fun SharedTagAuthForm(
             .testTag("auth_google"),
         enabled = !isSubmitting,
     ) {
-        Text("Googleで続ける")
+        AuthProviderButtonContent(R.drawable.ic_auth_google, "Googleで続ける")
     }
-    OutlinedButton(onClick = onAppleSignIn, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("auth_apple"), enabled = !isSubmitting) { Text("Appleで続ける") }
-    OutlinedButton(onClick = {}, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("auth_chatgpt"), enabled = false) { Text("ChatGPTで続ける（準備中）") }
+    OutlinedButton(
+        onClick = onAppleSignIn,
+        modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("auth_apple"),
+        enabled = !isSubmitting,
+    ) {
+        AuthProviderButtonContent(
+            iconRes = LinkedIdentityProvider.APPLE.iconResForSurface(MaterialTheme.colorScheme.surface),
+            label = "Appleで続ける",
+        )
+    }
+    OutlinedButton(
+        onClick = {},
+        modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("auth_chatgpt"),
+        enabled = false,
+    ) {
+        AuthProviderButtonContent(
+            iconRes = R.drawable.ai_chatgpt,
+            label = "ChatGPTで続ける（準備中）",
+            darkIconBacking = true,
+        )
+    }
     TextButton(onClick = { emailExpanded = !emailExpanded }, modifier = Modifier.fillMaxWidth().testTag("auth_email")) {
         Text(if (emailExpanded) "メールで続ける ▲" else "メールで続ける ▼")
     }
@@ -2282,6 +2337,189 @@ private fun SharedTagAuthForm(
             text = it,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+@Composable
+private fun LinkedIdentityProviderAccountRow(
+    provider: LinkedIdentityProvider,
+    state: LinkedIdentityProviderState,
+    isSubmitting: Boolean,
+    onLink: () -> Unit,
+) {
+    val currentAuthUserId = when (state) {
+        is LinkedIdentityProviderState.Verified -> state.snapshot.authUserId
+        is LinkedIdentityProviderState.LastConfirmed -> state.snapshot.authUserId
+        is LinkedIdentityProviderState.Loading -> state.authUserId
+        is LinkedIdentityProviderState.Error -> state.authUserId
+        is LinkedIdentityProviderState.Unknown -> null
+    }
+    val snapshot = when (state) {
+        is LinkedIdentityProviderState.Verified -> state.snapshot
+        is LinkedIdentityProviderState.LastConfirmed -> state.snapshot
+        is LinkedIdentityProviderState.Loading -> state.lastConfirmed
+        is LinkedIdentityProviderState.Error -> state.lastConfirmed
+        is LinkedIdentityProviderState.Unknown -> null
+    }?.takeIf { it.authUserId == currentAuthUserId }
+    val isFresh = state is LinkedIdentityProviderState.Verified && snapshot != null
+    val isLinked = snapshot?.providers?.contains(provider) == true
+    if (isFresh && !isLinked) {
+        OutlinedButton(
+            onClick = onLink,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("auth_link_${provider.supabaseValue}"),
+            enabled = !isSubmitting,
+        ) {
+            val iconRes = provider.iconResForSurface(MaterialTheme.colorScheme.surface)
+            AuthProviderButtonContent(
+                iconRes = iconRes,
+                label = "${provider.displayName} を連携する",
+            )
+        }
+    } else {
+        val status = when {
+            snapshot == null -> "未確認"
+            isFresh && isLinked -> "連携済み"
+            isLinked -> "前回: 連携済み"
+            else -> "前回: 未連携"
+        }
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 56.dp)
+                .testTag("auth_link_${provider.supabaseValue}_status"),
+            shape = MaterialTheme.shapes.small,
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp)
+                    .semantics(mergeDescendants = true) {
+                        stateDescription = status
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                val iconRes = provider.iconResForSurface(MaterialTheme.colorScheme.surface)
+                AuthProviderIcon(
+                    iconRes = iconRes,
+                )
+                Text(provider.displayName, modifier = Modifier.weight(1f), maxLines = 1)
+                Text(status, maxLines = 2, style = MaterialTheme.typography.bodySmall)
+                if (isFresh && isLinked) {
+                    Icon(Icons.Outlined.Check, contentDescription = null)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LinkedIdentityProviderStatusMessage(
+    state: LinkedIdentityProviderState,
+    onRetry: () -> Unit,
+) {
+    val message = when (state) {
+        is LinkedIdentityProviderState.Unknown -> "ログイン方法の状態はまだ確認できていません。"
+        is LinkedIdentityProviderState.LastConfirmed -> "前回確認した状態を表示しています。最新の状態を確認してください。"
+        is LinkedIdentityProviderState.Loading -> "ログイン方法を確認しています…"
+        is LinkedIdentityProviderState.Error -> if (state.lastConfirmed == null) {
+            "ログイン方法を確認できませんでした。連携状態は未確定です。"
+        } else {
+            "最新の状態を確認できませんでした。前回確認した状態を表示しています。"
+        }
+        is LinkedIdentityProviderState.Verified -> return
+    }
+    val isLoading = state is LinkedIdentityProviderState.Loading
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (isLoading) CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(
+                onClick = onRetry,
+                enabled = !isLoading,
+                modifier = Modifier.testTag("auth_providers_retry"),
+            ) {
+                Icon(Icons.Outlined.Refresh, contentDescription = null)
+                Text("再確認")
+            }
+        }
+        if (state is LinkedIdentityProviderState.Error && state.reason == LinkedIdentityProviderRefreshFailure.SIGNED_OUT) {
+            Text(
+                text = "サインイン後にログイン方法を確認できます。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AuthProviderButtonContent(
+    iconRes: Int,
+    label: String,
+    darkIconBacking: Boolean = false,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        AuthProviderIcon(iconRes, darkIconBacking)
+        Spacer(Modifier.size(12.dp))
+        Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun AuthProviderIcon(
+    iconRes: Int,
+    darkBacking: Boolean = false,
+) {
+    val isAppleLogo = iconRes == R.drawable.ic_auth_apple_black || iconRes == R.drawable.ic_auth_apple_white
+    Box(modifier = Modifier.size(32.dp), contentAlignment = Alignment.Center) {
+        if (darkBacking) {
+            Surface(
+                modifier = Modifier.size(24.dp),
+                shape = CircleShape,
+                color = Color.Black,
+            ) {
+                Image(
+                    painter = painterResource(iconRes),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize().padding(2.dp),
+                    contentScale = ContentScale.Fit,
+                )
+            }
+        } else {
+            Image(
+                painter = painterResource(iconRes),
+                contentDescription = null,
+                modifier = if (isAppleLogo) Modifier.requiredSize(44.dp) else Modifier.size(24.dp),
+                contentScale = ContentScale.Fit,
+            )
+        }
+    }
+}
+
+private val LinkedIdentityProvider.displayName: String
+    get() = when (this) {
+        LinkedIdentityProvider.GOOGLE -> "Google"
+        LinkedIdentityProvider.APPLE -> "Apple"
+    }
+
+private fun LinkedIdentityProvider.iconResForSurface(surfaceColor: Color): Int = when (this) {
+    LinkedIdentityProvider.GOOGLE -> R.drawable.ic_auth_google
+    LinkedIdentityProvider.APPLE -> if (surfaceColor.luminance() > 0.5f) {
+        R.drawable.ic_auth_apple_black
+    } else {
+        R.drawable.ic_auth_apple_white
     }
 }
 

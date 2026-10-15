@@ -94,6 +94,7 @@ class SupabaseStorePurchaseRemoteDataSource(
             !session.refreshToken.isNullOrBlank()
         ) {
             val refreshedSession = authRemoteDataSource.refreshSession(requireNotNull(session.refreshToken))
+                .withPreservedIdentityProviderSnapshotFrom(session)
             authSessionProvider.updateSession(refreshedSession)
             return executeFunction(
                 session = refreshedSession,

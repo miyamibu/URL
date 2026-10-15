@@ -13,6 +13,7 @@ import jp.mimac.urlsaver.data.SharedTagOAuthPendingState
 import jp.mimac.urlsaver.data.SharedTagOAuthStateStore
 import jp.mimac.urlsaver.data.SharedTagSyncRemoteConfig
 import jp.mimac.urlsaver.data.SupabaseSharedTagAuthRemoteDataSource
+import jp.mimac.urlsaver.domain.LinkedIdentityProvider
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -24,6 +25,44 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SupabaseSharedTagOAuthTest {
+    @Test
+    fun linkedIdentityStatus_usesAuthenticatedUserGetAndFiltersSupportedProviders() = runBlocking {
+        withAuthStub(listOf(
+            200 to """{"id":"original-user","identities":[{"provider":"google"},{"provider":"apple"},{"provider":"email"}]}""",
+        )) { baseURL, requests ->
+            val session = SharedTagAuthSession("original-user", "test-access")
+            val snapshot = remote(OAuthTestStateStore(), baseURL).fetchLinkedIdentityProviders(session)
+
+            assertEquals("original-user", snapshot.authUserId)
+            assertEquals(setOf(LinkedIdentityProvider.GOOGLE, LinkedIdentityProvider.APPLE), snapshot.providers)
+            assertTrue(snapshot.verifiedAtEpochMillis > 0L)
+            assertEquals("GET /auth/v1/user HTTP/1.1", requests.single().first)
+            assertEquals("Bearer test-access", requests.single().second["authorization"])
+            assertEquals("test-only", requests.single().second["apikey"])
+            assertFalse(requests.single().second.containsKey("content-length"))
+        }
+    }
+
+    @Test
+    fun linkedIdentityStatus_rejectsWrongUserAndMissingIdentityList() = runBlocking {
+        withAuthStub(listOf(
+            200 to """{"id":"different-user","identities":[{"provider":"google"}]}""",
+        )) { baseURL, _ ->
+            val session = SharedTagAuthSession("original-user", "test-access")
+            assertTrue(runCatching {
+                remote(OAuthTestStateStore(), baseURL).fetchLinkedIdentityProviders(session)
+            }.isFailure)
+        }
+        withAuthStub(listOf(
+            200 to """{"id":"original-user"}""",
+        )) { baseURL, _ ->
+            val session = SharedTagAuthSession("original-user", "test-access")
+            assertTrue(runCatching {
+                remote(OAuthTestStateStore(), baseURL).fetchLinkedIdentityProviders(session)
+            }.isFailure)
+        }
+    }
+
     @Test
     fun appleAuthorization_usesS256ChallengeAndExchangesCodeWithSavedVerifier() = runBlocking {
         val server = ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1"))

@@ -20,6 +20,11 @@ import jp.mimac.urlsaver.domain.EntitlementGrant
 import jp.mimac.urlsaver.domain.EntitlementSource
 import jp.mimac.urlsaver.domain.FeatureEntitlements
 import jp.mimac.urlsaver.domain.LaunchStandardPlan
+import jp.mimac.urlsaver.domain.LinkedIdentityProvider
+import jp.mimac.urlsaver.domain.LinkedIdentityProviderRefreshFailure
+import jp.mimac.urlsaver.domain.LinkedIdentityProviderRefreshResult
+import jp.mimac.urlsaver.domain.LinkedIdentityProviderState
+import jp.mimac.urlsaver.domain.LinkedIdentityProvidersSnapshot
 import jp.mimac.urlsaver.domain.MigrateSharedTagResult
 import jp.mimac.urlsaver.domain.PlanType
 import jp.mimac.urlsaver.domain.SharedTagAccountDeletionResult
@@ -48,9 +53,76 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 
 class SharedTagAuthViewModelTest {
+    @get:Rule
+    val mainDispatcherRule = MainDispatcherRule()
+
+    @Test
+    fun linkedIdentityRefresh_failureKeepsLastConfirmedProvidersExplicit() = runBlocking {
+        val snapshot = LinkedIdentityProvidersSnapshot(
+            authUserId = "user-a",
+            providers = setOf(LinkedIdentityProvider.GOOGLE),
+            verifiedAtEpochMillis = 42L,
+        )
+        val sessionProvider = FakeSessionProvider(
+            SharedTagAuthSession(
+                authUserId = "user-a",
+                accessToken = "access-a",
+                linkedIdentityProvidersSnapshot = snapshot,
+            ),
+        )
+        val repository = FakeTagRepository().apply {
+            identityRefreshResult = LinkedIdentityProviderRefreshResult.Failed(
+                LinkedIdentityProviderRefreshFailure.REQUEST_FAILED,
+            )
+        }
+        val viewModel = SharedTagAuthViewModel(
+            tagRepository = repository,
+            userProfileStore = FakeUserProfileStore(),
+            entitlementGrantRepository = fakeEntitlementGrantRepository(),
+            authSessionProvider = sessionProvider,
+        )
+
+        viewModel.refreshLinkedIdentityProviders()
+
+        assertEquals(
+            LinkedIdentityProviderState.Error(
+                authUserId = "user-a",
+                reason = LinkedIdentityProviderRefreshFailure.REQUEST_FAILED,
+                lastConfirmed = snapshot,
+            ),
+            viewModel.linkedIdentityProviders.value,
+        )
+    }
+
+    @Test
+    fun linkedIdentityRefresh_discardsResultWhenCurrentAccountChanges() = runBlocking {
+        val sessionProvider = FakeSessionProvider(
+            SharedTagAuthSession("user-a", "access-a"),
+        )
+        val responseSnapshot = LinkedIdentityProvidersSnapshot(
+            authUserId = "user-a",
+            providers = setOf(LinkedIdentityProvider.APPLE),
+            verifiedAtEpochMillis = 42L,
+        )
+        val repository = FakeTagRepository().apply {
+            identityRefreshResult = LinkedIdentityProviderRefreshResult.Verified(responseSnapshot)
+            onIdentityRefresh = { sessionProvider.updateSession(SharedTagAuthSession("user-b", "access-b")) }
+        }
+        val viewModel = SharedTagAuthViewModel(
+            tagRepository = repository,
+            userProfileStore = FakeUserProfileStore(),
+            entitlementGrantRepository = fakeEntitlementGrantRepository(),
+            authSessionProvider = sessionProvider,
+        )
+
+        viewModel.refreshLinkedIdentityProviders()
+
+        assertEquals(LinkedIdentityProviderState.Unknown("user-b"), viewModel.linkedIdentityProviders.value)
+    }
 
     @Test
     fun identityLink_exposesProviderResultAndCancelWithoutSigningOut() = runBlocking {
@@ -299,6 +371,13 @@ private class FakeTagRepository(
 ) : TagRepository {
     var linkCancelled = false
     var signedOut = false
+    var identityRefreshResult: LinkedIdentityProviderRefreshResult =
+        LinkedIdentityProviderRefreshResult.Failed(LinkedIdentityProviderRefreshFailure.REQUEST_FAILED)
+    var onIdentityRefresh: suspend () -> Unit = {}
+    override suspend fun refreshLinkedIdentityProviders(): LinkedIdentityProviderRefreshResult {
+        onIdentityRefresh()
+        return identityRefreshResult
+    }
     override suspend fun googleIdentityLinkUrl(): Result<String> = Result.success("https://example.com/link/google")
     override suspend fun appleIdentityLinkUrl(): Result<String> = Result.failure(IllegalStateException("manual linking disabled"))
     override suspend fun cancelIdentityLink() { linkCancelled = true }

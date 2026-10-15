@@ -20,6 +20,7 @@ import jp.mimac.urlsaver.data.PendingInviteRecord
 import jp.mimac.urlsaver.data.PendingInviteStore
 import jp.mimac.urlsaver.data.PromoCodeRedemptionResult
 import jp.mimac.urlsaver.data.SharedTagAuthSessionProvider
+import jp.mimac.urlsaver.data.SharedTagAuthSession
 import jp.mimac.urlsaver.data.TagRepository
 import jp.mimac.urlsaver.data.UserProfileStore
 import jp.mimac.urlsaver.domain.BillingPeriod
@@ -28,6 +29,9 @@ import jp.mimac.urlsaver.domain.PlanType
 import jp.mimac.urlsaver.domain.SharedTagAccountDeletionResult
 import jp.mimac.urlsaver.domain.SharedTagAuthResult
 import jp.mimac.urlsaver.domain.SharedTagCloudState
+import jp.mimac.urlsaver.domain.LinkedIdentityProviderRefreshResult
+import jp.mimac.urlsaver.domain.LinkedIdentityProviderState
+import jp.mimac.urlsaver.domain.LinkedIdentityProvidersSnapshot
 import jp.mimac.urlsaver.domain.SharedTagInviteAcceptanceResult
 import jp.mimac.urlsaver.domain.UsageSummary
 import jp.mimac.urlsaver.domain.UserProfile
@@ -42,6 +46,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.Base64
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 
 class SharedTagAuthViewModel(
     private val tagRepository: TagRepository,
@@ -60,6 +65,19 @@ class SharedTagAuthViewModel(
 ) : ViewModel() {
 
     private var lastBillingRefreshUserId: String? = null
+    private val linkedIdentityRefreshRevision = AtomicLong(0L)
+    private val _authSessionRevision = MutableStateFlow(0L)
+    val authSessionRevision: StateFlow<Long> = _authSessionRevision.asStateFlow()
+    private val initialAuthSession = authSessionProvider?.session?.value
+    private val _linkedIdentityProviders = MutableStateFlow(
+        linkedIdentityProviderState(
+            initialAuthSession,
+            initialAuthSession?.authUserId?.let { authUserId ->
+                authSessionProvider?.linkedIdentityProvidersSnapshotFor(authUserId)
+            },
+        ),
+    )
+    val linkedIdentityProviders: StateFlow<LinkedIdentityProviderState> = _linkedIdentityProviders.asStateFlow()
     private val _entitlements = MutableStateFlow(tagRepository.featureEntitlements())
     val entitlements: StateFlow<FeatureEntitlements> = _entitlements.asStateFlow()
 
@@ -67,8 +85,20 @@ class SharedTagAuthViewModel(
         val sessionProvider = authSessionProvider
         val billingService = googlePlayBillingService
         if (sessionProvider != null) {
+            var lastIdentitySession = sessionProvider.session.value
             viewModelScope.launch {
                 sessionProvider.session.collect { session ->
+                    if (session?.authUserId != lastIdentitySession?.authUserId ||
+                        session?.accessToken != lastIdentitySession?.accessToken
+                    ) {
+                        _authSessionRevision.value += 1L
+                        linkedIdentityRefreshRevision.incrementAndGet()
+                        _linkedIdentityProviders.value = linkedIdentityProviderState(
+                            session,
+                            session?.authUserId?.let(sessionProvider::linkedIdentityProvidersSnapshotFor),
+                        )
+                    }
+                    lastIdentitySession = session
                     val userId = session?.authUserId
                     _entitlements.value = tagRepository.featureEntitlements()
                     if (userId == null) {
@@ -202,6 +232,57 @@ class SharedTagAuthViewModel(
     suspend fun appleIdentityLinkUrl(): Result<String> = tagRepository.appleIdentityLinkUrl()
 
     suspend fun cancelIdentityLink() = tagRepository.cancelIdentityLink()
+
+    suspend fun refreshLinkedIdentityProviders() {
+        val sessionProvider = authSessionProvider
+        val session = sessionProvider?.session?.value
+        if (session == null) {
+            linkedIdentityRefreshRevision.incrementAndGet()
+            _linkedIdentityProviders.value = linkedIdentityProviderState(null)
+            return
+        }
+        val lastConfirmed = sessionProvider.linkedIdentityProvidersSnapshotFor(session.authUserId)
+            ?: session.linkedIdentityProvidersSnapshot?.takeIf { it.authUserId == session.authUserId }
+        val requestRevision = linkedIdentityRefreshRevision.incrementAndGet()
+        _linkedIdentityProviders.value = LinkedIdentityProviderState.Loading(
+            authUserId = session.authUserId,
+            lastConfirmed = lastConfirmed,
+        )
+        val result = tagRepository.refreshLinkedIdentityProviders()
+        if (linkedIdentityRefreshRevision.get() != requestRevision) return
+
+        val currentSession = sessionProvider.session.value
+        if (currentSession?.authUserId != session.authUserId ||
+            currentSession.accessToken != session.accessToken
+        ) {
+            linkedIdentityRefreshRevision.incrementAndGet()
+            _linkedIdentityProviders.value = linkedIdentityProviderState(
+                currentSession,
+                currentSession?.authUserId?.let(sessionProvider::linkedIdentityProvidersSnapshotFor),
+            )
+            return
+        }
+        _linkedIdentityProviders.value = when (result) {
+            is LinkedIdentityProviderRefreshResult.Verified -> {
+                if (result.snapshot.authUserId == session.authUserId) {
+                    LinkedIdentityProviderState.Verified(result.snapshot)
+                } else {
+                    LinkedIdentityProviderState.Error(
+                        authUserId = session.authUserId,
+                        reason = jp.mimac.urlsaver.domain.LinkedIdentityProviderRefreshFailure.SESSION_CHANGED,
+                        lastConfirmed = sessionProvider.linkedIdentityProvidersSnapshotFor(session.authUserId)
+                            ?: currentSession.linkedIdentityProvidersSnapshot?.takeIf { it.authUserId == session.authUserId },
+                    )
+                }
+            }
+            is LinkedIdentityProviderRefreshResult.Failed -> LinkedIdentityProviderState.Error(
+                authUserId = session.authUserId,
+                reason = result.reason,
+                lastConfirmed = sessionProvider.linkedIdentityProvidersSnapshotFor(session.authUserId)
+                    ?: currentSession.linkedIdentityProvidersSnapshot?.takeIf { it.authUserId == session.authUserId },
+            )
+        }
+    }
 
     suspend fun signOut() {
         tagRepository.signOut()
@@ -356,6 +437,22 @@ class SharedTagAuthViewModel(
             is ContactSupportResult.Success -> ContactSupportUiResult.Success
             is ContactSupportResult.Failure -> ContactSupportUiResult.Failure(result.message)
         }
+    }
+}
+
+private fun linkedIdentityProviderState(
+    session: SharedTagAuthSession?,
+    storedSnapshot: LinkedIdentityProvidersSnapshot? = null,
+): LinkedIdentityProviderState {
+    if (session == null) return LinkedIdentityProviderState.Unknown(authUserId = null)
+    val snapshot = storedSnapshot
+        ?.takeIf { it.authUserId == session.authUserId }
+        ?: session.linkedIdentityProvidersSnapshot
+        ?.takeIf { it.authUserId == session.authUserId }
+    return if (snapshot == null) {
+        LinkedIdentityProviderState.Unknown(authUserId = session.authUserId)
+    } else {
+        LinkedIdentityProviderState.LastConfirmed(snapshot)
     }
 }
 

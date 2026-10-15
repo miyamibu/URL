@@ -5,6 +5,8 @@ import jp.mimac.urlsaver.domain.SHARED_TAG_NORMALIZATION_VERSION
 import jp.mimac.urlsaver.domain.SHARED_TAG_INVITE_ROLE
 import jp.mimac.urlsaver.domain.SharedTagAuthResult
 import jp.mimac.urlsaver.domain.SharedTagAccountDeletionResult
+import jp.mimac.urlsaver.domain.LinkedIdentityProviderRefreshFailure
+import jp.mimac.urlsaver.domain.LinkedIdentityProviderRefreshResult
 import jp.mimac.urlsaver.domain.SharedTagCloudState
 import jp.mimac.urlsaver.domain.SharedTagGroupInviteCreationResult
 import jp.mimac.urlsaver.domain.SharedTagGroupMemberRecord
@@ -40,6 +42,7 @@ import jp.mimac.urlsaver.domain.normalizeSharedTagName
 import jp.mimac.urlsaver.domain.validateSharedTagName
 import jp.mimac.urlsaver.util.AppClock
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -727,6 +730,63 @@ class DefaultTagRepository(
     override suspend fun cancelIdentityLink() {
         accountOperationFence.withExclusiveOperation { authRemoteDataSource.cancelIdentityLink() }
     }
+
+    override suspend fun refreshLinkedIdentityProviders(): LinkedIdentityProviderRefreshResult =
+        accountOperationFence.withAccountOperation(
+            authUserId = { authSessionProvider.session.value?.authUserId },
+            blockedResult = {
+                LinkedIdentityProviderRefreshResult.Failed(
+                    LinkedIdentityProviderRefreshFailure.ACCOUNT_CLEANUP_IN_PROGRESS,
+                )
+            },
+        ) {
+            if (!remoteConfig.isConfigured) {
+                return@withAccountOperation LinkedIdentityProviderRefreshResult.Failed(
+                    LinkedIdentityProviderRefreshFailure.NOT_CONFIGURED,
+                )
+            }
+            val requestSession = authSessionProvider.session.value
+                ?: return@withAccountOperation LinkedIdentityProviderRefreshResult.Failed(
+                    LinkedIdentityProviderRefreshFailure.SIGNED_OUT,
+                )
+            val snapshot = try {
+                authRemoteDataSource.fetchLinkedIdentityProviders(requestSession)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                return@withAccountOperation LinkedIdentityProviderRefreshResult.Failed(
+                    LinkedIdentityProviderRefreshFailure.REQUEST_FAILED,
+                )
+            }
+            if (snapshot.authUserId != requestSession.authUserId) {
+                return@withAccountOperation LinkedIdentityProviderRefreshResult.Failed(
+                    LinkedIdentityProviderRefreshFailure.SESSION_CHANGED,
+                )
+            }
+            val snapshotSaved = try {
+                authSessionProvider.updateLinkedIdentityProvidersSnapshot(
+                    snapshot = snapshot,
+                    expectedAccessToken = requestSession.accessToken,
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                false
+            }
+            if (!snapshotSaved) {
+                val currentSession = authSessionProvider.session.value
+                return@withAccountOperation LinkedIdentityProviderRefreshResult.Failed(
+                    if (currentSession?.authUserId == requestSession.authUserId &&
+                        currentSession.accessToken == requestSession.accessToken
+                    ) {
+                        LinkedIdentityProviderRefreshFailure.REQUEST_FAILED
+                    } else {
+                        LinkedIdentityProviderRefreshFailure.SESSION_CHANGED
+                    },
+                )
+            }
+            LinkedIdentityProviderRefreshResult.Verified(snapshot)
+        }
 
     override suspend fun handleOAuthCallback(callbackUrl: String): SharedTagAuthResult =
         accountOperationFence.withExclusiveOperation {

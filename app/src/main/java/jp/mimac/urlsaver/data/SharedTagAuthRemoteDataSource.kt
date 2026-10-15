@@ -7,6 +7,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import jp.mimac.urlsaver.domain.LinkedIdentityProvider
+import jp.mimac.urlsaver.domain.LinkedIdentityProvidersSnapshot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -33,6 +35,8 @@ interface SharedTagAuthRemoteDataSource {
     suspend fun signUp(email: String, password: String): SharedTagAuthRemoteResult
     suspend fun signIn(email: String, password: String): SharedTagAuthRemoteResult
     suspend fun refreshSession(refreshToken: String): SharedTagAuthSession
+    suspend fun fetchLinkedIdentityProviders(session: SharedTagAuthSession): LinkedIdentityProvidersSnapshot =
+        throw IOException("Linked identity status is not configured.")
     suspend fun resendEmailConfirmation(email: String) {
         throw IOException("Email confirmation resend is not configured.")
     }
@@ -173,6 +177,40 @@ class SupabaseSharedTagAuthRemoteDataSource(
             )
         }
         return parseSession(requireSession(response))
+    }
+
+    override suspend fun fetchLinkedIdentityProviders(
+        session: SharedTagAuthSession,
+    ): LinkedIdentityProvidersSnapshot {
+        if (session.authUserId.isBlank() || session.accessToken.isBlank()) {
+            throw IOException("A signed-in session is required.")
+        }
+        val response = withContext(Dispatchers.IO) {
+            executeAuthRequest(
+                path = "/auth/v1/user",
+                method = "GET",
+                accessToken = session.accessToken,
+            )
+        }
+        val user = runCatching { json.decodeFromString<SupabaseIdentityProviderUserResponse>(response) }
+            .getOrElse { throw IOException("Supabase Auth did not return linked identity status.") }
+        if (user.id.isNullOrBlank() || user.id != session.authUserId) {
+            throw IOException("Supabase Auth returned a different account.")
+        }
+        val identities = user.identities
+            ?: throw IOException("Supabase Auth did not return linked identity status.")
+        val providers = identities.mapNotNull { identity ->
+            when (identity.provider?.lowercase()) {
+                LinkedIdentityProvider.GOOGLE.supabaseValue -> LinkedIdentityProvider.GOOGLE
+                LinkedIdentityProvider.APPLE.supabaseValue -> LinkedIdentityProvider.APPLE
+                else -> null
+            }
+        }.toSet()
+        return LinkedIdentityProvidersSnapshot(
+            authUserId = user.id,
+            providers = providers,
+            verifiedAtEpochMillis = System.currentTimeMillis(),
+        )
     }
 
     override suspend fun resendEmailConfirmation(email: String) {
@@ -458,6 +496,17 @@ private data class SupabaseAuthSessionResponse(
 private data class SupabaseAuthUser(
     val id: String,
     val email: String? = null,
+)
+
+@Serializable
+private data class SupabaseIdentityProviderUserResponse(
+    val id: String? = null,
+    val identities: List<SupabaseAuthIdentity>? = null,
+)
+
+@Serializable
+private data class SupabaseAuthIdentity(
+    val provider: String? = null,
 )
 
 @Serializable

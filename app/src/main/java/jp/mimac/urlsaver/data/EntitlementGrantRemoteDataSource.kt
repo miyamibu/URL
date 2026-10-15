@@ -91,6 +91,7 @@ class SupabaseEntitlementGrantRemoteDataSource(
             !session.refreshToken.isNullOrBlank()
         ) {
             val refreshedSession = authRemoteDataSource.refreshSession(requireNotNull(session.refreshToken))
+                .withPreservedIdentityProviderSnapshotFrom(session)
             authSessionProvider.updateSession(refreshedSession)
             return executeRpc(
                 path = path,
