@@ -1,5 +1,15 @@
 # Final Store Submission Checklist
 
+## 2026-10-15 release candidate: 1.0.27 (42)
+
+Status: VALIDATING. The user authorized completing the remaining provider-status/icon fixes, committing/pushing and submitting both mobile Stores. The prior Android `1.0.26 (41)` release is published; the prior iOS detail is ready for distribution. Both current candidates therefore use `1.0.27 (42)`. Existing release modes and audiences are retained.
+
+This update keeps provider choices in the existing Profile / Account panel, displays verified Google/Apple linked state, distinguishes unknown/loading/error, and uses readable Google/Apple/ChatGPT marks. iPhone Google OAuth success dismisses its completed browser sheet. Production sharing SQL and same-account Google/Apple proof are recorded in [the auth follow-up](production-sharing-auth-2026-10-15.md).
+
+The OpenAI commercial sign-in inquiry has been received; approval and client issuance remain external. ChatGPT login is noninteractive and marked preparing. This candidate does not claim working ChatGPT authentication.
+
+Source, signed artifact hashes, target-device checks and final review receipts will be recorded here after validation. The October13 receipts below remain historical and do not prove this candidate was submitted.
+
 ## 2026-10-13 release record: 1.0.26 (41)
 
 Status: BOTH_STORES_SUBMITTED_REVIEW_PENDING. The owner authorized committing/pushing the accumulated sharing/account/display changes and then submitting both mobile Stores. Both live Store consoles were authenticated and their newest existing build 40 was confirmed before choosing version 1.0.26/build 41. Existing production track and automatic-after-approval modes are preserved.
@@ -27,8 +37,8 @@ Status: BOTH_STORES_SUBMITTED_REVIEW_PENDING. Source commit `befc926df95b84537b2
 この文書の下部に残る `1.0.11` の表は、2026-06-27/28 の Google Play / App Store 提出時点の履歴ログとして扱う。現在の repo source はmanifestと実ソースで照合し、この履歴ログだけでは次回提出可否を判断しない。
 
 ## Current source snapshot (manifest-backed)
-- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.26`, `versionCode=41`
-- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.26`, `build=41`; share extension `com.mibu.codebridge.ios.share`
+- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.27`, `versionCode=42`
+- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.27`, `build=42`; share extension `com.mibu.codebridge.ios.share`
 - Supabase migration head: `20261013090000_auto_group_for_shared_tag_invite_accept.sql`
 - Machine-readable source: `docs/release/release-manifest.json`.
 - The dated provider and store records below are historical evidence and do not become current proof without a fresh recheck.

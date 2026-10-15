@@ -1,5 +1,17 @@
 # REPO_GO Evidence
 
+## 2026-10-15 verified provider-status source candidate: 1.0.27 (42)
+
+Final status: REPO_GO for the authorized mobile source update. Store processing, final Play-signed Android UI proof and review submission are subsequent gates; this entry does not claim approval or publication of build42. iOS auth source is committed as `1df6e634`; Android auth source is committed as `ffeff98e`. Release metadata is advanced to `1.0.27 (42)` because the prior iOS build41 is ready for distribution and Google Play submission25 is published.
+
+- The existing Profile / Account panel now uses authenticated user identities to show static Google/Apple `連携済み` rows. Unknown/loading/error and retry are explicit, and only a freshly verified unlinked provider offers linking. Google/Apple/ChatGPT marks are visible without adding a page or dependency. Android uses owner-approved official Apple artwork; iOS retains its native Apple mark.
+- The display-only refresh uses Auth GET and does not run shared-tag sync or upload the outbox. Encrypted-session compatibility and same-user token/account-change guards preserve existing data. Successful Google OAuth completion dismisses the completed iPhone browser sheet.
+- Android: 72 focused OAuth/repository/ViewModel/session-codec tests passed, zero failures/errors/skips; final Debug assemble/lint and mobile UI contract passed. No physical-device instrumentation, uninstall or app-data reset was used.
+- iOS: five relevant domain XCTests passed, zero failures. Final Development build and data-preserving install of `1.0.27 (42)` passed; Appium/XCUITest on the canonical physical iPhone confirmed both linked rows, all three marks and the retained account. Restart/provider-status refresh was also checked. The distribution archive/export passed canonical app/share identifiers, distribution signatures, disabled debug entitlement and all eight runtime configuration equality checks against the accepted41 archive. Single upload succeeded at15:58:46 JST and Apple processing is pending.
+- Production migration deployment and native Google/Apple same-user identity proof are recorded in [the production follow-up](production-sharing-auth-2026-10-15.md). The migration was not replayed during this mobile update.
+- The official Sign in with ChatGPT inquiry has been received. Approval and client issuance remain external; ChatGPT login stays noninteractive and preparing. This source GO is not a claim of enabled ChatGPT authentication or full production launch.
+- Root mobile contract, release manifest, release hygiene (including10 Web recovery tests), whitespace and staged secret scans passed. Private account/device screenshots and credentials are excluded from Git and retained locally. Final pushed SHA and CI, signed Android artifact and both Store receipts will be recorded after their actual results.
+
 ## 2026-10-13 sharing, accounts and display release candidate: 1.0.26 (41)
 
 Final status: REPO_GO for the authorized mobile Store update / BOTH_STORES_SUBMITTED_REVIEW_PENDING. Google Play submission `25` is `審査中`; App Store submission `909abe14-c066-49a7-879c-267e0832d96e` is `審査待ち` for `1.0.26 (41)`, submitted 2026-10-13 22:46 JST (minute precision). Approval and public availability are not verified. Source commit `54a9ca0cde30c58176a6721ef44b042d217e991e` is pushed to `origin/main`. Both new signed release artifacts passed validation; upload, Apple processing/build association, and both actual review submissions are verified. This scope does not authorize the separately proposed production Supabase migration or new provider/account security settings.
@@ -138,8 +150,8 @@ Still open at the time of the 2026-08-22 freeze (external, owner-gated): product
 
 ## Current source snapshot (manifest-backed)
 
-- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.26`, `versionCode=41`
-- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.26`, `build=41`; share extension `com.mibu.codebridge.ios.share`
+- Android: `jp.miyamibu.urlalbum`, `versionName=1.0.27`, `versionCode=42`
+- iOS: `com.mibu.codebridge.ios`, `shortVersion=1.0.27`, `build=42`; share extension `com.mibu.codebridge.ios.share`
 - Supabase migration head: `20261013090000_auto_group_for_shared_tag_invite_accept.sql`
 - Machine-readable source: `docs/release/release-manifest.json`
 

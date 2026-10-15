@@ -23,9 +23,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.26</string>
+	<string>1.0.27</string>
 	<key>CFBundleVersion</key>
-	<string>41</string>
+	<string>42</string>
 	<key>SharedTagCloudEnabled</key>
 	<string>$(URLSAVER_SHARED_TAG_CLOUD_ENABLED)</string>
 	<key>ChatGptPersonalLinkSyncEnabled</key>
